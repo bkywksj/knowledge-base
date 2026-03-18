@@ -1,0 +1,107 @@
+# =============================================================================
+# Tauri 跨平台自动构建 & 发布工作流
+# =============================================================================
+#
+# 触发方式：推送 v*.*.* 格式的 Git Tag
+#   git tag v1.0.0
+#   git push <remote> v1.0.0
+#
+# 前提条件（GitHub Secrets）：
+#   - TAURI_SIGNING_PRIVATE_KEY       签名私钥内容
+#   - TAURI_SIGNING_PRIVATE_KEY_PASSWORD  私钥密码（通常为空）
+#
+# 使用前须修改（搜索 TODO 标记）：
+#   1. releaseName: 修改为你的应用名称
+#   2. 构建矩阵: 根据 .claude/release-config.json 的 platforms 配置
+#      裁剪不需要的平台（删除对应 matrix include 条目）
+#
+# CI 只负责构建和上传到 GitHub Release（草稿）。
+# 产物下载和推送到 release 仓库由本地 /release 命令完成。
+# =============================================================================
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  # ===========================================================================
+  # Job 1: 跨平台构建
+  # ===========================================================================
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      # TODO: 根据 platforms 配置裁剪不需要的平台
+      # 只需 Windows + macOS 时，删除 ubuntu-22.04 条目
+      matrix:
+        include:
+          - platform: windows-latest           # platforms: windows
+            args: '--bundles nsis'
+          - platform: macos-latest             # platforms: macos
+            args: '--bundles app,dmg'
+            target: aarch64-apple-darwin
+          - platform: macos-latest             # platforms: macos
+            args: '--bundles app,dmg'
+            target: x86_64-apple-darwin
+          - platform: ubuntu-22.04             # platforms: linux（不需要可删除此条目及对应的 Install dependencies step）
+            args: '--bundles deb,appimage'
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (Ubuntu)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+        with:
+          tagName: ${{ github.ref_name }}
+          # TODO: 修改为你的应用名称
+          releaseName: '${{ github.ref_name }}'
+          releaseBody: 'See the assets to download and install this version.'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+
+  # ===========================================================================
+  # 注意：CI 只负责构建和上传到 GitHub Release（草稿）。
+  # 产物下载、复制到 release 仓库、生成 update.json、推送到 Gitee/GitHub
+  # 均由本地 /release 命令完成（避免 CI 跨国推送 Gitee 超时问题）。
+  # ===========================================================================
