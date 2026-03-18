@@ -5,7 +5,7 @@
   "identifier": "com.agilefr.kb",
   "build": {
     "beforeDevCommand": "pnpm dev:clean",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:1421",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
