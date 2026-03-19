@@ -22,6 +22,7 @@ pub fn run() {
         )
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         // ─── 应用初始化 ─────────────────────────────
         .setup(|app| {
             // 初始化数据库（存放在应用数据目录）
@@ -49,11 +50,67 @@ pub fn run() {
             // 系统模块
             commands::system::greet,
             commands::system::get_system_info,
+            commands::system::get_dashboard_stats,
             // 配置模块
             commands::config::get_all_config,
             commands::config::get_config,
             commands::config::set_config,
             commands::config::delete_config,
+            // 笔记模块
+            commands::notes::create_note,
+            commands::notes::update_note,
+            commands::notes::delete_note,
+            commands::notes::get_note,
+            commands::notes::list_notes,
+            commands::notes::toggle_pin,
+            commands::notes::move_note_to_folder,
+            // 文件夹模块
+            commands::folders::create_folder,
+            commands::folders::rename_folder,
+            commands::folders::delete_folder,
+            commands::folders::list_folders,
+            // 搜索模块
+            commands::search::search_notes,
+            // 回收站模块
+            commands::trash::soft_delete_note,
+            commands::trash::restore_note,
+            commands::trash::permanent_delete_note,
+            commands::trash::list_trash,
+            commands::trash::empty_trash,
+            // 每日笔记模块
+            commands::daily::get_or_create_daily,
+            commands::daily::list_daily_dates,
+            // 标签模块
+            commands::tags::create_tag,
+            commands::tags::list_tags,
+            commands::tags::rename_tag,
+            commands::tags::delete_tag,
+            commands::tags::add_tag_to_note,
+            commands::tags::remove_tag_from_note,
+            commands::tags::get_note_tags,
+            commands::tags::list_notes_by_tag,
+            // 链接模块
+            commands::links::sync_note_links,
+            commands::links::get_backlinks,
+            commands::links::search_link_targets,
+            commands::links::get_graph_data,
+            // AI 模块
+            commands::ai::list_ai_models,
+            commands::ai::create_ai_model,
+            commands::ai::update_ai_model,
+            commands::ai::delete_ai_model,
+            commands::ai::set_default_ai_model,
+            commands::ai::list_ai_conversations,
+            commands::ai::create_ai_conversation,
+            commands::ai::delete_ai_conversation,
+            commands::ai::rename_ai_conversation,
+            commands::ai::list_ai_messages,
+            commands::ai::send_ai_message,
+            commands::ai::cancel_ai_generation,
+            commands::ai::ai_write_assist,
+            commands::ai::cancel_ai_write_assist,
+            // 导入模块
+            commands::import::import_markdown_folder,
         ])
         // ─── 窗口事件处理 ─────────────────────────
         .on_window_event(|window, event| {

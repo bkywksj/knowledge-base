@@ -1,4 +1,10 @@
+pub mod ai;
+pub mod folders;
+pub mod links;
+pub mod notes;
 pub mod schema;
+pub mod search;
+pub mod tags;
 
 use std::sync::Mutex;
 
@@ -26,6 +32,15 @@ impl Database {
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    /// 获取数据库连接锁（供 Service 层复杂操作使用）
+    pub fn conn_lock(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, Connection>, AppError> {
+        self.conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))
     }
 
     // ─── 配置 DAO ────────────────────────────────────
@@ -67,6 +82,59 @@ impl Database {
             [key, value],
         )?;
         Ok(())
+    }
+
+    // ─── 统计 DAO ─────────────────────────────────────
+
+    /// 获取首页统计数据
+    pub fn get_dashboard_stats(&self) -> Result<crate::models::DashboardStats, AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+
+        let total_notes: usize = conn.query_row(
+            "SELECT COUNT(*) FROM notes WHERE is_deleted = 0",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let total_folders: usize = conn.query_row(
+            "SELECT COUNT(*) FROM folders",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let total_tags: usize = conn.query_row(
+            "SELECT COUNT(*) FROM tags",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let total_links: usize = conn.query_row(
+            "SELECT COUNT(*) FROM note_links",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let today_updated: usize = conn.query_row(
+            "SELECT COUNT(*) FROM notes WHERE is_deleted = 0 AND updated_at LIKE ?1",
+            [format!("{}%", today)],
+            |row| row.get(0),
+        )?;
+
+        let total_words: usize = conn.query_row(
+            "SELECT COALESCE(SUM(word_count), 0) FROM notes WHERE is_deleted = 0",
+            [],
+            |row| row.get(0),
+        )?;
+
+        Ok(crate::models::DashboardStats {
+            total_notes,
+            total_folders,
+            total_tags,
+            total_links,
+            today_updated,
+            total_words,
+        })
     }
 
     /// 删除配置

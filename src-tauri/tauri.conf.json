@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://localhost:* https://*; font-src 'self' data:"
     }
   },
   "plugins": {
@@ -42,10 +42,28 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": [],
+    "copyright": "Copyright (c) 2026 AgileFR",
+    "category": "Productivity",
+    "shortDescription": "本地知识库桌面应用",
+    "longDescription": "基于 Tauri 构建的本地知识库管理工具，支持 Markdown 编辑、全文搜索、双向链接、知识图谱、AI 问答等功能。",
     "windows": {
       "nsis": {
         "displayLanguageSelector": true,
-        "languages": ["SimpChinese", "English"]
+        "languages": ["SimpChinese", "English"],
+        "installerIcon": "icons/icon.ico"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0"],
+        "section": "utility"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
       }
     }
   }

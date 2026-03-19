@@ -1,2 +1,11 @@
+pub mod ai;
 pub mod config;
+pub mod daily;
+pub mod folders;
+pub mod links;
+pub mod notes;
+pub mod search;
 pub mod system;
+pub mod tags;
+pub mod trash;
+pub mod import;

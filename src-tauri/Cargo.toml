@@ -30,4 +30,25 @@ log = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+tokio = { version = "1", features = ["sync"] }
+futures = "0.3"
+tauri-plugin-dialog = "2"
+walkdir = "2"
+
+# ─── 编译优化 ────────────────────────────────────
+
+[profile.dev]
+opt-level = 0
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
 

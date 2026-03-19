@@ -1,6 +1,7 @@
-use tauri::Manager;
+use tauri::{Manager, State};
 
-use crate::models::SystemInfo;
+use crate::models::{DashboardStats, SystemInfo};
+use crate::state::AppState;
 
 /// 获取系统信息
 #[tauri::command]
@@ -17,6 +18,12 @@ pub fn get_system_info(app: tauri::AppHandle) -> Result<SystemInfo, String> {
         app_version: app.package_info().version.to_string(),
         data_dir,
     })
+}
+
+/// 获取首页统计数据
+#[tauri::command]
+pub fn get_dashboard_stats(state: State<'_, AppState>) -> Result<DashboardStats, String> {
+    state.db.get_dashboard_stats().map_err(|e| e.to_string())
 }
 
 /// 简单的 greet 命令（保留为示例）

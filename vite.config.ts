@@ -16,6 +16,25 @@ export default defineConfig(async () => ({
     },
   },
 
+  build: {
+    // 生产构建优化
+    target: "esnext",
+    minify: "terser",
+    terserOptions: {
+      compress: { drop_console: true, drop_debugger: true },
+    },
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "vendor-react": ["react", "react-dom", "react-router-dom"],
+          "vendor-antd": ["antd", "@ant-design/icons"],
+          "vendor-editor": ["@tiptap/react", "@tiptap/starter-kit"],
+        },
+      },
+    },
+    chunkSizeWarningLimit: 1000,
+  },
+
   clearScreen: false,
   server: {
     port: 1421,

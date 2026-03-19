@@ -18,6 +18,7 @@
     "core:menu:default",
     "core:tray:default",
     "updater:default",
-    "process:default"
+    "process:default",
+    "dialog:default"
   ]
 }
