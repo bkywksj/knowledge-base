@@ -136,6 +136,11 @@ fn markdown_to_html(md: &str) -> String {
     let parser = Parser::new_ext(md, options);
     let mut html_output = String::new();
     html::push_html(&mut html_output, parser);
+
+    // pulldown_cmark 会在 </code> 前插入尾部换行符，
+    // 导致 Tiptap CodeBlock 渲染时多出一个空行，需要去除
+    html_output = html_output.replace("\n</code></pre>", "</code></pre>");
+
     html_output
 }
 

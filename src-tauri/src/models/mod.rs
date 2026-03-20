@@ -75,6 +75,7 @@ pub struct Tag {
 }
 
 /// 创建/更新标签的入参
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct TagInput {
     pub name: String,
@@ -96,6 +97,7 @@ pub struct SearchResult {
 // ─── 回收站 ───────────────────────────────────
 
 /// 回收站笔记查询参数
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct TrashQuery {
     pub page: Option<usize>,
@@ -194,6 +196,7 @@ pub struct AiMessage {
 }
 
 /// AI 聊天请求
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct AiChatRequest {
     pub conversation_id: i64,

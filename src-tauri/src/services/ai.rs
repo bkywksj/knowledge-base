@@ -29,6 +29,7 @@ impl AiEventEmitter for WriteAssistEmitter {
 }
 
 /// 聊天事件发射器（ai: 前缀）
+#[allow(dead_code)]
 struct ChatEmitter {
     app: AppHandle,
 }

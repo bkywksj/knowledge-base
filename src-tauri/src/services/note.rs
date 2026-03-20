@@ -22,7 +22,8 @@ impl NoteService {
         db.update_note(id, input)
     }
 
-    /// 删除笔记
+    /// 删除笔记（永久删除，预留给未来使用）
+    #[allow(dead_code)]
     pub fn delete(db: &Database, id: i64) -> Result<(), AppError> {
         let deleted = db.delete_note(id)?;
         if !deleted {

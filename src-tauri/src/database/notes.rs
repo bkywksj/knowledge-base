@@ -39,7 +39,8 @@ impl Database {
         self.get_note_inner(&conn, id)
     }
 
-    /// 删除笔记
+    /// 删除笔记（永久删除，预留给未来使用）
+    #[allow(dead_code)]
     pub fn delete_note(&self, id: i64) -> Result<bool, AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
         let affected = conn.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
