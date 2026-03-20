@@ -116,7 +116,7 @@ export default function TagsPage() {
     <div className="max-w-4xl mx-auto">
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between mb-4">
-        <Title level={3} style={{ margin: 0 }}>
+        <Title level={3} style={{ margin: 0, lineHeight: "32px" }}>
           <span className="flex items-center gap-2">
             <Tags size={22} />
             标签管理

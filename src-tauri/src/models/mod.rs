@@ -217,6 +217,17 @@ pub struct DashboardStats {
 
 // ─── 导入 ─────────────────────────────────────
 
+/// 扫描到的文件条目（供前端预览勾选）
+#[derive(Debug, Clone, Serialize)]
+pub struct ScannedFile {
+    /// 文件绝对路径
+    pub path: String,
+    /// 文件名（不含扩展名）
+    pub name: String,
+    /// 文件大小（字节）
+    pub size: u64,
+}
+
 /// 导入结果
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportResult {

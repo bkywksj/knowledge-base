@@ -277,6 +277,15 @@ impl Database {
         Ok(affected)
     }
 
+    /// 删除所有笔记（永久删除，包括回收站中的）
+    pub fn delete_all_notes(&self) -> Result<usize, AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let affected = conn.execute("DELETE FROM notes", [])?;
+        // 清空 FTS 索引
+        conn.execute("INSERT INTO notes_fts(notes_fts) VALUES('rebuild')", [])?;
+        Ok(affected)
+    }
+
     // ─── 每日笔记 DAO ────────────────────────────
 
     /// 获取或创建每日笔记

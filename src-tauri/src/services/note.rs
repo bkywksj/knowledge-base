@@ -47,6 +47,11 @@ impl NoteService {
         db.move_note_to_folder(note_id, folder_id)
     }
 
+    /// 删除所有笔记
+    pub fn delete_all(db: &Database) -> Result<usize, AppError> {
+        db.delete_all_notes()
+    }
+
     /// 查询笔记列表（分页）
     pub fn list(db: &Database, query: &NoteQuery) -> Result<PageResult<Note>, AppError> {
         let page = query.page.unwrap_or(1).max(1);

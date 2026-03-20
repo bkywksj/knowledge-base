@@ -172,6 +172,13 @@ export interface AiMessage {
 
 // ─── 导入 ─────────────────────────────────────
 
+/** 扫描到的文件条目 */
+export interface ScannedFile {
+  path: string;
+  name: string;
+  size: number;
+}
+
 /** 导入结果 */
 export interface ImportResult {
   imported: number;

@@ -27,6 +27,19 @@ body,
   background: rgba(0, 0, 0, 0.25);
 }
 
+/* ─── Lucide 图标垂直居中 ──────────────────────── */
+
+.lucide {
+  vertical-align: middle;
+}
+
+/* Ant Design Segmented 图标居中 */
+.ant-segmented-item-label {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
 /* ─── 暗色模式卡片增强 ─────────────────────────── */
 
 [data-theme="dark"] .ant-card,

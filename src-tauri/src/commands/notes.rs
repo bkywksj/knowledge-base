@@ -50,6 +50,12 @@ pub fn move_note_to_folder(
     NoteService::move_to_folder(&state.db, note_id, folder_id).map_err(|e| e.to_string())
 }
 
+/// 删除所有笔记
+#[tauri::command]
+pub fn delete_all_notes(state: tauri::State<'_, AppState>) -> Result<usize, String> {
+    NoteService::delete_all(&state.db).map_err(|e| e.to_string())
+}
+
 /// 查询笔记列表（分页）
 #[tauri::command]
 pub fn list_notes(

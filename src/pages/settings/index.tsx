@@ -21,8 +21,9 @@ import { Trash2, Pencil, FolderInput } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import type { Update } from "@tauri-apps/plugin-updater";
-import type { AppConfig, AiModel, AiModelInput, ImportResult, ImportProgress } from "@/types";
+import type { AppConfig, AiModel, AiModelInput, ImportResult, ImportProgress, ScannedFile } from "@/types";
 import { configApi, systemApi, updaterApi, aiModelApi, importApi, folderApi } from "@/lib/api";
+import { Checkbox } from "antd";
 import { UpdateModal } from "@/components/ui/UpdateModal";
 import type { Folder } from "@/types";
 
@@ -63,6 +64,11 @@ export default function SettingsPage() {
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [importFolderId, setImportFolderId] = useState<number | undefined>(undefined);
+  // 扫描预览状态
+  const [scannedFiles, setScannedFiles] = useState<ScannedFile[]>([]);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const [scanModalOpen, setScanModalOpen] = useState(false);
+  const [scanning, setScanning] = useState(false);
 
   async function loadConfigs() {
     setLoading(true);
@@ -136,16 +142,39 @@ export default function SettingsPage() {
     return result;
   }
 
-  async function handleImport() {
-    // 选择文件夹
+  async function handleScanFolder() {
     const selected = await open({ directory: true, title: "选择 Markdown 文件夹" });
     if (!selected) return;
 
+    setScanning(true);
+    setImportResult(null);
+    try {
+      const files = await importApi.scan(selected as string);
+      if (files.length === 0) {
+        message.info("该文件夹下没有 .md 文件");
+        return;
+      }
+      setScannedFiles(files);
+      setSelectedPaths(new Set(files.map((f) => f.path)));
+      setScanModalOpen(true);
+    } catch (e) {
+      message.error(`扫描失败: ${e}`);
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  async function handleConfirmImport() {
+    if (selectedPaths.size === 0) {
+      message.warning("请至少选择一个文件");
+      return;
+    }
+
+    setScanModalOpen(false);
     setImporting(true);
     setImportProgress(null);
     setImportResult(null);
 
-    // 监听进度
     const unlistenProgress = await listen<ImportProgress>("import:progress", (e) => {
       setImportProgress(e.payload);
     });
@@ -154,7 +183,8 @@ export default function SettingsPage() {
     });
 
     try {
-      const result = await importApi.importFolder(selected as string, importFolderId ?? null);
+      const paths = Array.from(selectedPaths);
+      const result = await importApi.importSelected(paths, importFolderId ?? null);
       setImportResult(result);
       if (result.imported > 0) {
         message.success(`成功导入 ${result.imported} 篇笔记`);
@@ -165,6 +195,26 @@ export default function SettingsPage() {
       setImporting(false);
       unlistenProgress();
       unlistenDone();
+    }
+  }
+
+  function toggleFileSelection(path: string) {
+    setSelectedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedPaths.size === scannedFiles.length) {
+      setSelectedPaths(new Set());
+    } else {
+      setSelectedPaths(new Set(scannedFiles.map((f) => f.path)));
     }
   }
 
@@ -348,7 +398,7 @@ export default function SettingsPage() {
         <div className="mb-3">
           <Typography.Paragraph type="secondary" style={{ marginBottom: 8, fontSize: 13 }}>
             从 Obsidian vault 或 Typora 文件夹中批量导入 .md 文件为笔记。
-            支持递归读取子文件夹，自动提取 Markdown 标题。
+            支持递归读取子文件夹，自动提取 Markdown 标题，导入前可预览并勾选。
           </Typography.Paragraph>
           <Space>
             <Select
@@ -362,10 +412,10 @@ export default function SettingsPage() {
             <Button
               type="primary"
               icon={<FolderInput size={14} />}
-              onClick={handleImport}
-              loading={importing}
+              onClick={handleScanFolder}
+              loading={scanning || importing}
             >
-              选择文件夹并导入
+              选择文件夹
             </Button>
           </Space>
         </div>
@@ -448,6 +498,56 @@ export default function SettingsPage() {
           size="small"
         />
       </Card>
+
+      {/* 导入预览弹窗 */}
+      <Modal
+        title={`选择要导入的文件（共 ${scannedFiles.length} 个）`}
+        open={scanModalOpen}
+        onCancel={() => setScanModalOpen(false)}
+        onOk={handleConfirmImport}
+        okText={`导入 ${selectedPaths.size} 个文件`}
+        cancelText="取消"
+        width={600}
+        styles={{ body: { maxHeight: 400, overflow: "auto" } }}
+      >
+        <div className="flex items-center justify-between mb-3 pb-2" style={{ borderBottom: "1px solid #f0f0f0" }}>
+          <Checkbox
+            checked={selectedPaths.size === scannedFiles.length && scannedFiles.length > 0}
+            indeterminate={selectedPaths.size > 0 && selectedPaths.size < scannedFiles.length}
+            onChange={toggleSelectAll}
+          >
+            全选 / 取消全选
+          </Checkbox>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            已选 {selectedPaths.size} / {scannedFiles.length}
+          </Text>
+        </div>
+        <List
+          size="small"
+          dataSource={scannedFiles}
+          renderItem={(file) => (
+            <List.Item style={{ padding: "6px 0" }}>
+              <Checkbox
+                checked={selectedPaths.has(file.path)}
+                onChange={() => toggleFileSelection(file.path)}
+                style={{ marginRight: 8 }}
+              />
+              <div className="flex-1 min-w-0">
+                <Text ellipsis style={{ fontSize: 13 }}>
+                  {file.name}.md
+                </Text>
+              </div>
+              <Text type="secondary" style={{ fontSize: 11, flexShrink: 0 }}>
+                {file.size < 1024
+                  ? `${file.size} B`
+                  : file.size < 1048576
+                    ? `${(file.size / 1024).toFixed(1)} KB`
+                    : `${(file.size / 1048576).toFixed(1)} MB`}
+              </Text>
+            </List.Item>
+          )}
+        />
+      </Modal>
 
       {/* 添加/编辑模型弹窗 */}
       <Modal

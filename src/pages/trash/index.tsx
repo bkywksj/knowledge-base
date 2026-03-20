@@ -150,7 +150,7 @@ export default function TrashPage() {
     <div className="max-w-4xl mx-auto">
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between mb-4">
-        <Title level={3} style={{ margin: 0 }}>
+        <Title level={3} style={{ margin: 0, lineHeight: "32px" }}>
           <span className="flex items-center gap-2">
             <Trash2 size={22} />
             回收站

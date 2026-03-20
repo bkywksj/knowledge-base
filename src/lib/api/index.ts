@@ -18,6 +18,7 @@ import type {
   AiConversation,
   AiMessage,
   ImportResult,
+  ScannedFile,
 } from "@/types";
 
 /** 系统相关 API */
@@ -47,6 +48,7 @@ export const noteApi = {
   update: (id: number, input: NoteInput) =>
     invoke<Note>("update_note", { id, input }),
   delete: (id: number) => invoke<void>("delete_note", { id }),
+  deleteAll: () => invoke<number>("delete_all_notes"),
   get: (id: number) => invoke<Note>("get_note", { id }),
   list: (query: NoteQuery = {}) =>
     invoke<PageResult<Note>>("list_notes", { query }),
@@ -150,8 +152,10 @@ export const aiChatApi = {
 
 /** 导入 API */
 export const importApi = {
-  importFolder: (path: string, folderId?: number | null) =>
-    invoke<ImportResult>("import_markdown_folder", { path, folderId }),
+  scan: (path: string) =>
+    invoke<ScannedFile[]>("scan_markdown_folder", { path }),
+  importSelected: (filePaths: string[], folderId?: number | null) =>
+    invoke<ImportResult>("import_selected_files", { filePaths, folderId }),
 };
 
 /** AI 写作辅助 API */

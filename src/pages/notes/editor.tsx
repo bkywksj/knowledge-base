@@ -328,7 +328,7 @@ export default function NoteEditorPage() {
     <div className="max-w-4xl mx-auto">
       {/* 顶部工具栏 */}
       <div className="flex items-center justify-between mb-4">
-        <Space>
+        <Space align="center">
           <Button
             icon={<ArrowLeft size={16} />}
             onClick={() => navigate("/notes")}
@@ -342,7 +342,7 @@ export default function NoteEditorPage() {
           )}
           {dirty && <Text type="warning">未保存</Text>}
         </Space>
-        <Space>
+        <Space align="center">
           <Tooltip title={note?.is_pinned ? "取消置顶" : "置顶"}>
             <Button
               type={note?.is_pinned ? "primary" : "default"}

@@ -110,7 +110,10 @@ pub fn run() {
             commands::ai::ai_write_assist,
             commands::ai::cancel_ai_write_assist,
             // 导入模块
-            commands::import::import_markdown_folder,
+            commands::import::scan_markdown_folder,
+            commands::import::import_selected_files,
+            // 笔记批量操作
+            commands::notes::delete_all_notes,
         ])
         // ─── 窗口事件处理 ─────────────────────────
         .on_window_event(|window, event| {

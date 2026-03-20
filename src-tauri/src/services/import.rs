@@ -6,18 +6,13 @@ use walkdir::WalkDir;
 
 use crate::database::Database;
 use crate::error::AppError;
-use crate::models::{ImportProgress, ImportResult, NoteInput};
+use crate::models::{ImportProgress, ImportResult, NoteInput, ScannedFile};
 
 pub struct ImportService;
 
 impl ImportService {
-    /// 从文件夹递归导入 Markdown 文件
-    pub fn import_markdown_folder<R: Runtime, E: Emitter<R>>(
-        db: &Database,
-        folder_path: &str,
-        folder_id: Option<i64>,
-        emitter: &E,
-    ) -> Result<ImportResult, AppError> {
+    /// 扫描文件夹，返回所有 Markdown 文件列表（不导入）
+    pub fn scan_markdown_folder(folder_path: &str) -> Result<Vec<ScannedFile>, AppError> {
         let root = Path::new(folder_path);
         if !root.is_dir() {
             return Err(AppError::InvalidInput(format!(
@@ -26,8 +21,7 @@ impl ImportService {
             )));
         }
 
-        // 收集所有 .md 文件
-        let md_files: Vec<_> = WalkDir::new(root)
+        let files: Vec<ScannedFile> = WalkDir::new(root)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| {
@@ -37,15 +31,39 @@ impl ImportService {
                         .map(|ext| ext == "md" || ext == "markdown")
                         .unwrap_or(false)
             })
+            .filter_map(|entry| {
+                let path = entry.path();
+                let name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("未命名")
+                    .to_string();
+                let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                Some(ScannedFile {
+                    path: path.to_string_lossy().to_string(),
+                    name,
+                    size,
+                })
+            })
             .collect();
 
-        let total = md_files.len();
+        Ok(files)
+    }
+
+    /// 按指定文件路径列表导入 Markdown 文件
+    pub fn import_selected_files<R: Runtime, E: Emitter<R>>(
+        db: &Database,
+        file_paths: &[String],
+        folder_id: Option<i64>,
+        emitter: &E,
+    ) -> Result<ImportResult, AppError> {
+        let total = file_paths.len();
         let mut imported = 0usize;
         let mut skipped = 0usize;
         let mut errors = Vec::new();
 
-        for (i, entry) in md_files.iter().enumerate() {
-            let file_path = entry.path();
+        for (i, file_path_str) in file_paths.iter().enumerate() {
+            let file_path = Path::new(file_path_str);
             let file_name = file_path
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -80,12 +98,7 @@ impl ImportService {
             // 提取标题：优先用第一个 # 标题行，否则用文件名
             let title = extract_title(&content).unwrap_or(file_name);
 
-            // 计算相对文件夹路径（用于在日志中记录）
-            let _relative = file_path
-                .strip_prefix(root)
-                .unwrap_or(file_path);
-
-            // 将 Markdown 转换为 HTML（TiptapEditor 需要 HTML 格式）
+            // 将 Markdown 转换为 HTML
             let html_content = markdown_to_html(&content);
 
             let input = NoteInput {
@@ -97,10 +110,7 @@ impl ImportService {
             match db.create_note(&input) {
                 Ok(_) => imported += 1,
                 Err(e) => {
-                    errors.push(format!(
-                        "{}: 导入失败 - {}",
-                        input.title, e
-                    ));
+                    errors.push(format!("{}: 导入失败 - {}", input.title, e));
                 }
             }
         }

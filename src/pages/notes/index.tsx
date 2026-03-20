@@ -151,6 +151,25 @@ export default function NoteListPage() {
     [data.page, loadNotes],
   );
 
+  const handleDeleteAll = useCallback(() => {
+    Modal.confirm({
+      title: "删除所有笔记",
+      content: `确认永久删除全部 ${data.total} 篇笔记？此操作不可恢复！`,
+      okText: "确认删除",
+      okType: "danger",
+      cancelText: "取消",
+      onOk: async () => {
+        try {
+          const count = await noteApi.deleteAll();
+          message.success(`已删除 ${count} 篇笔记`);
+          loadNotes(1);
+        } catch (e) {
+          message.error(String(e));
+        }
+      },
+    });
+  }, [data.total, loadNotes]);
+
   const handleSearch = useCallback(() => {
     loadNotes(1, keyword);
   }, [loadNotes, keyword]);
@@ -256,10 +275,10 @@ export default function NoteListPage() {
     <div className="max-w-4xl mx-auto">
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between mb-4">
-        <Title level={3} style={{ margin: 0 }}>
+        <Title level={3} style={{ margin: 0, lineHeight: "32px" }}>
           笔记
         </Title>
-        <Space>
+        <Space align="center">
           <Segmented
             value={viewMode}
             onChange={handleViewChange}
@@ -270,6 +289,11 @@ export default function NoteListPage() {
             ]}
             size="small"
           />
+          {data.total > 0 && (
+            <Button danger icon={<Trash2 size={14} />} onClick={handleDeleteAll}>
+              全部删除
+            </Button>
+          )}
           <Button type="primary" icon={<Plus size={16} />} onClick={() => setCreateOpen(true)}>
             新建笔记
           </Button>
