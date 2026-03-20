@@ -6,12 +6,12 @@ import {
   Space,
   Popconfirm,
   Modal,
-  Empty,
   message,
 } from "antd";
 import { Trash2, RotateCcw, AlertTriangle } from "lucide-react";
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
 import { trashApi } from "@/lib/api";
+import { EmptyState } from "@/components/ui/EmptyState";
 import type { Note, PageResult } from "@/types";
 
 const { Title, Text } = Typography;
@@ -187,10 +187,7 @@ export default function TrashPage() {
           </div>
         </>
       ) : (
-        <Empty
-          description="回收站为空"
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
-        />
+        <EmptyState description="回收站为空" />
       )}
     </div>
   );

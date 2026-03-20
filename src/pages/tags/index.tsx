@@ -9,7 +9,6 @@ import {
   Modal,
   Form,
   Input,
-  Empty,
   List,
   Popconfirm,
   message,
@@ -18,6 +17,7 @@ import {
 import { Plus, Tags, FileText, Edit3, Trash2 } from "lucide-react";
 import { tagApi } from "@/lib/api";
 import { stripHtml, relativeTime } from "@/lib/utils";
+import { EmptyState } from "@/components/ui/EmptyState";
 import type { Tag, Note, PageResult } from "@/types";
 
 const { Title, Text, Paragraph } = Typography;
@@ -154,14 +154,11 @@ export default function TagsPage() {
             ))}
           </div>
         ) : (
-          <Empty
+          <EmptyState
             description="还没有标签"
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-          >
-            <Button type="primary" onClick={openCreateModal}>
-              创建第一个标签
-            </Button>
-          </Empty>
+            actionText="创建第一个标签"
+            onAction={openCreateModal}
+          />
         )}
       </Card>
 
@@ -232,10 +229,7 @@ export default function TagsPage() {
               )}
             />
           ) : (
-            <Empty
-              description="该标签下暂无笔记"
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-            />
+            <EmptyState description="该标签下暂无笔记" />
           )}
         </Card>
       )}

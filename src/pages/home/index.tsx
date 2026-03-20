@@ -8,7 +8,6 @@ import {
   Row,
   Col,
   List,
-  Empty,
   Button,
   Tag,
   theme as antdTheme,
@@ -29,6 +28,7 @@ import {
 } from "lucide-react";
 import { noteApi, dailyApi, systemApi } from "@/lib/api";
 import { stripHtml, relativeTime } from "@/lib/utils";
+import { EmptyState } from "@/components/ui/EmptyState";
 import type { Note, DashboardStats } from "@/types";
 
 const { Text, Paragraph } = Typography;
@@ -169,7 +169,7 @@ export default function HomePage() {
       <Row gutter={12} className="mb-5">
         <Col span={8}>
           <Button
-            type="dashed"
+            type="default"
             icon={<PenLine size={15} />}
             onClick={() => navigate("/notes")}
             block
@@ -180,7 +180,7 @@ export default function HomePage() {
         </Col>
         <Col span={8}>
           <Button
-            type="dashed"
+            type="default"
             icon={<Calendar size={15} />}
             onClick={handleTodayNote}
             block
@@ -191,7 +191,7 @@ export default function HomePage() {
         </Col>
         <Col span={8}>
           <Button
-            type="dashed"
+            type="default"
             icon={<Bot size={15} />}
             onClick={() => navigate("/ai")}
             block
@@ -300,44 +300,50 @@ export default function HomePage() {
             )}
           />
         ) : (
-          <Empty description="还没有笔记" image={Empty.PRESENTED_IMAGE_SIMPLE}>
-            <Button type="primary" onClick={() => navigate("/notes")}>
-              创建第一篇笔记
-            </Button>
-          </Empty>
+          <EmptyState
+            description="还没有笔记"
+            actionText="创建第一篇笔记"
+            onAction={() => navigate("/notes")}
+          />
         )}
       </Card>
 
-      {/* 底部快捷链接 */}
-      <div className="flex items-center justify-center gap-6 mt-5 mb-4">
-        <Button
-          type="link"
-          size="small"
-          icon={<GitBranch size={13} />}
-          onClick={() => navigate("/graph")}
-          style={{ color: token.colorTextSecondary, fontSize: 12 }}
-        >
-          知识图谱
-        </Button>
-        <Button
-          type="link"
-          size="small"
-          icon={<Search size={13} />}
-          onClick={() => navigate("/search")}
-          style={{ color: token.colorTextSecondary, fontSize: 12 }}
-        >
-          全文搜索
-        </Button>
-        <Button
-          type="link"
-          size="small"
-          icon={<Tags size={13} />}
-          onClick={() => navigate("/tags")}
-          style={{ color: token.colorTextSecondary, fontSize: 12 }}
-        >
-          标签管理
-        </Button>
-      </div>
+      {/* 底部快捷入口 */}
+      <Row gutter={12} className="mt-5 mb-4">
+        <Col span={8}>
+          <Card
+            size="small"
+            hoverable
+            onClick={() => navigate("/graph")}
+            styles={{ body: { padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 } }}
+          >
+            <GitBranch size={15} style={{ color: token.colorPrimary, flexShrink: 0 }} />
+            <Text style={{ fontSize: 13 }}>知识图谱</Text>
+          </Card>
+        </Col>
+        <Col span={8}>
+          <Card
+            size="small"
+            hoverable
+            onClick={() => navigate("/search")}
+            styles={{ body: { padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 } }}
+          >
+            <Search size={15} style={{ color: token.colorPrimary, flexShrink: 0 }} />
+            <Text style={{ fontSize: 13 }}>全文搜索</Text>
+          </Card>
+        </Col>
+        <Col span={8}>
+          <Card
+            size="small"
+            hoverable
+            onClick={() => navigate("/tags")}
+            styles={{ body: { padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 } }}
+          >
+            <Tags size={15} style={{ color: token.colorPrimary, flexShrink: 0 }} />
+            <Text style={{ fontSize: 13 }}>标签管理</Text>
+          </Card>
+        </Col>
+      </Row>
     </div>
   );
 }

@@ -205,10 +205,18 @@ export function Sidebar() {
             ) : (
               !creatingFolder && (
                 <div
-                  className="text-center py-4"
+                  className="text-center py-3"
                   style={{ color: token.colorTextQuaternary, fontSize: 12 }}
                 >
                   暂无文件夹
+                  <br />
+                  <span
+                    className="cursor-pointer"
+                    style={{ color: token.colorPrimary, fontSize: 11 }}
+                    onClick={() => setCreatingFolder(true)}
+                  >
+                    + 新建文件夹
+                  </span>
                 </div>
               )
             )}

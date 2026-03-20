@@ -27,6 +27,25 @@ body,
   background: rgba(0, 0, 0, 0.25);
 }
 
+/* ─── 暗色模式卡片增强 ─────────────────────────── */
+
+[data-theme="dark"] .ant-card,
+.dark .ant-card {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .ant-card-hoverable:hover,
+.dark .ant-card-hoverable:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="dark"] .ant-statistic-title,
+.dark .ant-statistic-title {
+  color: rgba(255, 255, 255, 0.45);
+}
+
 /* ─── Tiptap 编辑器样式 ─────────────────────────── */
 
 .tiptap-wrapper {

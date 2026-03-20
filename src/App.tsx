@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { ConfigProvider, theme } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
@@ -6,6 +7,11 @@ import { AppRouter } from "@/Router";
 
 function App() {
   const appTheme = useAppStore((s) => s.theme);
+
+  // 同步主题到 DOM，供 CSS 选择器使用
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", appTheme);
+  }, [appTheme]);
 
   return (
     <ConfigProvider

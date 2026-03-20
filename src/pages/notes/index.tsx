@@ -13,7 +13,6 @@ import {
   Card,
   Row,
   Col,
-  Empty,
   Segmented,
   Tag,
   Timeline,
@@ -34,6 +33,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
 import { noteApi } from "@/lib/api";
 import { stripHtml, relativeTime } from "@/lib/utils";
+import { EmptyState } from "@/components/ui/EmptyState";
 import type { Note, NoteInput, PageResult } from "@/types";
 
 const { Title, Text, Paragraph } = Typography;
@@ -443,11 +443,11 @@ export default function NoteListPage() {
               )}
             </>
           ) : (
-            <Empty description="暂无笔记" image={Empty.PRESENTED_IMAGE_SIMPLE}>
-              <Button type="primary" onClick={() => setCreateOpen(true)}>
-                创建第一篇笔记
-              </Button>
-            </Empty>
+            <EmptyState
+              description="暂无笔记"
+              actionText="创建第一篇笔记"
+              onAction={() => setCreateOpen(true)}
+            />
           )}
         </>
       )}
@@ -519,11 +519,11 @@ export default function NoteListPage() {
               ))}
             </div>
           ) : (
-            <Empty description="暂无笔记" image={Empty.PRESENTED_IMAGE_SIMPLE}>
-              <Button type="primary" onClick={() => setCreateOpen(true)}>
-                创建第一篇笔记
-              </Button>
-            </Empty>
+            <EmptyState
+              description="暂无笔记"
+              actionText="创建第一篇笔记"
+              onAction={() => setCreateOpen(true)}
+            />
           )}
         </>
       )}
