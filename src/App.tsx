@@ -21,6 +21,9 @@ function App() {
           appTheme === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm,
         token: {
           borderRadius: 6,
+          ...(appTheme === "dark" && {
+            colorPrimary: "#7c7c7c",
+          }),
         },
       }}
     >
