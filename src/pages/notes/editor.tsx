@@ -318,16 +318,18 @@ export default function NoteEditorPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Spin size="large" />
+      <div className="editor-page">
+        <div className="flex items-center justify-center flex-1">
+          <Spin size="large" />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="editor-page">
       {/* 顶部工具栏 */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="editor-topbar">
         <Space align="center">
           <Button
             icon={<ArrowLeft size={16} />}
@@ -367,43 +369,44 @@ export default function NoteEditorPage() {
         </Space>
       </div>
 
-      {/* 标题 */}
-      <Input
-        value={title}
-        onChange={(e) => handleTitleChange(e.target.value)}
-        placeholder="笔记标题"
-        variant="borderless"
-        style={{ fontSize: 24, fontWeight: 600, padding: "8px 0" }}
-      />
+      {/* 可滚动的编辑主体 */}
+      <div className="editor-body">
+        <div className="editor-content-area">
+          {/* 标题 */}
+          <Input
+            value={title}
+            onChange={(e) => handleTitleChange(e.target.value)}
+            placeholder="笔记标题"
+            variant="borderless"
+            className="editor-title"
+          />
 
-      <Divider style={{ margin: "4px 0" }} />
+          {/* 文件夹 + 标签元数据 */}
+          <div className="editor-meta">
+            <MetaBar
+              noteTags={noteTags}
+              allTags={allTags}
+              folderOptions={folderOptions}
+              folderId={note?.folder_id ?? null}
+              onTagsChange={handleTagsChange}
+              onFolderChange={handleFolderChange}
+            />
+          </div>
 
-      {/* 文件夹 + 标签元数据 */}
-      <MetaBar
-        noteTags={noteTags}
-        allTags={allTags}
-        folderOptions={folderOptions}
-        folderId={note?.folder_id ?? null}
-        onTagsChange={handleTagsChange}
-        onFolderChange={handleFolderChange}
-      />
+          {/* 内容编辑区 */}
+          <TiptapEditor
+            content={content}
+            onChange={handleContentChange}
+            placeholder="开始写点什么..."
+          />
 
-      <Divider style={{ margin: "4px 0" }} />
-
-      {/* 内容编辑区 */}
-      <div className="mt-2">
-        <TiptapEditor
-          content={content}
-          onChange={handleContentChange}
-          placeholder="开始写点什么..."
-        />
+          {/* 反向链接 */}
+          <BacklinksPanel
+            backlinks={backlinks}
+            onNavigate={(id) => navigate(`/notes/${id}`)}
+          />
+        </div>
       </div>
-
-      {/* 反向链接 */}
-      <BacklinksPanel
-        backlinks={backlinks}
-        onNavigate={(id) => navigate(`/notes/${id}`)}
-      />
     </div>
   );
 }

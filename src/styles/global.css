@@ -59,6 +59,52 @@ body,
   color: rgba(255, 255, 255, 0.45);
 }
 
+/* ─── 笔记编辑器页面布局（Typora 风格） ────────── */
+
+.editor-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  margin: -24px;  /* 抵消 Content 的 padding */
+}
+
+.editor-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--ant-color-border, #d9d9d9);
+  background: var(--ant-color-bg-container, #fff);
+  flex-shrink: 0;
+}
+
+.editor-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.editor-content-area {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 24px 48px 80px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.editor-title .ant-input {
+  font-size: 28px !important;
+  font-weight: 700 !important;
+  padding: 12px 0 !important;
+  line-height: 1.4 !important;
+}
+
+.editor-meta {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--ant-color-border-secondary, #f0f0f0);
+  margin-bottom: 16px;
+}
+
 /* ─── Tiptap 编辑器样式 ─────────────────────────── */
 
 .tiptap-wrapper {
@@ -67,14 +113,32 @@ body,
   overflow: hidden;
 }
 
+/* 编辑器页面内的 tiptap 无边框样式 */
+.editor-content-area .tiptap-wrapper {
+  border: none;
+  border-radius: 0;
+}
+
 .tiptap-toolbar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 1px;
-  padding: 4px 8px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--ant-color-border, #d9d9d9);
   background: var(--ant-color-bg-layout, #f5f5f5);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+/* 编辑器页面内的 toolbar 全宽吸顶 */
+.editor-content-area .tiptap-toolbar {
+  margin: 0 -48px;
+  padding: 6px 48px;
+  border-left: none;
+  border-right: none;
+  border-top: 1px solid var(--ant-color-border-secondary, #f0f0f0);
 }
 
 .toolbar-btn-active {
@@ -84,10 +148,15 @@ body,
 
 .tiptap-content .tiptap {
   outline: none;
-  padding: 16px 20px;
+  padding: 20px 0;
   min-height: 400px;
   font-size: 15px;
   line-height: 1.8;
+}
+
+/* 非编辑器页面的 tiptap 保持内边距 */
+:not(.editor-content-area) > .tiptap-wrapper .tiptap-content .tiptap {
+  padding: 16px 20px;
 }
 
 /* 标题 */
