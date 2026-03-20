@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
 import {
-  Card,
   Button,
   Input,
   Typography,
@@ -116,104 +115,101 @@ export default function DailyPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto">
-      {/* 顶部标题栏 */}
-      <div className="flex items-center justify-between mb-4">
-        <Title level={3} style={{ margin: 0, lineHeight: "32px" }}>
-          <span className="flex items-center gap-2">
-            <Calendar size={22} />
-            每日笔记
-          </span>
-        </Title>
-        {!isToday && (
-          <Button type="primary" onClick={() => setDate(todayStr())}>
-            今天
-          </Button>
-        )}
-      </div>
-
-      {/* 日期导航 */}
-      <div className="flex items-center justify-center gap-4 mb-4">
-        <Button
-          icon={<ChevronLeft size={16} />}
-          onClick={() => goToDate(offsetDate(date, -1))}
-        />
-        <Title level={4} style={{ margin: 0 }}>
-          {formatDateCN(date)}
-        </Title>
-        <Button
-          icon={<ChevronRight size={16} />}
-          onClick={() => goToDate(offsetDate(date, 1))}
-          disabled={isToday}
-        />
-      </div>
-
-      {/* 编辑区 */}
-      {loading ? (
-        <div className="flex justify-center py-12">
-          <Spin size="large" />
-        </div>
-      ) : (
-        <Card className="mb-4">
-          <Input
-            value={title}
-            onChange={(e) => handleTitleChange(e.target.value)}
-            placeholder="日记标题"
-            variant="borderless"
-            style={{ fontSize: 20, fontWeight: 600, marginBottom: 12, padding: 0 }}
+    <div className="editor-page">
+      {/* 顶部工具栏 */}
+      <div className="editor-topbar">
+        <Space align="center">
+          <Calendar size={18} />
+          <span style={{ fontWeight: 600, fontSize: 15 }}>每日笔记</span>
+          <Button
+            size="small"
+            icon={<ChevronLeft size={14} />}
+            onClick={() => goToDate(offsetDate(date, -1))}
           />
-          <TiptapEditor
-            content={content}
-            onChange={handleContentChange}
-            placeholder="写点什么..."
+          <Text strong>{formatDateCN(date)}</Text>
+          <Button
+            size="small"
+            icon={<ChevronRight size={14} />}
+            onClick={() => goToDate(offsetDate(date, 1))}
+            disabled={isToday}
           />
-          <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
-            <Space>
-              {dirty ? (
-                <Badge status="warning" text="未保存" />
-              ) : (
-                <Badge status="success" text="已保存" />
-              )}
-            </Space>
-            <Button
-              type="primary"
-              icon={<Save size={16} />}
-              onClick={handleSave}
-              loading={saving}
-              disabled={!dirty}
-            >
-              保存
+          {!isToday && (
+            <Button size="small" onClick={() => setDate(todayStr())}>
+              今天
             </Button>
-          </div>
-        </Card>
-      )}
+          )}
+          {dirty ? (
+            <Badge status="warning" text="未保存" />
+          ) : (
+            <Badge status="success" text="已保存" />
+          )}
+        </Space>
+        <Space align="center">
+          <Button
+            type="primary"
+            icon={<Save size={16} />}
+            onClick={handleSave}
+            loading={saving}
+            disabled={!dirty}
+          >
+            保存
+          </Button>
+        </Space>
+      </div>
 
-      {/* 最近日记 */}
-      {recentDates.length > 0 && (
-        <Card
-          title={
-            <span className="flex items-center gap-2">
-              <FileText size={16} />
-              最近日记
-            </span>
-          }
-          size="small"
-        >
-          <List
-            dataSource={recentDates.filter((d) => d !== date).slice(0, 10)}
-            renderItem={(d) => (
-              <List.Item
-                className="cursor-pointer"
-                style={{ padding: "6px 0" }}
-                onClick={() => goToDate(d)}
-              >
-                <Text>{formatDateCN(d)}</Text>
-              </List.Item>
-            )}
-            locale={{ emptyText: "暂无其他日记" }}
-          />
-        </Card>
-      )}
+      {/* 可滚动的编辑主体 */}
+      <div className="editor-body">
+        <div className="editor-content-area">
+          {loading ? (
+            <div className="flex items-center justify-center flex-1">
+              <Spin size="large" />
+            </div>
+          ) : (
+            <>
+              {/* 标题 */}
+              <Input
+                value={title}
+                onChange={(e) => handleTitleChange(e.target.value)}
+                placeholder="日记标题"
+                variant="borderless"
+                className="editor-title"
+              />
+
+              {/* 内容编辑区 */}
+              <TiptapEditor
+                content={content}
+                onChange={handleContentChange}
+                placeholder="写点什么..."
+              />
+
+              {/* 最近日记 */}
+              {recentDates.length > 0 && (
+                <div className="mt-8 pt-4" style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)" }}>
+                  <Title level={5} style={{ margin: "0 0 8px" }}>
+                    <span className="flex items-center gap-2">
+                      <FileText size={16} />
+                      最近日记
+                    </span>
+                  </Title>
+                  <List
+                    dataSource={recentDates.filter((d) => d !== date).slice(0, 10)}
+                    renderItem={(d) => (
+                      <List.Item
+                        className="cursor-pointer"
+                        style={{ padding: "6px 0" }}
+                        onClick={() => goToDate(d)}
+                      >
+                        <Text>{formatDateCN(d)}</Text>
+                      </List.Item>
+                    )}
+                    locale={{ emptyText: "暂无其他日记" }}
+                  />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
