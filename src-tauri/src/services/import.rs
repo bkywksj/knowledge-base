@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use pulldown_cmark::{Options, Parser, html};
 use tauri::{Emitter, Runtime};
 use walkdir::WalkDir;
 
@@ -84,9 +85,12 @@ impl ImportService {
                 .strip_prefix(root)
                 .unwrap_or(file_path);
 
+            // 将 Markdown 转换为 HTML（TiptapEditor 需要 HTML 格式）
+            let html_content = markdown_to_html(&content);
+
             let input = NoteInput {
                 title,
-                content,
+                content: html_content,
                 folder_id,
             };
 
@@ -112,6 +116,17 @@ impl ImportService {
 
         Ok(result)
     }
+}
+
+/// 将 Markdown 转换为 HTML
+fn markdown_to_html(md: &str) -> String {
+    let options = Options::ENABLE_TABLES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS;
+    let parser = Parser::new_ext(md, options);
+    let mut html_output = String::new();
+    html::push_html(&mut html_output, parser);
+    html_output
 }
 
 /// 从 Markdown 内容提取标题（第一个 # 开头的行）

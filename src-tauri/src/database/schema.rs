@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 5;
+pub const SCHEMA_VERSION: i32 = 6;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -35,6 +35,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             2 => migrate_v2_to_v3(conn)?,
             3 => migrate_v3_to_v4(conn)?,
             4 => migrate_v4_to_v5(conn)?,
+            5 => migrate_v5_to_v6(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -266,5 +267,35 @@ fn migrate_v4_to_v5(conn: &Connection) -> Result<(), AppError> {
     )?;
 
     set_version(conn, 5)?;
+    Ok(())
+}
+
+/// v5 -> v6: 修复 FTS5 触发器级联导致的索引损坏
+///
+/// 问题根因：notes_fts_update 监听 AFTER UPDATE ON notes（全列），
+/// 当 word_count 触发器更新 word_count 列时，也会触发 FTS 更新，
+/// 导致 FTS 索引被反复 DELETE+INSERT，最终损坏 → "database disk image is malformed"
+///
+/// 修复：将 FTS 更新触发器限定为 AFTER UPDATE OF title, content
+fn migrate_v5_to_v6(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v5 -> v6 (修复 FTS 触发器级联)");
+
+    conn.execute_batch(
+        "
+        -- 1. 删除有问题的 FTS 更新触发器（监听全列）
+        DROP TRIGGER IF EXISTS notes_fts_update;
+
+        -- 2. 重建：只在 title 或 content 变更时触发
+        CREATE TRIGGER IF NOT EXISTS notes_fts_update AFTER UPDATE OF title, content ON notes BEGIN
+            INSERT INTO notes_fts(notes_fts, rowid, title, content) VALUES('delete', old.id, old.title, old.content);
+            INSERT INTO notes_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
+        END;
+
+        -- 3. 重建 FTS 索引，清除可能已损坏的数据
+        INSERT INTO notes_fts(notes_fts) VALUES('rebuild');
+        ",
+    )?;
+
+    set_version(conn, 6)?;
     Ok(())
 }
