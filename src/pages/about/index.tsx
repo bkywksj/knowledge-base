@@ -1,15 +1,20 @@
 import { useEffect, useState } from "react";
-import { Card, Typography, Descriptions, Spin, message, Button, Tooltip } from "antd";
+import { Card, Typography, Descriptions, Spin, message, Button, Tooltip, Modal, Tag } from "antd";
 import { FolderOpen, Copy } from "lucide-react";
+import { RocketOutlined, ThunderboltOutlined, RightOutlined, CopyOutlined, CheckOutlined } from "@ant-design/icons";
 import { openPath } from "@tauri-apps/plugin-opener";
 import type { SystemInfo } from "@/types";
 import { systemApi } from "@/lib/api";
 
-const { Title, Text } = Typography;
+const { Title, Text, Paragraph } = Typography;
 
 export default function AboutPage() {
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [loading, setLoading] = useState(true);
+  const [promoOpen, setPromoOpen] = useState(false);
+  const [promoCopied, setPromoCopied] = useState(false);
+  const [frameworkOpen, setFrameworkOpen] = useState(false);
+  const [frameworkCopied, setFrameworkCopied] = useState(false);
 
   useEffect(() => {
     systemApi
@@ -93,7 +98,7 @@ export default function AboutPage() {
       {info && (
         <Card
           title="数据迁移说明"
-          className="mt-4"
+          style={{ marginTop: 16 }}
           size="small"
         >
           <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginBottom: 8 }}>
@@ -112,17 +117,201 @@ export default function AboutPage() {
         </Card>
       )}
 
-      <Card title="技术栈" className="mt-4">
-        <Descriptions column={1} bordered size="small">
-          <Descriptions.Item label="桌面框架">Tauri 2.x</Descriptions.Item>
-          <Descriptions.Item label="后端语言">Rust 2021</Descriptions.Item>
-          <Descriptions.Item label="前端框架">React 19</Descriptions.Item>
-          <Descriptions.Item label="UI 组件库">Ant Design</Descriptions.Item>
-          <Descriptions.Item label="样式方案">TailwindCSS 4</Descriptions.Item>
-          <Descriptions.Item label="状态管理">Zustand</Descriptions.Item>
-          <Descriptions.Item label="数据库">SQLite (rusqlite)</Descriptions.Item>
-        </Descriptions>
-      </Card>
+      {/* 推荐：RuoYi-Plus-UniApp */}
+      <div
+        onClick={() => setPromoOpen(true)}
+        className="mt-4"
+        style={{
+          padding: "12px 16px",
+          borderRadius: 8,
+          border: "1px solid var(--ant-color-border)",
+          background: "var(--ant-color-bg-container)",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          transition: "border-color 0.2s",
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-primary)")}
+        onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-border)")}
+      >
+        <RocketOutlined style={{ fontSize: 20, color: "var(--ant-color-primary)" }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Text strong style={{ fontSize: 13 }}>RuoYi-Plus-UniApp</Text>
+          <br />
+          <Text type="secondary" style={{ fontSize: 11 }}>业内首个适配 Claude Code 的企业级全栈框架</Text>
+        </div>
+        <RightOutlined style={{ fontSize: 11, color: "var(--ant-color-text-quaternary)" }} />
+      </div>
+
+      {/* 推荐：灵动桌面应用开发框架 */}
+      <div
+        onClick={() => setFrameworkOpen(true)}
+        className="mt-3"
+        style={{
+          padding: "12px 16px",
+          borderRadius: 8,
+          border: "1px solid var(--ant-color-border)",
+          background: "var(--ant-color-bg-container)",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          transition: "border-color 0.2s",
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-primary)")}
+        onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-border)")}
+      >
+        <ThunderboltOutlined style={{ fontSize: 20, color: "var(--ant-color-primary)" }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Text strong style={{ fontSize: 13 }}>灵动桌面应用开发框架</Text>
+          <br />
+          <Text type="secondary" style={{ fontSize: 11 }}>面向 AI 时代的桌面应用快速开发框架</Text>
+        </div>
+        <RightOutlined style={{ fontSize: 11, color: "var(--ant-color-text-quaternary)" }} />
+      </div>
+
+      {/* RuoYi-Plus-UniApp 详情弹窗 */}
+      <Modal
+        title={null}
+        open={promoOpen}
+        onCancel={() => setPromoOpen(false)}
+        footer={[
+          <Button key="close" onClick={() => setPromoOpen(false)}>关闭</Button>,
+        ]}
+        width={520}
+      >
+        <div style={{ textAlign: "center", paddingTop: 8, paddingBottom: 12 }}>
+          <RocketOutlined style={{ fontSize: 36, color: "var(--ant-color-primary)" }} />
+          <Title level={4} style={{ margin: "12px 0 4px" }}>RuoYi-Plus-UniApp</Title>
+          <Paragraph type="secondary" style={{ marginBottom: 12 }}>全栈开发框架 &middot; 业内首个完整适配 Claude Code</Paragraph>
+          <div style={{ display: "flex", justifyContent: "center", gap: 24 }}>
+            {[
+              ["200万+", "行代码增删"],
+              ["80+", "企业信赖"],
+              ["300+", "开发者"],
+            ].map(([num, label]) => (
+              <div key={label} style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "var(--ant-color-primary)" }}>{num}</div>
+                <Text type="secondary" style={{ fontSize: 11 }}>{label}</Text>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center", marginBottom: 8 }}>
+            <Tag color="blue">Java 21</Tag>
+            <Tag color="blue">Spring Boot 3.5</Tag>
+            <Tag color="green">Vue 3</Tag>
+            <Tag color="green">UniApp</Tag>
+            <Tag color="purple">Claude Code</Tag>
+          </div>
+
+          {[
+            ["AI 智能开发", "45+ 技能 · 10+ 命令 · 子代理协同，CLAUDE.md 上下文工程"],
+            ["智能代码生成", "四层架构模板一键生成 · 文件直传，代码量减少 70%"],
+            ["全端覆盖", "Web + 小程序 + App，一套代码多端运行"],
+            ["企业级能力", "MQTT 物联网 · RocketMQ 消息队列 · 微信/支付宝支付 · 多模型 AI"],
+          ].map(([title, desc]) => (
+            <div key={title} style={{ padding: "8px 12px", borderRadius: 6, background: "var(--ant-color-bg-layout)", border: "1px solid var(--ant-color-border)" }}>
+              <Text strong style={{ fontSize: 13 }}>{title}</Text>
+              <br />
+              <Text type="secondary" style={{ fontSize: 12 }}>{desc}</Text>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <Button
+            type="text"
+            size="small"
+            icon={promoCopied ? <CheckOutlined /> : <CopyOutlined />}
+            onClick={() => {
+              navigator.clipboard.writeText("770492966").then(() => {
+                setPromoCopied(true);
+                setTimeout(() => setPromoCopied(false), 1500);
+              });
+            }}
+          >
+            {promoCopied ? "已复制!" : "咨询: 770492966"}
+          </Button>
+        </div>
+      </Modal>
+
+      {/* 灵动桌面应用开发框架 详情弹窗 */}
+      <Modal
+        title={null}
+        open={frameworkOpen}
+        onCancel={() => setFrameworkOpen(false)}
+        footer={[
+          <Button key="close" onClick={() => setFrameworkOpen(false)}>关闭</Button>,
+        ]}
+        width={520}
+      >
+        <div style={{ textAlign: "center", paddingTop: 8, paddingBottom: 12 }}>
+          <ThunderboltOutlined style={{ fontSize: 36, color: "var(--ant-color-primary)" }} />
+          <Title level={4} style={{ margin: "12px 0 4px" }}>灵动桌面应用开发框架</Title>
+          <Paragraph type="secondary" style={{ marginBottom: 12 }}>面向 AI 时代 &middot; 桌面应用快速开发框架</Paragraph>
+          <div style={{ display: "flex", justifyContent: "center", gap: 24 }}>
+            {[
+              ["数周→数天", "开发周期"],
+              ["极小", "安装包体积"],
+              ["跨平台", "多端兼容"],
+            ].map(([num, label]) => (
+              <div key={label} style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "var(--ant-color-primary)" }}>{num}</div>
+                <Text type="secondary" style={{ fontSize: 11 }}>{label}</Text>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <Paragraph type="secondary" style={{ textAlign: "center", fontSize: 12, margin: "0 0 12px" }}>
+          框架深度融合 AI 辅助架构，内置完善的项目规范与智能提示体系，让 AI
+          能精准理解项目意图，大幅提升开发效率。开发者只需描述需求，即可快速
+          生成高质量的桌面应用。
+        </Paragraph>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center", marginBottom: 8 }}>
+            <Tag color="orange">Tauri 2.x</Tag>
+            <Tag color="blue">Rust</Tag>
+            <Tag color="green">React 19</Tag>
+            <Tag color="cyan">TypeScript</Tag>
+            <Tag color="purple">AI 驱动</Tag>
+          </div>
+
+          {[
+            ["AI 深度融合", "内置智能提示体系与项目规范，AI 精准理解意图，描述需求即可生成代码"],
+            ["极致轻量", "安装包体积小、启动速度快、内存占用低，媲美原生应用体验"],
+            ["原生体验", "系统级窗口管理、文件操作、通知推送，告别 Electron 的臃肿"],
+            ["跨平台兼容", "Windows + macOS 全平台支持，一套代码多端运行"],
+          ].map(([title, desc]) => (
+            <div key={title} style={{ padding: "8px 12px", borderRadius: 6, background: "var(--ant-color-bg-layout)", border: "1px solid var(--ant-color-border)" }}>
+              <Text strong style={{ fontSize: 13 }}>{title}</Text>
+              <br />
+              <Text type="secondary" style={{ fontSize: 12 }}>{desc}</Text>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <Button
+            type="text"
+            size="small"
+            icon={frameworkCopied ? <CheckOutlined /> : <CopyOutlined />}
+            onClick={() => {
+              navigator.clipboard.writeText("770492966").then(() => {
+                setFrameworkCopied(true);
+                setTimeout(() => setFrameworkCopied(false), 1500);
+              });
+            }}
+          >
+            {frameworkCopied ? "已复制!" : "咨询: 770492966"}
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -23,6 +23,7 @@ import {
   Search,
   Trash2,
   Edit3,
+  Download,
   LayoutList,
   LayoutGrid,
   Clock,
@@ -31,7 +32,8 @@ import {
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
-import { noteApi } from "@/lib/api";
+import { save } from "@tauri-apps/plugin-dialog";
+import { noteApi, exportApi } from "@/lib/api";
 import { stripHtml, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
 import type { Note, NoteInput, PageResult } from "@/types";
@@ -151,6 +153,21 @@ export default function NoteListPage() {
     [data.page, loadNotes],
   );
 
+  const handleExport = useCallback(async (record: Note) => {
+    const safeName = record.title.replace(/[/\\:*?"<>|]/g, "_").trim() || "未命名";
+    const filePath = await save({
+      defaultPath: `${safeName}.md`,
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    });
+    if (!filePath) return;
+    try {
+      await exportApi.exportSingle(record.id, filePath);
+      message.success("导出成功");
+    } catch (e) {
+      message.error(`导出失败: ${e}`);
+    }
+  }, []);
+
   const handleDeleteAll = useCallback(() => {
     Modal.confirm({
       title: "删除所有笔记",
@@ -230,7 +247,7 @@ export default function NoteListPage() {
       {
         title: "操作",
         key: "action",
-        width: 90,
+        width: 120,
         render: (_: unknown, record: Note) => (
           <Space size="small">
             <Button
@@ -239,6 +256,12 @@ export default function NoteListPage() {
               icon={<Edit3 size={14} />}
               onClick={() => navigate(`/notes/${record.id}`)}
             />
+            <Button
+              type="link"
+              size="small"
+              icon={<Download size={14} />}
+              onClick={() => handleExport(record)}
+            />
             <Popconfirm title="确认删除此笔记？" onConfirm={() => handleDelete(record.id)}>
               <Button type="link" danger size="small" icon={<Trash2 size={14} />} />
             </Popconfirm>
@@ -246,7 +269,7 @@ export default function NoteListPage() {
         ),
       },
     ],
-    [navigate, token.colorWarning, handleDelete],
+    [navigate, token.colorWarning, handleDelete, handleExport],
   );
 
   // 时间线分组（缓存）
@@ -422,22 +445,31 @@ export default function NoteListPage() {
                                     {relativeTime(note.updated_at)}
                                     {note.word_count > 0 && ` · ${note.word_count} 字`}
                                   </Text>
-                                  <Popconfirm
-                                    title="确认删除？"
-                                    onConfirm={(e) => {
-                                      e?.stopPropagation();
-                                      handleDelete(note.id);
-                                    }}
-                                  >
+                                  <Space size={0}>
                                     <Button
                                       type="text"
-                                      danger
                                       size="small"
-                                      icon={<Trash2 size={11} />}
-                                      onClick={(e) => e.stopPropagation()}
+                                      icon={<Download size={11} />}
+                                      onClick={(e) => { e.stopPropagation(); handleExport(note); }}
                                       style={{ height: 20, width: 20, padding: 0 }}
                                     />
-                                  </Popconfirm>
+                                    <Popconfirm
+                                      title="确认删除？"
+                                      onConfirm={(e) => {
+                                        e?.stopPropagation();
+                                        handleDelete(note.id);
+                                      }}
+                                    >
+                                      <Button
+                                        type="text"
+                                        danger
+                                        size="small"
+                                        icon={<Trash2 size={11} />}
+                                        onClick={(e) => e.stopPropagation()}
+                                        style={{ height: 20, width: 20, padding: 0 }}
+                                      />
+                                    </Popconfirm>
+                                  </Space>
                                 </div>
                               </Card>
                             </Col>

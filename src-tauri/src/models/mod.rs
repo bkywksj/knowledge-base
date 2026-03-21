@@ -9,6 +9,7 @@ pub struct AppConfig {
 
 /// 系统信息
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SystemInfo {
     pub os: String,
     pub arch: String,
