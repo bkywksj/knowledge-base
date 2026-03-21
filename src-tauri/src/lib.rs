@@ -114,6 +114,7 @@ pub fn run() {
             commands::import::import_selected_files,
             // 导出模块
             commands::export::export_notes,
+            commands::export::export_single_note,
             // 笔记批量操作
             commands::notes::delete_all_notes,
         ])

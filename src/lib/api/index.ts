@@ -161,9 +161,12 @@ export const importApi = {
 
 /** 导出 API */
 export const exportApi = {
-  /** 导出笔记为 Markdown 文件 */
+  /** 批量导出笔记为 Markdown 文件 */
   exportNotes: (outputDir: string, folderId?: number | null) =>
     invoke<ExportResult>("export_notes", { outputDir, folderId }),
+  /** 导出单篇笔记为 Markdown 文件 */
+  exportSingle: (id: number, filePath: string) =>
+    invoke<void>("export_single_note", { id, filePath }),
 };
 
 /** AI 写作辅助 API */

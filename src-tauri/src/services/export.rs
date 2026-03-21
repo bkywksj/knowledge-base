@@ -148,6 +148,31 @@ impl ExportService {
 
         Ok(result)
     }
+
+    /// 导出单篇笔记为 Markdown 文件
+    pub fn export_single_note(
+        db: &Database,
+        note_id: i64,
+        file_path: &str,
+    ) -> Result<(), AppError> {
+        let conn = db.conn_lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT content FROM notes WHERE id = ?1 AND is_deleted = 0",
+        )?;
+        let content: String = stmt
+            .query_row([note_id], |row| row.get(0))
+            .map_err(|_| AppError::NotFound(format!("笔记 {} 不存在", note_id)))?;
+
+        let markdown = html_to_markdown(&content);
+
+        // 确保父目录存在
+        if let Some(parent) = Path::new(file_path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        std::fs::write(file_path, markdown)?;
+        Ok(())
+    }
 }
 
 /// 构建文件夹的完整路径（递归拼接父级）

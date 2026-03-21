@@ -13,8 +13,9 @@ import {
   Divider,
   Tooltip,
 } from "antd";
-import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2 } from "lucide-react";
-import { noteApi, tagApi, folderApi, linkApi } from "@/lib/api";
+import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Download } from "lucide-react";
+import { noteApi, tagApi, folderApi, linkApi, exportApi } from "@/lib/api";
+import { save } from "@tauri-apps/plugin-dialog";
 import { relativeTime, stripHtml } from "@/lib/utils";
 import { TiptapEditor } from "@/components/editor";
 import type { Note, Tag, Folder, NoteLink } from "@/types";
@@ -276,6 +277,21 @@ export default function NoteEditorPage() {
     }
   }
 
+  async function handleExportNote() {
+    const safeName = title.replace(/[/\\:*?"<>|]/g, "_").trim() || "未命名";
+    const filePath = await save({
+      defaultPath: `${safeName}.md`,
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    });
+    if (!filePath) return;
+    try {
+      await exportApi.exportSingle(noteId, filePath);
+      message.success("导出成功");
+    } catch (e) {
+      message.error(`导出失败: ${e}`);
+    }
+  }
+
   async function handleTagsChange(newTagIds: number[]) {
     const currentIds = noteTags.map((t) => t.id);
     const toAdd = newTagIds.filter((id) => !currentIds.includes(id));
@@ -361,6 +377,12 @@ export default function NoteEditorPage() {
           >
             保存
           </Button>
+          <Tooltip title="导出为 Markdown">
+            <Button
+              icon={<Download size={16} />}
+              onClick={handleExportNote}
+            />
+          </Tooltip>
           <Popconfirm title="确认删除此笔记？" onConfirm={handleDelete}>
             <Button danger icon={<Trash2 size={16} />}>
               删除
