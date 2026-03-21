@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import Markdown from "react-markdown";
 import {
   Button,
   Input,
@@ -379,13 +380,13 @@ export default function AiChatPage() {
                     AI
                   </div>
                   <div
-                    className="max-w-[75%] px-3 py-2 rounded-lg text-sm whitespace-pre-wrap"
+                    className="max-w-[75%] px-3 py-2 rounded-lg text-sm ai-markdown"
                     style={{
                       background: token.colorBgContainer,
                       color: token.colorText,
                     }}
                   >
-                    {streamingText}
+                    <Markdown>{streamingText}</Markdown>
                     <span className="inline-block w-1.5 h-4 ml-0.5 animate-pulse" style={{ background: token.colorPrimary }} />
                   </div>
                 </div>
@@ -470,13 +471,13 @@ function MessageBubble({
       {/* 内容 */}
       <div className={`max-w-[75%] ${isUser ? "text-right" : ""}`}>
         <div
-          className="px-3 py-2 rounded-lg text-sm whitespace-pre-wrap"
+          className={`px-3 py-2 rounded-lg text-sm ${isUser ? "whitespace-pre-wrap" : "ai-markdown"}`}
           style={{
             background: isUser ? token.colorPrimary : token.colorBgContainer,
             color: isUser ? "#fff" : token.colorText,
           }}
         >
-          {msg.content}
+          {isUser ? msg.content : <Markdown>{msg.content}</Markdown>}
         </div>
 
         {/* 引用笔记 */}

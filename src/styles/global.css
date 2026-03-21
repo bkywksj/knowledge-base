@@ -308,3 +308,53 @@ body,
   height: 0;
 }
 
+/* ─── AI 消息 Markdown 样式 ──────────────────────── */
+
+.ai-markdown h1 { font-size: 1.3em; font-weight: 700; margin: 0.5em 0 0.3em; }
+.ai-markdown h2 { font-size: 1.15em; font-weight: 600; margin: 0.4em 0 0.2em; }
+.ai-markdown h3 { font-size: 1.05em; font-weight: 600; margin: 0.3em 0 0.15em; }
+.ai-markdown h4 { font-size: 1em; font-weight: 600; margin: 0.2em 0 0.1em; }
+.ai-markdown p { margin: 0.3em 0; }
+.ai-markdown ul { list-style: disc; padding-left: 1.5em; margin: 0.3em 0; }
+.ai-markdown ol { list-style: decimal; padding-left: 1.5em; margin: 0.3em 0; }
+.ai-markdown li { margin: 0.1em 0; }
+.ai-markdown li > p { margin: 0; }
+.ai-markdown blockquote {
+  border-left: 3px solid var(--ant-color-primary, #1677ff);
+  padding-left: 0.8em;
+  margin: 0.4em 0;
+  color: var(--ant-color-text-secondary, #666);
+}
+.ai-markdown pre {
+  background: var(--ant-color-bg-layout, #f5f5f5);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 0.4em 0;
+  overflow-x: auto;
+  font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+.ai-markdown pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+.ai-markdown code {
+  background: var(--ant-color-bg-layout, #f0f0f0);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.85em;
+  font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+}
+.ai-markdown hr {
+  border: none;
+  border-top: 1px solid var(--ant-color-border, #d9d9d9);
+  margin: 0.5em 0;
+}
+.ai-markdown strong { font-weight: 600; }
+.ai-markdown a { color: var(--ant-color-primary, #1677ff); }
+.ai-markdown > *:first-child { margin-top: 0; }
+.ai-markdown > *:last-child { margin-bottom: 0; }
+

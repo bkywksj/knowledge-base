@@ -61,12 +61,9 @@ impl Database {
         query: &str,
         limit: usize,
     ) -> Result<Vec<SearchResult>, AppError> {
+        let raw_keywords: Vec<&str> = query.split_whitespace().filter(|s| !s.is_empty()).collect();
         // 提取搜索词（按空格分隔，每个词用 LIKE 匹配）
-        let keywords: Vec<String> = query
-            .split_whitespace()
-            .filter(|s| !s.is_empty())
-            .map(|s| format!("%{}%", s))
-            .collect();
+        let keywords: Vec<String> = raw_keywords.iter().map(|s| format!("%{}%", s)).collect();
 
         if keywords.is_empty() {
             return Ok(Vec::new());
@@ -80,9 +77,7 @@ impl Database {
             .collect();
 
         let sql = format!(
-            "SELECT n.id, n.title,
-                    substr(n.content, 1, 200) as snippet,
-                    n.updated_at, n.folder_id
+            "SELECT n.id, n.title, n.content, n.updated_at, n.folder_id
              FROM notes n
              WHERE n.is_deleted = 0 AND ({})
              ORDER BY n.updated_at DESC
@@ -105,18 +100,120 @@ impl Database {
 
         let results = stmt
             .query_map(&*params_ref, |row| {
-                Ok(SearchResult {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    snippet: row.get(2)?,
-                    updated_at: row.get(3)?,
-                    folder_id: row.get(4)?,
-                })
+                let content: String = row.get(2)?;
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    content,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
+        // 生成带高亮的 snippet
+        let results = results
+            .into_iter()
+            .map(|(id, title, content, updated_at, folder_id)| {
+                let snippet = build_highlight_snippet(&content, &raw_keywords);
+                SearchResult {
+                    id,
+                    title,
+                    snippet,
+                    updated_at,
+                    folder_id,
+                }
+            })
+            .collect();
+
         Ok(results)
     }
+}
+
+/// 生成带 <mark> 高亮的摘要：截取第一个关键词附近的上下文
+fn build_highlight_snippet(content: &str, keywords: &[&str]) -> String {
+    // 去掉 HTML 标签，取纯文本
+    let chars: Vec<char> = strip_tags(content).chars().collect();
+    let total = chars.len();
+    if total == 0 {
+        return String::new();
+    }
+
+    let plain_lower: String = chars.iter().collect::<String>().to_lowercase();
+    let snippet_len = 150;
+
+    // 找第一个关键词出现的 char 位置
+    let first_char_pos = keywords.iter().find_map(|kw| {
+        let kw_lower = kw.to_lowercase();
+        plain_lower.find(&kw_lower).map(|byte_pos| {
+            plain_lower[..byte_pos].chars().count()
+        })
+    });
+
+    // 截取片段：关键词前后各取一段
+    let (start, end) = if let Some(char_pos) = first_char_pos {
+        let s = char_pos.saturating_sub(30);
+        let e = (s + snippet_len).min(total);
+        (s, e)
+    } else {
+        (0, snippet_len.min(total))
+    };
+
+    let snippet_chars = &chars[start..end];
+    let mut snippet: String = snippet_chars.iter().collect();
+    if start > 0 {
+        snippet = format!("...{}", snippet);
+    }
+    if end < total {
+        snippet.push_str("...");
+    }
+
+    // 对所有关键词加 <mark> 高亮（大小写不敏感，基于 char 操作）
+    for kw in keywords {
+        let kw_lower = kw.to_lowercase();
+        let kw_char_len = kw_lower.chars().count();
+        let snippet_chars: Vec<char> = snippet.chars().collect();
+        let snippet_lower: Vec<char> = snippet.to_lowercase().chars().collect();
+        let mut result = String::new();
+        let mut i = 0;
+
+        while i < snippet_chars.len() {
+            if i + kw_char_len <= snippet_chars.len()
+                && snippet_lower[i..i + kw_char_len]
+                    .iter()
+                    .collect::<String>()
+                    == kw_lower
+            {
+                result.push_str("<mark>");
+                for j in i..i + kw_char_len {
+                    result.push(snippet_chars[j]);
+                }
+                result.push_str("</mark>");
+                i += kw_char_len;
+            } else {
+                result.push(snippet_chars[i]);
+                i += 1;
+            }
+        }
+        snippet = result;
+    }
+
+    snippet
+}
+
+/// 简单去除 HTML 标签
+fn strip_tags(html: &str) -> String {
+    let mut result = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for c in html.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => result.push(c),
+            _ => {}
+        }
+    }
+    result
 }
 
 /// 将查询转换为 FTS5 语法：每个词用双引号包裹，去除 FTS5 特殊字符

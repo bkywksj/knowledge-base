@@ -321,43 +321,68 @@ impl AiService {
         )?;
         db.touch_ai_conversation(conversation_id)?;
 
-        // 4. 构建历史消息
+        // 4. 构建历史消息并发送（支持自动重试递减历史）
         let history = db.list_ai_messages(conversation_id)?;
-        let messages = Self::build_messages(&model, &history, &rag_context);
 
-        // 5. 流式请求 AI
-        let full_response = match model.provider.as_str() {
-            "ollama" => {
-                Self::stream_ollama(&app, &model, &messages, cancel_rx).await
-            }
-            "openai" | "claude" => {
-                Self::stream_openai_compatible(&app, &model, &messages, cancel_rx).await
-            }
-            _ => {
-                Err(AppError::Custom(format!(
-                    "不支持的模型提供商: {}",
-                    model.provider
-                )))
-            }
-        };
+        // 尝试不同的历史长度：20 → 10 → 4 → 0（仅当前消息）
+        let max_history_attempts = [20usize, 10, 4, 0];
+        let mut last_error = None;
 
-        // API 失败时回滚用户消息，防止消息序列污染
-        match full_response {
-            Ok(response) => {
-                // 6. 保存 AI 回复到数据库
-                db.add_ai_message(conversation_id, "assistant", &response, None)?;
-                db.touch_ai_conversation(conversation_id)?;
+        for &max_hist in &max_history_attempts {
+            let messages = Self::build_messages(&model, &history, &rag_context, max_hist);
 
-                // 7. 发送完成事件
-                let _ = app.emit("ai:done", conversation_id);
-                Ok(())
-            }
-            Err(e) => {
-                // 回滚：删除已保存的用户消息
-                let _ = db.delete_ai_message(user_msg.id);
-                Err(e)
+            log::info!("AI Request: model={}, messages={}, max_history={}",
+                model.model_id, messages.len(), max_hist);
+
+            let result = match model.provider.as_str() {
+                "ollama" => {
+                    Self::stream_ollama(&app, &model, &messages, cancel_rx.clone()).await
+                }
+                "openai" | "claude" => {
+                    Self::stream_openai_compatible(&app, &model, &messages, cancel_rx.clone())
+                        .await
+                }
+                _ => {
+                    return Err(AppError::Custom(format!(
+                        "不支持的模型提供商: {}",
+                        model.provider
+                    )));
+                }
+            };
+
+            match result {
+                Ok(response) => {
+                    // 成功：保存 AI 回复
+                    db.add_ai_message(conversation_id, "assistant", &response, None)?;
+                    db.touch_ai_conversation(conversation_id)?;
+                    let _ = app.emit("ai:done", conversation_id);
+                    return Ok(());
+                }
+                Err(ref e) => {
+                    let err_str = e.to_string();
+                    // 仅在消息格式/轮数限制错误时重试（减少历史）
+                    if err_str.contains("convert_request_failed")
+                        || err_str.contains("context_length_exceeded")
+                    {
+                        log::warn!(
+                            "API 请求失败(max_history={}), 尝试减少历史: {}",
+                            max_hist, err_str
+                        );
+                        last_error = Some(e.to_string());
+                        continue;
+                    }
+                    // 其他错误不重试，直接返回
+                    let _ = db.delete_ai_message(user_msg.id);
+                    return Err(AppError::Custom(err_str));
+                }
             }
         }
+
+        // 所有重试都失败了
+        let _ = db.delete_ai_message(user_msg.id);
+        Err(AppError::Custom(
+            last_error.unwrap_or_else(|| "AI 请求失败".to_string()),
+        ))
     }
 
     /// 构建发送给 AI 的消息列表
@@ -365,6 +390,7 @@ impl AiService {
         model: &AiModel,
         history: &[AiMessage],
         rag_context: &str,
+        max_history: usize,
     ) -> Vec<Value> {
         let mut messages = Vec::new();
 
@@ -385,17 +411,24 @@ impl AiService {
             }));
         }
 
-        // 历史消息（最多取最近 20 条避免 token 过长）
-        let start = if history.len() > 20 {
-            history.len() - 20
+        // 历史消息：按 max_history 限制数量
+        let start = if history.len() > max_history {
+            history.len() - max_history
         } else {
             0
         };
+        // 确保从 user 消息开始（不要从 assistant 消息开头）
+        let mut slice_start = start;
+        for i in start..history.len() {
+            if history[i].role == "user" {
+                slice_start = i;
+                break;
+            }
+        }
         // 过滤连续相同 role 的消息（保留最后一条），避免 API 报错
         let mut last_role = "system".to_string();
-        for msg in &history[start..] {
+        for msg in &history[slice_start..] {
             if msg.role == last_role {
-                // 连续相同 role，替换上一条（保留最新的）
                 messages.pop();
             }
             messages.push(json!({

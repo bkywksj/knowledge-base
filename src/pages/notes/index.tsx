@@ -10,6 +10,7 @@ import {
   Modal,
   Form,
   Popconfirm,
+  Tooltip,
   Card,
   Row,
   Col,
@@ -250,20 +251,26 @@ export default function NoteListPage() {
         width: 120,
         render: (_: unknown, record: Note) => (
           <Space size="small">
-            <Button
-              type="link"
-              size="small"
-              icon={<Edit3 size={14} />}
-              onClick={() => navigate(`/notes/${record.id}`)}
-            />
-            <Button
-              type="link"
-              size="small"
-              icon={<Download size={14} />}
-              onClick={() => handleExport(record)}
-            />
+            <Tooltip title="编辑">
+              <Button
+                type="link"
+                size="small"
+                icon={<Edit3 size={14} />}
+                onClick={() => navigate(`/notes/${record.id}`)}
+              />
+            </Tooltip>
+            <Tooltip title="导出">
+              <Button
+                type="link"
+                size="small"
+                icon={<Download size={14} />}
+                onClick={() => handleExport(record)}
+              />
+            </Tooltip>
             <Popconfirm title="确认删除此笔记？" onConfirm={() => handleDelete(record.id)}>
-              <Button type="link" danger size="small" icon={<Trash2 size={14} />} />
+              <Tooltip title="删除">
+                <Button type="link" danger size="small" icon={<Trash2 size={14} />} />
+              </Tooltip>
             </Popconfirm>
           </Space>
         ),
@@ -446,13 +453,15 @@ export default function NoteListPage() {
                                     {note.word_count > 0 && ` · ${note.word_count} 字`}
                                   </Text>
                                   <Space size={0}>
-                                    <Button
-                                      type="text"
-                                      size="small"
-                                      icon={<Download size={11} />}
-                                      onClick={(e) => { e.stopPropagation(); handleExport(note); }}
-                                      style={{ height: 20, width: 20, padding: 0 }}
-                                    />
+                                    <Tooltip title="导出">
+                                      <Button
+                                        type="text"
+                                        size="small"
+                                        icon={<Download size={11} />}
+                                        onClick={(e) => { e.stopPropagation(); handleExport(note); }}
+                                        style={{ height: 20, width: 20, padding: 0 }}
+                                      />
+                                    </Tooltip>
                                     <Popconfirm
                                       title="确认删除？"
                                       onConfirm={(e) => {
@@ -460,14 +469,16 @@ export default function NoteListPage() {
                                         handleDelete(note.id);
                                       }}
                                     >
-                                      <Button
-                                        type="text"
-                                        danger
-                                        size="small"
-                                        icon={<Trash2 size={11} />}
-                                        onClick={(e) => e.stopPropagation()}
-                                        style={{ height: 20, width: 20, padding: 0 }}
-                                      />
+                                      <Tooltip title="删除">
+                                        <Button
+                                          type="text"
+                                          danger
+                                          size="small"
+                                          icon={<Trash2 size={11} />}
+                                          onClick={(e) => e.stopPropagation()}
+                                          style={{ height: 20, width: 20, padding: 0 }}
+                                        />
+                                      </Tooltip>
                                     </Popconfirm>
                                   </Space>
                                 </div>

@@ -12,15 +12,46 @@ import {
   List,
   Popconfirm,
   message,
-  ColorPicker,
+  theme as antdTheme,
 } from "antd";
-import { Plus, Tags, FileText, Edit3, Trash2 } from "lucide-react";
+import { Plus, Tags, FileText, Edit3, Trash2, Check } from "lucide-react";
 import { tagApi } from "@/lib/api";
 import { stripHtml, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
 import type { Tag, Note, PageResult } from "@/types";
 
 const { Title, Text, Paragraph } = Typography;
+
+const TAG_COLORS = [
+  "#1677ff", "#722ed1", "#eb2f96", "#f5222d", "#fa541c",
+  "#fa8c16", "#faad14", "#a0d911", "#52c41a", "#13c2c2",
+  "#2f54eb", "#531dab", "#c41d7f", "#cf1322", "#d4380d",
+  "#d46b08", "#d48806", "#7cb305", "#389e0d", "#08979c",
+];
+
+function PresetColors({ value, onChange }: { value?: string; onChange?: (v: string) => void }) {
+  const { token } = antdTheme.useToken();
+  return (
+    <div className="flex flex-wrap gap-2">
+      {TAG_COLORS.map((c) => (
+        <div
+          key={c}
+          className="flex items-center justify-center cursor-pointer rounded-md transition-all"
+          style={{
+            width: 28,
+            height: 28,
+            backgroundColor: c,
+            border: value === c ? `2px solid ${token.colorText}` : "2px solid transparent",
+            transform: value === c ? "scale(1.15)" : undefined,
+          }}
+          onClick={() => onChange?.(c)}
+        >
+          {value === c && <Check size={14} color="#fff" strokeWidth={3} />}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function TagsPage() {
   const navigate = useNavigate();
@@ -254,7 +285,7 @@ export default function TagsPage() {
           </Form.Item>
           {!editingTag && (
             <Form.Item name="color" label="颜色" initialValue="#1677ff">
-              <ColorPicker format="hex" />
+              <PresetColors />
             </Form.Item>
           )}
         </Form>

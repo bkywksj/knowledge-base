@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Input, List, Typography, Empty, Spin, Tag } from "antd";
-import { Search as SearchIcon, FileText, Lightbulb } from "lucide-react";
+import { Input, List, Typography, Empty, Spin } from "antd";
+import { Search as SearchIcon, FileText } from "lucide-react";
 import { searchApi } from "@/lib/api";
 import type { SearchResult } from "@/types";
 
@@ -125,21 +125,6 @@ export default function SearchPage() {
           <Text type="secondary" className="mt-4" style={{ fontSize: 14 }}>
             输入关键词搜索笔记内容
           </Text>
-          <div className="flex items-center gap-2 mt-6">
-            <Lightbulb size={14} style={{ opacity: 0.4 }} />
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              试试搜索：
-            </Text>
-            {["React", "笔记", "学习"].map((word) => (
-              <Tag
-                key={word}
-                className="cursor-pointer"
-                onClick={() => handleInputChange(word)}
-              >
-                {word}
-              </Tag>
-            ))}
-          </div>
         </div>
       ) : null}
     </div>
