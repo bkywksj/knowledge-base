@@ -247,6 +247,24 @@ pub struct ImportProgress {
     pub file_name: String,
 }
 
+// ─── 导出 ─────────────────────────────────────
+
+/// 导出结果
+#[derive(Debug, Clone, Serialize)]
+pub struct ExportResult {
+    pub exported: usize,
+    pub errors: Vec<String>,
+    pub output_dir: String,
+}
+
+/// 导出进度（通过事件推送）
+#[derive(Debug, Clone, Serialize)]
+pub struct ExportProgress {
+    pub current: usize,
+    pub total: usize,
+    pub file_name: String,
+}
+
 // ─── 通用 ─────────────────────────────────────
 
 /// 分页响应

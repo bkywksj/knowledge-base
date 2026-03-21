@@ -17,12 +17,12 @@ import {
   List,
 } from "antd";
 import { SyncOutlined, PlusOutlined, StarFilled, StarOutlined } from "@ant-design/icons";
-import { Trash2, Pencil, FolderInput } from "lucide-react";
+import { Trash2, Pencil, FolderInput, FolderOutput } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import type { Update } from "@tauri-apps/plugin-updater";
-import type { AppConfig, AiModel, AiModelInput, ImportResult, ImportProgress, ScannedFile } from "@/types";
-import { configApi, systemApi, updaterApi, aiModelApi, importApi, folderApi } from "@/lib/api";
+import type { AppConfig, AiModel, AiModelInput, ImportResult, ImportProgress, ScannedFile, ExportResult, ExportProgress } from "@/types";
+import { configApi, systemApi, updaterApi, aiModelApi, importApi, exportApi, folderApi } from "@/lib/api";
 import { Checkbox } from "antd";
 import { UpdateModal } from "@/components/ui/UpdateModal";
 import type { Folder } from "@/types";
@@ -69,6 +69,12 @@ export default function SettingsPage() {
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [scanModalOpen, setScanModalOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
+
+  // 导出状态
+  const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
+  const [exportResult, setExportResult] = useState<ExportResult | null>(null);
+  const [exportFolderId, setExportFolderId] = useState<number | undefined>(undefined);
 
   async function loadConfigs() {
     setLoading(true);
@@ -193,6 +199,36 @@ export default function SettingsPage() {
       message.error(`导入失败: ${e}`);
     } finally {
       setImporting(false);
+      unlistenProgress();
+      unlistenDone();
+    }
+  }
+
+  async function handleExport() {
+    const selected = await open({ directory: true, title: "选择导出目录" });
+    if (!selected) return;
+
+    setExporting(true);
+    setExportProgress(null);
+    setExportResult(null);
+
+    const unlistenProgress = await listen<ExportProgress>("export:progress", (e) => {
+      setExportProgress(e.payload);
+    });
+    const unlistenDone = await listen<ExportResult>("export:done", (e) => {
+      setExportResult(e.payload);
+    });
+
+    try {
+      const result = await exportApi.exportNotes(selected as string, exportFolderId ?? null);
+      setExportResult(result);
+      if (result.exported > 0) {
+        message.success(`成功导出 ${result.exported} 篇笔记到 ${result.output_dir}`);
+      }
+    } catch (e) {
+      message.error(`导出失败: ${e}`);
+    } finally {
+      setExporting(false);
       unlistenProgress();
       unlistenDone();
     }
@@ -460,6 +496,77 @@ export default function SettingsPage() {
             }
             closable
             onClose={() => setImportResult(null)}
+          />
+        )}
+      </Card>
+
+      {/* 导出 Markdown */}
+      <Card
+        title={
+          <span className="flex items-center gap-2">
+            <FolderOutput size={16} />
+            导出 Markdown
+          </span>
+        }
+        className="mt-4"
+      >
+        <div className="mb-3">
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 8, fontSize: 13 }}>
+            将笔记导出为 Markdown 文件，按文件夹结构组织。便于迁移到其他工具（Obsidian、Typora 等）。
+          </Typography.Paragraph>
+          <Space>
+            <Select
+              placeholder="导出指定文件夹（可选，默认全部）"
+              allowClear
+              style={{ width: 240 }}
+              value={exportFolderId}
+              onChange={setExportFolderId}
+              options={flattenFolders(folders)}
+            />
+            <Button
+              type="primary"
+              icon={<FolderOutput size={14} />}
+              onClick={handleExport}
+              loading={exporting}
+            >
+              选择导出目录
+            </Button>
+          </Space>
+        </div>
+
+        {exporting && exportProgress && (
+          <div className="mb-3">
+            <Progress
+              percent={Math.round((exportProgress.current / exportProgress.total) * 100)}
+              size="small"
+              format={() => `${exportProgress.current}/${exportProgress.total}`}
+            />
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              正在导出: {exportProgress.file_name}
+            </Text>
+          </div>
+        )}
+
+        {exportResult && (
+          <Alert
+            type={exportResult.errors.length > 0 ? "warning" : "success"}
+            showIcon
+            message={`导出完成: ${exportResult.exported} 篇笔记`}
+            description={
+              exportResult.errors.length > 0 ? (
+                <List
+                  size="small"
+                  dataSource={exportResult.errors.slice(0, 10)}
+                  renderItem={(err) => (
+                    <List.Item style={{ padding: "2px 0", fontSize: 12 }}>
+                      <Text type="danger">{err}</Text>
+                    </List.Item>
+                  )}
+                />
+              ) : undefined
+            }
+            closable
+            onClose={() => setExportResult(null)}
           />
         )}
       </Card>

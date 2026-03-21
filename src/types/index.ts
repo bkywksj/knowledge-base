@@ -193,6 +193,22 @@ export interface ImportProgress {
   file_name: string;
 }
 
+// ─── 导出 ─────────────────────────────────────
+
+/** 导出结果 */
+export interface ExportResult {
+  exported: number;
+  errors: string[];
+  output_dir: string;
+}
+
+/** 导出进度 */
+export interface ExportProgress {
+  current: number;
+  total: number;
+  file_name: string;
+}
+
 // ─── 首页统计 ─────────────────────────────────
 
 /** 首页统计数据 */

@@ -112,6 +112,8 @@ pub fn run() {
             // 导入模块
             commands::import::scan_markdown_folder,
             commands::import::import_selected_files,
+            // 导出模块
+            commands::export::export_notes,
             // 笔记批量操作
             commands::notes::delete_all_notes,
         ])

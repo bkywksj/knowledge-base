@@ -8,3 +8,4 @@ pub mod search;
 pub mod tag;
 pub mod trash;
 pub mod import;
+pub mod export;

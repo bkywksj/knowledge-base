@@ -19,6 +19,7 @@ import type {
   AiMessage,
   ImportResult,
   ScannedFile,
+  ExportResult,
 } from "@/types";
 
 /** 系统相关 API */
@@ -156,6 +157,13 @@ export const importApi = {
     invoke<ScannedFile[]>("scan_markdown_folder", { path }),
   importSelected: (filePaths: string[], folderId?: number | null) =>
     invoke<ImportResult>("import_selected_files", { filePaths, folderId }),
+};
+
+/** 导出 API */
+export const exportApi = {
+  /** 导出笔记为 Markdown 文件 */
+  exportNotes: (outputDir: string, folderId?: number | null) =>
+    invoke<ExportResult>("export_notes", { outputDir, folderId }),
 };
 
 /** AI 写作辅助 API */
