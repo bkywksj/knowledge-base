@@ -253,33 +253,153 @@ impl Database {
         Ok(msg)
     }
 
+    /// 删除单条消息（用于 API 失败时回滚）
+    pub fn delete_ai_message(&self, id: i64) -> Result<(), AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        conn.execute("DELETE FROM ai_messages WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
     // ─── RAG 搜索 DAO ───────────────────────────
 
-    /// 搜索相关笔记用于 RAG 上下文（基于 FTS5）
+    /// 从用户输入中提取有意义的关键词（过滤停用词和标点）
+    fn extract_keywords(query: &str) -> Vec<String> {
+        // 中文停用词
+        const STOP_WORDS: &[&str] = &[
+            "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都", "一", "一个",
+            "上", "也", "很", "到", "说", "要", "去", "你", "会", "着", "没有", "看", "好",
+            "自己", "这", "他", "她", "它", "吗", "什么", "怎么", "哪", "那", "里", "面",
+            "里面", "这个", "那个", "还", "能", "可以", "被", "把", "给", "让", "用", "从",
+            "写", "中", "吧", "呢", "啊", "哦", "嗯", "请", "帮", "关于", "介绍", "描述",
+            "内容", "告诉", "解释", "如何", "为什么", "哪些", "什么样",
+        ];
+
+        let mut keywords = Vec::new();
+        let mut current = String::new();
+
+        for ch in query.chars() {
+            if ch.is_alphanumeric() || ch == '_' {
+                current.push(ch);
+            } else {
+                if !current.is_empty() {
+                    keywords.push(std::mem::take(&mut current));
+                }
+            }
+        }
+        if !current.is_empty() {
+            keywords.push(current);
+        }
+
+        // 过滤停用词和单个常见字符
+        keywords
+            .into_iter()
+            .filter(|w| !STOP_WORDS.contains(&w.as_str()) && w.len() > 0)
+            .collect()
+    }
+
+    /// 转义 FTS5 特殊字符
+    fn escape_fts5(term: &str) -> String {
+        // 用双引号包裹以转义特殊字符
+        format!("\"{}\"", term.replace('"', "\"\""))
+    }
+
+    /// 搜索相关笔记用于 RAG 上下文
+    /// 策略：先用 FTS5（关键词 OR）搜索，无结果则用 LIKE 模糊搜索兜底
     pub fn search_notes_for_rag(
         &self,
         query: &str,
         limit: usize,
     ) -> Result<Vec<(i64, String, String)>, AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
-        let mut stmt = conn.prepare(
-            "SELECT n.id, n.title, n.content
-             FROM notes_fts fts
-             JOIN notes n ON n.id = fts.rowid
-             WHERE notes_fts MATCH ?1
-               AND n.is_deleted = 0
-             ORDER BY rank
-             LIMIT ?2",
-        )?;
+
+        let keywords = Self::extract_keywords(query);
+
+        // 1. 尝试 FTS5 搜索（关键词用 OR 连接，提高召回率）
+        if !keywords.is_empty() {
+            let fts_query = keywords
+                .iter()
+                .map(|k| Self::escape_fts5(k))
+                .collect::<Vec<_>>()
+                .join(" OR ");
+
+            let fts_result = conn.prepare(
+                "SELECT n.id, n.title, n.content
+                 FROM notes_fts fts
+                 JOIN notes n ON n.id = fts.rowid
+                 WHERE notes_fts MATCH ?1
+                   AND n.is_deleted = 0
+                 ORDER BY rank
+                 LIMIT ?2",
+            );
+
+            if let Ok(mut stmt) = fts_result {
+                let results: Vec<(i64, String, String)> = stmt
+                    .query_map(rusqlite::params![fts_query, limit], |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    })
+                    .ok()
+                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                    .unwrap_or_default();
+
+                if !results.is_empty() {
+                    return Ok(results);
+                }
+            }
+        }
+
+        // 2. FTS5 无结果时，用 LIKE 模糊搜索兜底
+        let like_keywords: Vec<String> = if keywords.is_empty() {
+            // 无关键词时，用原始查询的连续中文片段
+            query
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|s| s.len() >= 2)
+                .map(|s| format!("%{}%", s))
+                .collect()
+        } else {
+            keywords.iter().map(|k| format!("%{}%", k)).collect()
+        };
+
+        if like_keywords.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // 构建 OR 条件的 LIKE 查询
+        let where_clauses: Vec<String> = like_keywords
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("(n.title LIKE ?{0} OR n.content LIKE ?{0})", i + 1))
+            .collect();
+        let sql = format!(
+            "SELECT n.id, n.title, n.content FROM notes n
+             WHERE n.is_deleted = 0 AND ({})
+             ORDER BY n.updated_at DESC
+             LIMIT ?{}",
+            where_clauses.join(" OR "),
+            like_keywords.len() + 1
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = like_keywords
+            .iter()
+            .map(|k| Box::new(k.clone()) as Box<dyn rusqlite::types::ToSql>)
+            .collect();
+        params.push(Box::new(limit as i64));
+
         let results = stmt
-            .query_map(rusqlite::params![query, limit], |row| {
+            .query_map(rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())), |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
                 ))
             })?
-            .collect::<Result<Vec<_>, _>>()?;
+            .filter_map(|r| r.ok())
+            .collect();
+
         Ok(results)
     }
 }

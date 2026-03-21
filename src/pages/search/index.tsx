@@ -1,5 +1,5 @@
-import { useState, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useRef, useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Input, List, Typography, Empty, Spin, Tag } from "antd";
 import { Search as SearchIcon, FileText, Lightbulb } from "lucide-react";
 import { searchApi } from "@/lib/api";
@@ -9,11 +9,37 @@ const { Text } = Typography;
 
 export default function SearchPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const initializedRef = useRef(false);
+
+  // 从 URL 参数 ?q= 初始化搜索
+  useEffect(() => {
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+    const q = searchParams.get("q");
+    if (q && q.trim()) {
+      setQuery(q.trim());
+      doSearch(q.trim());
+    }
+  }, [searchParams]);
+
+  async function doSearch(keyword: string) {
+    setLoading(true);
+    setSearched(true);
+    try {
+      const data = await searchApi.search(keyword);
+      setResults(data);
+    } catch (e) {
+      console.error("搜索失败:", e);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   function handleInputChange(value: string) {
     setQuery(value);
@@ -23,17 +49,8 @@ export default function SearchPage() {
       setSearched(false);
       return;
     }
-    timerRef.current = setTimeout(async () => {
-      setLoading(true);
-      setSearched(true);
-      try {
-        const data = await searchApi.search(value.trim());
-        setResults(data);
-      } catch (e) {
-        console.error("搜索失败:", e);
-      } finally {
-        setLoading(false);
-      }
+    timerRef.current = setTimeout(() => {
+      doSearch(value.trim());
     }, 300);
   }
 

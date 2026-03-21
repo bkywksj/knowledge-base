@@ -18,32 +18,8 @@ impl SearchService {
         }
 
         let limit = limit.unwrap_or(50).min(200);
-        let sanitized = sanitize_fts_query(query);
 
-        if sanitized.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        db.search_notes(&sanitized, limit)
+        // 传原始查询给 Database 层，由它分别处理 FTS 和 LIKE
+        db.search_notes(query, limit)
     }
-}
-
-/// 将查询分词，每个词用双引号包裹，去除 FTS5 特殊字符
-fn sanitize_fts_query(query: &str) -> String {
-    query
-        .split_whitespace()
-        .map(|word| {
-            let clean: String = word
-                .chars()
-                .filter(|c| !matches!(c, '"' | '*' | '(' | ')' | ':' | '^' | '{' | '}'))
-                .collect();
-            if clean.is_empty() {
-                String::new()
-            } else {
-                format!("\"{}\"", clean)
-            }
-        })
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
 }

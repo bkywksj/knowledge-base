@@ -313,7 +313,7 @@ impl AiService {
         } else {
             Some(serde_json::to_string(&ref_ids).unwrap_or_default())
         };
-        db.add_ai_message(
+        let user_msg = db.add_ai_message(
             conversation_id,
             "user",
             user_message,
@@ -328,27 +328,36 @@ impl AiService {
         // 5. 流式请求 AI
         let full_response = match model.provider.as_str() {
             "ollama" => {
-                Self::stream_ollama(&app, &model, &messages, cancel_rx).await?
+                Self::stream_ollama(&app, &model, &messages, cancel_rx).await
             }
             "openai" | "claude" => {
-                Self::stream_openai_compatible(&app, &model, &messages, cancel_rx).await?
+                Self::stream_openai_compatible(&app, &model, &messages, cancel_rx).await
             }
             _ => {
-                return Err(AppError::Custom(format!(
+                Err(AppError::Custom(format!(
                     "不支持的模型提供商: {}",
                     model.provider
-                )));
+                )))
             }
         };
 
-        // 6. 保存 AI 回复到数据库
-        db.add_ai_message(conversation_id, "assistant", &full_response, None)?;
-        db.touch_ai_conversation(conversation_id)?;
+        // API 失败时回滚用户消息，防止消息序列污染
+        match full_response {
+            Ok(response) => {
+                // 6. 保存 AI 回复到数据库
+                db.add_ai_message(conversation_id, "assistant", &response, None)?;
+                db.touch_ai_conversation(conversation_id)?;
 
-        // 7. 发送完成事件
-        let _ = app.emit("ai:done", conversation_id);
-
-        Ok(())
+                // 7. 发送完成事件
+                let _ = app.emit("ai:done", conversation_id);
+                Ok(())
+            }
+            Err(e) => {
+                // 回滚：删除已保存的用户消息
+                let _ = db.delete_ai_message(user_msg.id);
+                Err(e)
+            }
+        }
     }
 
     /// 构建发送给 AI 的消息列表
@@ -382,11 +391,18 @@ impl AiService {
         } else {
             0
         };
+        // 过滤连续相同 role 的消息（保留最后一条），避免 API 报错
+        let mut last_role = "system".to_string();
         for msg in &history[start..] {
+            if msg.role == last_role {
+                // 连续相同 role，替换上一条（保留最新的）
+                messages.pop();
+            }
             messages.push(json!({
                 "role": msg.role,
                 "content": msg.content
             }));
+            last_role = msg.role.clone();
         }
 
         messages
