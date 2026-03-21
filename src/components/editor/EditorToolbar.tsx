@@ -1,5 +1,5 @@
 import type { Editor } from "@tiptap/react";
-import { Button, Divider, Tooltip } from "antd";
+import { Button, Divider, Tooltip, message } from "antd";
 import {
   Bold,
   Italic,
@@ -20,10 +20,15 @@ import {
   Redo2,
   Link as LinkIcon,
   Unlink,
+  ImagePlus,
 } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { imageApi } from "@/lib/api";
 
 interface ToolbarProps {
   editor: Editor;
+  noteId?: number;
 }
 
 interface ToolItem {
@@ -33,7 +38,34 @@ interface ToolItem {
   isActive?: () => boolean;
 }
 
-export function EditorToolbar({ editor }: ToolbarProps) {
+export function EditorToolbar({ editor, noteId }: ToolbarProps) {
+  async function insertImage() {
+    if (!noteId) {
+      message.warning("请先保存笔记后再插入图片");
+      return;
+    }
+    const selected = await open({
+      multiple: true,
+      filters: [
+        {
+          name: "图片",
+          extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"],
+        },
+      ],
+    });
+    if (!selected) return;
+    const paths = Array.isArray(selected) ? selected : [selected];
+    for (const filePath of paths) {
+      try {
+        const savedPath = await imageApi.saveFromPath(noteId, filePath);
+        const assetUrl = convertFileSrc(savedPath);
+        editor.chain().focus().setImage({ src: assetUrl }).run();
+      } catch (e) {
+        message.error(`图片插入失败: ${e}`);
+      }
+    }
+  }
+
   function setLink() {
     const previousUrl = editor.getAttributes("link").href;
     const url = window.prompt("输入链接地址", previousUrl);
@@ -152,7 +184,7 @@ export function EditorToolbar({ editor }: ToolbarProps) {
         isActive: () => editor.isActive("codeBlock"),
       },
     ],
-    // 链接 & 分割线
+    // 链接 & 媒体
     [
       {
         icon: <LinkIcon size={15} />,
@@ -164,6 +196,11 @@ export function EditorToolbar({ editor }: ToolbarProps) {
         icon: <Unlink size={15} />,
         title: "移除链接",
         action: () => editor.chain().focus().unsetLink().run(),
+      },
+      {
+        icon: <ImagePlus size={15} />,
+        title: "插入图片",
+        action: insertImage,
       },
       {
         icon: <Minus size={15} />,

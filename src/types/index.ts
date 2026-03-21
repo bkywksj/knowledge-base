@@ -10,6 +10,7 @@ export interface SystemInfo {
   arch: string;
   appVersion: string;
   dataDir: string;
+  imagesDir: string;
 }
 
 // ─── 笔记 ─────────────────────────────────────

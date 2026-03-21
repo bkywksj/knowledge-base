@@ -420,6 +420,7 @@ export default function NoteEditorPage() {
             content={content}
             onChange={handleContentChange}
             placeholder="开始写点什么..."
+            noteId={noteId}
           />
 
           {/* 反向链接 */}

@@ -299,6 +299,19 @@ body,
   margin: 1em 0;
 }
 
+/* 图片 */
+.tiptap img.tiptap-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  margin: 0.5em 0;
+  cursor: default;
+}
+.tiptap img.tiptap-image.ProseMirror-selectednode {
+  outline: 2px solid var(--ant-color-primary, #1677ff);
+  outline-offset: 2px;
+}
+
 /* 占位符 */
 .tiptap p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);

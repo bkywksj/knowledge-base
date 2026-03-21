@@ -169,6 +169,21 @@ export const exportApi = {
     invoke<void>("export_single_note", { id, filePath }),
 };
 
+/** 图片 API */
+export const imageApi = {
+  /** 保存图片（base64 数据，用于粘贴/拖放） */
+  save: (noteId: number, fileName: string, base64Data: string) =>
+    invoke<string>("save_note_image", { noteId, fileName, base64Data }),
+  /** 从本地文件路径保存图片（用于工具栏文件选择） */
+  saveFromPath: (noteId: number, sourcePath: string) =>
+    invoke<string>("save_note_image_from_path", { noteId, sourcePath }),
+  /** 删除笔记的所有图片 */
+  deleteNoteImages: (noteId: number) =>
+    invoke<void>("delete_note_images", { noteId }),
+  /** 获取图片存储目录路径 */
+  getImagesDir: () => invoke<string>("get_images_dir"),
+};
+
 /** AI 写作辅助 API */
 export const aiWriteApi = {
   /** 执行写作辅助操作（流式返回，通过 ai-write:token 事件接收） */

@@ -89,6 +89,37 @@ export default function AboutPage() {
                 </Tooltip>
               </div>
             </Descriptions.Item>
+            <Descriptions.Item label="图片存储">
+              <div className="flex items-center justify-between gap-2">
+                <Text style={{ fontSize: 13 }}>
+                  {info.imagesDir}
+                </Text>
+                <span className="flex items-center gap-1">
+                  <Tooltip title="复制路径">
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<Copy size={14} />}
+                      onClick={() => handleCopyPath(info.imagesDir)}
+                    />
+                  </Tooltip>
+                  <Tooltip title="在文件管理器中打开">
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<FolderOpen size={14} />}
+                      onClick={async () => {
+                        try {
+                          await openPath(info.imagesDir);
+                        } catch (e) {
+                          message.error(`打开目录失败: ${e}`);
+                        }
+                      }}
+                    />
+                  </Tooltip>
+                </span>
+              </div>
+            </Descriptions.Item>
           </Descriptions>
         ) : (
           <Text type="danger">无法获取系统信息</Text>
@@ -102,12 +133,12 @@ export default function AboutPage() {
           size="small"
         >
           <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginBottom: 8 }}>
-            所有笔记数据保存在单个 SQLite 数据库文件中，迁移非常简单：
+            笔记数据保存在 SQLite 数据库文件中，图片保存在 <code>kb_assets/images/</code> 目录下。迁移步骤：
           </Typography.Paragraph>
           <ol style={{ fontSize: 13, paddingLeft: 20, margin: 0 }}>
             <li style={{ marginBottom: 4 }}>关闭应用</li>
             <li style={{ marginBottom: 4 }}>
-              复制 <code>app.db</code> 到新电脑的相同路径
+              复制 <code>app.db</code> 和 <code>kb_assets/</code> 目录到新电脑的相同路径
             </li>
             <li>启动应用即可</li>
           </ol>

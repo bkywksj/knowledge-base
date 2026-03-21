@@ -15,6 +15,7 @@ pub struct SystemInfo {
     pub arch: String,
     pub app_version: String,
     pub data_dir: String,
+    pub images_dir: String,
 }
 
 // ─── 笔记 ─────────────────────────────────────

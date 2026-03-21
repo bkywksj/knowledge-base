@@ -36,6 +36,11 @@ pub fn run() {
 
             log::info!("数据库初始化完成: {}", db_path_str);
 
+            // 初始化图片存储目录
+            let images_dir = services::image::ImageService::ensure_dir(&data_dir)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            log::info!("图片存储目录: {}", images_dir.display());
+
             // 注册全局状态
             app.manage(AppState::new(db));
 
@@ -117,6 +122,11 @@ pub fn run() {
             commands::export::export_single_note,
             // 笔记批量操作
             commands::notes::delete_all_notes,
+            // 图片模块
+            commands::image::save_note_image,
+            commands::image::save_note_image_from_path,
+            commands::image::delete_note_images,
+            commands::image::get_images_dir,
         ])
         // ─── 窗口事件处理 ─────────────────────────
         .on_window_event(|window, event| {

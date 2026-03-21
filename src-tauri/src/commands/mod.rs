@@ -10,3 +10,4 @@ pub mod tags;
 pub mod trash;
 pub mod import;
 pub mod export;
+pub mod image;
