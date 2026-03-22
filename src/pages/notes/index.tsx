@@ -129,6 +129,10 @@ export default function NoteListPage() {
   const handleCreate = useCallback(
     async (values: NoteInput) => {
       try {
+        // 如果当前正在查看某个文件夹，自动将新笔记归入该文件夹
+        if (folderId) {
+          values.folder_id = Number(folderId);
+        }
         const note = await noteApi.create(values);
         message.success("创建成功");
         setCreateOpen(false);
@@ -138,7 +142,7 @@ export default function NoteListPage() {
         message.error(String(e));
       }
     },
-    [form, navigate],
+    [form, navigate, folderId],
   );
 
   const handleDelete = useCallback(
