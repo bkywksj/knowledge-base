@@ -60,7 +60,7 @@ export function EditorToolbar({ editor, noteId }: ToolbarProps) {
         const savedPath = await imageApi.saveFromPath(noteId, filePath);
         const assetUrl = convertFileSrc(savedPath);
         editor.chain().focus().insertContent({
-          type: "image",
+          type: "imageResize",
           attrs: { src: assetUrl },
         }).run();
       } catch (e) {

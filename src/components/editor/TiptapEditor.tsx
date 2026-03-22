@@ -79,7 +79,7 @@ export function TiptapEditor({
           const filePath = await imageApi.save(noteId, file.name, base64);
           const assetUrl = convertFileSrc(filePath);
           editor.chain().focus().insertContent({
-            type: "image",
+            type: "imageResize",
             attrs: { src: assetUrl },
           }).run();
         } catch (e) {
