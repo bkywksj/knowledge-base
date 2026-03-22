@@ -1,5 +1,6 @@
+import { useState, useCallback } from "react";
 import type { Editor } from "@tiptap/react";
-import { Button, Divider, Tooltip, message } from "antd";
+import { Button, Divider, Tooltip, Modal, Input, message } from "antd";
 import {
   Bold,
   Italic,
@@ -39,6 +40,8 @@ interface ToolItem {
 }
 
 export function EditorToolbar({ editor, noteId }: ToolbarProps) {
+  const [linkModalOpen, setLinkModalOpen] = useState(false);
+  const [linkUrl, setLinkUrl] = useState("");
   async function insertImage() {
     if (!noteId) {
       message.warning("请先保存笔记后再插入图片");
@@ -69,16 +72,22 @@ export function EditorToolbar({ editor, noteId }: ToolbarProps) {
     }
   }
 
-  function setLink() {
-    const previousUrl = editor.getAttributes("link").href;
-    const url = window.prompt("输入链接地址", previousUrl);
-    if (url === null) return; // 取消
-    if (url === "") {
+  const openLinkModal = useCallback(() => {
+    const previousUrl = editor.getAttributes("link").href || "";
+    setLinkUrl(previousUrl);
+    setLinkModalOpen(true);
+  }, [editor]);
+
+  const handleLinkConfirm = useCallback(() => {
+    const url = linkUrl.trim();
+    if (!url) {
       editor.chain().focus().extendMarkRange("link").unsetLink().run();
-      return;
+    } else {
+      editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
     }
-    editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
-  }
+    setLinkModalOpen(false);
+    setLinkUrl("");
+  }, [editor, linkUrl]);
 
   const groups: ToolItem[][] = [
     // 撤销/重做
@@ -192,7 +201,7 @@ export function EditorToolbar({ editor, noteId }: ToolbarProps) {
       {
         icon: <LinkIcon size={15} />,
         title: "插入链接",
-        action: setLink,
+        action: openLinkModal,
         isActive: () => editor.isActive("link"),
       },
       {
@@ -214,26 +223,50 @@ export function EditorToolbar({ editor, noteId }: ToolbarProps) {
   ];
 
   return (
-    <div className="tiptap-toolbar">
-      {groups.map((group, gi) => (
-        <span key={gi} className="inline-flex items-center">
-          {gi > 0 && (
-            <Divider type="vertical" style={{ height: 20, margin: "0 2px" }} />
-          )}
-          {group.map((item, ii) => (
-            <Tooltip key={ii} title={item.title} mouseEnterDelay={0.5}>
-              <Button
-                type="text"
-                size="small"
-                icon={item.icon}
-                onClick={item.action}
-                className={item.isActive?.() ? "toolbar-btn-active" : ""}
-                style={{ width: 28, height: 28, padding: 0 }}
-              />
-            </Tooltip>
-          ))}
-        </span>
-      ))}
-    </div>
+    <>
+      <div className="tiptap-toolbar">
+        {groups.map((group, gi) => (
+          <span key={gi} className="inline-flex items-center">
+            {gi > 0 && (
+              <Divider type="vertical" style={{ height: 20, margin: "0 2px" }} />
+            )}
+            {group.map((item, ii) => (
+              <Tooltip key={ii} title={item.title} mouseEnterDelay={0.5}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={item.icon}
+                  onClick={item.action}
+                  className={item.isActive?.() ? "toolbar-btn-active" : ""}
+                  style={{ width: 28, height: 28, padding: 0 }}
+                />
+              </Tooltip>
+            ))}
+          </span>
+        ))}
+      </div>
+
+      <Modal
+        title="插入链接"
+        open={linkModalOpen}
+        onOk={handleLinkConfirm}
+        onCancel={() => { setLinkModalOpen(false); setLinkUrl(""); }}
+        okText="确定"
+        cancelText="取消"
+        width={420}
+        destroyOnClose
+      >
+        <Input
+          placeholder="请输入链接地址，如 https://example.com"
+          value={linkUrl}
+          onChange={(e) => setLinkUrl(e.target.value)}
+          onPressEnter={handleLinkConfirm}
+          autoFocus
+        />
+        <div className="mt-2 text-xs" style={{ color: "var(--ant-color-text-quaternary)" }}>
+          留空并确定将移除当前链接
+        </div>
+      </Modal>
+    </>
   );
 }
