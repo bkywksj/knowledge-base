@@ -59,7 +59,10 @@ export function EditorToolbar({ editor, noteId }: ToolbarProps) {
       try {
         const savedPath = await imageApi.saveFromPath(noteId, filePath);
         const assetUrl = convertFileSrc(savedPath);
-        editor.chain().focus().setImage({ src: assetUrl }).run();
+        editor.chain().focus().insertContent({
+          type: "image",
+          attrs: { src: assetUrl },
+        }).run();
       } catch (e) {
         message.error(`图片插入失败: ${e}`);
       }

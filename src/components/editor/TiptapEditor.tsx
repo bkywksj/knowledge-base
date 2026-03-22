@@ -8,7 +8,7 @@ import Link from "@tiptap/extension-link";
 import Underline from "@tiptap/extension-underline";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import Typography from "@tiptap/extension-typography";
-import Image from "@tiptap/extension-image";
+import ImageResize from "tiptap-extension-resize-image";
 import { common, createLowlight } from "lowlight";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useRef, useCallback } from "react";
@@ -78,7 +78,10 @@ export function TiptapEditor({
           const base64 = await fileToBase64(file);
           const filePath = await imageApi.save(noteId, file.name, base64);
           const assetUrl = convertFileSrc(filePath);
-          editor.chain().focus().setImage({ src: assetUrl }).run();
+          editor.chain().focus().insertContent({
+            type: "image",
+            attrs: { src: assetUrl },
+          }).run();
         } catch (e) {
           message.error(`图片插入失败: ${e}`);
         }
@@ -103,11 +106,10 @@ export function TiptapEditor({
       Underline,
       CodeBlockLowlight.configure({ lowlight }),
       Typography,
-      Image.configure({
-        allowBase64: true,
-        HTMLAttributes: {
-          class: "tiptap-image",
-        },
+      ImageResize.configure({
+        inline: false,
+        minWidth: 50,
+        maxWidth: 1200,
       }),
     ],
     content: isHtml(content) ? content : textToHtml(content),

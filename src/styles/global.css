@@ -299,17 +299,17 @@ body,
   margin: 1em 0;
 }
 
-/* 图片 */
-.tiptap img.tiptap-image {
+/* 图片（支持拖拽调整尺寸） */
+.tiptap img {
   max-width: 100%;
   height: auto;
   border-radius: 6px;
   margin: 0.5em 0;
-  cursor: default;
 }
-.tiptap img.tiptap-image.ProseMirror-selectednode {
-  outline: 2px solid var(--ant-color-primary, #1677ff);
-  outline-offset: 2px;
+
+/* 图片 resize 容器暗色模式适配 */
+[data-theme="dark"] .tiptap [style*="border: 1px dashed"] {
+  border-color: rgba(255, 255, 255, 0.35) !important;
 }
 
 /* 占位符 */

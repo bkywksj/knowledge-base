@@ -41,6 +41,7 @@
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.13.1",
+    "tiptap-extension-resize-image": "^1.3.3",
     "zustand": "^5.0.11"
   },
   "devDependencies": {
