@@ -222,6 +222,15 @@ export interface DashboardStats {
   total_words: number;
 }
 
+// ─── 写作趋势 ─────────────────────────────────
+
+/** 每日写作统计 */
+export interface DailyWritingStat {
+  date: string;
+  note_count: number;
+  word_count: number;
+}
+
 // ─── 笔记模板 ─────────────────────────────────
 
 /** 笔记模板 */

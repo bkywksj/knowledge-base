@@ -267,6 +267,19 @@ pub struct ExportProgress {
     pub file_name: String,
 }
 
+// ─── 写作趋势 ─────────────────────────────────
+
+/// 每日写作统计
+#[derive(Debug, Clone, Serialize)]
+pub struct DailyWritingStat {
+    /// 日期 (YYYY-MM-DD)
+    pub date: String,
+    /// 当日更新的笔记数
+    pub note_count: usize,
+    /// 当日总字数（更新过的笔记的字数之和）
+    pub word_count: usize,
+}
+
 // ─── 笔记模板 ─────────────────────────────────
 
 /// 笔记模板

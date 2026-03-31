@@ -138,6 +138,30 @@ impl Database {
         })
     }
 
+    /// 获取最近 N 天的写作趋势
+    pub fn get_writing_trend(&self, days: i32) -> Result<Vec<crate::models::DailyWritingStat>, AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "SELECT DATE(updated_at) as d, COUNT(*) as cnt, COALESCE(SUM(word_count), 0) as wc
+             FROM notes
+             WHERE is_deleted = 0
+               AND updated_at >= DATE('now', 'localtime', ?1)
+             GROUP BY d
+             ORDER BY d",
+        )?;
+        let offset = format!("-{} days", days);
+        let stats = stmt
+            .query_map([&offset], |row| {
+                Ok(crate::models::DailyWritingStat {
+                    date: row.get(0)?,
+                    note_count: row.get(1)?,
+                    word_count: row.get(2)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(stats)
+    }
+
     /// 删除配置
     pub fn delete_config(&self, key: &str) -> Result<bool, AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;

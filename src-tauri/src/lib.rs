@@ -56,6 +56,7 @@ pub fn run() {
             commands::system::greet,
             commands::system::get_system_info,
             commands::system::get_dashboard_stats,
+            commands::system::get_writing_trend,
             // 配置模块
             commands::config::get_all_config,
             commands::config::get_config,

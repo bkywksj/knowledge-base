@@ -26,10 +26,11 @@ import {
   Bot,
   GitBranch,
 } from "lucide-react";
+import { Tooltip as AntTooltip } from "antd";
 import { noteApi, dailyApi, systemApi } from "@/lib/api";
 import { stripHtml, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
-import type { Note, DashboardStats } from "@/types";
+import type { Note, DashboardStats, DailyWritingStat } from "@/types";
 
 const { Text, Paragraph } = Typography;
 
@@ -39,19 +40,22 @@ export default function HomePage() {
   const [recentNotes, setRecentNotes] = useState<Note[]>([]);
   const [pinnedNotes, setPinnedNotes] = useState<Note[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [trend, setTrend] = useState<DailyWritingStat[]>([]);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [loading, setLoading] = useState(true);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     try {
-      const [notesResult, dashStats] = await Promise.all([
+      const [notesResult, dashStats, trendData] = await Promise.all([
         noteApi.list({ page: 1, page_size: 8 }),
         systemApi.getDashboardStats(),
+        systemApi.getWritingTrend(14),
       ]);
       setRecentNotes(notesResult.items.filter((n) => !n.is_pinned));
       setPinnedNotes(notesResult.items.filter((n) => n.is_pinned));
       setStats(dashStats);
+      setTrend(trendData);
     } catch (e) {
       console.error("加载首页数据失败:", e);
     } finally {
@@ -201,6 +205,63 @@ export default function HomePage() {
           </Button>
         </Col>
       </Row>
+
+      {/* 写作趋势 */}
+      {trend.length > 0 && (
+        <Card
+          size="small"
+          title={
+            <span className="flex items-center gap-2 text-sm">
+              <Calendar size={14} />
+              近两周写作趋势
+            </span>
+          }
+          className="mb-4"
+          styles={{ body: { padding: "12px 16px" } }}
+        >
+          {(() => {
+            const maxWords = Math.max(...trend.map((d) => d.word_count), 1);
+            return (
+              <div className="flex items-end gap-1" style={{ height: 80 }}>
+                {trend.map((day) => {
+                  const h = Math.max((day.word_count / maxWords) * 64, 2);
+                  const dateLabel = day.date.slice(5); // MM-DD
+                  return (
+                    <AntTooltip
+                      key={day.date}
+                      title={`${day.date}: ${day.note_count} 篇, ${day.word_count} 字`}
+                    >
+                      <div className="flex flex-col items-center flex-1 min-w-0">
+                        <div
+                          style={{
+                            width: "100%",
+                            maxWidth: 28,
+                            height: h,
+                            borderRadius: 3,
+                            background: token.colorPrimary,
+                            opacity: day.word_count > 0 ? 0.7 : 0.15,
+                            transition: "height 0.3s",
+                          }}
+                        />
+                        <span
+                          className="mt-1 truncate"
+                          style={{
+                            fontSize: 9,
+                            color: token.colorTextQuaternary,
+                            maxWidth: "100%",
+                          }}
+                        >
+                          {dateLabel}
+                        </span>
+                      </div>
+                    </AntTooltip>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </Card>
+      )}
 
       {/* 置顶笔记 */}
       {pinnedNotes.length > 0 && (

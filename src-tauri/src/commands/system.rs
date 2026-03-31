@@ -1,6 +1,6 @@
 use tauri::{Manager, State};
 
-use crate::models::{DashboardStats, SystemInfo};
+use crate::models::{DailyWritingStat, DashboardStats, SystemInfo};
 use crate::services::image::ImageService;
 use crate::state::AppState;
 
@@ -32,6 +32,15 @@ pub fn get_system_info(app: tauri::AppHandle) -> Result<SystemInfo, String> {
 #[tauri::command]
 pub fn get_dashboard_stats(state: State<'_, AppState>) -> Result<DashboardStats, String> {
     state.db.get_dashboard_stats().map_err(|e| e.to_string())
+}
+
+/// 获取写作趋势（最近 N 天）
+#[tauri::command]
+pub fn get_writing_trend(
+    state: State<'_, AppState>,
+    days: Option<i32>,
+) -> Result<Vec<DailyWritingStat>, String> {
+    state.db.get_writing_trend(days.unwrap_or(30)).map_err(|e| e.to_string())
 }
 
 /// 简单的 greet 命令（保留为示例）

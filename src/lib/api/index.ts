@@ -22,6 +22,7 @@ import type {
   ExportResult,
   NoteTemplate,
   NoteTemplateInput,
+  DailyWritingStat,
 } from "@/types";
 
 /** 系统相关 API */
@@ -29,6 +30,8 @@ export const systemApi = {
   greet: (name: string) => invoke<string>("greet", { name }),
   getSystemInfo: () => invoke<SystemInfo>("get_system_info"),
   getDashboardStats: () => invoke<DashboardStats>("get_dashboard_stats"),
+  getWritingTrend: (days?: number) =>
+    invoke<DailyWritingStat[]>("get_writing_trend", { days }),
 };
 
 /** 更新相关 API */
