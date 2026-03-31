@@ -16,8 +16,9 @@ import { TextAlign } from "@tiptap/extension-text-align";
 import ImageResize from "tiptap-extension-resize-image";
 import { common, createLowlight } from "lowlight";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useMemo } from "react";
 import { message } from "antd";
+import { theme as antdTheme } from "antd";
 import { imageApi } from "@/lib/api";
 import { EditorToolbar } from "./EditorToolbar";
 import { AiWriteMenu } from "./AiWriteMenu";
@@ -167,6 +168,24 @@ export function TiptapEditor({
     }
   }, [content, editor]);
 
+  const { token } = antdTheme.useToken();
+
+  // 编辑器统计信息
+  const stats = useMemo(() => {
+    if (!editor) return { chars: 0, words: 0, readingTime: "< 1 min" };
+    const text = editor.getText();
+    const chars = text.length;
+    // 中文按字数，英文按空格分词
+    const cjkCount = (text.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) || []).length;
+    const nonCjk = text.replace(/[\u4e00-\u9fff\u3400-\u4dbf]/g, " ");
+    const engWords = nonCjk.split(/\s+/).filter((w) => w.length > 0).length;
+    const words = cjkCount + engWords;
+    // 按 400 字/分钟估算阅读时间
+    const minutes = Math.ceil(words / 400);
+    const readingTime = minutes < 1 ? "< 1 min" : `${minutes} min`;
+    return { chars, words, readingTime };
+  }, [editor, editor?.getText()]);
+
   if (!editor) return null;
 
   return (
@@ -174,6 +193,18 @@ export function TiptapEditor({
       <EditorToolbar editor={editor} noteId={noteId} />
       <EditorContent editor={editor} className="tiptap-content" />
       <AiWriteMenu editor={editor} />
+      <div
+        className="flex items-center gap-4 px-3 py-1.5 text-xs"
+        style={{
+          color: token.colorTextQuaternary,
+          borderTop: `1px solid ${token.colorBorderSecondary}`,
+          background: token.colorBgContainer,
+        }}
+      >
+        <span>{stats.words} 字</span>
+        <span>{stats.chars} 字符</span>
+        <span>{stats.readingTime} 阅读</span>
+      </div>
     </div>
   );
 }
