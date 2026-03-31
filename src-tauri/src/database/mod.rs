@@ -5,6 +5,7 @@ pub mod notes;
 pub mod schema;
 pub mod search;
 pub mod tags;
+pub mod templates;
 
 use std::sync::Mutex;
 

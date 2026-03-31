@@ -127,6 +127,12 @@ pub fn run() {
             commands::image::save_note_image_from_path,
             commands::image::delete_note_images,
             commands::image::get_images_dir,
+            // 模板模块
+            commands::template::list_templates,
+            commands::template::get_template,
+            commands::template::create_template,
+            commands::template::update_template,
+            commands::template::delete_template,
         ])
         // ─── 窗口事件处理 ─────────────────────────
         .on_window_event(|window, event| {

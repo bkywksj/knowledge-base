@@ -17,6 +17,10 @@ import {
   Segmented,
   Tag,
   Timeline,
+  Dropdown,
+  List,
+  Empty,
+  Spin,
   theme as antdTheme,
 } from "antd";
 import {
@@ -30,14 +34,16 @@ import {
   Clock,
   Pin,
   Calendar,
+  FileText,
+  LayoutTemplate,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
 import { save } from "@tauri-apps/plugin-dialog";
-import { noteApi, exportApi } from "@/lib/api";
+import { noteApi, exportApi, templateApi } from "@/lib/api";
 import { stripHtml, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
-import type { Note, NoteInput, PageResult } from "@/types";
+import type { Note, NoteInput, NoteTemplate, PageResult } from "@/types";
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -89,6 +95,9 @@ export default function NoteListPage() {
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState(searchParams.get("keyword") || "");
   const [createOpen, setCreateOpen] = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [templates, setTemplates] = useState<NoteTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [form] = Form.useForm<NoteInput>();
 
@@ -191,6 +200,37 @@ export default function NoteListPage() {
       },
     });
   }, [data.total, loadNotes]);
+
+  const openTemplateModal = useCallback(async () => {
+    setTemplateOpen(true);
+    setTemplatesLoading(true);
+    try {
+      const list = await templateApi.list();
+      setTemplates(list);
+    } catch (e) {
+      message.error(`加载模板失败: ${e}`);
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }, []);
+
+  const handleCreateFromTemplate = useCallback(
+    async (template: NoteTemplate) => {
+      try {
+        const note = await noteApi.create({
+          title: template.name,
+          content: template.content,
+          folder_id: folderId ? Number(folderId) : undefined,
+        });
+        message.success("从模板创建成功");
+        setTemplateOpen(false);
+        navigate(`/notes/${note.id}`);
+      } catch (e) {
+        message.error(String(e));
+      }
+    },
+    [folderId, navigate],
+  );
 
   const handleSearch = useCallback(() => {
     loadNotes(1, keyword);
@@ -328,9 +368,28 @@ export default function NoteListPage() {
               全部删除
             </Button>
           )}
-          <Button type="primary" icon={<Plus size={16} />} onClick={() => setCreateOpen(true)}>
-            新建笔记
-          </Button>
+          <Dropdown
+            menu={{
+              items: [
+                {
+                  key: "blank",
+                  icon: <FileText size={14} />,
+                  label: "空白笔记",
+                  onClick: () => setCreateOpen(true),
+                },
+                {
+                  key: "template",
+                  icon: <LayoutTemplate size={14} />,
+                  label: "从模板创建",
+                  onClick: openTemplateModal,
+                },
+              ],
+            }}
+          >
+            <Button type="primary" icon={<Plus size={16} />}>
+              新建笔记
+            </Button>
+          </Dropdown>
         </Space>
       </div>
 
@@ -621,6 +680,53 @@ export default function NoteListPage() {
             <Input.TextArea rows={4} placeholder="输入笔记内容（可选）" />
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* 模板选择弹窗 */}
+      <Modal
+        title="从模板创建笔记"
+        open={templateOpen}
+        onCancel={() => setTemplateOpen(false)}
+        footer={null}
+        width={500}
+      >
+        {templatesLoading ? (
+          <div className="flex justify-center py-8">
+            <Spin />
+          </div>
+        ) : templates.length > 0 ? (
+          <List
+            dataSource={templates}
+            renderItem={(tpl) => (
+              <List.Item
+                className="cursor-pointer"
+                style={{ padding: "10px 12px", borderRadius: 8 }}
+                onClick={() => handleCreateFromTemplate(tpl)}
+              >
+                <List.Item.Meta
+                  avatar={
+                    <div
+                      className="flex items-center justify-center rounded-lg"
+                      style={{
+                        width: 40,
+                        height: 40,
+                        background: token.colorPrimaryBg,
+                      }}
+                    >
+                      <LayoutTemplate size={18} style={{ color: token.colorPrimary }} />
+                    </div>
+                  }
+                  title={<span style={{ fontSize: 14 }}>{tpl.name}</span>}
+                  description={
+                    <span style={{ fontSize: 12 }}>{tpl.description || "无描述"}</span>
+                  }
+                />
+              </List.Item>
+            )}
+          />
+        ) : (
+          <Empty description="暂无模板，请在设置中添加" />
+        )}
       </Modal>
     </div>
   );

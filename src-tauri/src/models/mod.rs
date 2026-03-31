@@ -267,6 +267,26 @@ pub struct ExportProgress {
     pub file_name: String,
 }
 
+// ─── 笔记模板 ─────────────────────────────────
+
+/// 笔记模板
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteTemplate {
+    pub id: i64,
+    pub name: String,
+    pub description: String,
+    pub content: String,
+    pub created_at: String,
+}
+
+/// 创建/更新模板入参
+#[derive(Debug, Clone, Deserialize)]
+pub struct NoteTemplateInput {
+    pub name: String,
+    pub description: String,
+    pub content: String,
+}
+
 // ─── 通用 ─────────────────────────────────────
 
 /// 分页响应

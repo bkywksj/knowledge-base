@@ -20,6 +20,8 @@ import type {
   ImportResult,
   ScannedFile,
   ExportResult,
+  NoteTemplate,
+  NoteTemplateInput,
 } from "@/types";
 
 /** 系统相关 API */
@@ -182,6 +184,17 @@ export const imageApi = {
     invoke<void>("delete_note_images", { noteId }),
   /** 获取图片存储目录路径 */
   getImagesDir: () => invoke<string>("get_images_dir"),
+};
+
+/** 模板 API */
+export const templateApi = {
+  list: () => invoke<NoteTemplate[]>("list_templates"),
+  get: (id: number) => invoke<NoteTemplate>("get_template", { id }),
+  create: (input: NoteTemplateInput) =>
+    invoke<NoteTemplate>("create_template", { input }),
+  update: (id: number, input: NoteTemplateInput) =>
+    invoke<NoteTemplate>("update_template", { id, input }),
+  delete: (id: number) => invoke<void>("delete_template", { id }),
 };
 
 /** AI 写作辅助 API */

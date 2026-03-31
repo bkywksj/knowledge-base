@@ -222,6 +222,24 @@ export interface DashboardStats {
   total_words: number;
 }
 
+// ─── 笔记模板 ─────────────────────────────────
+
+/** 笔记模板 */
+export interface NoteTemplate {
+  id: number;
+  name: string;
+  description: string;
+  content: string;
+  created_at: string;
+}
+
+/** 创建/更新模板入参 */
+export interface NoteTemplateInput {
+  name: string;
+  description: string;
+  content: string;
+}
+
 // ─── 通用 ─────────────────────────────────────
 
 /** 分页响应 */
