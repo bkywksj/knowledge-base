@@ -13,6 +13,7 @@ import {
   Info,
   Trash2,
   CornerDownLeft,
+  Keyboard,
 } from "lucide-react";
 import { searchApi } from "@/lib/api";
 import type { SearchResult } from "@/types";
@@ -29,14 +30,16 @@ const pages = [
   { path: "/trash", icon: <Trash2 size={14} />, label: "回收站" },
   { path: "/settings", icon: <Settings size={14} />, label: "设置" },
   { path: "/about", icon: <Info size={14} />, label: "关于" },
+  { path: "#shortcuts", icon: <Keyboard size={14} />, label: "快捷键 (F1)" },
 ];
 
 interface CommandPaletteProps {
   open: boolean;
   onClose: () => void;
+  onOpenShortcuts?: () => void;
 }
 
-export function CommandPalette({ open, onClose }: CommandPaletteProps) {
+export function CommandPalette({ open, onClose, onOpenShortcuts }: CommandPaletteProps) {
   const navigate = useNavigate();
   const { token } = antdTheme.useToken();
   const [keyword, setKeyword] = useState("");
@@ -105,7 +108,13 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       } else if (e.key === "Enter") {
         e.preventDefault();
         if (selectedIndex < filteredPages.length) {
-          navigate(filteredPages[selectedIndex].path);
+          const page = filteredPages[selectedIndex];
+          if (page.path === "#shortcuts") {
+            onClose();
+            onOpenShortcuts?.();
+            return;
+          }
+          navigate(page.path);
         } else {
           const note = results[selectedIndex - filteredPages.length];
           if (note) navigate(`/notes/${note.id}`);
@@ -113,7 +122,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         onClose();
       }
     },
-    [totalItems, selectedIndex, filteredPages, results, navigate, onClose],
+    [totalItems, selectedIndex, filteredPages, results, navigate, onClose, onOpenShortcuts],
   );
 
   // 滚动到选中项
@@ -123,6 +132,11 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   }, [selectedIndex]);
 
   function selectPage(path: string) {
+    if (path === "#shortcuts") {
+      onClose();
+      onOpenShortcuts?.();
+      return;
+    }
     navigate(path);
     onClose();
   }

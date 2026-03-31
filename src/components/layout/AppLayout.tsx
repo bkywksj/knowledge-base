@@ -8,6 +8,7 @@ import { useAppStore } from "@/store";
 import { Sidebar } from "./Sidebar";
 import { WindowControls } from "./WindowControls";
 import { CommandPalette } from "@/components/ui/CommandPalette";
+import { ShortcutsPanel } from "@/components/ui/ShortcutsPanel";
 
 const { Header, Sider, Content } = Layout;
 
@@ -52,11 +53,16 @@ export function AppLayout() {
   const { token } = antdTheme.useToken();
   const navigate = useNavigate();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   const handleGlobalKeyDown = useCallback((e: KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "k") {
       e.preventDefault();
       setPaletteOpen((prev) => !prev);
+    }
+    if (e.key === "F1") {
+      e.preventDefault();
+      setShortcutsOpen((prev) => !prev);
     }
   }, []);
 
@@ -132,7 +138,12 @@ export function AppLayout() {
           <Outlet />
         </Content>
       </Layout>
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onOpenShortcuts={() => { setPaletteOpen(false); setShortcutsOpen(true); }}
+      />
+      <ShortcutsPanel open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     </Layout>
   );
 }
