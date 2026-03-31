@@ -22,6 +22,14 @@ import {
   Link as LinkIcon,
   Unlink,
   ImagePlus,
+  Table as TableIcon,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  AlignJustify,
+  Rows3,
+  Columns3,
+  Trash2,
 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -194,6 +202,61 @@ export function EditorToolbar({ editor, noteId }: ToolbarProps) {
         title: "代码块",
         action: () => editor.chain().focus().toggleCodeBlock().run(),
         isActive: () => editor.isActive("codeBlock"),
+      },
+    ],
+    // 对齐
+    [
+      {
+        icon: <AlignLeft size={15} />,
+        title: "左对齐",
+        action: () => editor.chain().focus().setTextAlign("left").run(),
+        isActive: () => editor.isActive({ textAlign: "left" }),
+      },
+      {
+        icon: <AlignCenter size={15} />,
+        title: "居中",
+        action: () => editor.chain().focus().setTextAlign("center").run(),
+        isActive: () => editor.isActive({ textAlign: "center" }),
+      },
+      {
+        icon: <AlignRight size={15} />,
+        title: "右对齐",
+        action: () => editor.chain().focus().setTextAlign("right").run(),
+        isActive: () => editor.isActive({ textAlign: "right" }),
+      },
+      {
+        icon: <AlignJustify size={15} />,
+        title: "两端对齐",
+        action: () => editor.chain().focus().setTextAlign("justify").run(),
+        isActive: () => editor.isActive({ textAlign: "justify" }),
+      },
+    ],
+    // 表格
+    [
+      {
+        icon: <TableIcon size={15} />,
+        title: "插入表格",
+        action: () =>
+          editor
+            .chain()
+            .focus()
+            .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+            .run(),
+      },
+      {
+        icon: <Columns3 size={15} />,
+        title: "添加列",
+        action: () => editor.chain().focus().addColumnAfter().run(),
+      },
+      {
+        icon: <Rows3 size={15} />,
+        title: "添加行",
+        action: () => editor.chain().focus().addRowAfter().run(),
+      },
+      {
+        icon: <Trash2 size={15} />,
+        title: "删除表格",
+        action: () => editor.chain().focus().deleteTable().run(),
       },
     ],
     // 链接 & 媒体

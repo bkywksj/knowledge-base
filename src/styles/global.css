@@ -312,6 +312,59 @@ body,
   border-color: rgba(255, 255, 255, 0.35) !important;
 }
 
+/* 表格 */
+.tiptap table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5em 0;
+  table-layout: fixed;
+  overflow: hidden;
+}
+
+.tiptap table td,
+.tiptap table th {
+  border: 1px solid var(--ant-color-border, #d9d9d9);
+  padding: 6px 10px;
+  vertical-align: top;
+  position: relative;
+  min-width: 60px;
+}
+
+.tiptap table th {
+  background: var(--ant-color-bg-layout, #fafafa);
+  font-weight: 600;
+}
+
+[data-theme="dark"] .tiptap table th {
+  background: var(--ant-color-bg-elevated, #1f1f1f);
+}
+
+/* 表格选中单元格高亮 */
+.tiptap table td.selectedCell,
+.tiptap table th.selectedCell {
+  background: var(--ant-color-primary-bg, #e6f4ff);
+}
+
+[data-theme="dark"] .tiptap table td.selectedCell,
+[data-theme="dark"] .tiptap table th.selectedCell {
+  background: rgba(22, 119, 255, 0.15);
+}
+
+/* 表格列拖拽调整宽度手柄 */
+.tiptap .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: -2px;
+  width: 4px;
+  background-color: var(--ant-color-primary, #1677ff);
+  pointer-events: none;
+}
+
+.tiptap.resize-cursor {
+  cursor: col-resize;
+}
+
 /* 占位符 */
 .tiptap p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);

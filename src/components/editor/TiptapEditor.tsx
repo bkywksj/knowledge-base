@@ -8,6 +8,11 @@ import Link from "@tiptap/extension-link";
 import Underline from "@tiptap/extension-underline";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import Typography from "@tiptap/extension-typography";
+import { Table } from "@tiptap/extension-table";
+import { TableRow } from "@tiptap/extension-table-row";
+import { TableCell } from "@tiptap/extension-table-cell";
+import { TableHeader } from "@tiptap/extension-table-header";
+import { TextAlign } from "@tiptap/extension-text-align";
 import ImageResize from "tiptap-extension-resize-image";
 import { common, createLowlight } from "lowlight";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -106,6 +111,16 @@ export function TiptapEditor({
       Underline,
       CodeBlockLowlight.configure({ lowlight }),
       Typography,
+      Table.configure({
+        resizable: true,
+        HTMLAttributes: { class: "tiptap-table" },
+      }),
+      TableRow,
+      TableCell,
+      TableHeader,
+      TextAlign.configure({
+        types: ["heading", "paragraph"],
+      }),
       ImageResize.configure({
         inline: false,
         minWidth: 50,
