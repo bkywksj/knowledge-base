@@ -1,12 +1,13 @@
-import { useRef } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
-import { Layout, Button, theme as antdTheme } from "antd";
+import { Layout, Button, theme as antdTheme, Tooltip } from "antd";
 import { MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined } from "@ant-design/icons";
-import { Sun, Moon } from "lucide-react";
+import { Sun, Moon, Search } from "lucide-react";
 import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 import { useAppStore } from "@/store";
 import { Sidebar } from "./Sidebar";
 import { WindowControls } from "./WindowControls";
+import { CommandPalette } from "@/components/ui/CommandPalette";
 
 const { Header, Sider, Content } = Layout;
 
@@ -50,6 +51,19 @@ export function AppLayout() {
     useAppStore();
   const { token } = antdTheme.useToken();
   const navigate = useNavigate();
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  const handleGlobalKeyDown = useCallback((e: KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+      e.preventDefault();
+      setPaletteOpen((prev) => !prev);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [handleGlobalKeyDown]);
 
   return (
     <Layout style={{ height: "100vh" }}>
@@ -87,6 +101,13 @@ export function AppLayout() {
           </div>
           <DragRegion />
           <div style={{ display: "flex", alignItems: "center" }}>
+            <Tooltip title="搜索 (Ctrl+K)">
+              <Button
+                type="text"
+                icon={<Search size={16} />}
+                onClick={() => setPaletteOpen(true)}
+              />
+            </Tooltip>
             <Button
               type="text"
               icon={theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
@@ -111,6 +132,7 @@ export function AppLayout() {
           <Outlet />
         </Content>
       </Layout>
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </Layout>
   );
 }
