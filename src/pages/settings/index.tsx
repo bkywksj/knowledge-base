@@ -17,12 +17,12 @@ import {
   List,
 } from "antd";
 import { SyncOutlined, PlusOutlined, StarFilled, StarOutlined } from "@ant-design/icons";
-import { Trash2, Pencil, FolderInput, FolderOutput } from "lucide-react";
+import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import type { Update } from "@tauri-apps/plugin-updater";
-import type { AppConfig, AiModel, AiModelInput, ImportResult, ImportProgress, ScannedFile, ExportResult, ExportProgress } from "@/types";
-import { configApi, systemApi, updaterApi, aiModelApi, importApi, exportApi, folderApi } from "@/lib/api";
+import type { AppConfig, AiModel, AiModelInput, ImportResult, ImportProgress, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput } from "@/types";
+import { configApi, systemApi, updaterApi, aiModelApi, importApi, exportApi, folderApi, templateApi } from "@/lib/api";
 import { Checkbox } from "antd";
 import { UpdateModal } from "@/components/ui/UpdateModal";
 import type { Folder } from "@/types";
@@ -76,6 +76,13 @@ export default function SettingsPage() {
   const [exportResult, setExportResult] = useState<ExportResult | null>(null);
   const [exportFolderId, setExportFolderId] = useState<number | undefined>(undefined);
 
+  // 模板管理状态
+  const [tplList, setTplList] = useState<NoteTemplate[]>([]);
+  const [tplLoading, setTplLoading] = useState(false);
+  const [tplModalOpen, setTplModalOpen] = useState(false);
+  const [editingTpl, setEditingTpl] = useState<NoteTemplate | null>(null);
+  const [tplForm] = Form.useForm<NoteTemplateInput>();
+
   async function loadConfigs() {
     setLoading(true);
     try {
@@ -126,10 +133,67 @@ export default function SettingsPage() {
     }
   }
 
+  async function loadTemplates() {
+    setTplLoading(true);
+    try {
+      const list = await templateApi.list();
+      setTplList(list);
+    } catch (e) {
+      message.error(`加载模板失败: ${e}`);
+    } finally {
+      setTplLoading(false);
+    }
+  }
+
+  function openAddTemplate() {
+    setEditingTpl(null);
+    tplForm.resetFields();
+    setTplModalOpen(true);
+  }
+
+  function openEditTemplate(tpl: NoteTemplate) {
+    setEditingTpl(tpl);
+    tplForm.setFieldsValue({
+      name: tpl.name,
+      description: tpl.description,
+      content: tpl.content,
+    });
+    setTplModalOpen(true);
+  }
+
+  async function handleTemplateSave() {
+    try {
+      const values = await tplForm.validateFields();
+      if (editingTpl) {
+        await templateApi.update(editingTpl.id, values);
+        message.success("模板已更新");
+      } else {
+        await templateApi.create(values);
+        message.success("模板已创建");
+      }
+      setTplModalOpen(false);
+      loadTemplates();
+    } catch (e) {
+      if (e && typeof e === "object" && "errorFields" in e) return;
+      message.error(`保存失败: ${e}`);
+    }
+  }
+
+  async function handleDeleteTemplate(id: number) {
+    try {
+      await templateApi.delete(id);
+      message.success("模板已删除");
+      loadTemplates();
+    } catch (e) {
+      message.error(`删除失败: ${e}`);
+    }
+  }
+
   useEffect(() => {
     loadConfigs();
     loadModels();
     loadFolders();
+    loadTemplates();
     systemApi
       .getSystemInfo()
       .then((info) => setAppVersion(info.appVersion))
@@ -595,6 +659,74 @@ export default function SettingsPage() {
         />
       </Card>
 
+      {/* 模板管理 */}
+      <Card
+        title={
+          <span className="flex items-center gap-2">
+            <LayoutTemplate size={16} />
+            笔记模板
+          </span>
+        }
+        className="mt-4"
+        extra={
+          <Button
+            type="primary"
+            size="small"
+            icon={<PlusOutlined />}
+            onClick={openAddTemplate}
+          >
+            新建模板
+          </Button>
+        }
+      >
+        <Table
+          columns={[
+            {
+              title: "模板名称",
+              dataIndex: "name",
+              key: "name",
+            },
+            {
+              title: "描述",
+              dataIndex: "description",
+              key: "description",
+              ellipsis: true,
+              render: (text: string) => (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {text || "—"}
+                </Text>
+              ),
+            },
+            {
+              title: "操作",
+              key: "action",
+              width: 100,
+              render: (_: unknown, record: NoteTemplate) => (
+                <Space size="small">
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<Pencil size={14} />}
+                    onClick={() => openEditTemplate(record)}
+                  />
+                  <Popconfirm
+                    title="确认删除此模板？"
+                    onConfirm={() => handleDeleteTemplate(record.id)}
+                  >
+                    <Button type="text" size="small" danger icon={<Trash2 size={14} />} />
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]}
+          dataSource={tplList}
+          rowKey="id"
+          loading={tplLoading}
+          pagination={false}
+          size="small"
+        />
+      </Card>
+
       <Card title="应用配置" className="mt-4">
         <Table
           columns={configColumns}
@@ -709,6 +841,37 @@ export default function SettingsPage() {
             rules={[{ required: true, message: "请输入模型标识" }]}
           >
             <Input placeholder="如: gpt-4o-mini / llama3 / claude-sonnet-4-20250514" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 模板编辑弹窗 */}
+      <Modal
+        title={editingTpl ? "编辑模板" : "新建模板"}
+        open={tplModalOpen}
+        onOk={handleTemplateSave}
+        onCancel={() => setTplModalOpen(false)}
+        okText="保存"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <Form form={tplForm} layout="vertical" className="mt-4">
+          <Form.Item
+            name="name"
+            label="模板名称"
+            rules={[{ required: true, message: "请输入模板名称" }]}
+          >
+            <Input placeholder="如：会议记录" />
+          </Form.Item>
+          <Form.Item name="description" label="描述" initialValue="">
+            <Input placeholder="简要描述模板用途" />
+          </Form.Item>
+          <Form.Item name="content" label="模板内容（HTML）" initialValue="">
+            <Input.TextArea
+              rows={8}
+              placeholder="输入 HTML 格式的模板内容，创建笔记时将自动填充"
+              style={{ fontFamily: "monospace", fontSize: 12 }}
+            />
           </Form.Item>
         </Form>
       </Modal>
