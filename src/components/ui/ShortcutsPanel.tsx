@@ -12,6 +12,8 @@ const shortcutGroups: ShortcutGroup[] = [
     items: [
       { keys: ["Ctrl", "K"], desc: "打开命令面板" },
       { keys: ["Ctrl", "S"], desc: "保存当前笔记" },
+      { keys: ["F11"], desc: "专注模式" },
+      { keys: ["Esc"], desc: "退出专注模式" },
     ],
   },
   {

@@ -13,7 +13,8 @@ import {
   Divider,
   Tooltip,
 } from "antd";
-import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Download } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Download, Maximize2, Minimize2 } from "lucide-react";
+import { useAppStore } from "@/store";
 import { noteApi, tagApi, folderApi, linkApi, exportApi } from "@/lib/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { relativeTime, stripHtml } from "@/lib/utils";
@@ -164,6 +165,7 @@ function MetaBar({
 export default function NoteEditorPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { focusMode, setFocusMode } = useAppStore();
   const [note, setNote] = useState<Note | null>(null);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -361,6 +363,12 @@ export default function NoteEditorPage() {
           {dirty && <Text type="warning">未保存</Text>}
         </Space>
         <Space align="center">
+          <Tooltip title={focusMode ? "退出专注模式 (Esc)" : "专注模式 (F11)"}>
+            <Button
+              icon={focusMode ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              onClick={() => setFocusMode(!focusMode)}
+            />
+          </Tooltip>
           <Tooltip title={note?.is_pinned ? "取消置顶" : "置顶"}>
             <Button
               type={note?.is_pinned ? "primary" : "default"}

@@ -48,7 +48,7 @@ function DragRegion() {
 }
 
 export function AppLayout() {
-  const { sidebarCollapsed, toggleSidebar, theme, toggleTheme } =
+  const { sidebarCollapsed, toggleSidebar, theme, toggleTheme, focusMode, setFocusMode } =
     useAppStore();
   const { token } = antdTheme.useToken();
   const navigate = useNavigate();
@@ -64,7 +64,14 @@ export function AppLayout() {
       e.preventDefault();
       setShortcutsOpen((prev) => !prev);
     }
-  }, []);
+    if (e.key === "Escape" && focusMode) {
+      setFocusMode(false);
+    }
+    if (e.key === "F11") {
+      e.preventDefault();
+      setFocusMode(!focusMode);
+    }
+  }, [focusMode, setFocusMode]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleGlobalKeyDown);
@@ -73,18 +80,21 @@ export function AppLayout() {
 
   return (
     <Layout style={{ height: "100vh" }}>
-      <Sider
-        collapsed={sidebarCollapsed}
-        collapsedWidth={60}
-        width={220}
-        style={{
-          borderRight: `1px solid ${token.colorBorderSecondary}`,
-          background: token.colorBgContainer,
-        }}
-      >
-        <Sidebar />
-      </Sider>
+      {!focusMode && (
+        <Sider
+          collapsed={sidebarCollapsed}
+          collapsedWidth={60}
+          width={220}
+          style={{
+            borderRight: `1px solid ${token.colorBorderSecondary}`,
+            background: token.colorBgContainer,
+          }}
+        >
+          <Sidebar />
+        </Sider>
+      )}
       <Layout>
+        {!focusMode && (
         <Header
           style={{
             padding: 0,
@@ -128,9 +138,10 @@ export function AppLayout() {
             <WindowControls />
           </div>
         </Header>
+        )}
         <Content
           style={{
-            padding: 24,
+            padding: focusMode ? 0 : 24,
             overflow: "auto",
             background: token.colorBgLayout,
           }}
