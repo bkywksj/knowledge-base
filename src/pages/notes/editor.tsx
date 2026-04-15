@@ -13,7 +13,7 @@ import {
   Divider,
   Tooltip,
 } from "antd";
-import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Download, Maximize2, Minimize2 } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2 } from "lucide-react";
 import { useAppStore } from "@/store";
 import { noteApi, tagApi, folderApi, linkApi, exportApi } from "@/lib/api";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -387,7 +387,7 @@ export default function NoteEditorPage() {
           </Button>
           <Tooltip title="导出为 Markdown">
             <Button
-              icon={<Download size={16} />}
+              icon={<Share size={16} />}
               onClick={handleExportNote}
             />
           </Tooltip>

@@ -92,6 +92,8 @@ export const trashApi = {
 
 /** 每日笔记 API */
 export const dailyApi = {
+  get: (date: string) =>
+    invoke<Note | null>("get_daily", { date }),
   getOrCreate: (date: string) =>
     invoke<Note>("get_or_create_daily", { date }),
   listDates: (year: number, month: number) =>

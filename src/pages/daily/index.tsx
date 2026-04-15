@@ -56,10 +56,17 @@ export default function DailyPage() {
     setLoading(true);
     setDirty(false);
     try {
-      const n = await dailyApi.getOrCreate(d);
-      setNote(n);
-      setTitle(n.title);
-      setContent(n.content);
+      const n = await dailyApi.get(d);
+      if (n) {
+        setNote(n);
+        setTitle(n.title);
+        setContent(n.content);
+      } else {
+        // 该日期还没有日记，仅设置默认标题，不创建数据库记录
+        setNote(null);
+        setTitle(`${d} 的日记`);
+        setContent("");
+      }
     } catch (e) {
       message.error(String(e));
     } finally {
@@ -93,11 +100,16 @@ export default function DailyPage() {
   }
 
   async function handleSave() {
-    if (!note) return;
     setSaving(true);
     try {
+      let currentNote = note;
+      // 如果还没有数据库记录，先创建
+      if (!currentNote) {
+        currentNote = await dailyApi.getOrCreate(date);
+        setNote(currentNote);
+      }
       const input: NoteInput = { title, content };
-      await noteApi.update(note.id, input);
+      await noteApi.update(currentNote.id, input);
       setDirty(false);
       message.success("保存成功");
     } catch (e) {
@@ -150,7 +162,7 @@ export default function DailyPage() {
             icon={<Save size={16} />}
             onClick={handleSave}
             loading={saving}
-            disabled={!dirty}
+            disabled={!dirty && note !== null}
           >
             保存
           </Button>

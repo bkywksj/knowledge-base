@@ -28,7 +28,7 @@ import {
   Search,
   Trash2,
   Edit3,
-  Download,
+  Share,
   LayoutList,
   LayoutGrid,
   Clock,
@@ -40,10 +40,10 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
 import { save } from "@tauri-apps/plugin-dialog";
-import { noteApi, exportApi, templateApi } from "@/lib/api";
+import { noteApi, exportApi, templateApi, folderApi } from "@/lib/api";
 import { stripHtml, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
-import type { Note, NoteInput, NoteTemplate, PageResult } from "@/types";
+import type { Note, NoteInput, NoteTemplate, PageResult, Folder } from "@/types";
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -102,6 +102,23 @@ export default function NoteListPage() {
   const [form] = Form.useForm<NoteInput>();
 
   const folderId = searchParams.get("folder");
+
+  // 文件夹 id → name 映射（用于显示目录列）
+  const [folderMap, setFolderMap] = useState<Map<number, string>>(new Map());
+
+  useEffect(() => {
+    folderApi.list().then((folders) => {
+      const map = new Map<number, string>();
+      function flatten(list: Folder[]) {
+        for (const f of list) {
+          map.set(f.id, f.name);
+          if (f.children?.length) flatten(f.children);
+        }
+      }
+      flatten(folders);
+      setFolderMap(map);
+    });
+  }, []);
 
   useEffect(() => {
     loadNotes(1);
@@ -268,6 +285,26 @@ export default function NoteListPage() {
         ),
       },
       {
+        title: "目录",
+        dataIndex: "folder_id",
+        key: "folder",
+        width: 100,
+        ellipsis: true,
+        render: (fid: number | null) =>
+          fid && folderMap.get(fid) ? (
+            <a
+              onClick={() => navigate(`/notes?folder=${fid}`)}
+              style={{ fontSize: 12 }}
+            >
+              {folderMap.get(fid)}
+            </a>
+          ) : (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              —
+            </Text>
+          ),
+      },
+      {
         title: "字数",
         dataIndex: "word_count",
         key: "word_count",
@@ -307,7 +344,7 @@ export default function NoteListPage() {
               <Button
                 type="link"
                 size="small"
-                icon={<Download size={14} />}
+                icon={<Share size={14} />}
                 onClick={() => handleExport(record)}
               />
             </Tooltip>
@@ -320,7 +357,7 @@ export default function NoteListPage() {
         ),
       },
     ],
-    [navigate, token.colorWarning, handleDelete, handleExport],
+    [navigate, token.colorWarning, handleDelete, handleExport, folderMap],
   );
 
   // 时间线分组（缓存）
@@ -520,7 +557,7 @@ export default function NoteListPage() {
                                       <Button
                                         type="text"
                                         size="small"
-                                        icon={<Download size={11} />}
+                                        icon={<Share size={11} />}
                                         onClick={(e) => { e.stopPropagation(); handleExport(note); }}
                                         style={{ height: 20, width: 20, padding: 0 }}
                                       />

@@ -6,6 +6,12 @@ use crate::models::Note;
 pub struct DailyService;
 
 impl DailyService {
+    /// 查询每日笔记（不创建）
+    pub fn get(db: &Database, date: &str) -> Result<Option<Note>, AppError> {
+        validate_date(date)?;
+        db.get_daily(date)
+    }
+
     /// 获取或创建每日笔记
     pub fn get_or_create(db: &Database, date: &str) -> Result<Note, AppError> {
         validate_date(date)?;

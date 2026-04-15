@@ -289,6 +289,35 @@ impl Database {
 
     // ─── 每日笔记 DAO ────────────────────────────
 
+    /// 查询每日笔记（不创建）
+    pub fn get_daily(&self, date: &str) -> Result<Option<Note>, AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at
+             FROM notes WHERE is_daily = 1 AND daily_date = ?1 AND is_deleted = 0",
+        )?;
+
+        let existing = stmt
+            .query_row(params![date], |row| {
+                Ok(Note {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    content: row.get(2)?,
+                    folder_id: row.get(3)?,
+                    is_daily: row.get::<_, i32>(4)? != 0,
+                    daily_date: row.get(5)?,
+                    is_pinned: row.get::<_, i32>(6)? != 0,
+                    word_count: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                })
+            })
+            .ok();
+
+        Ok(existing)
+    }
+
     /// 获取或创建每日笔记
     pub fn get_or_create_daily(&self, date: &str) -> Result<Note, AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;

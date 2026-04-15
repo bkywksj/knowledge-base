@@ -84,6 +84,7 @@ pub fn run() {
             commands::trash::list_trash,
             commands::trash::empty_trash,
             // 每日笔记模块
+            commands::daily::get_daily,
             commands::daily::get_or_create_daily,
             commands::daily::list_daily_dates,
             // 标签模块

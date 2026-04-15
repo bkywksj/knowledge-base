@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Card, Typography, Descriptions, Spin, message, Button, Tooltip, Modal, Tag } from "antd";
 import { FolderOpen, Copy } from "lucide-react";
-import { RocketOutlined, ThunderboltOutlined, RightOutlined, CopyOutlined, CheckOutlined } from "@ant-design/icons";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { RocketOutlined, ThunderboltOutlined, RightOutlined, CopyOutlined, CheckOutlined, AppstoreOutlined } from "@ant-design/icons";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import type { SystemInfo } from "@/types";
 import { systemApi } from "@/lib/api";
 
@@ -15,6 +15,7 @@ export default function AboutPage() {
   const [promoCopied, setPromoCopied] = useState(false);
   const [frameworkOpen, setFrameworkOpen] = useState(false);
   const [frameworkCopied, setFrameworkCopied] = useState(false);
+  const [workstationOpen, setWorkstationOpen] = useState(false);
 
   useEffect(() => {
     systemApi
@@ -201,6 +202,32 @@ export default function AboutPage() {
         <RightOutlined style={{ fontSize: 11, color: "var(--ant-color-text-quaternary)" }} />
       </div>
 
+      {/* 推荐：AI 全能工作站 */}
+      <div
+        onClick={() => setWorkstationOpen(true)}
+        style={{
+          padding: "12px 16px",
+          borderRadius: 8,
+          border: "1px solid var(--ant-color-border)",
+          background: "var(--ant-color-bg-container)",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          transition: "border-color 0.2s",
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-primary)")}
+        onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-border)")}
+      >
+        <AppstoreOutlined style={{ fontSize: 20, color: "var(--ant-color-primary)" }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Text strong style={{ fontSize: 13 }}>AI 全能工作站</Text>
+          <br />
+          <Text type="secondary" style={{ fontSize: 11 }}>42 集视频教程已发布，MCP 接入试用中</Text>
+        </div>
+        <RightOutlined style={{ fontSize: 11, color: "var(--ant-color-text-quaternary)" }} />
+      </div>
+
       {/* RuoYi-Plus-UniApp 详情弹窗 */}
       <Modal
         title={null}
@@ -265,6 +292,72 @@ export default function AboutPage() {
             }}
           >
             {promoCopied ? "已复制!" : "咨询: 770492966"}
+          </Button>
+        </div>
+      </Modal>
+
+      {/* AI 全能工作站 详情弹窗 */}
+      <Modal
+        title={null}
+        open={workstationOpen}
+        onCancel={() => setWorkstationOpen(false)}
+        footer={[
+          <Button key="close" onClick={() => setWorkstationOpen(false)}>关闭</Button>,
+          <Button key="site" type="primary" onClick={() => openUrl("https://ai-workstation.ruoyi.plus/")}>
+            访问官网
+          </Button>,
+        ]}
+        width={520}
+      >
+        <div style={{ textAlign: "center", paddingTop: 8, paddingBottom: 12 }}>
+          <AppstoreOutlined style={{ fontSize: 36, color: "var(--ant-color-primary)" }} />
+          <Title level={4} style={{ margin: "12px 0 4px" }}>AI 全能工作站</Title>
+          <Paragraph type="secondary" style={{ marginBottom: 12 }}>一句话说出需求，自动路由到对应专业模块执行</Paragraph>
+          <div style={{ display: "flex", justifyContent: "center", gap: 24 }}>
+            {[
+              ["55+", "专业模块"],
+              ["1300+", "AI 技能"],
+              ["42", "集视频教程"],
+            ].map(([num, label]) => (
+              <div key={label} style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "var(--ant-color-primary)" }}>{num}</div>
+                <Text type="secondary" style={{ fontSize: 11 }}>{label}</Text>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center", marginBottom: 8 }}>
+            <Tag color="orange">MCP</Tag>
+            <Tag color="blue">Claude Code</Tag>
+            <Tag color="green">55+ 模块</Tag>
+            <Tag color="purple">全域覆盖</Tag>
+          </div>
+
+          {[
+            ["42 集视频教程", "从入门到精通的完整使用教程，最后一集为 MCP 接入实战"],
+            ["MCP 试用体验", "通过 MCP 即可试用工作站，邀请新用户试用天数 +1"],
+            ["55+ 专业模块", "覆盖设计、视频、文档、代码、企业管理等全域场景"],
+            ["智能路由调度", "自然语言输入需求，自动匹配最佳模块和技能执行"],
+          ].map(([title, desc]) => (
+            <div key={title} style={{ padding: "8px 12px", borderRadius: 6, background: "var(--ant-color-bg-layout)", border: "1px solid var(--ant-color-border)" }}>
+              <Text strong style={{ fontSize: 13 }}>{title}</Text>
+              <br />
+              <Text type="secondary" style={{ fontSize: 12 }}>{desc}</Text>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <Button type="link" size="small" onClick={() => openUrl("https://www.bilibili.com/video/BV17cXNBkEEV")}>
+            观看教程 (B站)
+          </Button>
+          <Button type="link" size="small" onClick={() => openUrl("https://ai-workstation-mcp.agilefr.com/")}>
+            MCP 试用
+          </Button>
+          <Button type="link" size="small" onClick={() => openUrl("https://ai-workstation.ruoyi.plus/")}>
+            官网
           </Button>
         </div>
       </Modal>
