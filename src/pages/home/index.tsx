@@ -133,9 +133,9 @@ export default function HomePage() {
   const displayedRecent = useMemo(() => recentNotes.slice(0, 6), [recentNotes]);
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-4xl mx-auto" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* 快速搜索 */}
-      <div className="mb-5">
+      <div>
         <Input
           size="large"
           placeholder="搜索笔记..."
@@ -149,7 +149,7 @@ export default function HomePage() {
       </div>
 
       {/* 统计卡片 */}
-      <Row gutter={[12, 12]} className="mb-5">
+      <Row gutter={[12, 12]}>
         {statCards.map((item) => (
           <Col key={item.key} span={4}>
             <Card
@@ -170,7 +170,7 @@ export default function HomePage() {
       </Row>
 
       {/* 快捷操作 */}
-      <Row gutter={12} className="mb-5">
+      <Row gutter={12}>
         <Col span={8}>
           <Button
             type="default"
@@ -216,7 +216,6 @@ export default function HomePage() {
               近两周写作趋势
             </span>
           }
-          className="mb-4"
           styles={{ body: { padding: "12px 16px" } }}
         >
           {(() => {
@@ -273,7 +272,6 @@ export default function HomePage() {
               置顶笔记
             </span>
           }
-          className="mb-4"
           styles={{ body: { padding: "4px 12px" } }}
         >
           <List
@@ -370,7 +368,7 @@ export default function HomePage() {
       </Card>
 
       {/* 底部快捷入口 */}
-      <Row gutter={12} className="mt-5 mb-4">
+      <Row gutter={12}>
         <Col span={8}>
           <Card
             size="small"
