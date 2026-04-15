@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./themes.css";
 
 :root {
   --sidebar-width: 220px;
@@ -27,13 +28,7 @@ body,
   background: rgba(0, 0, 0, 0.25);
 }
 
-/* 暗色模式滚动条 */
-[data-theme="dark"] ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-}
-[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
-}
+/* 暗色模式滚动条 — 见 themes.css */
 
 /* ─── Lucide 图标垂直居中 ──────────────────────── */
 
@@ -48,24 +43,7 @@ body,
   justify-content: center;
 }
 
-/* ─── 暗色模式卡片增强 ─────────────────────────── */
-
-[data-theme="dark"] .ant-card,
-.dark .ant-card {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(255, 255, 255, 0.08);
-}
-
-[data-theme="dark"] .ant-card-hoverable:hover,
-.dark .ant-card-hoverable:hover {
-  border-color: rgba(255, 255, 255, 0.15);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-}
-
-[data-theme="dark"] .ant-statistic-title,
-.dark .ant-statistic-title {
-  color: rgba(255, 255, 255, 0.45);
-}
+/* ─── 暗色模式卡片增强 — 见 themes.css ────────── */
 
 /* ─── 侧边栏 Menu 背景继承 ─────────────────────── */
 
@@ -73,14 +51,7 @@ body,
   background: transparent !important;
 }
 
-/* 暗色模式 Menu 选中项 */
-[data-theme="dark"] .ant-menu-item-selected {
-  background: rgba(255, 255, 255, 0.08) !important;
-}
-
-[data-theme="dark"] .ant-menu-item:hover:not(.ant-menu-item-selected) {
-  background: rgba(255, 255, 255, 0.04) !important;
-}
+/* 暗色模式 Menu — 见 themes.css */
 
 /* ─── 笔记编辑器页面布局（Typora 风格） ────────── */
 
@@ -184,11 +155,7 @@ body,
   background: var(--ant-color-primary-bg, #e6f4ff) !important;
 }
 
-/* 暗色模式工具栏激活按钮 */
-[data-theme="dark"] .toolbar-btn-active {
-  color: rgba(255, 255, 255, 0.85) !important;
-  background: rgba(255, 255, 255, 0.12) !important;
-}
+/* 暗色模式工具栏 — 见 themes.css */
 
 .tiptap-content .tiptap {
   outline: none;
@@ -280,10 +247,7 @@ body,
   padding: 1px 2px;
   border-radius: 2px;
 }
-[data-theme="dark"] .tiptap mark {
-  background: rgba(255, 243, 191, 0.2);
-  color: #ffd666;
-}
+/* 暗色模式 mark — 见 themes.css */
 
 /* 链接 */
 .tiptap-link {
@@ -307,10 +271,7 @@ body,
   margin: 0.5em 0;
 }
 
-/* 图片 resize 容器暗色模式适配 */
-[data-theme="dark"] .tiptap [style*="border: 1px dashed"] {
-  border-color: rgba(255, 255, 255, 0.35) !important;
-}
+/* 图片 resize 暗色 — 见 themes.css */
 
 /* 表格 */
 .tiptap table {
@@ -335,9 +296,7 @@ body,
   font-weight: 600;
 }
 
-[data-theme="dark"] .tiptap table th {
-  background: var(--ant-color-bg-elevated, #1f1f1f);
-}
+/* 暗色模式表格 — 见 themes.css */
 
 /* 表格选中单元格高亮 */
 .tiptap table td.selectedCell,
@@ -345,10 +304,7 @@ body,
   background: var(--ant-color-primary-bg, #e6f4ff);
 }
 
-[data-theme="dark"] .tiptap table td.selectedCell,
-[data-theme="dark"] .tiptap table th.selectedCell {
-  background: rgba(22, 119, 255, 0.15);
-}
+/* 暗色模式选中 — 见 themes.css */
 
 /* 表格列拖拽调整宽度手柄 */
 .tiptap .column-resize-handle {

@@ -1,14 +1,17 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
-import { Layout, Button, theme as antdTheme, Tooltip } from "antd";
+import { Layout, Button, theme as antdTheme, Tooltip, Dropdown } from "antd";
 import { MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined } from "@ant-design/icons";
-import { Sun, Moon, Search } from "lucide-react";
+import { Sun, Moon, Search, Palette } from "lucide-react";
 import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 import { useAppStore } from "@/store";
+import { getThemesByCategory } from "@/theme/tokens";
+import type { ThemeMode } from "@/theme/tokens";
 import { Sidebar } from "./Sidebar";
 import { WindowControls } from "./WindowControls";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 import { ShortcutsPanel } from "@/components/ui/ShortcutsPanel";
+import { StarryBackground } from "@/components/ui/StarryBackground";
 
 const { Header, Sider, Content } = Layout;
 
@@ -48,12 +51,46 @@ function DragRegion() {
 }
 
 export function AppLayout() {
-  const { sidebarCollapsed, toggleSidebar, theme, toggleTheme, focusMode, setFocusMode } =
-    useAppStore();
+  const {
+    sidebarCollapsed, toggleSidebar,
+    themeCategory, toggleTheme,
+    lightTheme, darkTheme,
+    setLightTheme, setDarkTheme,
+    focusMode, setFocusMode,
+  } = useAppStore();
+  const activeTheme = themeCategory === "light" ? lightTheme : darkTheme;
   const { token } = antdTheme.useToken();
   const navigate = useNavigate();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+
+  const themeMenuItems = [
+    { type: "group" as const, label: "亮色主题", children: getThemesByCategory("light").map(t => ({
+      key: t.key,
+      label: <span className="flex items-center gap-2">
+        <span className="flex gap-1">{t.colors.slice(0,3).map((c,i) => <span key={i} style={{width:10,height:10,borderRadius:3,background:c,display:'inline-block'}} />)}</span>
+        {t.label}
+      </span>,
+    }))},
+    { type: "group" as const, label: "暗色主题", children: getThemesByCategory("dark").map(t => ({
+      key: t.key,
+      label: <span className="flex items-center gap-2">
+        <span className="flex gap-1">{t.colors.slice(0,3).map((c,i) => <span key={i} style={{width:10,height:10,borderRadius:3,background:c,display:'inline-block'}} />)}</span>
+        {t.label}
+      </span>,
+    }))},
+  ];
+
+  function handleThemeSelect({ key }: { key: string }) {
+    const mode = key as ThemeMode;
+    if (mode.startsWith("light")) {
+      setLightTheme(mode);
+      if (themeCategory !== "light") toggleTheme();
+    } else {
+      setDarkTheme(mode);
+      if (themeCategory !== "dark") toggleTheme();
+    }
+  }
 
   const handleGlobalKeyDown = useCallback((e: KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "k") {
@@ -79,7 +116,8 @@ export function AppLayout() {
   }, [handleGlobalKeyDown]);
 
   return (
-    <Layout style={{ height: "100vh" }}>
+    <Layout style={{ height: "100vh", position: "relative" }}>
+      {activeTheme === "dark-starry" && <StarryBackground />}
       {!focusMode && (
         <Sider
           collapsed={sidebarCollapsed}
@@ -124,11 +162,18 @@ export function AppLayout() {
                 onClick={() => setPaletteOpen(true)}
               />
             </Tooltip>
-            <Button
-              type="text"
-              icon={theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-              onClick={toggleTheme}
-            />
+            <Tooltip title="切换亮/暗">
+              <Button
+                type="text"
+                icon={themeCategory === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+                onClick={toggleTheme}
+              />
+            </Tooltip>
+            <Dropdown menu={{ items: themeMenuItems, onClick: handleThemeSelect, selectedKeys: [activeTheme] }} trigger={["click"]}>
+              <Tooltip title="选择主题风格">
+                <Button type="text" icon={<Palette size={16} />} />
+              </Tooltip>
+            </Dropdown>
             <Button
               type="text"
               icon={<SettingOutlined />}
