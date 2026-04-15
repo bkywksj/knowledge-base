@@ -45,7 +45,7 @@ export default function AboutPage() {
   const dbPath = info ? `${info.dataDir}${info.dataDir.includes("\\") ? "\\" : "/"}app.db` : "";
 
   return (
-    <div className="max-w-2xl mx-auto">
+    <div className="max-w-2xl mx-auto space-y-4">
       <Title level={3}>关于</Title>
       <Text type="secondary">系统信息和应用版本</Text>
 
@@ -151,7 +151,6 @@ export default function AboutPage() {
       {/* 推荐：RuoYi-Plus-UniApp */}
       <div
         onClick={() => setPromoOpen(true)}
-        className="mt-4"
         style={{
           padding: "12px 16px",
           borderRadius: 8,
@@ -178,7 +177,6 @@ export default function AboutPage() {
       {/* 推荐：灵动桌面应用开发框架 */}
       <div
         onClick={() => setFrameworkOpen(true)}
-        className="mt-3"
         style={{
           padding: "12px 16px",
           borderRadius: 8,

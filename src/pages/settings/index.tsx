@@ -468,11 +468,13 @@ export default function SettingsPage() {
   ];
 
   return (
-    <div className="max-w-2xl mx-auto">
-      <Title level={3}>设置</Title>
-      <Text type="secondary">应用配置与 AI 模型管理</Text>
+    <div className="max-w-2xl mx-auto space-y-4">
+      <div>
+        <Title level={3}>设置</Title>
+        <Text type="secondary">应用配置与 AI 模型管理</Text>
+      </div>
 
-      <Card title="软件更新" className="mt-6">
+      <Card title="软件更新">
         <Space>
           <Button
             icon={<SyncOutlined spin={checking} />}
@@ -497,7 +499,7 @@ export default function SettingsPage() {
       >
         <div className="mb-3">
           <Typography.Paragraph type="secondary" style={{ marginBottom: 8, fontSize: 13 }}>
-            从 Obsidian vault 或 Typora 文件夹中批量导入 .md 文件为笔记。
+            从本地文件夹中批量导入 .md 文件为笔记。
             支持递归读取子文件夹，自动提取 Markdown 标题，导入前可预览并勾选。
           </Typography.Paragraph>
           <Space>
@@ -576,7 +578,7 @@ export default function SettingsPage() {
       >
         <div className="mb-3">
           <Typography.Paragraph type="secondary" style={{ marginBottom: 8, fontSize: 13 }}>
-            将笔记导出为 Markdown 文件，按文件夹结构组织。便于迁移到其他工具（Obsidian、Typora 等）。
+            将笔记导出为 Markdown 文件，按文件夹结构组织。便于备份或迁移到其他笔记工具。
           </Typography.Paragraph>
           <Space>
             <Select
@@ -727,7 +729,7 @@ export default function SettingsPage() {
         />
       </Card>
 
-      <Card title="应用配置" className="mt-4">
+      <Card title="应用配置">
         <Table
           columns={configColumns}
           dataSource={configs}
