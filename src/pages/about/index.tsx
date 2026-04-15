@@ -46,10 +46,12 @@ export default function AboutPage() {
 
   return (
     <div className="max-w-2xl mx-auto" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <Title level={3}>关于</Title>
-      <Text type="secondary">系统信息和应用版本</Text>
+      <div>
+        <Title level={3} style={{ marginBottom: 4 }}>关于</Title>
+        <Text type="secondary">系统信息和应用版本</Text>
+      </div>
 
-      <Card title="系统信息" className="mt-6">
+      <Card title="系统信息">
         {loading ? (
           <div className="flex justify-center py-8">
             <Spin />
