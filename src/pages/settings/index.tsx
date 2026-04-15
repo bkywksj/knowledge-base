@@ -468,7 +468,7 @@ export default function SettingsPage() {
   ];
 
   return (
-    <div className="max-w-2xl mx-auto space-y-4">
+    <div className="max-w-2xl mx-auto" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div>
         <Title level={3}>设置</Title>
         <Text type="secondary">应用配置与 AI 模型管理</Text>
@@ -495,7 +495,6 @@ export default function SettingsPage() {
             导入 Markdown
           </span>
         }
-        className="mt-4"
       >
         <div className="mb-3">
           <Typography.Paragraph type="secondary" style={{ marginBottom: 8, fontSize: 13 }}>
@@ -574,7 +573,6 @@ export default function SettingsPage() {
             导出 Markdown
           </span>
         }
-        className="mt-4"
       >
         <div className="mb-3">
           <Typography.Paragraph type="secondary" style={{ marginBottom: 8, fontSize: 13 }}>
@@ -639,7 +637,6 @@ export default function SettingsPage() {
 
       <Card
         title="AI 模型配置"
-        className="mt-4"
         extra={
           <Button
             type="primary"
@@ -669,7 +666,6 @@ export default function SettingsPage() {
             笔记模板
           </span>
         }
-        className="mt-4"
         extra={
           <Button
             type="primary"

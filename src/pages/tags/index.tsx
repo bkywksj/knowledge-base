@@ -144,7 +144,7 @@ export default function TagsPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-4">
+    <div className="max-w-4xl mx-auto" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between">
         <Title level={3} style={{ margin: 0, lineHeight: "32px" }}>
