@@ -125,7 +125,6 @@ export function AppLayout() {
           width={220}
           style={{
             borderRight: `1px solid ${token.colorBorderSecondary}`,
-            background: token.colorBgContainer,
           }}
         >
           <Sidebar />
@@ -140,7 +139,6 @@ export function AppLayout() {
             lineHeight: "48px",
             display: "flex",
             alignItems: "center",
-            background: token.colorBgContainer,
             borderBottom: `1px solid ${token.colorBorderSecondary}`,
           }}
         >
@@ -188,7 +186,6 @@ export function AppLayout() {
           style={{
             padding: focusMode ? 0 : 24,
             overflow: "auto",
-            background: token.colorBgLayout,
           }}
         >
           <Outlet />
