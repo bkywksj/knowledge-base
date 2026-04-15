@@ -2,7 +2,7 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
 import { Layout, Button, theme as antdTheme, Tooltip, Dropdown } from "antd";
 import { MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined } from "@ant-design/icons";
-import { Sun, Moon, Search, Palette } from "lucide-react";
+import { Search, Palette } from "lucide-react";
 import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 import { useAppStore } from "@/store";
 import { getThemesByCategory } from "@/theme/tokens";
@@ -53,9 +53,10 @@ function DragRegion() {
 export function AppLayout() {
   const {
     sidebarCollapsed, toggleSidebar,
-    themeCategory, toggleTheme,
+    themeCategory,
     lightTheme, darkTheme,
     setLightTheme, setDarkTheme,
+    setThemeCategory,
     focusMode, setFocusMode,
   } = useAppStore();
   const activeTheme = themeCategory === "light" ? lightTheme : darkTheme;
@@ -85,10 +86,10 @@ export function AppLayout() {
     const mode = key as ThemeMode;
     if (mode.startsWith("light")) {
       setLightTheme(mode);
-      if (themeCategory !== "light") toggleTheme();
+      setThemeCategory("light");
     } else {
       setDarkTheme(mode);
-      if (themeCategory !== "dark") toggleTheme();
+      setThemeCategory("dark");
     }
   }
 
@@ -160,15 +161,8 @@ export function AppLayout() {
                 onClick={() => setPaletteOpen(true)}
               />
             </Tooltip>
-            <Tooltip title="切换亮/暗">
-              <Button
-                type="text"
-                icon={themeCategory === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-                onClick={toggleTheme}
-              />
-            </Tooltip>
             <Dropdown menu={{ items: themeMenuItems, onClick: handleThemeSelect, selectedKeys: [activeTheme] }} trigger={["click"]}>
-              <Tooltip title="选择主题风格">
+              <Tooltip title="切换主题">
                 <Button type="text" icon={<Palette size={16} />} />
               </Tooltip>
             </Dropdown>
