@@ -121,7 +121,7 @@ export default function TrashPage() {
     {
       title: "操作",
       key: "action",
-      width: 160,
+      width: 200,
       render: (_: unknown, record: Note) => (
         <Space size="small">
           <Button
