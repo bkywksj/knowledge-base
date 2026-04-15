@@ -131,7 +131,6 @@ export default function AboutPage() {
       {info && (
         <Card
           title="数据迁移说明"
-          style={{ marginTop: 16 }}
           size="small"
         >
           <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginBottom: 8 }}>
