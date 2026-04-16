@@ -53,5 +53,5 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
-panic = "abort"
+# 注意：不能设置 panic = "abort"，否则 html2md 的子依赖会因 panic 策略冲突编译失败
 
