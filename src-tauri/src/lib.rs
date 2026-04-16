@@ -28,7 +28,15 @@ pub fn run() {
             // 初始化数据库（存放在应用数据目录）
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
-            let db_path = data_dir.join("app.db");
+
+            // 开发/生产数据隔离：dev 模式下所有数据加 dev- 前缀，避免改坏生产数据
+            // 首次启动 dev 时若检测到旧无前缀数据，自动迁移
+            if cfg!(debug_assertions) {
+                migrate_to_dev_prefix(&data_dir);
+            }
+
+            let prefix = if cfg!(debug_assertions) { "dev-" } else { "" };
+            let db_path = data_dir.join(format!("{}app.db", prefix));
             let db_path_str = db_path.to_string_lossy().to_string();
 
             let db = database::Database::init(&db_path_str)
@@ -36,7 +44,7 @@ pub fn run() {
 
             log::info!("数据库初始化完成: {}", db_path_str);
 
-            // 初始化图片存储目录
+            // 初始化图片存储目录（image service 内部会自动加 dev- 前缀）
             let images_dir = services::image::ImageService::ensure_dir(&data_dir)
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             log::info!("图片存储目录: {}", images_dir.display());
@@ -147,3 +155,30 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+/// dev 模式首次启动时，把旧的无前缀数据自动迁移到 dev- 前缀
+/// （只在 cfg!(debug_assertions) 下调用；迁移失败仅记日志，不阻断启动）
+#[cfg(debug_assertions)]
+fn migrate_to_dev_prefix(data_dir: &std::path::Path) {
+    let pairs: &[(&str, &str)] = &[
+        ("app.db", "dev-app.db"),
+        ("app.db-shm", "dev-app.db-shm"),
+        ("app.db-wal", "dev-app.db-wal"),
+        ("kb_assets", "dev-kb_assets"),
+        ("settings.json", "dev-settings.json"),
+    ];
+    for (old, new) in pairs {
+        let old_p = data_dir.join(old);
+        let new_p = data_dir.join(new);
+        if old_p.exists() && !new_p.exists() {
+            match std::fs::rename(&old_p, &new_p) {
+                Ok(_) => log::info!("[dev 迁移] {} → {}", old_p.display(), new_p.display()),
+                Err(e) => log::warn!("[dev 迁移失败] {} → {}: {}", old_p.display(), new_p.display(), e),
+            }
+        }
+    }
+}
+
+#[cfg(not(debug_assertions))]
+#[allow(dead_code)]
+fn migrate_to_dev_prefix(_data_dir: &std::path::Path) {}

@@ -4,16 +4,22 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 use crate::error::AppError;
 
-/// 图片资产目录名
-const ASSETS_DIR: &str = "kb_assets";
+/// 图片资产目录名（dev 模式加 dev- 前缀实现数据隔离）
+const ASSETS_DIR_PROD: &str = "kb_assets";
+const ASSETS_DIR_DEV: &str = "dev-kb_assets";
 const IMAGES_DIR: &str = "images";
+
+#[inline]
+fn assets_dir_name() -> &'static str {
+    if cfg!(debug_assertions) { ASSETS_DIR_DEV } else { ASSETS_DIR_PROD }
+}
 
 pub struct ImageService;
 
 impl ImageService {
-    /// 获取图片根目录: {app_data_dir}/kb_assets/images/
+    /// 获取图片根目录: {app_data_dir}/{prefix}kb_assets/images/
     pub fn images_dir(app_data_dir: &Path) -> PathBuf {
-        app_data_dir.join(ASSETS_DIR).join(IMAGES_DIR)
+        app_data_dir.join(assets_dir_name()).join(IMAGES_DIR)
     }
 
     /// 确保图片目录存在

@@ -2,6 +2,10 @@ import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
 import type { ThemeMode, ThemeCategory } from "@/theme/tokens";
 
+// 开发/生产数据隔离：dev 用 dev-settings.json，prod 用 settings.json
+// 与后端 cfg!(debug_assertions) 加 dev- 前缀对齐；旧文件由后端 migrate_to_dev_prefix 自动迁移
+const STORE_FILE = import.meta.env.DEV ? "dev-settings.json" : "settings.json";
+
 interface AppStore {
   /** 当前亮色主题 */
   lightTheme: ThemeMode;
@@ -53,7 +57,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 /** 从 tauri-plugin-store 恢复主题设置 */
 export async function loadThemeFromStore() {
   try {
-    const store = await Store.load("settings.json");
+    const store = await Store.load(STORE_FILE);
     const lt = await store.get<ThemeMode>("lightTheme");
     const dt = await store.get<ThemeMode>("darkTheme");
     const cat = await store.get<ThemeCategory>("themeCategory");
@@ -69,7 +73,7 @@ export async function loadThemeFromStore() {
 export async function saveThemeToStore() {
   try {
     const { lightTheme, darkTheme, themeCategory } = useAppStore.getState();
-    const store = await Store.load("settings.json");
+    const store = await Store.load(STORE_FILE);
     await store.set("lightTheme", lightTheme);
     await store.set("darkTheme", darkTheme);
     await store.set("themeCategory", themeCategory);
