@@ -28,3 +28,6 @@ src-tauri/keys/
 
 # Release config (contains local paths)
 .claude/release-config.json
+
+# 设计稿/原型/临时输出（不进仓库）
+output/
