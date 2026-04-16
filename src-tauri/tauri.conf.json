@@ -31,8 +31,8 @@
   },
   "plugins": {
     "updater": {
-      "endpoints": ["https://gitee.com/bkywksj/knowledge-base-release/raw/master/update.json"],
-      "pubkey": "YOUR_UPDATER_PUBKEY_HERE"
+      "endpoints": ["https://github.com/bkywksj/knowledge-base-release/raw/master/update.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZCODc4OUM5MERBNEFBMUIKUldRYnFxUU55WW1IYXk3L2tTR3V3Z1JTRGhIRXJyWTc2MEpydU9EMkRMaytxVkZ2UFZFdEZrQmYK"
     }
   },
   "bundle": {
