@@ -283,6 +283,22 @@ body,
   text-decoration: underline;
 }
 
+/* Tippy.js wiki-suggestion 主题 — 去掉默认黑色背景/边距 */
+.tippy-box[data-theme~="wiki-suggestion"] {
+  background: transparent;
+  color: inherit;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+.tippy-box[data-theme~="wiki-suggestion"] > .tippy-content {
+  background: transparent;
+  padding: 0;
+}
+.tippy-box[data-theme~="wiki-suggestion"] > .tippy-arrow {
+  display: none;
+}
+
 /* 分割线 */
 .tiptap hr {
   border: none;
