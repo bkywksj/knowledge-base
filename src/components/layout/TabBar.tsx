@@ -165,26 +165,19 @@ export function TabBar() {
                   alignItems: "center",
                   gap: 6,
                   padding: "0 8px 0 12px",
-                  height: 30,
+                  height: 28,
+                  marginBottom: 4,
                   cursor: "pointer",
-                  background: isActive
-                    ? token.colorBgContainer
-                    : "transparent",
-                  color: isActive ? token.colorText : token.colorTextSecondary,
+                  background: "transparent",
+                  color: isActive ? token.colorPrimary : token.colorTextSecondary,
                   fontSize: 13,
                   whiteSpace: "nowrap",
                   maxWidth: 200,
                   minWidth: 100,
-                  borderTopLeftRadius: 8,
-                  borderTopRightRadius: 8,
-                  border: `1px solid ${isActive ? token.colorBorderSecondary : "transparent"}`,
-                  borderBottom: isActive
-                    ? `1px solid ${token.colorBgContainer}`
-                    : "1px solid transparent",
-                  marginBottom: -1, // 压到底部边框上，形成"tab 与内容区相连"的视觉
-                  position: "relative",
+                  borderRadius: 8,
+                  border: `1px solid ${isActive ? token.colorPrimary : "transparent"}`,
                   userSelect: "none",
-                  transition: "background 0.15s ease",
+                  transition: "background 0.15s ease, color 0.15s ease, border-color 0.15s ease",
                 }}
                 onMouseEnter={(e) => {
                   if (!isActive) {
@@ -197,20 +190,7 @@ export function TabBar() {
                   }
                 }}
               >
-                {isActive && (
-                  <span
-                    style={{
-                      position: "absolute",
-                      top: 0,
-                      left: 8,
-                      right: 8,
-                      height: 2,
-                      background: token.colorPrimary,
-                      borderRadius: 2,
-                    }}
-                  />
-                )}
-                <FileText size={13} style={{ flexShrink: 0, opacity: 0.7 }} />
+                <FileText size={13} style={{ flexShrink: 0, opacity: isActive ? 0.9 : 0.7 }} />
                 <span
                   style={{
                     flex: 1,
