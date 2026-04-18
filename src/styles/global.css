@@ -269,6 +269,20 @@ body,
   cursor: pointer;
 }
 
+/* 内联 wiki 链接 [[标题]] — Ctrl/Cmd + 点击跳转 */
+.tiptap .wiki-link {
+  color: var(--ant-color-primary, #1677ff);
+  background: color-mix(in srgb, var(--ant-color-primary, #1677ff) 8%, transparent);
+  border-radius: 3px;
+  padding: 0 2px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.tiptap .wiki-link:hover {
+  background: color-mix(in srgb, var(--ant-color-primary, #1677ff) 18%, transparent);
+  text-decoration: underline;
+}
+
 /* 分割线 */
 .tiptap hr {
   border: none;

@@ -22,6 +22,7 @@ import { theme as antdTheme } from "antd";
 import { imageApi } from "@/lib/api";
 import { EditorToolbar } from "./EditorToolbar";
 import { AiWriteMenu } from "./AiWriteMenu";
+import { WikiLinkDecoration } from "./WikiLinkDecoration";
 
 const lowlight = createLowlight(common);
 
@@ -60,6 +61,8 @@ interface TiptapEditorProps {
   placeholder?: string;
   /** 当前笔记 ID，用于图片保存 */
   noteId?: number;
+  /** Ctrl/Cmd + 点击 [[标题]] 时触发（编辑器内 wiki 链接跳转） */
+  onWikiLinkClick?: (title: string) => void;
 }
 
 export function TiptapEditor({
@@ -67,8 +70,15 @@ export function TiptapEditor({
   onChange,
   placeholder = "开始写点什么...",
   noteId,
+  onWikiLinkClick,
 }: TiptapEditorProps) {
   const isExternalUpdate = useRef(false);
+
+  // 用 ref 保持 onWikiLinkClick 最新引用，避免 Tiptap 扩展闭包过期
+  const wikiClickRef = useRef(onWikiLinkClick);
+  useEffect(() => {
+    wikiClickRef.current = onWikiLinkClick;
+  }, [onWikiLinkClick]);
 
   /** 处理图片文件：保存到本地并插入编辑器 */
   const handleImageFiles = useCallback(
@@ -126,6 +136,9 @@ export function TiptapEditor({
         inline: false,
         minWidth: 50,
         maxWidth: 1200,
+      }),
+      WikiLinkDecoration.configure({
+        onClick: (title: string) => wikiClickRef.current?.(title),
       }),
     ],
     content: isHtml(content) ? content : textToHtml(content),

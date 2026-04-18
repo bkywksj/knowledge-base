@@ -279,6 +279,27 @@ export default function NoteEditorPage() {
     }
   }
 
+  /** Ctrl/Cmd + 点击 [[标题]] 时跳转到对应笔记 */
+  async function handleWikiLinkClick(wikiTitle: string) {
+    try {
+      const results = await linkApi.searchTargets(wikiTitle, 5);
+      const exact = results.find(([, name]) => name === wikiTitle);
+      if (exact) {
+        navigate(`/notes/${exact[0]}`);
+        return;
+      }
+      if (results.length > 0) {
+        // 没有完全同名，退而求其次跳转到第一个匹配项
+        navigate(`/notes/${results[0][0]}`);
+        message.info(`未找到同名笔记，跳转到相近的「${results[0][1]}」`);
+        return;
+      }
+      message.warning(`未找到笔记「${wikiTitle}」`);
+    } catch (e) {
+      message.error(`跳转失败: ${e}`);
+    }
+  }
+
   async function handleExportNote() {
     const safeName = title.replace(/[/\\:*?"<>|]/g, "_").trim() || "未命名";
     const filePath = await save({
@@ -429,6 +450,7 @@ export default function NoteEditorPage() {
             onChange={handleContentChange}
             placeholder="开始写点什么..."
             noteId={noteId}
+            onWikiLinkClick={handleWikiLinkClick}
           />
 
           {/* 反向链接 */}
