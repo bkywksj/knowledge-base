@@ -65,6 +65,8 @@ description: |
 | 状态不更新 | useState 闭包陷阱 | 使用函数式更新 `setState(prev => ...)` |
 | 事件监听不生效 | 未清理旧监听器 | 在 useEffect 中返回 unlisten |
 | 样式不生效 | CSS 冲突或选择器错误 | 使用 DevTools Elements 面板 |
+| 页内拖拽光标显示 🚫、onDrop 不触发（antd Tree/react-dnd 等） | Tauri 窗口 `dragDropEnabled` 默认 true，WebView 吞掉 HTML5 dragover/drop | `tauri.conf.json` 窗口配置加 `"dragDropEnabled": false`，重启 dev |
+| 右键菜单 Dropdown（`trigger={['contextMenu']}`）包裹节点后 antd Tree 拖不动 | rc-trigger ref 转发 + mousedown 拦截破坏原生 drag 绑定 | 改用 Tree 级 `onRightClick` + 全局定位 Dropdown（幻影锚点） |
 
 ### IPC 通信常见问题
 

@@ -35,12 +35,29 @@ description: |
         "decorations": true,
         "transparent": false,
         "fullscreen": false,
-        "alwaysOnTop": false
+        "alwaysOnTop": false,
+        "dragDropEnabled": false
       }
     ]
   }
 }
 ```
+
+---
+
+## ⚠️ dragDropEnabled（页内拖拽必关）
+
+Tauri 2.x 窗口默认 `dragDropEnabled: true`——WebView 层启用 **OS 原生文件拖入识别**，拦截所有 `dragover/drop` 事件。后果：
+
+- antd Tree / react-dnd / HTML5 原生拖拽 **全部失效**
+- 页内拖拽时光标显示 🚫 禁止图标
+- `onDrop` 回调永远不触发
+
+**修复**：窗口配置显式设 `"dragDropEnabled": false`（改后必须重启 `pnpm tauri dev`，前端 HMR 不会重载 Rust 配置）。
+
+**副作用**：无法"从文件管理器把文件拖进应用"。若必须保留该能力，改用 Dialog 选文件（`tauri-plugin-dialog`），或在 Rust 侧监听 Tauri 的 `on_drag_drop_event` 接管文件投递。两者不可兼得。
+
+**判断该不该关**：项目里是否有任何组件需要页内拖拽（Tree 排序、看板卡片、列表 reorder、分栏 resize、富文本拖图片……）？有就关。
 
 ---
 
@@ -199,3 +216,4 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 | 无边框窗口不加拖拽区域 | 添加 `data-tauri-drag-region` |
 | 关闭窗口不清理资源 | 监听 close-requested 事件清理 |
 | 不处理窗口创建失败 | 窗口可能已存在，需 catch 错误 |
+| 页内 antd Tree/react-dnd 拖拽无反应、光标 🚫 | 窗口配置设 `dragDropEnabled: false`，重启 dev server |
