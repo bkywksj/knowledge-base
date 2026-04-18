@@ -71,6 +71,10 @@ export const folderApi = {
     invoke<void>("rename_folder", { id, name }),
   delete: (id: number) => invoke<void>("delete_folder", { id }),
   list: () => invoke<Folder[]>("list_folders"),
+  move: (id: number, newParentId: number | null) =>
+    invoke<void>("move_folder", { id, newParentId }),
+  reorder: (orderedIds: number[]) =>
+    invoke<void>("reorder_folders", { orderedIds }),
 };
 
 /** 搜索 API */
