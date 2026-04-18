@@ -36,11 +36,12 @@ import {
   Calendar,
   FileText,
   LayoutTemplate,
+  FileUp,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
-import { save } from "@tauri-apps/plugin-dialog";
-import { noteApi, exportApi, templateApi, folderApi } from "@/lib/api";
+import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { noteApi, exportApi, templateApi, folderApi, pdfApi } from "@/lib/api";
 import { stripHtml, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
 import type { Note, NoteInput, NoteTemplate, PageResult, Folder } from "@/types";
@@ -231,6 +232,46 @@ export default function NoteListPage() {
     }
   }, []);
 
+  const handleImportPdfs = useCallback(async () => {
+    const picked = await openDialog({
+      multiple: true,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (!picked) return;
+    const paths = Array.isArray(picked) ? picked : [picked];
+    if (paths.length === 0) return;
+    const hide = message.loading(`正在导入 ${paths.length} 个 PDF...`, 0);
+    try {
+      const results = await pdfApi.importPdfs(paths);
+      const ok = results.filter((r) => r.noteId !== null);
+      const fail = results.filter((r) => r.noteId === null);
+      hide();
+      if (ok.length > 0) message.success(`成功导入 ${ok.length} 个 PDF`);
+      if (fail.length > 0) {
+        Modal.warning({
+          title: `${fail.length} 个 PDF 导入失败`,
+          content: (
+            <List
+              size="small"
+              dataSource={fail}
+              renderItem={(r) => (
+                <List.Item>
+                  <Typography.Text type="danger" style={{ fontSize: 12 }}>
+                    {r.sourcePath.split(/[\\/]/).pop()}: {r.error}
+                  </Typography.Text>
+                </List.Item>
+              )}
+            />
+          ),
+        });
+      }
+      loadNotes(1);
+    } catch (e) {
+      hide();
+      message.error(`导入失败: ${e}`);
+    }
+  }, [loadNotes]);
+
   const handleCreateFromTemplate = useCallback(
     async (template: NoteTemplate) => {
       try {
@@ -419,6 +460,13 @@ export default function NoteListPage() {
                   icon: <LayoutTemplate size={14} />,
                   label: "从模板创建",
                   onClick: openTemplateModal,
+                },
+                { type: "divider" },
+                {
+                  key: "import-pdf",
+                  icon: <FileUp size={14} />,
+                  label: "导入 PDF",
+                  onClick: handleImportPdfs,
                 },
               ],
             }}

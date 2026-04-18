@@ -15,11 +15,12 @@ import {
   Modal,
   List,
 } from "antd";
-import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2 } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon } from "lucide-react";
 import { useAppStore } from "@/store";
 import { useTabsStore } from "@/store/tabs";
-import { noteApi, tagApi, folderApi, linkApi, exportApi } from "@/lib/api";
+import { noteApi, tagApi, folderApi, linkApi, exportApi, pdfApi } from "@/lib/api";
 import { save } from "@tauri-apps/plugin-dialog";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { relativeTime, stripHtml } from "@/lib/utils";
 import { TiptapEditor } from "@/components/editor";
 import type { Note, Tag, Folder, NoteLink } from "@/types";
@@ -194,6 +195,10 @@ export default function NoteEditorPage() {
   const [disambigItems, setDisambigItems] = useState<Note[]>([]);
   const [disambigTitle, setDisambigTitle] = useState("");
 
+  // PDF 预览 Modal 状态
+  const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string>("");
+
   const noteId = Number(id);
 
   const loadData = useCallback(async () => {
@@ -338,6 +343,20 @@ export default function NoteEditorPage() {
     navigate(`/notes/${targetId}`);
   }
 
+  async function handleOpenPdfPreview() {
+    try {
+      const abs = await pdfApi.getAbsolutePath(noteId);
+      if (!abs) {
+        message.warning("原始 PDF 文件丢失或未关联");
+        return;
+      }
+      setPdfPreviewUrl(convertFileSrc(abs));
+      setPdfPreviewOpen(true);
+    } catch (e) {
+      message.error(`预览失败: ${e}`);
+    }
+  }
+
   async function handleExportNote() {
     const safeName = title.replace(/[/\\:*?"<>|]/g, "_").trim() || "未命名";
     const filePath = await save({
@@ -447,6 +466,16 @@ export default function NoteEditorPage() {
           >
             保存
           </Button>
+          {note?.pdf_path && (
+            <Tooltip title="查看原始 PDF">
+              <Button
+                icon={<FileTextIcon size={16} />}
+                onClick={handleOpenPdfPreview}
+              >
+                PDF
+              </Button>
+            </Tooltip>
+          )}
           <Tooltip title="导出为 Markdown">
             <Button
               icon={<Share size={16} />}
@@ -501,6 +530,26 @@ export default function NoteEditorPage() {
           />
         </div>
       </div>
+
+      {/* PDF 原文件预览 */}
+      <Modal
+        open={pdfPreviewOpen}
+        title={note?.title ? `${note.title} · 原始 PDF` : "原始 PDF"}
+        footer={null}
+        onCancel={() => setPdfPreviewOpen(false)}
+        width="85vw"
+        style={{ top: 30 }}
+        styles={{ body: { padding: 0, height: "78vh" } }}
+        destroyOnHidden
+      >
+        {pdfPreviewUrl && (
+          <iframe
+            src={pdfPreviewUrl}
+            title="PDF 预览"
+            style={{ width: "100%", height: "100%", border: "none" }}
+          />
+        )}
+      </Modal>
 
       {/* 同名笔记消歧 */}
       <Modal

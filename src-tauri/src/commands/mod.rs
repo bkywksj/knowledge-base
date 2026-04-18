@@ -11,4 +11,5 @@ pub mod trash;
 pub mod import;
 pub mod export;
 pub mod image;
+pub mod pdf;
 pub mod template;

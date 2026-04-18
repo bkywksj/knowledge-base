@@ -23,6 +23,7 @@ import type {
   NoteTemplate,
   NoteTemplateInput,
   DailyWritingStat,
+  PdfImportResult,
 } from "@/types";
 
 /** 系统相关 API */
@@ -37,6 +38,16 @@ export const systemApi = {
 /** 更新相关 API */
 export const updaterApi = {
   checkUpdate: () => check(),
+};
+
+/** PDF 导入与预览 API */
+export const pdfApi = {
+  /** 批量导入 PDF 为笔记，返回每条结果（含错误） */
+  importPdfs: (paths: string[]) =>
+    invoke<PdfImportResult[]>("import_pdfs", { paths }),
+  /** 获取笔记关联 PDF 的绝对路径（无则返回 null） */
+  getAbsolutePath: (noteId: number) =>
+    invoke<string | null>("get_pdf_absolute_path", { noteId }),
 };
 
 /** 配置管理 API */

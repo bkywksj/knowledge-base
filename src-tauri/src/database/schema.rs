@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 7;
+pub const SCHEMA_VERSION: i32 = 8;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -37,6 +37,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             4 => migrate_v4_to_v5(conn)?,
             5 => migrate_v5_to_v6(conn)?,
             6 => migrate_v6_to_v7(conn)?,
+            7 => migrate_v7_to_v8(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -325,5 +326,20 @@ fn migrate_v6_to_v7(conn: &Connection) -> Result<(), AppError> {
     )?;
 
     set_version(conn, 7)?;
+    Ok(())
+}
+
+/// v7 -> v8: notes 表加 pdf_path 字段，用于关联导入的 PDF 原文件
+fn migrate_v7_to_v8(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v7 -> v8 (notes.pdf_path)");
+
+    conn.execute_batch(
+        "
+        -- 存相对路径 pdfs/<note_id>.pdf，拼 app_data_dir 得到绝对路径
+        ALTER TABLE notes ADD COLUMN pdf_path TEXT;
+        ",
+    )?;
+
+    set_version(conn, 8)?;
     Ok(())
 }

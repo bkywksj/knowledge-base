@@ -52,7 +52,7 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at, pdf_path
              FROM notes WHERE id = ?1",
         )?;
 
@@ -69,6 +69,7 @@ impl Database {
                     word_count: row.get(7)?,
                     created_at: row.get(8)?,
                     updated_at: row.get(9)?,
+                    pdf_path: row.get(10)?,
                 })
             })
             .ok();
@@ -115,7 +116,7 @@ impl Database {
         // 查询分页数据
         let offset = (page.saturating_sub(1)) * page_size;
         let data_sql = format!(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at, pdf_path
              FROM notes {} ORDER BY updated_at DESC LIMIT ?{} OFFSET ?{}",
             where_clause,
             param_values.len() + 1,
@@ -143,6 +144,7 @@ impl Database {
                     word_count: row.get(7)?,
                     created_at: row.get(8)?,
                     updated_at: row.get(9)?,
+                    pdf_path: row.get(10)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -245,7 +247,7 @@ impl Database {
         // 查询分页数据
         let offset = (page.saturating_sub(1)) * page_size;
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at, pdf_path
              FROM notes WHERE is_deleted = 1
              ORDER BY deleted_at DESC
              LIMIT ?1 OFFSET ?2",
@@ -264,6 +266,7 @@ impl Database {
                     word_count: row.get(7)?,
                     created_at: row.get(8)?,
                     updated_at: row.get(9)?,
+                    pdf_path: row.get(10)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -294,7 +297,7 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at, pdf_path
              FROM notes WHERE is_daily = 1 AND daily_date = ?1 AND is_deleted = 0",
         )?;
 
@@ -311,6 +314,7 @@ impl Database {
                     word_count: row.get(7)?,
                     created_at: row.get(8)?,
                     updated_at: row.get(9)?,
+                    pdf_path: row.get(10)?,
                 })
             })
             .ok();
@@ -324,7 +328,7 @@ impl Database {
 
         // 先查询是否已存在
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at, pdf_path
              FROM notes WHERE is_daily = 1 AND daily_date = ?1 AND is_deleted = 0",
         )?;
 
@@ -341,6 +345,7 @@ impl Database {
                     word_count: row.get(7)?,
                     created_at: row.get(8)?,
                     updated_at: row.get(9)?,
+                    pdf_path: row.get(10)?,
                 })
             })
             .ok();
@@ -385,7 +390,7 @@ impl Database {
         id: i64,
     ) -> Result<Note, AppError> {
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, word_count, created_at, updated_at, pdf_path
              FROM notes WHERE id = ?1",
         )?;
 
@@ -401,9 +406,23 @@ impl Database {
                 word_count: row.get(7)?,
                 created_at: row.get(8)?,
                 updated_at: row.get(9)?,
+                pdf_path: row.get(10)?,
             })
         })?;
 
         Ok(note)
+    }
+
+    /// 更新笔记的 pdf_path（导入 PDF 后调用）
+    pub fn set_note_pdf_path(&self, id: i64, pdf_path: Option<&str>) -> Result<(), AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let affected = conn.execute(
+            "UPDATE notes SET pdf_path = ?1 WHERE id = ?2",
+            params![pdf_path, id],
+        )?;
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("笔记 {} 不存在", id)));
+        }
+        Ok(())
     }
 }

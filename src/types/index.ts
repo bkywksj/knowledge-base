@@ -27,6 +27,16 @@ export interface Note {
   word_count: number;
   created_at: string;
   updated_at: string;
+  /** 关联的 PDF 相对路径（相对 app_data_dir），纯笔记为 null */
+  pdf_path: string | null;
+}
+
+/** PDF 导入结果（单个文件） */
+export interface PdfImportResult {
+  sourcePath: string;
+  noteId: number | null;
+  title: string | null;
+  error: string | null;
 }
 
 /** 创建/更新笔记入参 */

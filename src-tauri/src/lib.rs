@@ -49,6 +49,11 @@ pub fn run() {
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             log::info!("图片存储目录: {}", images_dir.display());
 
+            // 初始化 PDF 存储目录（同样带 dev- 前缀）
+            let pdfs_dir = services::pdf::PdfService::ensure_dir(&data_dir)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            log::info!("PDF 存储目录: {}", pdfs_dir.display());
+
             // 注册全局状态
             app.manage(AppState::new(db));
 
@@ -145,6 +150,9 @@ pub fn run() {
             commands::template::create_template,
             commands::template::update_template,
             commands::template::delete_template,
+            // PDF 模块
+            commands::pdf::import_pdfs,
+            commands::pdf::get_pdf_absolute_path,
         ])
         // ─── 窗口事件处理 ─────────────────────────
         .on_window_event(|window, event| {
