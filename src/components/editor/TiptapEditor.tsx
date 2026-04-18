@@ -142,13 +142,7 @@ export function TiptapEditor({
       WikiLinkDecoration.configure({
         onClick: (title: string) => wikiClickRef.current?.(title),
       }),
-      WikiLinkSuggestion.configure({
-        onPicked: (_item, createdId) => {
-          if (createdId !== null) {
-            message.success(`已创建新笔记（ID ${createdId}）`);
-          }
-        },
-      }),
+      WikiLinkSuggestion,
     ],
     content: isHtml(content) ? content : textToHtml(content),
     onUpdate: ({ editor }) => {

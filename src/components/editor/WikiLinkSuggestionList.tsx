@@ -1,10 +1,9 @@
 import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
 import { theme as antdTheme } from "antd";
-import { FileText, Plus } from "lucide-react";
+import { FileText } from "lucide-react";
 
 export interface WikiSuggestionItem {
-  /** null 表示"创建新笔记" */
-  id: number | null;
+  id: number;
   title: string;
 }
 
@@ -79,10 +78,9 @@ export const WikiLinkSuggestionList = forwardRef<WikiLinkSuggestionListRef, Prop
       >
         {items.map((item, i) => {
           const isActive = i === selectedIndex;
-          const isNew = item.id === null;
           return (
             <div
-              key={`${item.id ?? "new"}-${item.title}`}
+              key={`${item.id}-${item.title}`}
               onMouseEnter={() => setSelectedIndex(i)}
               onMouseDown={(e) => {
                 // 阻止编辑器失焦（失焦会让 suggestion 关闭）
@@ -98,12 +96,12 @@ export const WikiLinkSuggestionList = forwardRef<WikiLinkSuggestionListRef, Prop
                 alignItems: "center",
                 gap: 8,
                 background: isActive ? token.controlItemBgActive : "transparent",
-                color: isNew ? token.colorPrimary : token.colorText,
+                color: token.colorText,
               }}
             >
-              {isNew ? <Plus size={14} /> : <FileText size={14} />}
+              <FileText size={14} />
               <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {isNew ? `创建新笔记「${item.title}」` : item.title}
+                {item.title}
               </span>
             </div>
           );
