@@ -57,6 +57,13 @@ pub fn run() {
             // 注册全局状态
             app.manage(AppState::new(db));
 
+            // 开发模式下在窗口标题追加 [DEV] 标识，避免和生产窗口混淆
+            if cfg!(debug_assertions) {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_title("Knowledge Base [DEV]");
+                }
+            }
+
             // 初始化系统托盘
             tray::setup_tray(app)?;
             log::info!("系统托盘初始化完成");

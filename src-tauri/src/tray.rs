@@ -13,9 +13,15 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("应用图标未配置")?
         .clone();
 
+    let tooltip = if cfg!(debug_assertions) {
+        "Knowledge Base [DEV]"
+    } else {
+        "Knowledge Base"
+    };
+
     TrayIconBuilder::new()
         .icon(icon)
-        .tooltip("Knowledge Base")
+        .tooltip(tooltip)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
