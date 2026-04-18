@@ -53,6 +53,19 @@ body,
 
 /* 暗色模式 Menu — 见 themes.css */
 
+/* ─── 侧边栏文件夹树：整行点击区 ─────────────── */
+
+.sidebar-folder-tree .ant-tree-node-content-wrapper {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.sidebar-folder-tree .ant-tree-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
 /* ─── 笔记编辑器页面布局（Typora 风格） ────────── */
 
 .editor-page {
