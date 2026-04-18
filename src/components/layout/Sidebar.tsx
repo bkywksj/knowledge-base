@@ -615,7 +615,7 @@ export function Sidebar() {
                 className="sidebar-folder-tree"
                 treeData={treeData}
                 blockNode
-                draggable
+                draggable={{ icon: false }}
                 onDrop={handleDrop}
                 selectedKeys={selectedKey ? [selectedKey] : []}
                 expandedKeys={expandedKeys}
