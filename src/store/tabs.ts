@@ -1,0 +1,91 @@
+import { create } from "zustand";
+
+export interface NoteTab {
+  id: number;
+  title: string;
+  /** 是否有未保存改动（编辑器标记脏状态时反映出来） */
+  dirty?: boolean;
+}
+
+interface TabsStore {
+  tabs: NoteTab[];
+  activeId: number | null;
+
+  /** 打开一个笔记 tab；已存在则不重复，background=true 时不切换激活 */
+  openTab: (tab: NoteTab, opts?: { background?: boolean }) => void;
+  /** 激活指定 tab（不新增） */
+  activateTab: (id: number) => void;
+  /** 关闭 tab；返回关闭后应该激活的邻居 ID（null 表示没有剩余 tab） */
+  closeTab: (id: number) => number | null;
+  /** 关闭除指定 tab 外的全部 */
+  closeOtherTabs: (keepId: number) => void;
+  /** 关闭指定 tab 右侧所有 */
+  closeTabsToRight: (id: number) => void;
+  /** 同步 tab 标题（笔记重命名后调用） */
+  updateTabTitle: (id: number, title: string) => void;
+  /** 同步脏状态 */
+  setTabDirty: (id: number, dirty: boolean) => void;
+}
+
+export const useTabsStore = create<TabsStore>((set, get) => ({
+  tabs: [],
+  activeId: null,
+
+  openTab: (tab, opts) => {
+    const { tabs, activeId } = get();
+    const exists = tabs.some((t) => t.id === tab.id);
+    if (exists) {
+      if (!opts?.background) set({ activeId: tab.id });
+      return;
+    }
+    set({
+      tabs: [...tabs, tab],
+      activeId: opts?.background ? activeId : tab.id,
+    });
+  },
+
+  activateTab: (id) => set({ activeId: id }),
+
+  closeTab: (id) => {
+    const { tabs, activeId } = get();
+    const idx = tabs.findIndex((t) => t.id === id);
+    if (idx === -1) return activeId;
+    const next = tabs.filter((t) => t.id !== id);
+    let nextActive = activeId;
+    if (activeId === id) {
+      // 优先激活右邻，没有则左邻
+      const neighbor = next[idx] ?? next[idx - 1] ?? null;
+      nextActive = neighbor ? neighbor.id : null;
+    }
+    set({ tabs: next, activeId: nextActive });
+    return nextActive;
+  },
+
+  closeOtherTabs: (keepId) => {
+    const { tabs } = get();
+    const kept = tabs.find((t) => t.id === keepId);
+    if (!kept) return;
+    set({ tabs: [kept], activeId: keepId });
+  },
+
+  closeTabsToRight: (id) => {
+    const { tabs, activeId } = get();
+    const idx = tabs.findIndex((t) => t.id === id);
+    if (idx === -1) return;
+    const next = tabs.slice(0, idx + 1);
+    const stillPresent = next.some((t) => t.id === activeId);
+    set({ tabs: next, activeId: stillPresent ? activeId : id });
+  },
+
+  updateTabTitle: (id, title) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) => (t.id === id ? { ...t, title } : t)),
+    }));
+  },
+
+  setTabDirty: (id, dirty) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) => (t.id === id ? { ...t, dirty } : t)),
+    }));
+  },
+}));

@@ -23,6 +23,8 @@ import { imageApi } from "@/lib/api";
 import { EditorToolbar } from "./EditorToolbar";
 import { AiWriteMenu } from "./AiWriteMenu";
 import { WikiLinkDecoration } from "./WikiLinkDecoration";
+import { WikiLinkSuggestion } from "./WikiLinkSuggestion";
+import "tippy.js/dist/tippy.css";
 
 const lowlight = createLowlight(common);
 
@@ -139,6 +141,13 @@ export function TiptapEditor({
       }),
       WikiLinkDecoration.configure({
         onClick: (title: string) => wikiClickRef.current?.(title),
+      }),
+      WikiLinkSuggestion.configure({
+        onPicked: (_item, createdId) => {
+          if (createdId !== null) {
+            message.success(`已创建新笔记（ID ${createdId}）`);
+          }
+        },
       }),
     ],
     content: isHtml(content) ? content : textToHtml(content),

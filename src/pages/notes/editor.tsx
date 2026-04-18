@@ -12,9 +12,12 @@ import {
   Tag as AntTag,
   Divider,
   Tooltip,
+  Modal,
+  List,
 } from "antd";
 import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2 } from "lucide-react";
 import { useAppStore } from "@/store";
+import { useTabsStore } from "@/store/tabs";
 import { noteApi, tagApi, folderApi, linkApi, exportApi } from "@/lib/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { relativeTime, stripHtml } from "@/lib/utils";
@@ -166,6 +169,7 @@ export default function NoteEditorPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { focusMode, setFocusMode } = useAppStore();
+  const { openTab, updateTabTitle, setTabDirty } = useTabsStore();
   const [note, setNote] = useState<Note | null>(null);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -184,6 +188,11 @@ export default function NoteEditorPage() {
 
   // 反向链接状态
   const [backlinks, setBacklinks] = useState<NoteLink[]>([]);
+
+  // 同名消歧 Modal 状态
+  const [disambigOpen, setDisambigOpen] = useState(false);
+  const [disambigItems, setDisambigItems] = useState<Note[]>([]);
+  const [disambigTitle, setDisambigTitle] = useState("");
 
   const noteId = Number(id);
 
@@ -205,13 +214,14 @@ export default function NoteEditorPage() {
       setNoteTags(existingTags);
       setFolderOptions(flattenFolders(folders));
       setBacklinks(links);
+      openTab({ id: noteData.id, title: noteData.title });
     } catch (e) {
       message.error(String(e));
       navigate("/notes");
     } finally {
       setLoading(false);
     }
-  }, [noteId, navigate]);
+  }, [noteId, navigate, openTab]);
 
   useEffect(() => {
     if (id) loadData();
@@ -231,6 +241,8 @@ export default function NoteEditorPage() {
       });
       setNote(updated);
       setDirty(false);
+      setTabDirty(noteId, false);
+      updateTabTitle(noteId, updated.title);
 
       // 解析 [[]] 链接并同步
       const wikiTitles = extractWikiLinks(content);
@@ -263,6 +275,7 @@ export default function NoteEditorPage() {
     try {
       await noteApi.delete(noteId);
       message.success("删除成功");
+      useTabsStore.getState().closeTab(noteId);
       navigate("/notes");
     } catch (e) {
       message.error(String(e));
@@ -282,22 +295,47 @@ export default function NoteEditorPage() {
   /** Ctrl/Cmd + 点击 [[标题]] 时跳转到对应笔记 */
   async function handleWikiLinkClick(wikiTitle: string) {
     try {
-      const results = await linkApi.searchTargets(wikiTitle, 5);
-      const exact = results.find(([, name]) => name === wikiTitle);
-      if (exact) {
-        navigate(`/notes/${exact[0]}`);
+      const results = await linkApi.searchTargets(wikiTitle, 20);
+      const exactMatches = results.filter(([, name]) => name === wikiTitle);
+
+      // 精确命中 1 条：直接跳
+      if (exactMatches.length === 1) {
+        navigate(`/notes/${exactMatches[0][0]}`);
         return;
       }
+
+      // 精确命中多条：弹消歧 Modal
+      if (exactMatches.length > 1) {
+        const notes = await Promise.all(
+          exactMatches.map(([id]) => noteApi.get(id).catch(() => null)),
+        );
+        const valid = notes.filter((n): n is Note => n !== null);
+        if (valid.length === 1) {
+          navigate(`/notes/${valid[0].id}`);
+          return;
+        }
+        setDisambigTitle(wikiTitle);
+        setDisambigItems(valid);
+        setDisambigOpen(true);
+        return;
+      }
+
+      // 无精确匹配但有模糊匹配：跳转相近的第一条
       if (results.length > 0) {
-        // 没有完全同名，退而求其次跳转到第一个匹配项
         navigate(`/notes/${results[0][0]}`);
         message.info(`未找到同名笔记，跳转到相近的「${results[0][1]}」`);
         return;
       }
+
       message.warning(`未找到笔记「${wikiTitle}」`);
     } catch (e) {
       message.error(`跳转失败: ${e}`);
     }
+  }
+
+  function handleDisambigSelect(targetId: number) {
+    setDisambigOpen(false);
+    navigate(`/notes/${targetId}`);
   }
 
   async function handleExportNote() {
@@ -348,11 +386,14 @@ export default function NoteEditorPage() {
   function handleTitleChange(val: string) {
     setTitle(val);
     setDirty(true);
+    setTabDirty(noteId, true);
+    updateTabTitle(noteId, val || "未命名");
   }
 
   function handleContentChange(val: string) {
     setContent(val);
     setDirty(true);
+    setTabDirty(noteId, true);
   }
 
   if (loading) {
@@ -460,6 +501,41 @@ export default function NoteEditorPage() {
           />
         </div>
       </div>
+
+      {/* 同名笔记消歧 */}
+      <Modal
+        open={disambigOpen}
+        title={`「${disambigTitle}」存在 ${disambigItems.length} 条同名笔记`}
+        footer={null}
+        onCancel={() => setDisambigOpen(false)}
+        width={520}
+      >
+        <Text type="secondary" style={{ fontSize: 13 }}>
+          请选择要打开的那一条：
+        </Text>
+        <List
+          size="small"
+          style={{ marginTop: 12 }}
+          dataSource={disambigItems}
+          renderItem={(item) => (
+            <List.Item
+              style={{ cursor: "pointer" }}
+              onClick={() => handleDisambigSelect(item.id)}
+            >
+              <List.Item.Meta
+                title={item.title}
+                description={
+                  <span style={{ fontSize: 12 }}>
+                    {item.folder_id ? `文件夹 #${item.folder_id}` : "未分类"}
+                    {" · "}
+                    更新于 {relativeTime(item.updated_at)}
+                  </span>
+                }
+              />
+            </List.Item>
+          )}
+        />
+      </Modal>
     </div>
   );
 }

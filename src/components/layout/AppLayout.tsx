@@ -2,12 +2,13 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
 import { Layout, Button, theme as antdTheme, Tooltip, Dropdown } from "antd";
 import { MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined } from "@ant-design/icons";
-import { Search, Palette } from "lucide-react";
+import { Search, Palette, ArrowLeft, ArrowRight } from "lucide-react";
 import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 import { useAppStore } from "@/store";
 import { getThemesByCategory } from "@/theme/tokens";
 import type { ThemeMode } from "@/theme/tokens";
 import { Sidebar } from "./Sidebar";
+import { TabBar } from "./TabBar";
 import { WindowControls } from "./WindowControls";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 import { ShortcutsPanel } from "@/components/ui/ShortcutsPanel";
@@ -109,7 +110,16 @@ export function AppLayout() {
       e.preventDefault();
       setFocusMode(!focusMode);
     }
-  }, [focusMode, setFocusMode]);
+    // Alt + ←/→ 历史后退/前进
+    if (e.altKey && e.key === "ArrowLeft") {
+      e.preventDefault();
+      navigate(-1);
+    }
+    if (e.altKey && e.key === "ArrowRight") {
+      e.preventDefault();
+      navigate(1);
+    }
+  }, [focusMode, setFocusMode, navigate]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleGlobalKeyDown);
@@ -151,6 +161,20 @@ export function AppLayout() {
               }
               onClick={toggleSidebar}
             />
+            <Tooltip title="后退 (Alt+←)">
+              <Button
+                type="text"
+                icon={<ArrowLeft size={16} />}
+                onClick={() => navigate(-1)}
+              />
+            </Tooltip>
+            <Tooltip title="前进 (Alt+→)">
+              <Button
+                type="text"
+                icon={<ArrowRight size={16} />}
+                onClick={() => navigate(1)}
+              />
+            </Tooltip>
           </div>
           <DragRegion />
           <div style={{ display: "flex", alignItems: "center" }}>
@@ -176,6 +200,7 @@ export function AppLayout() {
           </div>
         </Header>
         )}
+        {!focusMode && <TabBar />}
         <Content
           style={{
             padding: focusMode ? 0 : 24,
