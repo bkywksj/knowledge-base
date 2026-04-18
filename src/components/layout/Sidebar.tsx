@@ -119,6 +119,15 @@ export function Sidebar() {
   // 当前选中的节点（用于 F2 快捷键）
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
+  // 右键菜单（Tree 级别，使用幻影锚点 Dropdown 定位）
+  const [contextMenu, setContextMenu] = useState<{
+    key: string;
+    name: string;
+    x: number;
+    y: number;
+    ts: number;
+  } | null>(null);
+
   // 双击检测：记录最近一次点击时间，300ms 内同一节点再次点击视为双击
   const lastClickRef = useRef<{ key: string; time: number } | null>(null);
   // 按 Esc 取消编辑时置为 true，随后的 onBlur 跳过提交
@@ -368,25 +377,35 @@ export function Sidebar() {
   // ─── 右键菜单 ─────────────────────────────
 
   function buildMenuItems(key: string, name: string): MenuProps["items"] {
+    const close = () => setContextMenu(null);
     return [
       {
         key: "new-child",
         icon: <Plus size={14} />,
         label: "新建子文件夹",
-        onClick: () => startCreateChild(key),
+        onClick: () => {
+          startCreateChild(key);
+          close();
+        },
       },
       {
         key: "new-note",
         icon: <FileText size={14} />,
         label: "在此新建笔记",
-        onClick: () => navigate(`/notes?folder=${key}&new=1`),
+        onClick: () => {
+          navigate(`/notes?folder=${key}&new=1`);
+          close();
+        },
       },
       { type: "divider" },
       {
         key: "rename",
         icon: <Edit3 size={14} />,
         label: "重命名",
-        onClick: () => startRename(key, name),
+        onClick: () => {
+          startRename(key, name);
+          close();
+        },
       },
       { type: "divider" },
       {
@@ -394,7 +413,10 @@ export function Sidebar() {
         icon: <Trash size={14} />,
         label: "删除",
         danger: true,
-        onClick: () => confirmDelete(key, name),
+        onClick: () => {
+          confirmDelete(key, name);
+          close();
+        },
       },
     ];
   }
@@ -452,24 +474,19 @@ export function Sidebar() {
       );
     }
 
-    // 正常态：Dropdown 包裹，支持右键菜单；整行可点击
+    // 正常态：纯 span，点击跳转/重命名；右键菜单由 Tree 级 onRightClick 统一处理
     const name = String(node.title ?? "");
     return (
-      <Dropdown
-        menu={{ items: buildMenuItems(key, name) }}
-        trigger={["contextMenu"]}
+      <span
+        className="flex items-center gap-1.5 w-full"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleTitleClick(key);
+        }}
       >
-        <span
-          className="flex items-center gap-1.5 w-full"
-          onClick={(e) => {
-            e.stopPropagation();
-            handleTitleClick(key);
-          }}
-        >
-          <FolderOutlined style={{ flexShrink: 0 }} />
-          <span className="truncate">{name}</span>
-        </span>
-      </Dropdown>
+        <FolderOutlined style={{ flexShrink: 0 }} />
+        <span className="truncate">{name}</span>
+      </span>
     );
   }
 
@@ -598,12 +615,27 @@ export function Sidebar() {
                 className="sidebar-folder-tree"
                 treeData={treeData}
                 blockNode
-                draggable={{ icon: false }}
+                draggable
                 onDrop={handleDrop}
                 selectedKeys={selectedKey ? [selectedKey] : []}
                 expandedKeys={expandedKeys}
                 onExpand={(keys) => setExpandedKeys(keys)}
                 titleRender={renderTitle}
+                onRightClick={({ event, node }) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const key = String(node.key);
+                  if (key.startsWith(NEW_NODE_PREFIX)) return;
+                  const name = findFolderName(folders, Number(key));
+                  if (name === null) return;
+                  setContextMenu({
+                    key,
+                    name,
+                    x: (event as unknown as React.MouseEvent).clientX,
+                    y: (event as unknown as React.MouseEvent).clientY,
+                    ts: Date.now(),
+                  });
+                }}
                 style={{ background: "transparent" }}
               />
             ) : (
@@ -649,6 +681,30 @@ export function Sidebar() {
         onClick={({ key }) => navigate(key)}
         style={{ border: "none", flexShrink: 0 }}
       />
+
+      {/* 右键菜单（幻影锚点，跟随鼠标坐标定位） */}
+      {contextMenu && (
+        <Dropdown
+          key={contextMenu.ts}
+          open
+          onOpenChange={(open) => {
+            if (!open) setContextMenu(null);
+          }}
+          menu={{ items: buildMenuItems(contextMenu.key, contextMenu.name) }}
+          trigger={[]}
+        >
+          <div
+            style={{
+              position: "fixed",
+              left: contextMenu.x,
+              top: contextMenu.y,
+              width: 1,
+              height: 1,
+              pointerEvents: "none",
+            }}
+          />
+        </Dropdown>
+      )}
     </div>
   );
 }
