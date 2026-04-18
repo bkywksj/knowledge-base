@@ -283,6 +283,11 @@ body,
   text-decoration: underline;
 }
 
+/* 笔记 Tab 栏的滚动容器 — 隐藏 webkit 滚动条 */
+.tabbar-scroller::-webkit-scrollbar {
+  display: none;
+}
+
 /* Tippy.js wiki-suggestion 主题 — 去掉默认黑色背景/边距 */
 .tippy-box[data-theme~="wiki-suggestion"] {
   background: transparent;

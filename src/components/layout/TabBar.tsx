@@ -1,7 +1,7 @@
 import { useNavigate, useLocation } from "react-router-dom";
-import { useCallback, useEffect } from "react";
-import { theme as antdTheme, Dropdown, type MenuProps } from "antd";
-import { X, FileText } from "lucide-react";
+import { useCallback, useEffect, useRef } from "react";
+import { theme as antdTheme, Dropdown, Tooltip, type MenuProps } from "antd";
+import { X, FileText, ListTree } from "lucide-react";
 import { useTabsStore } from "@/store/tabs";
 
 export function TabBar() {
@@ -10,6 +10,9 @@ export function TabBar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { token } = antdTheme.useToken();
+
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const tabRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   const handleSelect = useCallback(
     (id: number) => {
@@ -22,10 +25,10 @@ export function TabBar() {
     (id: number, e?: React.MouseEvent) => {
       e?.stopPropagation();
       const wasActive = activeId === id;
-      // 关闭的路径是当前正在查看的 → 需要跳转
       const isViewing =
         wasActive && location.pathname === `/notes/${id}`;
       const nextActive = closeTab(id);
+      tabRefs.current.delete(id);
       if (isViewing) {
         if (nextActive !== null) navigate(`/notes/${nextActive}`);
         else navigate("/notes");
@@ -45,6 +48,15 @@ export function TabBar() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [activeId, handleClose]);
+
+  // 激活的 tab 超出可视区时自动滚入视界
+  useEffect(() => {
+    if (activeId === null) return;
+    const el = tabRefs.current.get(activeId);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+    }
+  }, [activeId, tabs.length]);
 
   if (tabs.length === 0) return null;
 
@@ -68,108 +80,179 @@ export function TabBar() {
     <div
       style={{
         display: "flex",
-        alignItems: "center",
-        height: 36,
+        alignItems: "flex-end",
+        height: 38,
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
-        background: token.colorBgContainer,
-        overflowX: "auto",
-        overflowY: "hidden",
+        background: token.colorBgLayout,
         flexShrink: 0,
+        paddingLeft: 4,
       }}
     >
-      {tabs.map((tab) => {
-        const isActive = tab.id === activeId;
-        return (
-          <Dropdown
-            key={tab.id}
-            menu={{
-              items: menuFor(tab.id),
-              onClick: ({ key }) => onMenuClick(tab.id, key),
-            }}
-            trigger={["contextMenu"]}
-          >
-            <div
-              onClick={() => handleSelect(tab.id)}
-              onAuxClick={(e) => {
-                // 鼠标中键关闭
-                if (e.button === 1) {
-                  e.preventDefault();
-                  handleClose(tab.id);
-                }
+      {/* 左侧固定：回到笔记列表 */}
+      <Tooltip title="笔记列表">
+        <button
+          type="button"
+          onClick={() => navigate("/notes")}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 32,
+            height: 28,
+            marginBottom: 4,
+            marginRight: 4,
+            border: "none",
+            background: "transparent",
+            borderRadius: 6,
+            cursor: "pointer",
+            color: token.colorTextSecondary,
+            flexShrink: 0,
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = token.colorFillSecondary;
+            e.currentTarget.style.color = token.colorText;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+            e.currentTarget.style.color = token.colorTextSecondary;
+          }}
+        >
+          <ListTree size={16} />
+        </button>
+      </Tooltip>
+
+      {/* 中间可滚动 tab 容器 */}
+      <div
+        ref={scrollerRef}
+        style={{
+          flex: 1,
+          display: "flex",
+          alignItems: "flex-end",
+          gap: 2,
+          overflowX: "auto",
+          overflowY: "hidden",
+          scrollbarWidth: "none", // Firefox
+          minWidth: 0,
+        }}
+        className="tabbar-scroller"
+      >
+        {tabs.map((tab) => {
+          const isActive = tab.id === activeId;
+          return (
+            <Dropdown
+              key={tab.id}
+              menu={{
+                items: menuFor(tab.id),
+                onClick: ({ key }) => onMenuClick(tab.id, key),
               }}
-              title={tab.title}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "0 10px 0 12px",
-                height: "100%",
-                cursor: "pointer",
-                borderRight: `1px solid ${token.colorBorderSecondary}`,
-                background: isActive
-                  ? token.colorBgElevated
-                  : "transparent",
-                color: isActive ? token.colorText : token.colorTextSecondary,
-                fontSize: 13,
-                whiteSpace: "nowrap",
-                maxWidth: 200,
-                position: "relative",
-                userSelect: "none",
-              }}
+              trigger={["contextMenu"]}
             >
-              {isActive && (
-                <span
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    height: 2,
-                    background: token.colorPrimary,
-                  }}
-                />
-              )}
-              <FileText size={13} style={{ flexShrink: 0, opacity: 0.7 }} />
-              <span
-                style={{
-                  flex: 1,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  fontWeight: isActive ? 500 : 400,
+              <div
+                ref={(el) => {
+                  if (el) tabRefs.current.set(tab.id, el);
+                  else tabRefs.current.delete(tab.id);
                 }}
-              >
-                {tab.title || "未命名"}
-                {tab.dirty ? " •" : ""}
-              </span>
-              <button
-                type="button"
-                onClick={(e) => handleClose(tab.id, e)}
+                onClick={() => handleSelect(tab.id)}
+                onAuxClick={(e) => {
+                  if (e.button === 1) {
+                    e.preventDefault();
+                    handleClose(tab.id);
+                  }
+                }}
+                title={tab.title}
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  justifyContent: "center",
-                  width: 18,
-                  height: 18,
-                  border: "none",
-                  background: "transparent",
-                  borderRadius: 4,
+                  gap: 6,
+                  padding: "0 8px 0 12px",
+                  height: 30,
                   cursor: "pointer",
-                  color: token.colorTextTertiary,
-                  flexShrink: 0,
+                  background: isActive
+                    ? token.colorBgContainer
+                    : "transparent",
+                  color: isActive ? token.colorText : token.colorTextSecondary,
+                  fontSize: 13,
+                  whiteSpace: "nowrap",
+                  maxWidth: 200,
+                  minWidth: 100,
+                  borderTopLeftRadius: 8,
+                  borderTopRightRadius: 8,
+                  border: `1px solid ${isActive ? token.colorBorderSecondary : "transparent"}`,
+                  borderBottom: isActive
+                    ? `1px solid ${token.colorBgContainer}`
+                    : "1px solid transparent",
+                  marginBottom: -1, // 压到底部边框上，形成"tab 与内容区相连"的视觉
+                  position: "relative",
+                  userSelect: "none",
+                  transition: "background 0.15s ease",
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.background = token.colorFillSecondary;
+                  if (!isActive) {
+                    e.currentTarget.style.background = token.colorFillQuaternary;
+                  }
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "transparent";
+                  if (!isActive) {
+                    e.currentTarget.style.background = "transparent";
+                  }
                 }}
               >
-                <X size={12} />
-              </button>
-            </div>
-          </Dropdown>
-        );
-      })}
+                {isActive && (
+                  <span
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 8,
+                      right: 8,
+                      height: 2,
+                      background: token.colorPrimary,
+                      borderRadius: 2,
+                    }}
+                  />
+                )}
+                <FileText size={13} style={{ flexShrink: 0, opacity: 0.7 }} />
+                <span
+                  style={{
+                    flex: 1,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    fontWeight: isActive ? 500 : 400,
+                  }}
+                >
+                  {tab.title || "未命名"}
+                  {tab.dirty ? " •" : ""}
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => handleClose(tab.id, e)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 18,
+                    height: 18,
+                    border: "none",
+                    background: "transparent",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                    color: token.colorTextTertiary,
+                    flexShrink: 0,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = token.colorFillSecondary;
+                    e.stopPropagation();
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "transparent";
+                  }}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            </Dropdown>
+          );
+        })}
+      </div>
     </div>
   );
 }
