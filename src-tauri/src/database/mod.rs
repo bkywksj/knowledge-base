@@ -172,4 +172,5 @@ impl Database {
         let affected = conn.execute("DELETE FROM app_config WHERE key = ?1", [key])?;
         Ok(affected > 0)
     }
+
 }
