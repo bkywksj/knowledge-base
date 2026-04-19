@@ -132,13 +132,20 @@ fn convert_via_libreoffice(src: &Path, dst_dir: &Path) -> Result<PathBuf, AppErr
 
 #[cfg(target_os = "windows")]
 fn has_windows_com() -> bool {
-    // GetTypeFromProgId 不会启动 Word，纯查注册表，最干净
+    // 真实例化 Word.Application 一次，立即退出
+    //
+    // 之前用 GetTypeFromProgId 仅查注册表，会被 Office 卸载残留的 ProgId 误判（CLSID 实际未注册）。
+    // 实例化 + Quit 是唯一可靠方法，启动一次 Word 进程约 0.5-2s，OnceLock 缓存后不再触发。
+    let script = "$ErrorActionPreference='Stop'; \
+                  try { \
+                      $w = New-Object -ComObject Word.Application; \
+                      $w.Visible = $false; \
+                      $w.DisplayAlerts = 0; \
+                      $w.Quit(); \
+                      exit 0 \
+                  } catch { exit 1 }";
     let mut cmd = Command::new("powershell");
-    cmd.args([
-        "-NoProfile",
-        "-Command",
-        "if ([type]::GetTypeFromProgId('Word.Application')) { exit 0 } else { exit 1 }",
-    ]);
+    cmd.args(["-NoProfile", "-Command", script]);
     add_no_window(&mut cmd);
     cmd.status().map(|s| s.success()).unwrap_or(false)
 }

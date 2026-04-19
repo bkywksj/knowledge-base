@@ -70,11 +70,46 @@ export async function importWordFile(
 ): Promise<{ note: Note; warnings: string[] }> {
   const lower = filePath.toLowerCase();
   const isDoc = lower.endsWith(".doc") && !lower.endsWith(".docx");
+  const warnings: string[] = [];
 
-  // 1. 拿到 .docx 字节（base64）
-  const base64 = isDoc
-    ? await sourceFileApi.convertDocToDocxBase64(filePath)
-    : await sourceFileApi.readFileAsBase64(filePath);
+  // 1. 拿到 .docx 字节（base64）；.doc 转换失败时降级占位
+  let base64: string;
+  let degradedToPlaceholder = false;
+  try {
+    base64 = isDoc
+      ? await sourceFileApi.convertDocToDocxBase64(filePath)
+      : await sourceFileApi.readFileAsBase64(filePath);
+  } catch (e) {
+    if (!isDoc) throw e; // .docx 失败就真没救
+    // .doc 转换失败：降级为"只保存原文件 + 占位笔记"
+    degradedToPlaceholder = true;
+    warnings.push(
+      `.doc 转换失败：${String(e)}\n建议安装 LibreOffice (https://www.libreoffice.org) 或 Microsoft Office 后重新导入以解析正文。`,
+    );
+    base64 = "";
+  }
+
+  // 占位策略：直接建笔记 + 挂原文件，不跑 mammoth
+  if (degradedToPlaceholder) {
+    const title = fileStem(filePath);
+    const placeholder =
+      "<p>⚠️ <strong>未能解析此 .doc 文件正文</strong></p>" +
+      "<p>系统未检测到可用的转换器（LibreOffice 或 Microsoft Office / WPS）。</p>" +
+      '<p>请通过下方"DOC"按钮用系统默认应用查看；' +
+      "或安装 LibreOffice 后重新导入即可获得全文搜索能力。</p>";
+    const note = await noteApi.create({
+      title,
+      content: placeholder,
+      folder_id: folderId,
+    });
+    try {
+      await sourceFileApi.attach(note.id, filePath, "doc");
+    } catch (e) {
+      warnings.push(`原文件保存失败: ${e}`);
+    }
+    const fresh = await noteApi.get(note.id);
+    return { note: fresh, warnings };
+  }
 
   const arrayBuffer = base64ToArrayBuffer(base64);
 
@@ -84,9 +119,9 @@ export async function importWordFile(
     { convertImage: imgConvertOption() },
   );
   const rawHtml = result.value || "<p></p>";
-  const warnings = (result.messages || [])
-    .filter((m) => m.type === "warning" || m.type === "error")
-    .map((m) => m.message);
+  for (const m of result.messages || []) {
+    if (m.type === "warning" || m.type === "error") warnings.push(m.message);
+  }
 
   // 3. 创建笔记
   const title = fileStem(filePath);
