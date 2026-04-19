@@ -63,9 +63,13 @@ export default function GraphPage() {
 
     const graph = new Graph({
       container: containerRef.current,
-      // "view" 会整图等比缩放适配画布 → 节点一散开字就被缩小到看不清；
-      // 改 "center" 仅居中不缩放，节点按实际尺寸渲染，用户可滚轮放缩
-      autoFit: "center",
+      // 用对象写法：内容溢出才缩放（when: "overflow"），装得下就保持原尺寸；
+      // 两者兼顾——首屏能看到全部节点，字也不会被无谓缩小
+      autoFit: {
+        type: "view",
+        options: { when: "overflow", direction: "both" },
+        animation: { duration: 300, easing: "ease-out" },
+      },
       data: { nodes, edges },
       node: {
         style: {
