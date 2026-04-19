@@ -29,6 +29,7 @@ import type {
   SyncImportMode,
   SyncManifest,
   SyncHistoryItem,
+  RemoteSnapshot,
 } from "@/types";
 import { DEFAULT_SYNC_SCOPE } from "@/types";
 
@@ -72,6 +73,10 @@ export function SyncSection() {
   const [pushing, setPushing] = useState(false);
   const [pulling, setPulling] = useState(false);
   const [previewing, setPreviewing] = useState(false);
+  // 从其他设备拉取
+  const [snapshotsModalOpen, setSnapshotsModalOpen] = useState(false);
+  const [loadingSnapshots, setLoadingSnapshots] = useState(false);
+  const [snapshots, setSnapshots] = useState<RemoteSnapshot[]>([]);
 
   // 自动同步
   const [autoEnabled, setAutoEnabled] = useState(false);
@@ -292,6 +297,59 @@ export function SyncSection() {
     }
   }
 
+  async function handleOpenSnapshots() {
+    if (!webdavReady) {
+      message.warning("请先完成 WebDAV 配置并测试连接");
+      return;
+    }
+    setSnapshotsModalOpen(true);
+    setLoadingSnapshots(true);
+    try {
+      const config = { url, username, password: password || undefined };
+      const list = await syncApi.webdavListSnapshots(config);
+      setSnapshots(list);
+      if (list.length === 0) {
+        message.info("云端暂无任何快照");
+      }
+    } catch (e) {
+      message.error(`列表失败: ${String(e)}`);
+      setSnapshots([]);
+    } finally {
+      setLoadingSnapshots(false);
+    }
+  }
+
+  async function handlePullFromDevice(snap: RemoteSnapshot) {
+    if (importMode === "overwrite") {
+      const confirmed = await new Promise<boolean>((resolve) => {
+        Modal.confirm({
+          title: `覆盖式拉取 "${snap.device}" 的数据 — 危险操作`,
+          content: "本地所有数据将被云端数据替换。确定继续？",
+          okText: "继续",
+          okType: "danger",
+          cancelText: "取消",
+          onOk: () => resolve(true),
+          onCancel: () => resolve(false),
+        });
+      });
+      if (!confirmed) return;
+    }
+    setPulling(true);
+    try {
+      const config = { url, username, password: password || undefined };
+      const m = await syncApi.webdavPull(importMode, config, snap.filename);
+      message.success(
+        `已从 ${snap.device} 拉取：${m.stats.notesCount} 条笔记（${m.exportedAt}）`,
+      );
+      setSnapshotsModalOpen(false);
+      loadHistory();
+    } catch (e) {
+      message.error(`拉取失败: ${e}`);
+    } finally {
+      setPulling(false);
+    }
+  }
+
   async function loadCloudPreview() {
     if (!webdavReady) {
       message.warning("请先完成 WebDAV 配置并测试连接");
@@ -492,6 +550,9 @@ export function SyncSection() {
         >
           查看云端状态
         </Button>
+        <Button onClick={handleOpenSnapshots} disabled={!webdavReady}>
+          从其他设备拉取…
+        </Button>
       </Space>
 
       <Divider style={{ margin: "12px 0" }}>自动同步</Divider>
@@ -552,6 +613,64 @@ export function SyncSection() {
                     <Text type="danger">{h.error}</Text>
                   )}
                 </Space>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
+
+      {/* 从其他设备拉取 */}
+      <Modal
+        title="选择要拉取的设备快照"
+        open={snapshotsModalOpen}
+        onCancel={() => setSnapshotsModalOpen(false)}
+        footer={null}
+        width={520}
+      >
+        <div className="mb-2" style={{ fontSize: 12 }}>
+          <Text type="secondary">
+            云端每台设备会推送独立的 <code>kb-sync-&lt;主机名&gt;.zip</code>。
+            选一个覆盖本机（受"导入模式"影响）。
+          </Text>
+        </div>
+        {loadingSnapshots ? (
+          <div className="py-4 text-center">
+            <Text type="secondary">加载中…</Text>
+          </div>
+        ) : snapshots.length === 0 ? (
+          <div className="py-4 text-center">
+            <Text type="secondary">云端暂无任何快照</Text>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {snapshots.map((snap) => (
+              <div
+                key={snap.filename}
+                style={{
+                  padding: "10px 12px",
+                  border: "1px solid var(--ant-color-border)",
+                  borderRadius: 6,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Text strong>{snap.device}</Text>
+                  <br />
+                  <Text type="secondary" style={{ fontSize: 11 }}>
+                    {snap.filename}
+                  </Text>
+                </div>
+                <Button
+                  type="primary"
+                  size="small"
+                  loading={pulling}
+                  onClick={() => handlePullFromDevice(snap)}
+                >
+                  拉取
+                </Button>
               </div>
             ))}
           </div>

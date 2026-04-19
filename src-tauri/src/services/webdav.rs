@@ -118,4 +118,72 @@ impl WebDavClient {
             .map_err(|e| AppError::Custom(format!("读取响应失败: {}", e)))?;
         Ok(bytes.to_vec())
     }
+
+    /// 列出目录下的文件名（PROPFIND Depth:1，用正则抽取 <d:href>）
+    /// 返回的是基础文件名（不含路径），按字母序
+    pub async fn list_files(&self) -> Result<Vec<String>, AppError> {
+        let resp = self
+            .client
+            .request(Method::from_bytes(b"PROPFIND").unwrap(), &self.base_url)
+            .headers(self.headers())
+            .header("Depth", "1")
+            .header(CONTENT_TYPE, "application/xml")
+            .send()
+            .await
+            .map_err(|e| AppError::Custom(format!("列目录失败: {}", e)))?;
+
+        let status = resp.status();
+        if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+            return Err(AppError::Custom("认证失败，请检查用户名/密码".into()));
+        }
+        if status == StatusCode::NOT_FOUND {
+            return Err(AppError::Custom("云端文件夹不存在".into()));
+        }
+        if !status.is_success() && status != StatusCode::MULTI_STATUS {
+            return Err(AppError::Custom(format!("列目录失败，服务器返回 {}", status)));
+        }
+
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| AppError::Custom(format!("读取响应失败: {}", e)))?;
+
+        // 扫描所有 href 标签的内容（大小写 + 命名空间不敏感）
+        // 常见格式：<D:href>/dav/folder/kb-sync-ye.zip</D:href>
+        let mut files = Vec::new();
+        let lower = body.to_lowercase();
+        let bytes = body.as_bytes();
+        let mut i = 0;
+        while let Some(open) = lower[i..].find("href>") {
+            let content_start = i + open + 5; // 跳过 "href>"
+            // 找对应的 </...href>
+            let close_rel = match lower[content_start..].find("</") {
+                Some(p) => p,
+                None => break,
+            };
+            let content_end = content_start + close_rel;
+            let raw = std::str::from_utf8(&bytes[content_start..content_end])
+                .unwrap_or("")
+                .trim();
+            i = content_end + 2;
+            if raw.is_empty() || raw.ends_with('/') {
+                // 空的或以 / 结尾（通常是目录自身），跳过
+                continue;
+            }
+            // 取路径最后一段作为文件名
+            let name = raw.rsplit('/').next().unwrap_or("");
+            if name.is_empty() {
+                continue;
+            }
+            // URL decode（文件名可能含 URL 编码，比如空格/中文）
+            let decoded = urlencoding::decode(name)
+                .map(|c| c.into_owned())
+                .unwrap_or_else(|_| name.to_string());
+            files.push(decoded);
+        }
+
+        files.sort();
+        files.dedup();
+        Ok(files)
+    }
 }

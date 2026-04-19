@@ -185,6 +185,7 @@ pub fn run() {
             commands::sync::sync_webdav_push,
             commands::sync::sync_webdav_pull,
             commands::sync::sync_webdav_preview,
+            commands::sync::sync_webdav_list_snapshots,
             commands::sync::sync_save_webdav_password,
             commands::sync::sync_has_webdav_password,
             commands::sync::sync_delete_webdav_password,

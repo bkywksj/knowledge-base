@@ -302,6 +302,31 @@ impl SyncService {
         Self::apply_snapshot(data_dir, db_path, &bytes, mode)
     }
 
+    /// 列出云端所有 `kb-sync-*.zip` 快照（多设备场景）
+    /// 返回 (filename, device_name) 元组列表，按设备名排序
+    pub async fn webdav_list_snapshots(
+        url: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<Vec<(String, String)>, AppError> {
+        let client = WebDavClient::new(url, username, password);
+        let files = client.list_files().await?;
+        let mut snapshots: Vec<(String, String)> = files
+            .into_iter()
+            .filter(|f| f.starts_with("kb-sync-") && f.ends_with(".zip"))
+            .map(|f| {
+                // kb-sync-<device>.zip → 提取 <device>
+                let device = f
+                    .trim_start_matches("kb-sync-")
+                    .trim_end_matches(".zip")
+                    .to_string();
+                (f, device)
+            })
+            .collect();
+        snapshots.sort_by(|a, b| a.1.cmp(&b.1));
+        Ok(snapshots)
+    }
+
     /// 预览云端 manifest（不下载资产，只读 manifest.json）
     pub async fn webdav_preview(
         url: &str,

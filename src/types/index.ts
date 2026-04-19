@@ -330,6 +330,12 @@ export interface SyncStats {
   assetsSize: number;
 }
 
+/** 云端快照条目（多设备场景，一台一个 kb-sync-<device>.zip） */
+export interface RemoteSnapshot {
+  filename: string;
+  device: string;
+}
+
 /** 云端 manifest（快照元信息） */
 export interface SyncManifest {
   schemaVersion: number;

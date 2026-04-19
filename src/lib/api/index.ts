@@ -32,6 +32,7 @@ import type {
   SyncManifest,
   SyncResult,
   SyncHistoryItem,
+  RemoteSnapshot,
 } from "@/types";
 
 /** 系统相关 API */
@@ -280,6 +281,9 @@ export const syncApi = {
   /** 预览云端 manifest */
   webdavPreview: (config: WebDavConfig, filename?: string) =>
     invoke<SyncManifest>("sync_webdav_preview", { config, filename }),
+  /** 列出云端所有 kb-sync-*.zip 快照（多设备场景） */
+  webdavListSnapshots: (config: WebDavConfig) =>
+    invoke<RemoteSnapshot[]>("sync_webdav_list_snapshots", { config }),
   /** 保存 WebDAV 密码到 OS keyring */
   savePassword: (username: string, password: string) =>
     invoke<void>("sync_save_webdav_password", { username, password }),

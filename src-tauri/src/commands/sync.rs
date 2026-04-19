@@ -143,6 +143,29 @@ pub async fn sync_webdav_preview(
         .map_err(|e| e.to_string())
 }
 
+/// 列出云端所有 `kb-sync-*.zip` 快照（多设备场景）
+/// 返回 [{filename, device}, ...]
+#[tauri::command]
+pub async fn sync_webdav_list_snapshots(
+    config: WebDavConfig,
+) -> Result<Vec<RemoteSnapshot>, String> {
+    let password = resolve_password(&config)?;
+    let items = SyncService::webdav_list_snapshots(&config.url, &config.username, &password)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(items
+        .into_iter()
+        .map(|(filename, device)| RemoteSnapshot { filename, device })
+        .collect())
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteSnapshot {
+    pub filename: String,
+    pub device: String,
+}
+
 // ─── 密码 Keyring ─────────────────────────────
 
 #[tauri::command]
