@@ -27,6 +27,7 @@ import { systemApi, updaterApi, aiModelApi, importApi, exportApi, folderApi, tem
 import { Checkbox } from "antd";
 import { UpdateModal } from "@/components/ui/UpdateModal";
 import { RecommendCards } from "@/components/ui/RecommendCards";
+import { SyncSection } from "@/components/settings/SyncSection";
 import { TiptapEditor } from "@/components/editor";
 import type { Folder } from "@/types";
 
@@ -705,6 +706,8 @@ export default function SettingsPage() {
           size="small"
         />
       </Card>
+
+      <SyncSection />
 
       <RecommendCards />
 

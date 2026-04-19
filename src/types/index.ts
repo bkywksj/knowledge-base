@@ -287,3 +287,72 @@ export interface PageResult<T> {
   page: number;
   page_size: number;
 }
+
+// ─── 同步 ─────────────────────────────────────
+
+/** 同步范围：控制本次同步包含哪些数据 */
+export interface SyncScope {
+  notes: boolean;
+  images: boolean;
+  pdfs: boolean;
+  sources: boolean;
+  settings: boolean;
+}
+
+export const DEFAULT_SYNC_SCOPE: SyncScope = {
+  notes: true,
+  images: true,
+  pdfs: true,
+  sources: true,
+  settings: true,
+};
+
+/** 导入模式 */
+export type SyncImportMode = "merge" | "overwrite";
+
+/** WebDAV 配置 */
+export interface WebDavConfig {
+  url: string;
+  username: string;
+  /** 前端传入时使用；后端读取时从 keyring 取 */
+  password?: string;
+}
+
+/** 同步数据统计 */
+export interface SyncStats {
+  notesCount: number;
+  foldersCount: number;
+  tagsCount: number;
+  imagesCount: number;
+  pdfsCount: number;
+  sourcesCount: number;
+  /** 资产总大小（字节）*/
+  assetsSize: number;
+}
+
+/** 云端 manifest（快照元信息） */
+export interface SyncManifest {
+  schemaVersion: number;
+  device: string;
+  exportedAt: string;
+  appVersion: string;
+  scope: SyncScope;
+  stats: SyncStats;
+}
+
+/** 同步操作结果 */
+export interface SyncResult {
+  stats: SyncStats;
+  finishedAt: string;
+}
+
+/** 同步历史记录 */
+export interface SyncHistoryItem {
+  id: number;
+  direction: string;
+  startedAt: string;
+  finishedAt: string | null;
+  success: boolean;
+  error: string | null;
+  statsJson: string;
+}

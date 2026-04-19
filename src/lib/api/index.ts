@@ -26,6 +26,12 @@ import type {
   PdfImportResult,
   DocConverter,
   ConverterDiagnostic,
+  SyncScope,
+  SyncImportMode,
+  WebDavConfig,
+  SyncManifest,
+  SyncResult,
+  SyncHistoryItem,
 } from "@/types";
 
 /** 系统相关 API */
@@ -252,4 +258,38 @@ export const aiWriteApi = {
     invoke<void>("ai_write_assist", { action, selectedText, context }),
   /** 取消写作辅助 */
   cancel: () => invoke<void>("cancel_ai_write_assist"),
+};
+
+/** 同步 API（V1 本地 ZIP + V2 WebDAV 全量快照） */
+export const syncApi = {
+  /** 导出为本地 ZIP 文件 */
+  exportToFile: (scope: SyncScope, targetPath: string) =>
+    invoke<SyncResult>("sync_export_to_file", { scope, targetPath }),
+  /** 从本地 ZIP 文件导入 */
+  importFromFile: (sourcePath: string, mode: SyncImportMode) =>
+    invoke<SyncManifest>("sync_import_from_file", { sourcePath, mode }),
+  /** 测试 WebDAV 连接 */
+  webdavTest: (url: string, username: string, password: string) =>
+    invoke<void>("sync_webdav_test", { url, username, password }),
+  /** 推送到 WebDAV */
+  webdavPush: (scope: SyncScope, config: WebDavConfig) =>
+    invoke<SyncResult>("sync_webdav_push", { scope, config }),
+  /** 从 WebDAV 拉取 */
+  webdavPull: (mode: SyncImportMode, config: WebDavConfig, filename?: string) =>
+    invoke<SyncManifest>("sync_webdav_pull", { mode, config, filename }),
+  /** 预览云端 manifest */
+  webdavPreview: (config: WebDavConfig, filename?: string) =>
+    invoke<SyncManifest>("sync_webdav_preview", { config, filename }),
+  /** 保存 WebDAV 密码到 OS keyring */
+  savePassword: (username: string, password: string) =>
+    invoke<void>("sync_save_webdav_password", { username, password }),
+  /** 检查 keyring 中是否有该用户的密码 */
+  hasPassword: (username: string) =>
+    invoke<boolean>("sync_has_webdav_password", { username }),
+  /** 删除 keyring 中的密码 */
+  deletePassword: (username: string) =>
+    invoke<void>("sync_delete_webdav_password", { username }),
+  /** 列出同步历史 */
+  listHistory: (limit?: number) =>
+    invoke<SyncHistoryItem[]>("sync_list_history", { limit }),
 };
