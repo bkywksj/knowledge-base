@@ -100,6 +100,7 @@ function MetaBar({
   folderId,
   onTagsChange,
   onFolderChange,
+  onCreateTag,
 }: {
   noteTags: Tag[];
   allTags: Tag[];
@@ -107,13 +108,18 @@ function MetaBar({
   folderId: number | null;
   onTagsChange: (tagIds: number[]) => void;
   onFolderChange: (folderId: number | null) => void;
+  onCreateTag: (name: string) => Promise<void>;
 }) {
+  const [tagSearch, setTagSearch] = useState("");
   const tagOptions = allTags.map((t) => ({
     label: t.name,
     value: t.id,
   }));
 
   const selectedTagIds = noteTags.map((t) => t.id);
+  const trimmedSearch = tagSearch.trim();
+  const exactExists = allTags.some((t) => t.name === trimmedSearch);
+  const showCreate = trimmedSearch.length > 0 && !exactExists;
 
   return (
     <div className="flex items-center gap-3 py-2 flex-wrap">
@@ -159,7 +165,48 @@ function MetaBar({
             options={tagOptions}
             maxTagCount={0}
             maxTagPlaceholder={`+ 添加`}
-            popupMatchSelectWidth={180}
+            popupMatchSelectWidth={220}
+            showSearch
+            searchValue={tagSearch}
+            onSearch={setTagSearch}
+            filterOption={(input, option) =>
+              String(option?.label ?? "")
+                .toLowerCase()
+                .includes(input.toLowerCase())
+            }
+            dropdownRender={(menu) => (
+              <>
+                {menu}
+                {showCreate && (
+                  <>
+                    <Divider style={{ margin: "4px 0" }} />
+                    <div
+                      onMouseDown={(e) => {
+                        // 阻止 Select 关闭
+                        e.preventDefault();
+                        onCreateTag(trimmedSearch);
+                        setTagSearch("");
+                      }}
+                      style={{
+                        padding: "6px 12px",
+                        cursor: "pointer",
+                        fontSize: 13,
+                        color: "var(--ant-color-primary, #1677ff)",
+                      }}
+                      onMouseEnter={(e) =>
+                        (e.currentTarget.style.background =
+                          "var(--ant-control-item-bg-hover, #f5f5f5)")
+                      }
+                      onMouseLeave={(e) =>
+                        (e.currentTarget.style.background = "transparent")
+                      }
+                    >
+                      + 创建标签「{trimmedSearch}」
+                    </div>
+                  </>
+                )}
+              </>
+            )}
           />
         </div>
       </div>
@@ -398,6 +445,26 @@ export default function NoteEditorPage() {
     }
   }
 
+  /** 在编辑器里直接创建新标签并挂到当前笔记 */
+  async function handleCreateTag(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    // 同名已存在 → 直接复用（不重复创建）
+    const existing = allTags.find((t) => t.name === trimmed);
+    try {
+      const tag = existing ?? (await tagApi.create(trimmed));
+      if (!existing) {
+        setAllTags((prev) => [...prev, tag]);
+      }
+      await tagApi.addToNote(noteId, tag.id);
+      const updatedTags = await tagApi.getNoteTags(noteId);
+      setNoteTags(updatedTags);
+      message.success(existing ? `已添加「${trimmed}」` : `已创建并添加「${trimmed}」`);
+    } catch (e) {
+      message.error(String(e));
+    }
+  }
+
   async function handleFolderChange(folderId: number | null) {
     try {
       await noteApi.moveToFolder(noteId, folderId);
@@ -525,6 +592,7 @@ export default function NoteEditorPage() {
               folderId={note?.folder_id ?? null}
               onTagsChange={handleTagsChange}
               onFolderChange={handleFolderChange}
+              onCreateTag={handleCreateTag}
             />
           </div>
 
