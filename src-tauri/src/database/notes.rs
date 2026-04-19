@@ -284,6 +284,29 @@ impl Database {
         Ok(affected)
     }
 
+    /// 查询指定笔记的 source_file_path（无论是否在回收站）
+    pub fn get_note_source_path(&self, id: i64) -> Result<Option<String>, AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let mut stmt = conn.prepare("SELECT source_file_path FROM notes WHERE id = ?1")?;
+        let path: Option<Option<String>> = stmt
+            .query_row(params![id], |row| row.get::<_, Option<String>>(0))
+            .ok();
+        Ok(path.flatten())
+    }
+
+    /// 列出回收站内所有笔记的 (id, source_file_path) —— 用于清理时遍历
+    pub fn list_trash_ids_with_sources(&self) -> Result<Vec<(i64, Option<String>)>, AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let mut stmt = conn
+            .prepare("SELECT id, source_file_path FROM notes WHERE is_deleted = 1")?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     /// 将所有笔记批量移到回收站（软删）
     /// 只影响 is_deleted = 0 的笔记；已在回收站的保持不变。
     pub fn trash_all_notes(&self) -> Result<usize, AppError> {

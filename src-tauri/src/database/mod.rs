@@ -27,6 +27,9 @@ impl Database {
         // 启用 WAL 模式提升并发性能
         conn.pragma_update(None, "journal_mode", "WAL")?;
 
+        // 启用外键约束（SQLite 默认关闭，不开则 ON DELETE CASCADE 不生效）
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+
         // 执行 Schema 迁移
         schema::migrate(&conn)?;
 

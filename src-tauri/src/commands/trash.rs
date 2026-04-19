@@ -14,10 +14,10 @@ pub fn restore_note(state: tauri::State<'_, AppState>, id: i64) -> Result<(), St
     TrashService::restore(&state.db, id).map_err(|e| e.to_string())
 }
 
-/// 永久删除笔记
+/// 永久删除笔记（连带清理图片 + 源文件）
 #[tauri::command]
 pub fn permanent_delete_note(state: tauri::State<'_, AppState>, id: i64) -> Result<(), String> {
-    TrashService::permanent_delete(&state.db, id).map_err(|e| e.to_string())
+    TrashService::permanent_delete(&state.db, &state.data_dir, id).map_err(|e| e.to_string())
 }
 
 /// 查询回收站笔记列表（分页）
@@ -30,8 +30,8 @@ pub fn list_trash(
     TrashService::list(&state.db, page, page_size).map_err(|e| e.to_string())
 }
 
-/// 清空回收站
+/// 清空回收站（连带清理所有图片 + 源文件）
 #[tauri::command]
 pub fn empty_trash(state: tauri::State<'_, AppState>) -> Result<usize, String> {
-    TrashService::empty(&state.db).map_err(|e| e.to_string())
+    TrashService::empty(&state.db, &state.data_dir).map_err(|e| e.to_string())
 }

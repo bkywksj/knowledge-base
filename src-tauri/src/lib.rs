@@ -59,8 +59,8 @@ pub fn run() {
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             log::info!("源文件存储目录: {}", sources_dir.display());
 
-            // 注册全局状态
-            app.manage(AppState::new(db));
+            // 注册全局状态（data_dir 用于服务层清理资产文件）
+            app.manage(AppState::new(db, data_dir.clone()));
 
             // 开发模式下在窗口标题追加 [DEV] 标识，避免和生产窗口混淆
             if cfg!(debug_assertions) {
