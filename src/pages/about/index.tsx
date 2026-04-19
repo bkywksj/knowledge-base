@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { Card, Typography, Descriptions, Spin, message, Button, Tooltip } from "antd";
-import { FolderOpen, Copy } from "lucide-react";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { FolderOpen, Copy, ExternalLink } from "lucide-react";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+
+const OFFICIAL_SITE = "https://kb.ruoyi.plus/";
 import type { SystemInfo } from "@/types";
 import { systemApi } from "@/lib/api";
 import { RecommendCards } from "@/components/ui/RecommendCards";
@@ -58,6 +60,19 @@ export default function AboutPage() {
             <Descriptions.Item label="CPU 架构">{info.arch}</Descriptions.Item>
             <Descriptions.Item label="应用版本">
               v{info.appVersion}
+            </Descriptions.Item>
+            <Descriptions.Item label="官网">
+              <div className="flex items-center justify-between gap-2">
+                <Text style={{ fontSize: 13 }}>{OFFICIAL_SITE}</Text>
+                <Tooltip title="在浏览器中打开">
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<ExternalLink size={14} />}
+                    onClick={() => openUrl(OFFICIAL_SITE)}
+                  />
+                </Tooltip>
+              </div>
             </Descriptions.Item>
             <Descriptions.Item label="数据目录">
               <div className="flex items-center justify-between gap-2">
