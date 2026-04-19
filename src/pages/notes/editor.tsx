@@ -158,22 +158,42 @@ function MetaBar({
           <Select
             mode="multiple"
             size="small"
-            placeholder="+ 添加标签"
-            style={{ minWidth: 120, maxWidth: 200 }}
+            placeholder={
+              allTags.length === 0
+                ? "输入标签名后回车创建"
+                : "+ 添加 / 搜索 / 新建"
+            }
+            style={{ minWidth: 160, maxWidth: 240 }}
             value={selectedTagIds}
             onChange={onTagsChange}
             options={tagOptions}
             maxTagCount={0}
             maxTagPlaceholder={`+ 添加`}
-            popupMatchSelectWidth={220}
+            popupMatchSelectWidth={240}
+            notFoundContent={
+              trimmedSearch
+                ? null
+                : <div style={{ padding: "8px 12px", fontSize: 12, color: "#999" }}>
+                    输入标签名后从下方点击创建
+                  </div>
+            }
             showSearch
-            searchValue={tagSearch}
+            // 注意：searchValue 非受控，交给 antd 内部管；我们只监听 onSearch
             onSearch={setTagSearch}
             filterOption={(input, option) =>
               String(option?.label ?? "")
                 .toLowerCase()
                 .includes(input.toLowerCase())
             }
+            onInputKeyDown={async (e) => {
+              // 回车直接创建（当输入不存在时）
+              if (e.key === "Enter" && showCreate) {
+                e.preventDefault();
+                e.stopPropagation();
+                await onCreateTag(trimmedSearch);
+                setTagSearch("");
+              }
+            }}
             dropdownRender={(menu) => (
               <>
                 {menu}
@@ -182,8 +202,9 @@ function MetaBar({
                     <Divider style={{ margin: "4px 0" }} />
                     <div
                       onMouseDown={(e) => {
-                        // 阻止 Select 关闭
+                        // 阻止 Select 抢走焦点 + 关闭
                         e.preventDefault();
+                        e.stopPropagation();
                         onCreateTag(trimmedSearch);
                         setTagSearch("");
                       }}
