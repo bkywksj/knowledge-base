@@ -541,7 +541,7 @@ export function Sidebar() {
           color: token.colorText,
         }}
       >
-        本地知识库{import.meta.env.DEV ? " [DEV]" : ""}
+        知识库{import.meta.env.DEV ? " [DEV]" : ""}
       </div>
 
       {/* 全局"新建笔记"按钮（折叠时变图标） */}

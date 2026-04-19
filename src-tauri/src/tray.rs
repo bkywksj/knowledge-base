@@ -14,9 +14,9 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .clone();
 
     let tooltip = if cfg!(debug_assertions) {
-        "本地知识库 [DEV]"
+        "知识库 [DEV]"
     } else {
-        "本地知识库"
+        "知识库"
     };
 
     TrayIconBuilder::new()
