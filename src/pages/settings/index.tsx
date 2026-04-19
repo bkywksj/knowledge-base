@@ -23,7 +23,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import type { Update } from "@tauri-apps/plugin-updater";
 import type { AiModel, AiModelInput, ImportResult, ImportProgress, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput } from "@/types";
-import { systemApi, updaterApi, aiModelApi, importApi, exportApi, folderApi, templateApi } from "@/lib/api";
+import { systemApi, updaterApi, aiModelApi, importApi, exportApi, folderApi, templateApi, pdfApi, sourceFileApi } from "@/lib/api";
+import { importWordFiles } from "@/lib/wordImport";
 import { Checkbox } from "antd";
 import { UpdateModal } from "@/components/ui/UpdateModal";
 import { RecommendCards } from "@/components/ui/RecommendCards";
@@ -199,6 +200,86 @@ export default function SettingsPage() {
       }
     }
     return result;
+  }
+
+  async function handleImportPdfs() {
+    const picked = await open({
+      multiple: true,
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (!picked) return;
+    const paths = Array.isArray(picked) ? picked : [picked];
+    if (paths.length === 0) return;
+    const hide = message.loading(`正在导入 ${paths.length} 个 PDF...`, 0);
+    try {
+      const results = await pdfApi.importPdfs(paths, importFolderId ?? null);
+      const ok = results.filter((r) => r.noteId !== null);
+      const fail = results.filter((r) => r.noteId === null);
+      hide();
+      if (ok.length > 0) message.success(`成功导入 ${ok.length} 个 PDF`);
+      if (fail.length > 0) {
+        Modal.warning({
+          title: `${fail.length} 个 PDF 导入失败`,
+          content: (
+            <List
+              size="small"
+              dataSource={fail}
+              renderItem={(r) => (
+                <List.Item>
+                  <Text type="danger" style={{ fontSize: 12 }}>
+                    {r.sourcePath.split(/[\\/]/).pop()}: {r.error}
+                  </Text>
+                </List.Item>
+              )}
+            />
+          ),
+        });
+      }
+    } catch (e) {
+      hide();
+      message.error(`导入失败: ${e}`);
+    }
+  }
+
+  async function handleImportWord() {
+    const converter = await sourceFileApi.getConverterStatus().catch(() => "none" as const);
+    const exts = converter === "none" ? ["docx"] : ["docx", "doc"];
+    const picked = await open({
+      multiple: true,
+      filters: [{ name: "Word", extensions: exts }],
+    });
+    if (!picked) return;
+    const paths = Array.isArray(picked) ? picked : [picked];
+    if (paths.length === 0) return;
+    const hide = message.loading(`正在导入 ${paths.length} 个 Word...`, 0);
+    try {
+      const results = await importWordFiles(paths, importFolderId ?? null);
+      const ok = results.filter((r) => r.noteId !== null);
+      const fail = results.filter((r) => r.noteId === null);
+      hide();
+      if (ok.length > 0) message.success(`成功导入 ${ok.length} 个 Word`);
+      if (fail.length > 0) {
+        Modal.warning({
+          title: `${fail.length} 个 Word 导入失败`,
+          content: (
+            <List
+              size="small"
+              dataSource={fail}
+              renderItem={(r) => (
+                <List.Item>
+                  <Text type="danger" style={{ fontSize: 12 }}>
+                    {r.sourcePath.split(/[\\/]/).pop()}: {r.error}
+                  </Text>
+                </List.Item>
+              )}
+            />
+          ),
+        });
+      }
+    } catch (e) {
+      hide();
+      message.error(`导入失败: ${e}`);
+    }
   }
 
   async function handleScanFolder() {
@@ -469,21 +550,20 @@ export default function SettingsPage() {
         </Space>
       </Card>
 
-      {/* 导入 Markdown */}
+      {/* 导入笔记（Markdown / PDF / Word） */}
       <Card
         title={
           <span className="flex items-center gap-2">
             <FolderInput size={16} />
-            导入 Markdown
+            导入笔记
           </span>
         }
       >
         <div className="mb-3">
           <Typography.Paragraph type="secondary" style={{ marginBottom: 8, fontSize: 13 }}>
-            从本地文件夹中批量导入 .md 文件为笔记。
-            支持递归读取子文件夹，自动提取 Markdown 标题，导入前可预览并勾选。
+            支持三种导入方式：从文件夹批量扫描 .md 文件；从本地选择 PDF 或 Word 文档。
           </Typography.Paragraph>
-          <Space>
+          <Space wrap>
             <Select
               placeholder="导入到文件夹（可选）"
               allowClear
@@ -498,8 +578,10 @@ export default function SettingsPage() {
               onClick={handleScanFolder}
               loading={scanning || importing}
             >
-              选择文件夹
+              扫描 Markdown 文件夹
             </Button>
+            <Button onClick={handleImportPdfs}>导入 PDF</Button>
+            <Button onClick={handleImportWord}>导入 Word</Button>
           </Space>
         </div>
 
