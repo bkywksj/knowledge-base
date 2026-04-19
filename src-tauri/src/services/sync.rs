@@ -250,7 +250,51 @@ impl SyncService {
             std::io::copy(&mut file, &mut out)?;
         }
 
+        // 同步完成后清理失效的 WebDAV 加密密码条目
+        // （从别的设备同步来的密文，用的是那台设备的 hostname 派生的 key，本机解不开）
+        Self::cleanup_invalid_webdav_passwords(db_path);
+
         Ok(manifest)
+    }
+
+    /// 扫描 app_config 中所有 sync.webdav_pw_enc.* 条目，
+    /// 解密失败的（换设备后无效）直接删除。失败仅 warn，不阻塞同步。
+    fn cleanup_invalid_webdav_passwords(db_path: &Path) {
+        let conn = match rusqlite::Connection::open(db_path) {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("清理失效密码：打开 DB 失败 {}", e);
+                return;
+            }
+        };
+        let entries: Vec<(String, String)> = match conn
+            .prepare("SELECT key, value FROM app_config WHERE key LIKE 'sync.webdav_pw_enc.%'")
+            .and_then(|mut stmt| {
+                stmt.query_map([], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()
+            }) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("清理失效密码：查询失败 {}", e);
+                return;
+            }
+        };
+
+        let mut removed = 0;
+        for (key, enc) in entries {
+            if crypto::decrypt(&enc).is_err() {
+                if let Err(e) = conn.execute("DELETE FROM app_config WHERE key = ?1", [&key]) {
+                    log::warn!("清理失效密码：删除 {} 失败 {}", key, e);
+                } else {
+                    removed += 1;
+                }
+            }
+        }
+        if removed > 0 {
+            log::info!("同步后已清理 {} 个失效的 WebDAV 密码条目（换设备导致）", removed);
+        }
     }
 
     /// 从本地文件导入
