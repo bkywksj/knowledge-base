@@ -1,7 +1,7 @@
 import { useNavigate, useLocation } from "react-router-dom";
 import { useCallback, useEffect, useRef } from "react";
 import { theme as antdTheme, Dropdown, Tooltip, type MenuProps } from "antd";
-import { X, FileText, ListTree } from "lucide-react";
+import { X, FileText, FileType, ListTree } from "lucide-react";
 import { useTabsStore } from "@/store/tabs";
 
 export function TabBar() {
@@ -190,7 +190,31 @@ export function TabBar() {
                   }
                 }}
               >
-                <FileText size={13} style={{ flexShrink: 0, opacity: isActive ? 0.9 : 0.7 }} />
+                {(() => {
+                  const t = tab.sourceFileType;
+                  if (t === "pdf") {
+                    return (
+                      <FileText
+                        size={13}
+                        style={{ flexShrink: 0, color: "#D4380D" }}
+                      />
+                    );
+                  }
+                  if (t === "docx" || t === "doc") {
+                    return (
+                      <FileType
+                        size={13}
+                        style={{ flexShrink: 0, color: "#1677FF" }}
+                      />
+                    );
+                  }
+                  return (
+                    <FileText
+                      size={13}
+                      style={{ flexShrink: 0, opacity: isActive ? 0.9 : 0.7 }}
+                    />
+                  );
+                })()}
                 <span
                   style={{
                     flex: 1,

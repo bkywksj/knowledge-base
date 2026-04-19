@@ -19,6 +19,8 @@ import {
   FileText,
   LayoutTemplate,
   FileUp,
+  FileCode,
+  FileType,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
@@ -363,19 +365,22 @@ export function CreateNoteModal({ open, folderId = null, onClose, onCreated }: P
       {mode === "import" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <ImportCard
-            icon={<FileText size={24} />}
+            icon={<FileCode size={24} />}
+            color="#08979C"
             title="导入 Markdown"
             desc=".md / .markdown，每个文件创建一篇笔记"
             onClick={handleImportMarkdown}
           />
           <ImportCard
             icon={<FileText size={24} />}
+            color="#D4380D"
             title="导入 PDF"
             desc="抽取正文 + 保留原文件，每个 PDF 一篇笔记"
             onClick={handleImportPdfs}
           />
           <ImportCard
-            icon={<FileText size={24} />}
+            icon={<FileType size={24} />}
+            color="#1677FF"
             title="导入 Word"
             desc=".docx 直接转换；.doc 需装 Office / WPS"
             onClick={handleImportWord}
@@ -388,11 +393,13 @@ export function CreateNoteModal({ open, folderId = null, onClose, onCreated }: P
 
 function ImportCard({
   icon,
+  color,
   title,
   desc,
   onClick,
 }: {
   icon: React.ReactNode;
+  color: string;
   title: string;
   desc: string;
   onClick: () => void;
@@ -400,7 +407,7 @@ function ImportCard({
   return (
     <Card hoverable size="small" onClick={onClick} styles={{ body: { padding: 14 } }}>
       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-        <div style={{ color: "#1677ff", flexShrink: 0 }}>{icon}</div>
+        <div style={{ color, flexShrink: 0 }}>{icon}</div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 500 }}>{title}</div>
           <div style={{ fontSize: 12, color: "#999", marginTop: 2 }}>{desc}</div>

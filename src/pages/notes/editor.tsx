@@ -288,7 +288,11 @@ export default function NoteEditorPage() {
       setNoteTags(existingTags);
       setFolderOptions(flattenFolders(folders));
       setBacklinks(links);
-      openTab({ id: noteData.id, title: noteData.title });
+      openTab({
+        id: noteData.id,
+        title: noteData.title,
+        sourceFileType: noteData.source_file_type,
+      });
     } catch (e) {
       message.error(String(e));
       navigate("/notes");

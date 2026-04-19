@@ -5,6 +5,8 @@ export interface NoteTab {
   title: string;
   /** 是否有未保存改动（编辑器标记脏状态时反映出来） */
   dirty?: boolean;
+  /** 关联源文件类型：pdf / docx / doc，用于 Tab 图标区分；纯笔记为 null */
+  sourceFileType?: string | null;
 }
 
 interface TabsStore {
@@ -37,9 +39,15 @@ export const useTabsStore = create<TabsStore>((set, get) => ({
 
   openTab: (tab, opts) => {
     const { tabs, activeId } = get();
-    const exists = tabs.some((t) => t.id === tab.id);
-    if (exists) {
-      if (!opts?.background) set({ activeId: tab.id });
+    const existIdx = tabs.findIndex((t) => t.id === tab.id);
+    if (existIdx !== -1) {
+      // 已存在：同步可变属性（title / sourceFileType），保留 dirty
+      const next = tabs.slice();
+      next[existIdx] = { ...next[existIdx], title: tab.title, sourceFileType: tab.sourceFileType };
+      set({
+        tabs: next,
+        activeId: opts?.background ? activeId : tab.id,
+      });
       return;
     }
     set({
