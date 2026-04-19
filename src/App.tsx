@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { ConfigProvider, theme } from "antd";
+import { ConfigProvider, theme, App as AntdApp } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { useAppStore } from "@/store";
@@ -28,9 +28,11 @@ function App() {
         token: tokens,
       }}
     >
-      <ErrorBoundary>
-        <AppRouter />
-      </ErrorBoundary>
+      <AntdApp style={{ height: "100%" }}>
+        <ErrorBoundary>
+          <AppRouter />
+        </ErrorBoundary>
+      </AntdApp>
     </ConfigProvider>
   );
 }

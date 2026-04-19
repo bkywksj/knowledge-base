@@ -112,6 +112,10 @@ export function TiptapEditor({
     extensions: [
       StarterKit.configure({
         codeBlock: false, // 用 CodeBlockLowlight 替代
+        // Tiptap 3.x StarterKit 自带 link/underline，这里禁用以避免和下方
+        // 手动 Link.configure / Underline 重复（控制台会打印 Duplicate extension names）
+        link: false,
+        underline: false,
       }),
       Placeholder.configure({ placeholder }),
       Highlight.configure({ multicolor: true }),
