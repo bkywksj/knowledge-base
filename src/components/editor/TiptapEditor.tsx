@@ -210,12 +210,8 @@ export function TiptapEditor({
       <EditorContent editor={editor} className="tiptap-content" />
       <AiWriteMenu editor={editor} />
       <div
-        className="flex items-center gap-4 px-3 py-1.5 text-xs"
-        style={{
-          color: token.colorTextQuaternary,
-          borderTop: `1px solid ${token.colorBorderSecondary}`,
-          background: token.colorBgContainer,
-        }}
+        className="flex items-center gap-4 px-3 pt-4 pb-3 text-xs"
+        style={{ color: token.colorTextTertiary }}
       >
         <span>{stats.words} 字</span>
         <span>{stats.chars} 字符</span>
