@@ -26,6 +26,7 @@ import { systemApi, updaterApi, aiModelApi, importApi, exportApi, folderApi, tem
 import { Checkbox } from "antd";
 import { UpdateModal } from "@/components/ui/UpdateModal";
 import { RecommendCards } from "@/components/ui/RecommendCards";
+import { TiptapEditor } from "@/components/editor";
 import type { Folder } from "@/types";
 
 const { Title, Text } = Typography;
@@ -815,6 +816,8 @@ export default function SettingsPage() {
         okText="保存"
         cancelText="取消"
         destroyOnClose
+        width={820}
+        styles={{ body: { maxHeight: "calc(100vh - 240px)", overflow: "auto" } }}
       >
         <Form form={tplForm} layout="vertical" className="mt-4">
           <Form.Item
@@ -827,11 +830,16 @@ export default function SettingsPage() {
           <Form.Item name="description" label="描述" initialValue="">
             <Input placeholder="简要描述模板用途" />
           </Form.Item>
-          <Form.Item name="content" label="模板内容（HTML）" initialValue="">
-            <Input.TextArea
-              rows={8}
-              placeholder="输入 HTML 格式的模板内容，创建笔记时将自动填充"
-              style={{ fontFamily: "monospace", fontSize: 12 }}
+          <Form.Item
+            name="content"
+            label="模板内容"
+            initialValue=""
+            valuePropName="content"
+          >
+            <TiptapEditor
+              content=""
+              onChange={() => {}}
+              placeholder="输入模板内容（支持富文本），创建笔记时将自动填充"
             />
           </Form.Item>
         </Form>
