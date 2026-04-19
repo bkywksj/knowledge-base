@@ -80,7 +80,7 @@ pub async fn sync_webdav_push(
     config: WebDavConfig,
 ) -> Result<SyncResult, String> {
     let version = app.package_info().version.to_string();
-    let password = resolve_password(&config)?;
+    let password = resolve_password(&state.db, &config)?;
 
     let history_id = state
         .db
@@ -109,7 +109,7 @@ pub async fn sync_webdav_pull(
     config: WebDavConfig,
     filename: Option<String>,
 ) -> Result<SyncManifest, String> {
-    let password = resolve_password(&config)?;
+    let password = resolve_password(&state.db, &config)?;
     let db_path = resolve_db_path(&state.data_dir);
 
     let history_id = state
@@ -134,10 +134,11 @@ pub async fn sync_webdav_pull(
 
 #[tauri::command]
 pub async fn sync_webdav_preview(
+    state: State<'_, AppState>,
     config: WebDavConfig,
     filename: Option<String>,
 ) -> Result<SyncManifest, String> {
-    let password = resolve_password(&config)?;
+    let password = resolve_password(&state.db, &config)?;
     SyncService::webdav_preview(&config.url, &config.username, &password, filename.as_deref())
         .await
         .map_err(|e| e.to_string())
@@ -147,9 +148,10 @@ pub async fn sync_webdav_preview(
 /// 返回 [{filename, device}, ...]
 #[tauri::command]
 pub async fn sync_webdav_list_snapshots(
+    state: State<'_, AppState>,
     config: WebDavConfig,
 ) -> Result<Vec<RemoteSnapshot>, String> {
-    let password = resolve_password(&config)?;
+    let password = resolve_password(&state.db, &config)?;
     let items = SyncService::webdav_list_snapshots(&config.url, &config.username, &password)
         .await
         .map_err(|e| e.to_string())?;
@@ -166,23 +168,34 @@ pub struct RemoteSnapshot {
     pub device: String,
 }
 
-// ─── 密码 Keyring ─────────────────────────────
+// ─── 密码加密存取（AES-GCM + SQLite） ─────────────────────────────
 
 #[tauri::command]
-pub fn sync_save_webdav_password(username: String, password: String) -> Result<(), String> {
-    SyncService::save_webdav_password(&username, &password).map_err(|e| e.to_string())
+pub fn sync_save_webdav_password(
+    state: State<'_, AppState>,
+    username: String,
+    password: String,
+) -> Result<(), String> {
+    SyncService::save_webdav_password(&state.db, &username, &password)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn sync_has_webdav_password(username: String) -> Result<bool, String> {
-    SyncService::get_webdav_password(&username)
+pub fn sync_has_webdav_password(
+    state: State<'_, AppState>,
+    username: String,
+) -> Result<bool, String> {
+    SyncService::get_webdav_password(&state.db, &username)
         .map(|p| p.is_some())
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn sync_delete_webdav_password(username: String) -> Result<(), String> {
-    SyncService::delete_webdav_password(&username).map_err(|e| e.to_string())
+pub fn sync_delete_webdav_password(
+    state: State<'_, AppState>,
+    username: String,
+) -> Result<(), String> {
+    SyncService::delete_webdav_password(&state.db, &username).map_err(|e| e.to_string())
 }
 
 // ─── 同步历史 ─────────────────────────────────
@@ -207,14 +220,14 @@ pub fn sync_scheduler_reload(state: State<'_, AppState>) -> Result<(), String> {
 
 // ─── 辅助 ────────────────────────────────────
 
-/// 从 WebDavConfig 读 password：优先用前端传入的，否则读 keyring
-fn resolve_password(config: &WebDavConfig) -> Result<String, String> {
+/// 从 WebDavConfig 读 password：优先用前端传入的，否则读 SQLite 里的加密密文
+fn resolve_password(db: &crate::database::Database, config: &WebDavConfig) -> Result<String, String> {
     if let Some(p) = &config.password {
         if !p.is_empty() {
             return Ok(p.clone());
         }
     }
-    match SyncService::get_webdav_password(&config.username).map_err(|e| e.to_string())? {
+    match SyncService::get_webdav_password(db, &config.username).map_err(|e| e.to_string())? {
         Some(p) => Ok(p),
         None => Err("未配置密码，请先在设置中保存 WebDAV 密码".into()),
     }

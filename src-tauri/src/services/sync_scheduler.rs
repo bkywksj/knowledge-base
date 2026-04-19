@@ -108,7 +108,7 @@ async fn auto_push(app: &AppHandle) {
         return;
     }
 
-    let password = match SyncService::get_webdav_password(&username) {
+    let password = match SyncService::get_webdav_password(&state.db, &username) {
         Ok(Some(p)) => p,
         Ok(None) => {
             let err = "未保存 WebDAV 密码";

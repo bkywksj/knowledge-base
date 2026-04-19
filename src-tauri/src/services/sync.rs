@@ -4,7 +4,8 @@
 //! - **全量快照**：每次导出/推送都生成完整 ZIP 包（app.db + 资产 + settings.json）
 //! - **overwrite 模式**：导入时替换本地所有数据（先清空 → 再展开 ZIP）
 //! - **merge 模式**：只添加 ZIP 里有、本地没有的资产；app.db 不合并（MVP 暂不实现真正合并，等同 overwrite）
-//! - **密码**：WebDAV 密码走 OS keyring，不入 DB
+//! - **密码**：WebDAV 密码 AES-256-GCM 加密后存入 SQLite app_config
+//!   （密钥从 hostname + 固定 salt 派生；复制 db 到别的机器无法解密）
 
 use std::fs;
 use std::io::{Cursor, Read, Write};
@@ -16,6 +17,7 @@ use zip::{ZipArchive, ZipWriter};
 use crate::database::Database;
 use crate::error::AppError;
 use crate::models::{SyncImportMode, SyncManifest, SyncResult, SyncScope, SyncStats};
+use crate::services::crypto;
 use crate::services::webdav::WebDavClient;
 
 const MANIFEST_VERSION: u32 = 1;
@@ -349,40 +351,40 @@ impl SyncService {
         Ok(m)
     }
 
-    // ─── Keyring 密码存取 ──────────────────────
+    // ─── 密码存取（AES-GCM 加密 + SQLite app_config） ──────────────────────
 
-    /// 服务标识：knowledge-base-sync
-    const KEYRING_SERVICE: &'static str = "knowledge-base-sync";
+    /// 配置 key：密文按用户名后缀区分（支持多 WebDAV 账号）
+    /// 最终存的键形如 `sync.webdav_pw_enc.<username>`，value 是 base64 密文
+    fn pw_config_key(username: &str) -> String {
+        format!("sync.webdav_pw_enc.{}", username)
+    }
 
-    /// 把 WebDAV 密码写入 OS 钥匙串
-    pub fn save_webdav_password(username: &str, password: &str) -> Result<(), AppError> {
-        let entry = keyring::Entry::new(Self::KEYRING_SERVICE, username)
-            .map_err(|e| AppError::Custom(format!("keyring 初始化失败: {}", e)))?;
-        entry
-            .set_password(password)
-            .map_err(|e| AppError::Custom(format!("保存密码失败: {}", e)))?;
+    /// 把 WebDAV 密码加密后存入 SQLite
+    pub fn save_webdav_password(
+        db: &Database,
+        username: &str,
+        password: &str,
+    ) -> Result<(), AppError> {
+        let enc = crypto::encrypt(password)?;
+        db.set_config(&Self::pw_config_key(username), &enc)?;
         Ok(())
     }
 
-    /// 从 OS 钥匙串读 WebDAV 密码
-    pub fn get_webdav_password(username: &str) -> Result<Option<String>, AppError> {
-        let entry = keyring::Entry::new(Self::KEYRING_SERVICE, username)
-            .map_err(|e| AppError::Custom(format!("keyring 初始化失败: {}", e)))?;
-        match entry.get_password() {
-            Ok(p) => Ok(Some(p)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(AppError::Custom(format!("读取密码失败: {}", e))),
+    /// 从 SQLite 读 WebDAV 密文并解密
+    pub fn get_webdav_password(
+        db: &Database,
+        username: &str,
+    ) -> Result<Option<String>, AppError> {
+        match db.get_config(&Self::pw_config_key(username))? {
+            Some(enc) if !enc.is_empty() => crypto::decrypt(&enc).map(Some),
+            _ => Ok(None),
         }
     }
 
-    /// 删除 WebDAV 密码
-    pub fn delete_webdav_password(username: &str) -> Result<(), AppError> {
-        let entry = keyring::Entry::new(Self::KEYRING_SERVICE, username)
-            .map_err(|e| AppError::Custom(format!("keyring 初始化失败: {}", e)))?;
-        match entry.delete_credential() {
-            Ok(_) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(AppError::Custom(format!("删除密码失败: {}", e))),
-        }
+    /// 删除 SQLite 中的 WebDAV 密文
+    pub fn delete_webdav_password(db: &Database, username: &str) -> Result<(), AppError> {
+        let _ = db.delete_config(&Self::pw_config_key(username))?;
+        Ok(())
     }
 }
 

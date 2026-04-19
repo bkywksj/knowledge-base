@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod config;
+pub mod crypto;
 pub mod daily;
 pub mod folder;
 pub mod links;
