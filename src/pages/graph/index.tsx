@@ -95,17 +95,22 @@ export default function GraphPage() {
       },
       edge: {
         style: {
-          stroke: token.colorBorderSecondary,
-          lineWidth: 1,
+          stroke: token.colorPrimary,
+          strokeOpacity: 0.45,
+          lineWidth: 1.5,
           endArrow: true,
-          endArrowSize: 6,
+          endArrowSize: 8,
+          endArrowFill: token.colorPrimary,
         },
       },
       layout: {
         type: layout,
+        // d3-force 专属参数（其他 layout 会忽略未知参数）
         preventOverlap: true,
-        nodeSize: 40,
-        linkDistance: 120,
+        nodeSize: 70,        // 覆盖节点 + label 的视觉范围，防重叠更稳
+        linkDistance: 200,   // 连线理想长度（上调 120 → 200）
+        nodeStrength: -400,  // 节点间排斥（更负 → 推得更开）
+        collideStrength: 0.85,
       },
       behaviors: [
         "drag-canvas",
