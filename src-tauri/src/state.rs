@@ -1,7 +1,7 @@
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-use tokio::sync::watch;
+use tokio::sync::{watch, Notify};
 
 use crate::database::Database;
 
@@ -12,6 +12,8 @@ pub struct AppState {
     pub data_dir: PathBuf,
     /// AI 生成取消信号 (conversation_id -> sender)
     pub ai_cancel: Mutex<std::collections::HashMap<i64, watch::Sender<bool>>>,
+    /// 自动同步调度器唤醒信号：配置变更时 notify_one 重载
+    pub sync_scheduler_notify: Arc<Notify>,
 }
 
 impl AppState {
@@ -20,6 +22,7 @@ impl AppState {
             db,
             data_dir,
             ai_cancel: Mutex::new(std::collections::HashMap::new()),
+            sync_scheduler_notify: Arc::new(Notify::new()),
         }
     }
 }

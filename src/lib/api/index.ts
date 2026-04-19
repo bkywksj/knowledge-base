@@ -292,4 +292,6 @@ export const syncApi = {
   /** 列出同步历史 */
   listHistory: (limit?: number) =>
     invoke<SyncHistoryItem[]>("sync_list_history", { limit }),
+  /** 唤醒自动同步调度器（配置变更后调用）*/
+  schedulerReload: () => invoke<void>("sync_scheduler_reload"),
 };

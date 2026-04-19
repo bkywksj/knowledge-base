@@ -22,6 +22,7 @@ import {
   HistoryOutlined,
 } from "@ant-design/icons";
 import { save, open } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import { syncApi, configApi } from "@/lib/api";
 import type {
   SyncScope,
@@ -79,7 +80,7 @@ export function SyncSection() {
   const [history, setHistory] = useState<SyncHistoryItem[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
 
-  // 初始化：从配置读 WebDAV 信息 + 自动同步设置
+  // 初始化：从配置读 WebDAV 信息 + 自动同步设置 + 订阅自动同步事件
   useEffect(() => {
     (async () => {
       try {
@@ -98,6 +99,22 @@ export function SyncSection() {
       } catch {}
       loadHistory();
     })();
+
+    // 订阅后台自动同步结果事件
+    const unlistenPromise = listen<{ success: boolean; error?: string; stats?: unknown }>(
+      "sync:auto-triggered",
+      (e) => {
+        if (e.payload.success) {
+          message.success("自动同步成功");
+        } else {
+          message.warning(`自动同步失败：${e.payload.error || "未知错误"}`);
+        }
+        loadHistory();
+      },
+    );
+    return () => {
+      unlistenPromise.then((fn) => fn()).catch(() => {});
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -266,6 +283,7 @@ export function SyncSection() {
     setAutoEnabled(enabled);
     try {
       await configApi.set(CFG_KEY_AUTO, enabled ? "true" : "false");
+      await syncApi.schedulerReload();
       message.success(enabled ? "已启用自动同步" : "已关闭自动同步");
     } catch (e) {
       message.error(String(e));
@@ -276,6 +294,7 @@ export function SyncSection() {
     setAutoInterval(v);
     try {
       await configApi.set(CFG_KEY_INTERVAL, String(v));
+      await syncApi.schedulerReload();
     } catch {}
   }
 
@@ -450,7 +469,7 @@ export function SyncSection() {
         <Text type="secondary" style={{ fontSize: 12 }}>分钟推送一次</Text>
       </Space>
       <div style={{ fontSize: 12, color: "var(--ant-color-text-tertiary)", marginTop: 4 }}>
-        默认关闭。启用后应用会在后台按间隔自动推送到云端。（首版 UI 配置已落地，后台调度逻辑待接入）
+        默认关闭。启用后应用在后台按设定间隔自动推送到 WebDAV；推送结果会通过消息提示。最小间隔 5 分钟。
       </div>
 
       <Divider style={{ margin: "12px 0" }} />

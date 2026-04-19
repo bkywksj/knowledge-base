@@ -175,6 +175,13 @@ pub fn sync_list_history(
         .map_err(|e| e.to_string())
 }
 
+/// 唤醒自动同步调度器：配置变更后由前端调用
+#[tauri::command]
+pub fn sync_scheduler_reload(state: State<'_, AppState>) -> Result<(), String> {
+    state.sync_scheduler_notify.notify_one();
+    Ok(())
+}
+
 // ─── 辅助 ────────────────────────────────────
 
 /// 从 WebDavConfig 读 password：优先用前端传入的，否则读 keyring

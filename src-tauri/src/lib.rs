@@ -73,6 +73,12 @@ pub fn run() {
             tray::setup_tray(app)?;
             log::info!("系统托盘初始化完成");
 
+            // 启动自动同步调度器（后台 tokio 任务，按配置周期触发 WebDAV push）
+            let app_handle_sched = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                services::sync_scheduler::run_scheduler(app_handle_sched).await;
+            });
+
             Ok(())
         })
         // ─── Command 注册 ───────────────────────────
@@ -183,6 +189,7 @@ pub fn run() {
             commands::sync::sync_has_webdav_password,
             commands::sync::sync_delete_webdav_password,
             commands::sync::sync_list_history,
+            commands::sync::sync_scheduler_reload,
         ])
         // ─── 窗口事件处理 ─────────────────────────
         .on_window_event(|window, event| {
