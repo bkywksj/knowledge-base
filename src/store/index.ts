@@ -19,6 +19,8 @@ interface AppStore {
   focusMode: boolean;
   /** "新建笔记" Modal 全局开关 */
   createModalOpen: boolean;
+  /** 笔记列表刷新触发器：递增即触发各页面重新拉数据 */
+  notesRefreshTick: number;
   /** 获取当前生效的主题 */
   activeTheme: () => ThemeMode;
   /** 切换亮/暗分类 */
@@ -37,6 +39,8 @@ interface AppStore {
   openCreateModal: () => void;
   /** 关闭"新建笔记" Modal */
   closeCreateModal: () => void;
+  /** 触发所有监听笔记列表的页面刷新（导入/创建后调用） */
+  bumpNotesRefresh: () => void;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -46,6 +50,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   sidebarCollapsed: false,
   focusMode: false,
   createModalOpen: false,
+  notesRefreshTick: 0,
   activeTheme: () => {
     const s = get();
     return s.themeCategory === "light" ? s.lightTheme : s.darkTheme;
@@ -61,6 +66,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setFocusMode: (on) => set({ focusMode: on }),
   openCreateModal: () => set({ createModalOpen: true }),
   closeCreateModal: () => set({ createModalOpen: false }),
+  bumpNotesRefresh: () => set((s) => ({ notesRefreshTick: s.notesRefreshTick + 1 })),
 }));
 
 /** 从 tauri-plugin-store 恢复主题设置 */

@@ -115,6 +115,13 @@ export default function NoteListPage() {
     loadNotes(1);
   }, [folderId]);
 
+  // 监听全局"刷新"触发器：CreateNoteModal 任何方式创建/导入完成后自动重拉
+  const notesRefreshTick = useAppStore((s) => s.notesRefreshTick);
+  useEffect(() => {
+    if (notesRefreshTick > 0) loadNotes(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notesRefreshTick]);
+
   useEffect(() => {
     const kw = searchParams.get("keyword");
     if (kw) {

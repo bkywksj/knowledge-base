@@ -30,6 +30,7 @@ import {
   sourceFileApi,
 } from "@/lib/api";
 import { importWordFiles } from "@/lib/wordImport";
+import { useAppStore } from "@/store";
 import type { NoteTemplate } from "@/types";
 
 type Mode = "blank" | "template" | "import";
@@ -80,6 +81,7 @@ export function CreateNoteModal({ open, folderId = null, onClose, onCreated }: P
         });
         message.success("创建成功");
         onClose();
+        useAppStore.getState().bumpNotesRefresh();
         onCreated?.();
         navigate(`/notes/${note.id}`);
       } catch (e) {
@@ -100,6 +102,7 @@ export function CreateNoteModal({ open, folderId = null, onClose, onCreated }: P
         });
         message.success("从模板创建成功");
         onClose();
+        useAppStore.getState().bumpNotesRefresh();
         onCreated?.();
         navigate(`/notes/${note.id}`);
       } catch (e) {
@@ -149,6 +152,7 @@ export function CreateNoteModal({ open, folderId = null, onClose, onCreated }: P
         });
       }
       onClose();
+      useAppStore.getState().bumpNotesRefresh();
       onCreated?.();
     } catch (e) {
       hide();
@@ -191,6 +195,7 @@ export function CreateNoteModal({ open, folderId = null, onClose, onCreated }: P
         });
       }
       onClose();
+      useAppStore.getState().bumpNotesRefresh();
       onCreated?.();
     } catch (e) {
       hide();
@@ -247,6 +252,7 @@ export function CreateNoteModal({ open, folderId = null, onClose, onCreated }: P
         });
       }
       onClose();
+      useAppStore.getState().bumpNotesRefresh();
       onCreated?.();
     } catch (e) {
       hide();
