@@ -373,7 +373,8 @@ body,
 }
 
 .tiptap table th {
-  background: var(--ant-color-bg-layout, #fafafa);
+  /* 用 5% 文本色叠加替代主题 bg-layout，避免某些"玻璃感"主题下表头偏深偏紫 */
+  background: color-mix(in srgb, var(--ant-color-text, #000) 5%, transparent);
   font-weight: 600;
 }
 
