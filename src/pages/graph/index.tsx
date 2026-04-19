@@ -63,13 +63,15 @@ export default function GraphPage() {
 
     const graph = new Graph({
       container: containerRef.current,
-      autoFit: "view",
+      // "view" 会整图等比缩放适配画布 → 节点一散开字就被缩小到看不清；
+      // 改 "center" 仅居中不缩放，节点按实际尺寸渲染，用户可滚轮放缩
+      autoFit: "center",
       data: { nodes, edges },
       node: {
         style: {
           size: (d: any) => {
             const linkCount = d.data?.linkCount || 0;
-            return Math.max(16, Math.min(48, 16 + linkCount * 6));
+            return Math.max(20, Math.min(52, 20 + linkCount * 6));
           },
           fill: (d: any) => {
             if (d.data?.isDaily) return token.colorWarning;
@@ -87,10 +89,11 @@ export default function GraphPage() {
             const label = d.data?.label || "";
             return label.length > 10 ? label.slice(0, 10) + "..." : label;
           },
-          labelFontSize: 11,
+          labelFontSize: 13,
+          labelFontWeight: 500,
           labelFill: token.colorText,
           labelPlacement: "bottom",
-          labelOffsetY: 4,
+          labelOffsetY: 6,
         },
       },
       edge: {
