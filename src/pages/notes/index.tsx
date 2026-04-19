@@ -42,7 +42,7 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
 import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
-import { noteApi, exportApi, templateApi, folderApi, pdfApi, sourceFileApi } from "@/lib/api";
+import { noteApi, exportApi, templateApi, folderApi, pdfApi, sourceFileApi, importApi } from "@/lib/api";
 import { importWordFiles } from "@/lib/wordImport";
 import { stripHtml, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -232,6 +232,54 @@ export default function NoteListPage() {
       setTemplatesLoading(false);
     }
   }, []);
+
+  const handleImportMarkdown = useCallback(async () => {
+    const picked = await openDialog({
+      multiple: true,
+      filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
+    });
+    if (!picked) return;
+    const paths = Array.isArray(picked) ? picked : [picked];
+    if (paths.length === 0) return;
+    const hide = message.loading(`正在导入 ${paths.length} 个 Markdown 文件...`, 0);
+    try {
+      const result = await importApi.importSelected(
+        paths,
+        folderId ? Number(folderId) : null,
+      );
+      hide();
+      if (result.imported > 0) {
+        message.success(
+          `成功导入 ${result.imported} 篇` +
+            (result.skipped > 0 ? `，跳过 ${result.skipped} 篇` : ""),
+        );
+      } else if (result.skipped > 0) {
+        message.warning(`全部 ${result.skipped} 篇已跳过`);
+      }
+      if (result.errors.length > 0) {
+        Modal.warning({
+          title: `${result.errors.length} 个文件导入失败`,
+          content: (
+            <List
+              size="small"
+              dataSource={result.errors}
+              renderItem={(err) => (
+                <List.Item>
+                  <Typography.Text type="danger" style={{ fontSize: 12 }}>
+                    {err}
+                  </Typography.Text>
+                </List.Item>
+              )}
+            />
+          ),
+        });
+      }
+      loadNotes(1);
+    } catch (e) {
+      hide();
+      message.error(`导入失败: ${e}`);
+    }
+  }, [folderId, loadNotes]);
 
   const handleImportWord = useCallback(async () => {
     // 先看转换器，决定是否允许 .doc
@@ -513,6 +561,12 @@ export default function NoteListPage() {
                   onClick: openTemplateModal,
                 },
                 { type: "divider" },
+                {
+                  key: "import-md",
+                  icon: <FileUp size={14} />,
+                  label: "导入 Markdown",
+                  onClick: handleImportMarkdown,
+                },
                 {
                   key: "import-pdf",
                   icon: <FileUp size={14} />,
