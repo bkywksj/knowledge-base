@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, startTransition } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Table,
@@ -212,10 +212,13 @@ export default function NoteListPage() {
 
   const handleViewChange = useCallback(
     (v: string) => {
-      setViewMode(v as ViewMode);
-      if (v === "timeline") {
-        loadNotes(1);
-      }
+      // startTransition 标记为非紧急，让 Segmented 滑块动画先跑完
+      startTransition(() => {
+        setViewMode(v as ViewMode);
+        if (v === "timeline") {
+          loadNotes(1);
+        }
+      });
     },
     [loadNotes],
   );
@@ -312,6 +315,15 @@ export default function NoteListPage() {
 
   // 时间线分组（缓存）
   const dateGroups = useMemo(() => groupByDate(data.items), [data.items]);
+
+  // 笔记纯文本预览（缓存：仅当 data.items 变化才重算 stripHtml，避免每次 render 都跑）
+  const notePreviews = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const n of data.items) {
+      map.set(n.id, n.content ? stripHtml(n.content) : "");
+    }
+    return map;
+  }, [data.items]);
 
   // ─── 虚拟滚动（卡片视图） ────────────────────
   // 将笔记按 3 列分行
@@ -480,7 +492,7 @@ export default function NoteListPage() {
                                   ellipsis={{ rows: 3 }}
                                   style={{ fontSize: 11, flex: 1, marginBottom: 6 }}
                                 >
-                                  {stripHtml(note.content) || "暂无内容"}
+                                  {notePreviews.get(note.id) || "暂无内容"}
                                 </Paragraph>
                                 <div className="flex items-center justify-between">
                                   <Text type="secondary" style={{ fontSize: 10 }}>
@@ -610,7 +622,7 @@ export default function NoteListPage() {
                                 marginTop: 2,
                               }}
                             >
-                              {stripHtml(note.content).slice(0, 100)}
+                              {(notePreviews.get(note.id) ?? "").slice(0, 100)}
                             </Paragraph>
                           )}
                         </div>

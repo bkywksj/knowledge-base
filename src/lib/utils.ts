@@ -1,9 +1,22 @@
-/** 去除 HTML 标签，提取纯文本 */
+/** 去除 HTML 标签，提取纯文本
+ *
+ * 用正则替代 DOMParser：DOMParser 对 50KB HTML 需 20-50ms，正则只需 1-5ms。
+ * 笔记列表（50+ 条）+ PDF/Word 抽出的大 content 场景下显著优化。
+ */
 export function stripHtml(html: string): string {
   if (!html) return "";
-  // 用 DOMParser 安全地提取文本
-  const doc = new DOMParser().parseFromString(html, "text/html");
-  return doc.body.textContent?.trim() || "";
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** 相对时间格式化 */
