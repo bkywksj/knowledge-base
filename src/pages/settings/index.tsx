@@ -21,10 +21,11 @@ import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate } from "lucid
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import type { Update } from "@tauri-apps/plugin-updater";
-import type { AppConfig, AiModel, AiModelInput, ImportResult, ImportProgress, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput } from "@/types";
-import { configApi, systemApi, updaterApi, aiModelApi, importApi, exportApi, folderApi, templateApi } from "@/lib/api";
+import type { AiModel, AiModelInput, ImportResult, ImportProgress, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput } from "@/types";
+import { systemApi, updaterApi, aiModelApi, importApi, exportApi, folderApi, templateApi } from "@/lib/api";
 import { Checkbox } from "antd";
 import { UpdateModal } from "@/components/ui/UpdateModal";
+import { RecommendCards } from "@/components/ui/RecommendCards";
 import type { Folder } from "@/types";
 
 const { Title, Text } = Typography;
@@ -44,8 +45,6 @@ const DEFAULT_URLS: Record<string, string> = {
 };
 
 export default function SettingsPage() {
-  const [configs, setConfigs] = useState<AppConfig[]>([]);
-  const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(false);
   const [update, setUpdate] = useState<Update | null>(null);
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
@@ -82,18 +81,6 @@ export default function SettingsPage() {
   const [tplModalOpen, setTplModalOpen] = useState(false);
   const [editingTpl, setEditingTpl] = useState<NoteTemplate | null>(null);
   const [tplForm] = Form.useForm<NoteTemplateInput>();
-
-  async function loadConfigs() {
-    setLoading(true);
-    try {
-      const data = await configApi.getAll();
-      setConfigs(data);
-    } catch (e) {
-      message.error(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function loadModels() {
     setModelsLoading(true);
@@ -190,7 +177,6 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
-    loadConfigs();
     loadModels();
     loadFolders();
     loadTemplates();
@@ -378,20 +364,6 @@ export default function SettingsPage() {
   function handleProviderChange(provider: string) {
     form.setFieldValue("api_url", DEFAULT_URLS[provider] || "");
   }
-
-  const configColumns = [
-    {
-      title: "配置键",
-      dataIndex: "key",
-      key: "key",
-      render: (text: string) => <Tag color="blue">{text}</Tag>,
-    },
-    {
-      title: "配置值",
-      dataIndex: "value",
-      key: "value",
-    },
-  ];
 
   const modelColumns = [
     {
@@ -725,16 +697,7 @@ export default function SettingsPage() {
         />
       </Card>
 
-      <Card title="应用配置">
-        <Table
-          columns={configColumns}
-          dataSource={configs}
-          rowKey="key"
-          loading={loading}
-          pagination={false}
-          size="small"
-        />
-      </Card>
+      <RecommendCards />
 
       {/* 导入预览弹窗 */}
       <Modal
