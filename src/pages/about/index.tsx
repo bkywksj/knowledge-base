@@ -1,18 +1,24 @@
 import { useEffect, useState } from "react";
 import { Card, Typography, Descriptions, Spin, message, Button, Tooltip } from "antd";
+import { SyncOutlined } from "@ant-design/icons";
 import { FolderOpen, ExternalLink } from "lucide-react";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+import type { Update } from "@tauri-apps/plugin-updater";
+import type { SystemInfo } from "@/types";
+import { systemApi, updaterApi } from "@/lib/api";
+import { RecommendCards } from "@/components/ui/RecommendCards";
+import { UpdateModal } from "@/components/ui/UpdateModal";
 
 const OFFICIAL_SITE = "https://kb.ruoyi.plus/";
-import type { SystemInfo } from "@/types";
-import { systemApi } from "@/lib/api";
-import { RecommendCards } from "@/components/ui/RecommendCards";
 
 const { Title, Text } = Typography;
 
 export default function AboutPage() {
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [loading, setLoading] = useState(true);
+  const [checking, setChecking] = useState(false);
+  const [update, setUpdate] = useState<Update | null>(null);
+  const [updateModalOpen, setUpdateModalOpen] = useState(false);
 
   useEffect(() => {
     systemApi
@@ -28,6 +34,23 @@ export default function AboutPage() {
       await openPath(info.dataDir);
     } catch (e) {
       message.error(`打开目录失败: ${e}`);
+    }
+  }
+
+  async function handleCheckUpdate() {
+    setChecking(true);
+    try {
+      const result = await updaterApi.checkUpdate();
+      if (result) {
+        setUpdate(result);
+        setUpdateModalOpen(true);
+      } else {
+        message.success("当前已是最新版本");
+      }
+    } catch (e) {
+      message.warning(`检查更新失败: ${String(e)}`);
+    } finally {
+      setChecking(false);
     }
   }
 
@@ -48,7 +71,18 @@ export default function AboutPage() {
             <Descriptions.Item label="操作系统">{info.os}</Descriptions.Item>
             <Descriptions.Item label="CPU 架构">{info.arch}</Descriptions.Item>
             <Descriptions.Item label="应用版本">
-              v{info.appVersion}
+              <div className="flex items-center justify-between gap-2">
+                <Text style={{ fontSize: 13 }}>v{info.appVersion}</Text>
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<SyncOutlined spin={checking} />}
+                  loading={checking}
+                  onClick={handleCheckUpdate}
+                >
+                  检查更新
+                </Button>
+              </div>
             </Descriptions.Item>
             <Descriptions.Item label="官网">
               <div className="flex items-center justify-between gap-2">
@@ -116,6 +150,12 @@ export default function AboutPage() {
       )}
 
       <RecommendCards />
+
+      <UpdateModal
+        open={updateModalOpen}
+        onClose={() => setUpdateModalOpen(false)}
+        update={update}
+      />
     </div>
   );
 }
