@@ -71,6 +71,7 @@ export function SyncSection() {
   const [importing, setImporting] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [pulling, setPulling] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
 
   // 自动同步
   const [autoEnabled, setAutoEnabled] = useState(false);
@@ -292,13 +293,27 @@ export function SyncSection() {
   }
 
   async function loadCloudPreview() {
-    if (!webdavReady) return;
+    if (!webdavReady) {
+      message.warning("请先完成 WebDAV 配置并测试连接");
+      return;
+    }
+    setPreviewing(true);
     try {
       const config = { url, username, password: password || undefined };
       const m = await syncApi.webdavPreview(config);
       setCloudManifest(m);
-    } catch {
+      if (m) {
+        message.success(
+          `云端快照：${m.device}（${m.exportedAt}）· ${m.stats.notesCount} 条笔记`,
+        );
+      } else {
+        message.info("云端暂无快照，请先执行一次推送");
+      }
+    } catch (e) {
       setCloudManifest(null);
+      message.error(`查询云端失败: ${String(e)}`);
+    } finally {
+      setPreviewing(false);
     }
   }
 
@@ -470,7 +485,11 @@ export function SyncSection() {
         >
           从云端拉取
         </Button>
-        <Button onClick={loadCloudPreview} disabled={!webdavReady}>
+        <Button
+          onClick={loadCloudPreview}
+          loading={previewing}
+          disabled={!webdavReady}
+        >
           查看云端状态
         </Button>
       </Space>
