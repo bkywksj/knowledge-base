@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, Typography, Descriptions, Spin, message, Button, Tooltip } from "antd";
-import { FolderOpen, Copy, ExternalLink } from "lucide-react";
+import { FolderOpen, ExternalLink } from "lucide-react";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 
 const OFFICIAL_SITE = "https://kb.ruoyi.plus/";
@@ -30,17 +30,6 @@ export default function AboutPage() {
       message.error(`打开目录失败: ${e}`);
     }
   }
-
-  async function handleCopyPath(path: string) {
-    try {
-      await navigator.clipboard.writeText(path);
-      message.success("已复制到剪贴板");
-    } catch {
-      message.error("复制失败");
-    }
-  }
-
-  const dbPath = info ? `${info.dataDir}${info.dataDir.includes("\\") ? "\\" : "/"}app.db` : "";
 
   return (
     <div className="max-w-2xl mx-auto" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -87,50 +76,6 @@ export default function AboutPage() {
                     onClick={handleOpenDataDir}
                   />
                 </Tooltip>
-              </div>
-            </Descriptions.Item>
-            <Descriptions.Item label="数据库文件">
-              <div className="flex items-center justify-between gap-2">
-                <code style={{ fontSize: 12 }}>app.db</code>
-                <Tooltip title="复制完整路径">
-                  <Button
-                    type="link"
-                    size="small"
-                    icon={<Copy size={14} />}
-                    onClick={() => handleCopyPath(dbPath)}
-                  />
-                </Tooltip>
-              </div>
-            </Descriptions.Item>
-            <Descriptions.Item label="图片存储">
-              <div className="flex items-center justify-between gap-2">
-                <Text style={{ fontSize: 13 }}>
-                  {info.imagesDir}
-                </Text>
-                <span className="flex items-center gap-1">
-                  <Tooltip title="复制路径">
-                    <Button
-                      type="link"
-                      size="small"
-                      icon={<Copy size={14} />}
-                      onClick={() => handleCopyPath(info.imagesDir)}
-                    />
-                  </Tooltip>
-                  <Tooltip title="在文件管理器中打开">
-                    <Button
-                      type="link"
-                      size="small"
-                      icon={<FolderOpen size={14} />}
-                      onClick={async () => {
-                        try {
-                          await openPath(info.imagesDir);
-                        } catch (e) {
-                          message.error(`打开目录失败: ${e}`);
-                        }
-                      }}
-                    />
-                  </Tooltip>
-                </span>
               </div>
             </Descriptions.Item>
           </Descriptions>
