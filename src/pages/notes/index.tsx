@@ -27,6 +27,7 @@ import {
   Plus,
   Search,
   Trash2,
+  Archive,
   Edit3,
   Share,
   LayoutList,
@@ -41,7 +42,8 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
 import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
-import { noteApi, exportApi, templateApi, folderApi, pdfApi } from "@/lib/api";
+import { noteApi, exportApi, templateApi, folderApi, pdfApi, sourceFileApi } from "@/lib/api";
+import { importWordFiles } from "@/lib/wordImport";
 import { stripHtml, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
 import type { Note, NoteInput, NoteTemplate, PageResult, Folder } from "@/types";
@@ -200,17 +202,16 @@ export default function NoteListPage() {
     }
   }, []);
 
-  const handleDeleteAll = useCallback(() => {
+  const handleTrashAll = useCallback(() => {
     Modal.confirm({
-      title: "删除所有笔记",
-      content: `确认永久删除全部 ${data.total} 篇笔记？此操作不可恢复！`,
-      okText: "确认删除",
-      okType: "danger",
+      title: "全部移到回收站",
+      content: `将全部 ${data.total} 篇笔记移到回收站，可在回收站中恢复或彻底删除。`,
+      okText: "确认移入回收站",
       cancelText: "取消",
       onOk: async () => {
         try {
-          const count = await noteApi.deleteAll();
-          message.success(`已删除 ${count} 篇笔记`);
+          const count = await noteApi.trashAll();
+          message.success(`已将 ${count} 篇笔记移到回收站`);
           loadNotes(1);
         } catch (e) {
           message.error(String(e));
@@ -231,6 +232,56 @@ export default function NoteListPage() {
       setTemplatesLoading(false);
     }
   }, []);
+
+  const handleImportWord = useCallback(async () => {
+    // 先看转换器，决定是否允许 .doc
+    const converter = await sourceFileApi.getConverterStatus().catch(() => "none" as const);
+    const exts = converter === "none" ? ["docx"] : ["docx", "doc"];
+    const picked = await openDialog({
+      multiple: true,
+      filters: [{ name: "Word", extensions: exts }],
+    });
+    if (!picked) return;
+    const paths = Array.isArray(picked) ? picked : [picked];
+    if (paths.length === 0) return;
+    if (converter === "none" && paths.some((p) => p.toLowerCase().endsWith(".doc"))) {
+      Modal.warning({
+        title: ".doc 暂不可用",
+        content: "未检测到 LibreOffice 或 Microsoft Office / WPS。安装其一后可导入 .doc。",
+      });
+      return;
+    }
+    const hide = message.loading(`正在导入 ${paths.length} 个 Word 文件...`, 0);
+    try {
+      const results = await importWordFiles(paths);
+      const ok = results.filter((r) => r.noteId !== null);
+      const fail = results.filter((r) => r.noteId === null);
+      hide();
+      if (ok.length > 0) message.success(`成功导入 ${ok.length} 个 Word 文件`);
+      if (fail.length > 0) {
+        Modal.warning({
+          title: `${fail.length} 个 Word 文件导入失败`,
+          content: (
+            <List
+              size="small"
+              dataSource={fail}
+              renderItem={(r) => (
+                <List.Item>
+                  <Typography.Text type="danger" style={{ fontSize: 12 }}>
+                    {r.sourcePath.split(/[\\/]/).pop()}: {r.error}
+                  </Typography.Text>
+                </List.Item>
+              )}
+            />
+          ),
+        });
+      }
+      loadNotes(1);
+    } catch (e) {
+      hide();
+      message.error(`导入失败: ${e}`);
+    }
+  }, [loadNotes]);
 
   const handleImportPdfs = useCallback(async () => {
     const picked = await openDialog({
@@ -442,8 +493,8 @@ export default function NoteListPage() {
             size="small"
           />
           {data.total > 0 && (
-            <Button danger icon={<Trash2 size={14} />} onClick={handleDeleteAll}>
-              全部删除
+            <Button icon={<Archive size={14} />} onClick={handleTrashAll}>
+              全部移到回收站
             </Button>
           )}
           <Dropdown
@@ -467,6 +518,12 @@ export default function NoteListPage() {
                   icon: <FileUp size={14} />,
                   label: "导入 PDF",
                   onClick: handleImportPdfs,
+                },
+                {
+                  key: "import-word",
+                  icon: <FileUp size={14} />,
+                  label: "导入 Word (.docx / .doc)",
+                  onClick: handleImportWord,
                 },
               ],
             }}

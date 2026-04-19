@@ -33,8 +33,10 @@ pub struct Note {
     pub word_count: i64,
     pub created_at: String,
     pub updated_at: String,
-    /// 关联的原始 PDF 相对路径（相对 app_data_dir），为 None 表示纯笔记
-    pub pdf_path: Option<String>,
+    /// 关联的原始文件相对路径（相对 app_data_dir），为 None 表示纯笔记
+    pub source_file_path: Option<String>,
+    /// 原始文件类型："pdf" / "docx" / "doc" / null
+    pub source_file_type: Option<String>,
 }
 
 /// 创建/更新笔记的入参

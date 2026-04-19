@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 8;
+pub const SCHEMA_VERSION: i32 = 9;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -38,6 +38,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             5 => migrate_v5_to_v6(conn)?,
             6 => migrate_v6_to_v7(conn)?,
             7 => migrate_v7_to_v8(conn)?,
+            8 => migrate_v8_to_v9(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -341,5 +342,25 @@ fn migrate_v7_to_v8(conn: &Connection) -> Result<(), AppError> {
     )?;
 
     set_version(conn, 8)?;
+    Ok(())
+}
+
+/// v8 -> v9: 把 pdf_path 升级为通用源文件路径
+///
+/// - 新增 source_file_type 列，区分 pdf/docx/doc 等
+/// - pdf_path 列重命名为 source_file_path（SQLite 3.25+ 支持 RENAME COLUMN）
+/// - 旧 pdf_path 不为空的行回填 source_file_type='pdf'
+fn migrate_v8_to_v9(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v8 -> v9 (pdf_path → source_file_path + source_file_type)");
+
+    conn.execute_batch(
+        "
+        ALTER TABLE notes ADD COLUMN source_file_type TEXT;
+        ALTER TABLE notes RENAME COLUMN pdf_path TO source_file_path;
+        UPDATE notes SET source_file_type = 'pdf' WHERE source_file_path IS NOT NULL;
+        ",
+    )?;
+
+    set_version(conn, 9)?;
     Ok(())
 }

@@ -41,7 +41,7 @@ pub fn get_pdf_absolute_path(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("笔记 {} 不存在", note_id))?;
 
-    let Some(rel) = note.pdf_path else {
+    let Some(rel) = note.source_file_path else {
         return Ok(None);
     };
 

@@ -18,9 +18,10 @@ import {
 import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon } from "lucide-react";
 import { useAppStore } from "@/store";
 import { useTabsStore } from "@/store/tabs";
-import { noteApi, tagApi, folderApi, linkApi, exportApi, pdfApi } from "@/lib/api";
+import { noteApi, tagApi, folderApi, linkApi, exportApi, sourceFileApi } from "@/lib/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { relativeTime, stripHtml } from "@/lib/utils";
 import { TiptapEditor } from "@/components/editor";
 import type { Note, Tag, Folder, NoteLink } from "@/types";
@@ -343,17 +344,22 @@ export default function NoteEditorPage() {
     navigate(`/notes/${targetId}`);
   }
 
-  async function handleOpenPdfPreview() {
+  async function handleOpenSourceFile() {
     try {
-      const abs = await pdfApi.getAbsolutePath(noteId);
+      const abs = await sourceFileApi.getAbsolutePath(noteId);
       if (!abs) {
-        message.warning("原始 PDF 文件丢失或未关联");
+        message.warning("原始文件丢失或未关联");
         return;
       }
-      setPdfPreviewUrl(convertFileSrc(abs));
-      setPdfPreviewOpen(true);
+      // PDF 用内置 iframe Modal 预览；其他类型（Word 等）用系统默认应用打开
+      if (note?.source_file_type === "pdf") {
+        setPdfPreviewUrl(convertFileSrc(abs));
+        setPdfPreviewOpen(true);
+      } else {
+        await openPath(abs);
+      }
     } catch (e) {
-      message.error(`预览失败: ${e}`);
+      message.error(`打开失败: ${e}`);
     }
   }
 
@@ -466,13 +472,21 @@ export default function NoteEditorPage() {
           >
             保存
           </Button>
-          {note?.pdf_path && (
-            <Tooltip title="查看原始 PDF">
+          {note?.source_file_path && (
+            <Tooltip
+              title={
+                note?.source_file_type === "pdf"
+                  ? "查看原始 PDF"
+                  : "用系统默认应用打开原始文件"
+              }
+            >
               <Button
                 icon={<FileTextIcon size={16} />}
-                onClick={handleOpenPdfPreview}
+                onClick={handleOpenSourceFile}
               >
-                PDF
+                {note?.source_file_type === "pdf"
+                  ? "PDF"
+                  : (note?.source_file_type ?? "源文件").toUpperCase()}
               </Button>
             </Tooltip>
           )}

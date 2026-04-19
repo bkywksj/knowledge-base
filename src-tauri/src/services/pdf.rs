@@ -83,10 +83,10 @@ impl PdfService {
             return Ok(note);
         }
 
-        // 5. 更新 pdf_path（存相对路径，便于搬家）
-        db.set_note_pdf_path(note.id, Some(&rel_path))?;
+        // 5. 更新 source_file_path 和 source_file_type
+        db.set_note_source_file(note.id, Some(&rel_path), Some("pdf"))?;
 
-        // 6. 重新取完整 note 带 pdf_path 返回
+        // 6. 重新取完整 note 带 source_file_path 返回
         let note = db
             .get_note(note.id)?
             .ok_or_else(|| AppError::NotFound("刚创建的笔记查询失败".into()))?;

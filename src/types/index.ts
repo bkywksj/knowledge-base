@@ -27,8 +27,10 @@ export interface Note {
   word_count: number;
   created_at: string;
   updated_at: string;
-  /** 关联的 PDF 相对路径（相对 app_data_dir），纯笔记为 null */
-  pdf_path: string | null;
+  /** 关联的原始文件相对路径（相对 app_data_dir），纯笔记为 null */
+  source_file_path: string | null;
+  /** 原始文件类型："pdf" / "docx" / "doc" / null */
+  source_file_type: string | null;
 }
 
 /** PDF 导入结果（单个文件） */
@@ -38,6 +40,9 @@ export interface PdfImportResult {
   title: string | null;
   error: string | null;
 }
+
+/** .doc 转换器探测结果（serde kebab-case） */
+export type DocConverter = "libre-office" | "windows-com" | "none";
 
 /** 创建/更新笔记入参 */
 export interface NoteInput {

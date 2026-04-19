@@ -24,6 +24,7 @@ import type {
   NoteTemplateInput,
   DailyWritingStat,
   PdfImportResult,
+  DocConverter,
 } from "@/types";
 
 /** 系统相关 API */
@@ -50,6 +51,29 @@ export const pdfApi = {
     invoke<string | null>("get_pdf_absolute_path", { noteId }),
 };
 
+/** 通用源文件 API（Word / 任意附件） */
+export const sourceFileApi = {
+  /** 探测系统可用的 .doc 转换器（启动时检测一次） */
+  getConverterStatus: () =>
+    invoke<DocConverter>("get_converter_status"),
+  /** 把 .doc 转 .docx，返回 .docx 字节的 base64 */
+  convertDocToDocxBase64: (path: string) =>
+    invoke<string>("convert_doc_to_docx_base64", { path }),
+  /** 把任意路径的文件读为 base64（路径来自 dialog） */
+  readFileAsBase64: (path: string) =>
+    invoke<string>("read_file_as_base64", { path }),
+  /** 把源文件挂到笔记上（拷贝原文件 + 更新 source_file_path/type） */
+  attach: (noteId: number, sourcePath: string, fileType: string) =>
+    invoke<string>("attach_source_file", {
+      noteId,
+      sourcePath,
+      fileType,
+    }),
+  /** 通用：获取笔记关联源文件的绝对路径 */
+  getAbsolutePath: (noteId: number) =>
+    invoke<string | null>("get_source_file_absolute_path", { noteId }),
+};
+
 /** 配置管理 API */
 export const configApi = {
   getAll: () => invoke<AppConfig[]>("get_all_config"),
@@ -65,7 +89,7 @@ export const noteApi = {
   update: (id: number, input: NoteInput) =>
     invoke<Note>("update_note", { id, input }),
   delete: (id: number) => invoke<void>("delete_note", { id }),
-  deleteAll: () => invoke<number>("delete_all_notes"),
+  trashAll: () => invoke<number>("trash_all_notes"),
   get: (id: number) => invoke<Note>("get_note", { id }),
   list: (query: NoteQuery = {}) =>
     invoke<PageResult<Note>>("list_notes", { query }),

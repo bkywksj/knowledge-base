@@ -54,6 +54,11 @@ pub fn run() {
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             log::info!("PDF 存储目录: {}", pdfs_dir.display());
 
+            // 初始化通用源文件存储目录（Word 等用）
+            let sources_dir = services::source_file::SourceFileService::ensure_dir(&data_dir)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            log::info!("源文件存储目录: {}", sources_dir.display());
+
             // 注册全局状态
             app.manage(AppState::new(db));
 
@@ -145,7 +150,7 @@ pub fn run() {
             commands::export::export_notes,
             commands::export::export_single_note,
             // 笔记批量操作
-            commands::notes::delete_all_notes,
+            commands::notes::trash_all_notes,
             // 图片模块
             commands::image::save_note_image,
             commands::image::save_note_image_from_path,
@@ -160,6 +165,12 @@ pub fn run() {
             // PDF 模块
             commands::pdf::import_pdfs,
             commands::pdf::get_pdf_absolute_path,
+            // 通用源文件 / Word 模块
+            commands::source_file::get_converter_status,
+            commands::source_file::convert_doc_to_docx_base64,
+            commands::source_file::attach_source_file,
+            commands::source_file::get_source_file_absolute_path,
+            commands::source_file::read_file_as_base64,
         ])
         // ─── 窗口事件处理 ─────────────────────────
         .on_window_event(|window, event| {
