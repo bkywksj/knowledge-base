@@ -214,6 +214,31 @@ export function SyncSection() {
     try {
       await syncApi.webdavTest(url, username, password);
       message.success("连接成功");
+      // 测试成功后询问是否把密码保存到钥匙串
+      Modal.confirm({
+        title: "是否保存密码到系统钥匙串？",
+        content:
+          "保存后下次无需再填写密码，后台自动同步也可直接使用。" +
+          "密码由操作系统加密管理（Windows Credential Manager / macOS Keychain），" +
+          "不会写入数据库。",
+        okText: "保存",
+        cancelText: "不保存",
+        async onOk() {
+          try {
+            await syncApi.savePassword(username, password);
+            await configApi.set(CFG_KEY_URL, url);
+            await configApi.set(CFG_KEY_USER, username);
+            setPassword("");
+            setHasSavedPw(true);
+            message.success("密码已保存到系统钥匙串");
+          } catch (e) {
+            message.error(`保存失败: ${e}`);
+          }
+        },
+        onCancel() {
+          message.info("密码仅本次会话有效，关闭应用后需重新填写；自动同步需要先保存密码");
+        },
+      });
     } catch (e) {
       message.error(`连接失败: ${e}`);
     } finally {
