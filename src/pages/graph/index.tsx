@@ -114,15 +114,16 @@ export default function GraphPage() {
         layout === "d3-force"
           ? {
               // G6 v5 的 d3-force 走子对象 API（link / manyBody / collide / center）
-              // 之前用的 linkDistance / nodeStrength 顶层简写是 v4 的，v5 会被忽略
+              // 小图（<20 节点）用紧凑参数：节点不会散到画布外，autoFit 也就
+              // 不需要缩放，字得以保持原尺寸
               type: "d3-force",
-              link: { distance: 220, strength: 0.4 },
-              manyBody: { strength: -500 },
-              collide: { radius: 60, strength: 0.9 },
-              center: { strength: 0.05 },
+              link: { distance: 110, strength: 0.5 },
+              manyBody: { strength: -180 },
+              collide: { radius: 48, strength: 0.9 },
+              center: { strength: 0.08 },
             }
           : layout === "radial"
-            ? { type: "radial", unitRadius: 140, preventOverlap: true, nodeSize: 50 }
+            ? { type: "radial", unitRadius: 110, preventOverlap: true, nodeSize: 50 }
             : { type: layout },
       behaviors: [
         "drag-canvas",
