@@ -44,6 +44,7 @@ import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
 import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { noteApi, exportApi, templateApi, folderApi, pdfApi, sourceFileApi, importApi } from "@/lib/api";
 import { importWordFiles } from "@/lib/wordImport";
+import { useTabsStore } from "@/store/tabs";
 import { stripHtml, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
 import type { Note, NoteInput, NoteTemplate, PageResult, Folder } from "@/types";
@@ -178,6 +179,7 @@ export default function NoteListPage() {
     async (id: number) => {
       try {
         await noteApi.delete(id);
+        useTabsStore.getState().closeTab(id);
         message.success("删除成功");
         loadNotes(data.page);
       } catch (e) {
@@ -211,6 +213,7 @@ export default function NoteListPage() {
       onOk: async () => {
         try {
           const count = await noteApi.trashAll();
+          useTabsStore.getState().closeAllTabs();
           message.success(`已将 ${count} 篇笔记移到回收站`);
           loadNotes(1);
         } catch (e) {

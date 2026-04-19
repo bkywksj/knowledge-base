@@ -11,6 +11,7 @@ import {
 import { Trash2, RotateCcw, AlertTriangle } from "lucide-react";
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
 import { trashApi } from "@/lib/api";
+import { useTabsStore } from "@/store/tabs";
 import { EmptyState } from "@/components/ui/EmptyState";
 import type { Note, PageResult } from "@/types";
 
@@ -69,6 +70,7 @@ export default function TrashPage() {
   async function handlePermanentDelete(id: number) {
     try {
       await trashApi.permanentDelete(id);
+      useTabsStore.getState().closeTab(id);
       message.success("已永久删除");
       loadTrash(data.page);
     } catch (e) {
@@ -77,6 +79,8 @@ export default function TrashPage() {
   }
 
   function handleEmptyTrash() {
+    // 当前页面已加载的回收站 id（最多 20 条），先收着用于清 tab
+    const visibleIds = data.items.map((n) => n.id);
     Modal.confirm({
       title: "清空回收站",
       icon: <AlertTriangle size={20} style={{ color: "#ff4d4f", marginRight: 8 }} />,
@@ -87,6 +91,11 @@ export default function TrashPage() {
       onOk: async () => {
         try {
           const count = await trashApi.empty();
+          // 兜底关 tab：当前页可见的 id 一定关掉；超过分页范围的"幽灵 tab"
+          // 用户点击时编辑器会跳回 /notes，体验上不会崩
+          if (visibleIds.length > 0) {
+            useTabsStore.getState().closeTabsByIds(visibleIds);
+          }
           message.success(`已清空 ${count} 篇笔记`);
           loadTrash(1);
         } catch (e) {

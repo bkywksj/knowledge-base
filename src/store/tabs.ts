@@ -17,6 +17,10 @@ interface TabsStore {
   activateTab: (id: number) => void;
   /** 关闭 tab；返回关闭后应该激活的邻居 ID（null 表示没有剩余 tab） */
   closeTab: (id: number) => number | null;
+  /** 批量关闭 tab（删除多条笔记后用），返回新的 activeId */
+  closeTabsByIds: (ids: number[]) => number | null;
+  /** 关闭所有 tab */
+  closeAllTabs: () => void;
   /** 关闭除指定 tab 外的全部 */
   closeOtherTabs: (keepId: number) => void;
   /** 关闭指定 tab 右侧所有 */
@@ -60,6 +64,26 @@ export const useTabsStore = create<TabsStore>((set, get) => ({
     set({ tabs: next, activeId: nextActive });
     return nextActive;
   },
+
+  closeTabsByIds: (ids) => {
+    const idSet = new Set(ids);
+    const { tabs, activeId } = get();
+    const next = tabs.filter((t) => !idSet.has(t.id));
+    let nextActive: number | null = activeId;
+    if (activeId !== null && idSet.has(activeId)) {
+      // 原激活被关掉，挑剩余里最接近原位置的一个
+      const oldIdx = tabs.findIndex((t) => t.id === activeId);
+      const candidate =
+        next.find((_, i, arr) => i + (tabs.length - arr.length) >= oldIdx) ??
+        next[next.length - 1] ??
+        null;
+      nextActive = candidate ? candidate.id : null;
+    }
+    set({ tabs: next, activeId: nextActive });
+    return nextActive;
+  },
+
+  closeAllTabs: () => set({ tabs: [], activeId: null }),
 
   closeOtherTabs: (keepId) => {
     const { tabs } = get();
