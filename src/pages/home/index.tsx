@@ -26,6 +26,7 @@ import {
   LetterText,
   Bot,
   GitBranch,
+  History,
 } from "lucide-react";
 import { Tooltip as AntTooltip } from "antd";
 import { noteApi, dailyApi, systemApi } from "@/lib/api";
@@ -312,7 +313,7 @@ export default function HomePage() {
         size="small"
         title={
           <span className="flex items-center gap-2 text-sm">
-            <FileText size={14} />
+            <History size={14} />
             最近编辑
           </span>
         }
