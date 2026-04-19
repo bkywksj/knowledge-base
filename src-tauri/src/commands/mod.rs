@@ -13,4 +13,5 @@ pub mod export;
 pub mod image;
 pub mod pdf;
 pub mod source_file;
+pub mod sync;
 pub mod template;

@@ -4,6 +4,7 @@ pub mod links;
 pub mod notes;
 pub mod schema;
 pub mod search;
+pub mod sync;
 pub mod tags;
 pub mod templates;
 

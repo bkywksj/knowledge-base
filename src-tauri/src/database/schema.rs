@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 10;
+pub const SCHEMA_VERSION: i32 = 11;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -40,6 +40,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             7 => migrate_v7_to_v8(conn)?,
             8 => migrate_v8_to_v9(conn)?,
             9 => migrate_v9_to_v10(conn)?,
+            10 => migrate_v10_to_v11(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -421,5 +422,29 @@ fn migrate_v9_to_v10(conn: &Connection) -> Result<(), AppError> {
     )?;
 
     set_version(conn, 10)?;
+    Ok(())
+}
+
+/// v10 -> v11: 新增同步历史表（sync_history）
+fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v10 -> v11（同步历史表）");
+
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS sync_history (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            direction    TEXT NOT NULL,      -- 'export' / 'import' / 'push' / 'pull'
+            started_at   TEXT NOT NULL,
+            finished_at  TEXT,
+            success      INTEGER NOT NULL DEFAULT 0,
+            error        TEXT,
+            stats_json   TEXT NOT NULL DEFAULT '{}'
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sync_history_started ON sync_history(started_at DESC);
+        ",
+    )?;
+
+    set_version(conn, 11)?;
     Ok(())
 }

@@ -314,3 +314,111 @@ pub struct PageResult<T: Serialize> {
     pub page: usize,
     pub page_size: usize,
 }
+
+// ─── 同步 ─────────────────────────────────────
+
+/// 同步范围：控制本次同步包含哪些数据
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncScope {
+    /// 笔记元数据（app.db 的 notes 及关联表）
+    pub notes: bool,
+    /// 图片资产（kb_assets/images/）
+    pub images: bool,
+    /// PDF 原文件（pdfs/）
+    pub pdfs: bool,
+    /// Word 源文件（sources/）
+    pub sources: bool,
+    /// 应用设置（settings.json）
+    pub settings: bool,
+}
+
+impl Default for SyncScope {
+    fn default() -> Self {
+        // V1/V2 默认全部勾选（资产也勾，符合用户预期）
+        Self {
+            notes: true,
+            images: true,
+            pdfs: true,
+            sources: true,
+            settings: true,
+        }
+    }
+}
+
+/// 导入模式：合并 or 覆盖
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SyncImportMode {
+    /// 合并：已有的保留，新增的导入
+    Merge,
+    /// 覆盖：先清空本地 DB/资产，再用同步包替换
+    Overwrite,
+}
+
+/// WebDAV 配置（不含密码——密码走 keyring）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebDavConfig {
+    pub url: String,
+    pub username: String,
+    /// 仅在前端传入时使用；后端读取时从 keyring 取
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+}
+
+/// 云端同步文件的清单信息（用于 preview）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncManifest {
+    /// manifest 版本号（格式升级用）
+    pub schema_version: u32,
+    /// 设备名
+    pub device: String,
+    /// 导出时间（ISO 8601 本地时间）
+    pub exported_at: String,
+    /// 应用版本
+    pub app_version: String,
+    /// 本次同步包含的范围
+    pub scope: SyncScope,
+    /// 元数据统计（仅用于预览展示）
+    pub stats: SyncStats,
+}
+
+/// 同步数据统计
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncStats {
+    pub notes_count: usize,
+    pub folders_count: usize,
+    pub tags_count: usize,
+    pub images_count: usize,
+    pub pdfs_count: usize,
+    pub sources_count: usize,
+    /// 资产总大小（字节）
+    pub assets_size: u64,
+}
+
+/// 同步操作结果
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncResult {
+    /// 实际同步的条数/文件数（视具体范围而定）
+    pub stats: SyncStats,
+    /// 完成时间
+    pub finished_at: String,
+}
+
+/// 同步历史记录
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncHistoryItem {
+    pub id: i64,
+    /// "export" / "import" / "push" / "pull"
+    pub direction: String,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub success: bool,
+    pub error: Option<String>,
+    pub stats_json: String,
+}

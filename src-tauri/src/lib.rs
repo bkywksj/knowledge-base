@@ -172,6 +172,17 @@ pub fn run() {
             commands::source_file::attach_source_file,
             commands::source_file::get_source_file_absolute_path,
             commands::source_file::read_file_as_base64,
+            // 同步模块（V1/V2：本地 ZIP + WebDAV 全量快照）
+            commands::sync::sync_export_to_file,
+            commands::sync::sync_import_from_file,
+            commands::sync::sync_webdav_test,
+            commands::sync::sync_webdav_push,
+            commands::sync::sync_webdav_pull,
+            commands::sync::sync_webdav_preview,
+            commands::sync::sync_save_webdav_password,
+            commands::sync::sync_has_webdav_password,
+            commands::sync::sync_delete_webdav_password,
+            commands::sync::sync_list_history,
         ])
         // ─── 窗口事件处理 ─────────────────────────
         .on_window_event(|window, event| {

@@ -12,6 +12,9 @@ pub enum AppError {
     #[error("JSON 解析错误: {0}")]
     Json(#[from] serde_json::Error),
 
+    #[error("ZIP 错误: {0}")]
+    Zip(#[from] zip::result::ZipError),
+
     #[error("未找到: {0}")]
     NotFound(String),
 
