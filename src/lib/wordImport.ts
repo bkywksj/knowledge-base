@@ -84,7 +84,8 @@ export async function importWordFile(
     // .doc 转换失败：降级为"只保存原文件 + 占位笔记"
     degradedToPlaceholder = true;
     warnings.push(
-      `.doc 转换失败：${String(e)}\n建议安装 LibreOffice (https://www.libreoffice.org) 或 Microsoft Office 后重新导入以解析正文。`,
+      `.doc 转换失败：${String(e)}\n` +
+        `请安装 Microsoft Office 或 WPS Office 后重新导入即可解析正文。`,
     );
     base64 = "";
   }
@@ -94,9 +95,10 @@ export async function importWordFile(
     const title = fileStem(filePath);
     const placeholder =
       "<p>⚠️ <strong>未能解析此 .doc 文件正文</strong></p>" +
-      "<p>系统未检测到可用的转换器（LibreOffice 或 Microsoft Office / WPS）。</p>" +
-      '<p>请通过下方"DOC"按钮用系统默认应用查看；' +
-      "或安装 LibreOffice 后重新导入即可获得全文搜索能力。</p>";
+      "<p>系统未检测到 Microsoft Office 或 WPS Office 的 COM 自动化接口" +
+      "（错误码常见为 0x80040154 REGDB_E_CLASSNOTREG）。</p>" +
+      '<p>当前可用：通过下方"DOC"按钮用系统默认应用打开原文件。</p>' +
+      "<p>装上 Office 或 WPS（确认 OLE 自动化可用）后，重新导入即可解析正文并支持全文搜索。</p>";
     const note = await noteApi.create({
       title,
       content: placeholder,

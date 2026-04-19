@@ -132,18 +132,22 @@ fn convert_via_libreoffice(src: &Path, dst_dir: &Path) -> Result<PathBuf, AppErr
 
 #[cfg(target_os = "windows")]
 fn has_windows_com() -> bool {
-    // 真实例化 Word.Application 一次，立即退出
+    // 真实例化 Word.Application / Kwps.Application 一次，立即退出
     //
     // 之前用 GetTypeFromProgId 仅查注册表，会被 Office 卸载残留的 ProgId 误判（CLSID 实际未注册）。
     // 实例化 + Quit 是唯一可靠方法，启动一次 Word 进程约 0.5-2s，OnceLock 缓存后不再触发。
     let script = "$ErrorActionPreference='Stop'; \
-                  try { \
-                      $w = New-Object -ComObject Word.Application; \
-                      $w.Visible = $false; \
-                      $w.DisplayAlerts = 0; \
-                      $w.Quit(); \
-                      exit 0 \
-                  } catch { exit 1 }";
+                  $progIds = @('Word.Application', 'Kwps.Application'); \
+                  foreach ($pid in $progIds) { \
+                      try { \
+                          $w = New-Object -ComObject $pid; \
+                          $w.Visible = $false; \
+                          $w.DisplayAlerts = 0; \
+                          $w.Quit(); \
+                          exit 0 \
+                      } catch {} \
+                  } \
+                  exit 1";
     let mut cmd = Command::new("powershell");
     cmd.args(["-NoProfile", "-Command", script]);
     add_no_window(&mut cmd);
@@ -157,9 +161,15 @@ fn convert_via_windows_com(src: &Path, dst_dir: &Path) -> Result<PathBuf, AppErr
     let dst_str = ps_escape(&out_path.to_string_lossy());
 
     // wdFormatXMLDocument = 16 (.docx)
+    // 依次尝试 Word.Application（MS Office）→ Kwps.Application（WPS Office）
     let script = format!(
         "$ErrorActionPreference='Stop'; \
-         $word = New-Object -ComObject Word.Application; \
+         $progIds = @('Word.Application', 'Kwps.Application'); \
+         $word = $null; \
+         foreach ($pid in $progIds) {{ \
+             try {{ $word = New-Object -ComObject $pid; break }} catch {{}} \
+         }} \
+         if (-not $word) {{ throw '未找到可用的 Word COM 对象（需安装 Microsoft Office 或 WPS Office）' }} \
          $word.Visible = $false; \
          $word.DisplayAlerts = 0; \
          try {{ \
