@@ -433,7 +433,7 @@ impl Database {
     ) -> Result<(), AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
         let affected = conn.execute(
-            "UPDATE notes SET pdf_path = ?1, source_file_type = ?2 WHERE id = ?3",
+            "UPDATE notes SET source_file_path = ?1, source_file_type = ?2 WHERE id = ?3",
             params![path, file_type, id],
         )?;
         if affected == 0 {
