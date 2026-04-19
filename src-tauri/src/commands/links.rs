@@ -34,6 +34,15 @@ pub fn search_link_targets(
         .map_err(|e| e.to_string())
 }
 
+/// 按"规范化精确匹配"查找笔记 ID（用于 wiki 链接保存时解析 `[[标题]]`）
+#[tauri::command]
+pub fn find_note_id_by_title_loose(
+    state: State<'_, AppState>,
+    title: String,
+) -> Result<Option<i64>, String> {
+    LinkService::find_note_id_by_title_loose(&state.db, &title).map_err(|e| e.to_string())
+}
+
 /// 获取知识图谱数据
 #[tauri::command]
 pub fn get_graph_data(state: State<'_, AppState>) -> Result<GraphData, String> {

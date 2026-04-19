@@ -133,6 +133,7 @@ pub fn run() {
             commands::links::sync_note_links,
             commands::links::get_backlinks,
             commands::links::search_link_targets,
+            commands::links::find_note_id_by_title_loose,
             commands::links::get_graph_data,
             // AI 模块
             commands::ai::list_ai_models,

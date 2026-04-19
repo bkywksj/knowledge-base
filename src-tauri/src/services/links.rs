@@ -17,6 +17,13 @@ impl LinkService {
         db.get_backlinks(note_id)
     }
 
+    pub fn find_note_id_by_title_loose(
+        db: &Database,
+        title: &str,
+    ) -> Result<Option<i64>, AppError> {
+        db.find_note_id_by_title_loose(title)
+    }
+
     pub fn search_link_targets(
         db: &Database,
         keyword: &str,

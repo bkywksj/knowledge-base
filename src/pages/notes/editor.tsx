@@ -324,24 +324,37 @@ export default function NoteEditorPage() {
 
       // 解析 [[]] 链接并同步
       const wikiTitles = extractWikiLinks(content);
+      const missing: string[] = [];
       if (wikiTitles.length > 0) {
-        try {
-          const targetIds: number[] = [];
-          for (const t of wikiTitles) {
-            const results = await linkApi.searchTargets(t, 1);
-            const exact = results.find(([, name]) => name === t);
-            if (exact) targetIds.push(exact[0]);
+        const targetIds: number[] = [];
+        for (const t of wikiTitles) {
+          try {
+            const id = await linkApi.findIdByTitle(t);
+            if (id != null) {
+              targetIds.push(id);
+            } else {
+              missing.push(t);
+            }
+          } catch {
+            missing.push(t);
           }
-          await linkApi.syncLinks(noteId, targetIds);
-        } catch {
-          // 链接同步失败不影响保存
         }
+        await linkApi.syncLinks(noteId, targetIds).catch(() => {});
       } else {
-        // 无链接时清空
         await linkApi.syncLinks(noteId, []).catch(() => {});
       }
 
-      message.success("保存成功");
+      if (missing.length > 0) {
+        const preview = missing.slice(0, 3).map((s) => `[[${s}]]`).join("、");
+        message.warning(
+          `保存成功，但 ${missing.length} 个 wiki 链接未匹配到笔记：${preview}${
+            missing.length > 3 ? "…" : ""
+          }`,
+          5,
+        );
+      } else {
+        message.success("保存成功");
+      }
     } catch (e) {
       message.error(String(e));
     } finally {

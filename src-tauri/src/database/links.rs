@@ -1,6 +1,14 @@
 use crate::error::AppError;
 use crate::models::{GraphData, GraphEdge, GraphNode, NoteLink};
 
+/// 标题规范化：trim + 连续空白折叠成单空格 + 转小写。
+///
+/// 和前端 `stripHtml` 的 `/\s+/g → " "` + `trim()` 对齐，
+/// 再加 `to_lowercase()` 让英文更宽松（对中文无影响）。
+fn normalize_title(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
 impl super::Database {
     /// 同步笔记的出链（先删除旧链接，再插入新链接）
     pub fn sync_note_links(&self, source_id: i64, target_ids: Vec<i64>) -> Result<(), AppError> {
@@ -45,6 +53,36 @@ impl super::Database {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(links)
+    }
+
+    /// 通过"规范化精确匹配"查找笔记 ID
+    ///
+    /// Tiptap 正文经过 `stripHtml` 提取后，会把多空白折叠成单空格（`\s+` → ` `），
+    /// 而 DB 里的 `title` 没做同样处理，前端用 `name === t` 严格相等会错失匹配。
+    /// 这里在 Rust 侧做 trim + 空白折叠 + 小写 后做精确相等比较，
+    /// 命中第一个就返回 id。
+    pub fn find_note_id_by_title_loose(&self, title: &str) -> Result<Option<i64>, AppError> {
+        let needle = normalize_title(title);
+        if needle.is_empty() {
+            return Ok(None);
+        }
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "SELECT id, title FROM notes WHERE is_deleted = 0 ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (id, t) = row?;
+            if normalize_title(&t) == needle {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
     }
 
     /// 根据标题模糊搜索笔记（用于 [[ 自动补全）
