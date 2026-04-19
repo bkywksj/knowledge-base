@@ -145,10 +145,13 @@ body,
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 1px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--ant-color-border, #d9d9d9);
-  background: var(--ant-color-bg-layout, #f5f5f5);
+  gap: 2px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--ant-color-border-secondary, #f0f0f0);
+  /* 与正文同色 + 轻磨砂，消除灰色底的突兀感 */
+  background: color-mix(in srgb, var(--ant-color-bg-container, #fff) 85%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -160,12 +163,40 @@ body,
   padding: 6px 48px;
   border-left: none;
   border-right: none;
-  border-top: 1px solid var(--ant-color-border-secondary, #f0f0f0);
+  border-top: none;
 }
 
+/* 工具栏按钮：圆润、无边框、轻量 */
+.tiptap-toolbar .ant-btn {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border: none !important;
+  border-radius: 6px;
+  background: transparent !important;
+  color: var(--ant-color-text-secondary, #666);
+  box-shadow: none !important;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.tiptap-toolbar .ant-btn:hover:not(:disabled) {
+  background: var(--ant-color-fill-tertiary, rgba(0, 0, 0, 0.04)) !important;
+  color: var(--ant-color-text, #222) !important;
+}
+
+.tiptap-toolbar .ant-btn:disabled {
+  opacity: 0.35;
+}
+
+/* 活动态：主色淡底 */
 .toolbar-btn-active {
   color: var(--ant-color-primary, #1677ff) !important;
   background: var(--ant-color-primary-bg, #e6f4ff) !important;
+}
+
+.tiptap-toolbar .toolbar-btn-active:hover:not(:disabled) {
+  background: var(--ant-color-primary-bg-hover, #bae0ff) !important;
+  color: var(--ant-color-primary, #1677ff) !important;
 }
 
 /* 暗色模式工具栏 — 见 themes.css */
