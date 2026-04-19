@@ -130,12 +130,22 @@ export default function AboutPage() {
           size="small"
         >
           <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginBottom: 8 }}>
-            笔记数据保存在 SQLite 数据库文件中，图片保存在 <code>kb_assets/images/</code> 目录下。迁移步骤：
+            数据按类型分散在应用数据目录下的多个文件/子目录中：
+          </Typography.Paragraph>
+          <ul style={{ fontSize: 13, paddingLeft: 20, margin: "0 0 8px" }}>
+            <li style={{ marginBottom: 2 }}><code>app.db</code> — 笔记/文件夹/标签/链接/AI 对话等元数据（SQLite）</li>
+            <li style={{ marginBottom: 2 }}><code>kb_assets/</code> — 笔记中插入的图片</li>
+            <li style={{ marginBottom: 2 }}><code>pdfs/</code> — 导入的 PDF 原始文件</li>
+            <li style={{ marginBottom: 2 }}><code>sources/</code> — 导入的 Word (.docx/.doc) 原始文件</li>
+            <li><code>settings.json</code> — 应用偏好（主题、窗口状态等）</li>
+          </ul>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginBottom: 8 }}>
+            迁移步骤：
           </Typography.Paragraph>
           <ol style={{ fontSize: 13, paddingLeft: 20, margin: 0 }}>
             <li style={{ marginBottom: 4 }}>关闭应用</li>
             <li style={{ marginBottom: 4 }}>
-              复制 <code>app.db</code> 和 <code>kb_assets/</code> 目录到新电脑的相同路径
+              把上述所有文件/目录整体复制到新电脑的相同路径（点击上方"打开数据目录"定位）
             </li>
             <li>启动应用即可</li>
           </ol>
