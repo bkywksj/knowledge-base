@@ -277,9 +277,30 @@ export function CreateNoteModal({ open, folderId = null, onClose, onCreated }: P
         value={mode}
         onChange={(v) => setMode(v as Mode)}
         options={[
-          { label: <span><FileText size={13} style={{ marginRight: 4, verticalAlign: -2 }} />空白笔记</span>, value: "blank" },
-          { label: <span><LayoutTemplate size={13} style={{ marginRight: 4, verticalAlign: -2 }} />从模板</span>, value: "template" },
-          { label: <span><FileUp size={13} style={{ marginRight: 4, verticalAlign: -2 }} />导入文件</span>, value: "import" },
+          {
+            label: (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
+                <FileText size={13} />空白笔记
+              </span>
+            ),
+            value: "blank",
+          },
+          {
+            label: (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
+                <LayoutTemplate size={13} />从模板
+              </span>
+            ),
+            value: "template",
+          },
+          {
+            label: (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
+                <FileUp size={13} />导入文件
+              </span>
+            ),
+            value: "import",
+          },
         ]}
         style={{ marginBottom: 16 }}
       />

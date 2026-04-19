@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAppStore } from "@/store";
 import {
   Card,
   Input,
@@ -173,9 +174,9 @@ export default function HomePage() {
       <Row gutter={12}>
         <Col span={8}>
           <Button
-            type="default"
+            type="primary"
             icon={<PenLine size={15} />}
-            onClick={() => navigate("/notes")}
+            onClick={() => useAppStore.getState().openCreateModal()}
             block
             style={{ borderRadius: 8, height: 40 }}
           >
@@ -362,7 +363,7 @@ export default function HomePage() {
           <EmptyState
             description="还没有笔记"
             actionText="创建第一篇笔记"
-            onAction={() => navigate("/notes")}
+            onAction={() => useAppStore.getState().openCreateModal()}
           />
         )}
       </Card>
