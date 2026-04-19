@@ -103,15 +103,20 @@ export default function GraphPage() {
           endArrowFill: token.colorPrimary,
         },
       },
-      layout: {
-        type: layout,
-        // d3-force 专属参数（其他 layout 会忽略未知参数）
-        preventOverlap: true,
-        nodeSize: 70,        // 覆盖节点 + label 的视觉范围，防重叠更稳
-        linkDistance: 200,   // 连线理想长度（上调 120 → 200）
-        nodeStrength: -400,  // 节点间排斥（更负 → 推得更开）
-        collideStrength: 0.85,
-      },
+      layout:
+        layout === "d3-force"
+          ? {
+              // G6 v5 的 d3-force 走子对象 API（link / manyBody / collide / center）
+              // 之前用的 linkDistance / nodeStrength 顶层简写是 v4 的，v5 会被忽略
+              type: "d3-force",
+              link: { distance: 220, strength: 0.4 },
+              manyBody: { strength: -500 },
+              collide: { radius: 60, strength: 0.9 },
+              center: { strength: 0.05 },
+            }
+          : layout === "radial"
+            ? { type: "radial", unitRadius: 140, preventOverlap: true, nodeSize: 50 }
+            : { type: layout },
       behaviors: [
         "drag-canvas",
         "zoom-canvas",
