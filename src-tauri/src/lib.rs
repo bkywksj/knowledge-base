@@ -167,6 +167,7 @@ pub fn run() {
             commands::pdf::get_pdf_absolute_path,
             // 通用源文件 / Word 模块
             commands::source_file::get_converter_status,
+            commands::source_file::diagnose_doc_converter,
             commands::source_file::convert_doc_to_docx_base64,
             commands::source_file::attach_source_file,
             commands::source_file::get_source_file_absolute_path,

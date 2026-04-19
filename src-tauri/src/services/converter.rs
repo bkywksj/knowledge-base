@@ -1,8 +1,8 @@
 //! .doc → .docx 转换器
 //!
 //! 检测顺序（首个可用即胜出）：
-//! 1. **LibreOffice** (`soffice`)：跨平台，纯命令行 headless，最稳
-//! 2. **Windows COM** (`Word.Application`)：仅 Windows，需装 Office 或 WPS
+//! 1. **LibreOffice** (`soffice`)：跨平台，纯命令行 headless
+//! 2. **Windows COM** (`Word.Application` / WPS 兼容 ProgId)：仅 Windows
 //!
 //! 检测结果用 `OnceLock` 缓存，避免每次都探测一遍。
 
@@ -22,7 +22,20 @@ pub enum DocConverter {
     None,
 }
 
+/// Word COM ProgId 候选列表（按优先级，覆盖 Office + 各种 WPS 版本）
+///
+/// 注意：ProgId 是大小写不敏感的，但 PowerShell `New-Object -ComObject` 仍按字面值匹配。
+const WORD_PROGIDS: &[&str] = &[
+    "Word.Application",       // Microsoft Office Word
+    "KWps.Application",       // WPS Office 文字（旧版常见）
+    "Wps.Application",        // WPS Office 通用
+    "Kwps.Application",       // 大小写变体
+    "KingsoftOffice.Wps",     // 金山办公早期
+    "WPS.Application",        // 又一个变体
+];
+
 static CONVERTER: OnceLock<DocConverter> = OnceLock::new();
+static AVAILABLE_PROGID: OnceLock<Option<String>> = OnceLock::new();
 
 /// 检测当前系统可用的 .doc 转换器（首次调用会探测，后续走缓存）
 pub fn detect_converter() -> DocConverter {
@@ -32,8 +45,8 @@ pub fn detect_converter() -> DocConverter {
             return DocConverter::LibreOffice;
         }
         #[cfg(target_os = "windows")]
-        if has_windows_com() {
-            log::info!("检测到 Windows COM (Word.Application)，将用于 .doc 转换");
+        if let Some(progid) = detect_word_com_progid() {
+            log::info!("检测到 Windows COM ProgId: {}", progid);
             return DocConverter::WindowsCom;
         }
         log::warn!("未检测到 .doc 转换器，.doc 文件将仅作为附件保存");
@@ -64,8 +77,61 @@ pub fn convert_doc_to_docx(src: &Path, dst_dir: &Path) -> Result<PathBuf, AppErr
             }
         }
         DocConverter::None => Err(AppError::Custom(
-            "未检测到 .doc 转换器，请安装 LibreOffice 或 Microsoft Office / WPS".into(),
+            "未检测到 .doc 转换器，请安装 Microsoft Office 或 WPS Office（含 OLE 自动化组件）".into(),
         )),
+    }
+}
+
+// ─── 诊断报告（前端可调用） ──────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComProgIdAttempt {
+    pub progid: String,
+    pub ok: bool,
+    /// 失败时的具体错误（PowerShell stderr）
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConverterDiagnostic {
+    /// LibreOffice 可执行文件路径（找到才有值）
+    pub libre_office_path: Option<String>,
+    /// 每个 Word ProgId 的实测结果（仅 Windows）
+    pub com_attempts: Vec<ComProgIdAttempt>,
+    /// 当前最终选用的转换器
+    pub active: DocConverter,
+}
+
+/// 生成诊断报告供前端展示（每次调用都会**重新探测每个 ProgId**，不走缓存）
+pub fn diagnose() -> ConverterDiagnostic {
+    let lo = libreoffice_exe();
+    let lo_opt = if lo.is_empty() { None } else { Some(lo) };
+
+    #[cfg(target_os = "windows")]
+    let attempts: Vec<ComProgIdAttempt> = WORD_PROGIDS
+        .iter()
+        .map(|p| match try_instantiate(p) {
+            Ok(_) => ComProgIdAttempt {
+                progid: p.to_string(),
+                ok: true,
+                error: None,
+            },
+            Err(e) => ComProgIdAttempt {
+                progid: p.to_string(),
+                ok: false,
+                error: Some(e),
+            },
+        })
+        .collect();
+    #[cfg(not(target_os = "windows"))]
+    let attempts: Vec<ComProgIdAttempt> = Vec::new();
+
+    ConverterDiagnostic {
+        libre_office_path: lo_opt,
+        com_attempts: attempts,
+        active: detect_converter(),
     }
 }
 
@@ -130,46 +196,72 @@ fn convert_via_libreoffice(src: &Path, dst_dir: &Path) -> Result<PathBuf, AppErr
 
 // ─── Windows COM ───────────────────────────────────────
 
+/// 探测系统上第一个可实例化的 Word ProgId，缓存结果
 #[cfg(target_os = "windows")]
-fn has_windows_com() -> bool {
-    // 真实例化 Word.Application / Kwps.Application 一次，立即退出
-    //
-    // 之前用 GetTypeFromProgId 仅查注册表，会被 Office 卸载残留的 ProgId 误判（CLSID 实际未注册）。
-    // 实例化 + Quit 是唯一可靠方法，启动一次 Word 进程约 0.5-2s，OnceLock 缓存后不再触发。
-    let script = "$ErrorActionPreference='Stop'; \
-                  $progIds = @('Word.Application', 'Kwps.Application'); \
-                  foreach ($pid in $progIds) { \
-                      try { \
-                          $w = New-Object -ComObject $pid; \
-                          $w.Visible = $false; \
-                          $w.DisplayAlerts = 0; \
-                          $w.Quit(); \
-                          exit 0 \
-                      } catch {} \
-                  } \
-                  exit 1";
+fn detect_word_com_progid() -> Option<String> {
+    AVAILABLE_PROGID
+        .get_or_init(|| {
+            for progid in WORD_PROGIDS {
+                if try_instantiate(progid).is_ok() {
+                    return Some(progid.to_string());
+                }
+            }
+            None
+        })
+        .clone()
+}
+
+/// 实测一个 ProgId 是否能创建 + 退出。失败时返回 stderr 内容（含 HRESULT 等）
+#[cfg(target_os = "windows")]
+fn try_instantiate(progid: &str) -> Result<(), String> {
+    let escaped = progid.replace('\'', "''");
+    let script = format!(
+        "$ErrorActionPreference='Stop'; \
+         try {{ \
+             $w = New-Object -ComObject '{escaped}'; \
+             $w.Visible = $false; \
+             $w.DisplayAlerts = 0; \
+             $w.Quit() \
+         }} catch {{ \
+             [Console]::Error.WriteLine($_.Exception.Message); \
+             exit 1 \
+         }}"
+    );
     let mut cmd = Command::new("powershell");
-    cmd.args(["-NoProfile", "-Command", script]);
+    cmd.args(["-NoProfile", "-Command", &script]);
     add_no_window(&mut cmd);
-    cmd.status().map(|s| s.success()).unwrap_or(false)
+    let output = cmd.output().map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if err.is_empty() {
+            format!("退出码 {:?}", output.status.code())
+        } else {
+            err
+        })
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn try_instantiate(_progid: &str) -> Result<(), String> {
+    Err("仅 Windows 支持 COM".into())
 }
 
 #[cfg(target_os = "windows")]
 fn convert_via_windows_com(src: &Path, dst_dir: &Path) -> Result<PathBuf, AppError> {
+    let progid = detect_word_com_progid().ok_or_else(|| {
+        AppError::Custom("Windows COM 不可用：未检测到任何 Word.Application 等 ProgId".into())
+    })?;
     let out_path = expected_output(src, dst_dir)?;
     let src_str = ps_escape(&src.to_string_lossy());
     let dst_str = ps_escape(&out_path.to_string_lossy());
+    let progid_escaped = progid.replace('\'', "''");
 
     // wdFormatXMLDocument = 16 (.docx)
-    // 依次尝试 Word.Application（MS Office）→ Kwps.Application（WPS Office）
     let script = format!(
         "$ErrorActionPreference='Stop'; \
-         $progIds = @('Word.Application', 'Kwps.Application'); \
-         $word = $null; \
-         foreach ($pid in $progIds) {{ \
-             try {{ $word = New-Object -ComObject $pid; break }} catch {{}} \
-         }} \
-         if (-not $word) {{ throw '未找到可用的 Word COM 对象（需安装 Microsoft Office 或 WPS Office）' }} \
+         $word = New-Object -ComObject '{progid_escaped}'; \
          $word.Visible = $false; \
          $word.DisplayAlerts = 0; \
          try {{ \
@@ -189,7 +281,8 @@ fn convert_via_windows_com(src: &Path, dst_dir: &Path) -> Result<PathBuf, AppErr
         .map_err(|e| AppError::Custom(format!("PowerShell 启动失败: {}", e)))?;
     if !output.status.success() {
         return Err(AppError::Custom(format!(
-            "Windows COM 转换失败: {}",
+            "Windows COM 转换失败（ProgId={}）: {}",
+            progid,
             String::from_utf8_lossy(&output.stderr)
         )));
     }

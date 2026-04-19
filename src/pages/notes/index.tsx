@@ -312,18 +312,80 @@ export default function NoteListPage() {
       if (fail.length > 0) {
         Modal.warning({
           title: `${fail.length} 个 Word 文件导入失败`,
+          width: 600,
           content: (
-            <List
-              size="small"
-              dataSource={fail}
-              renderItem={(r) => (
-                <List.Item>
-                  <Typography.Text type="danger" style={{ fontSize: 12 }}>
-                    {r.sourcePath.split(/[\\/]/).pop()}: {r.error}
-                  </Typography.Text>
-                </List.Item>
-              )}
-            />
+            <>
+              <List
+                size="small"
+                dataSource={fail}
+                renderItem={(r) => (
+                  <List.Item>
+                    <Typography.Text type="danger" style={{ fontSize: 12 }}>
+                      {r.sourcePath.split(/[\\/]/).pop()}: {r.error}
+                    </Typography.Text>
+                  </List.Item>
+                )}
+              />
+              <Button
+                size="small"
+                style={{ marginTop: 8 }}
+                onClick={async () => {
+                  const diag = await sourceFileApi.diagnoseDocConverter();
+                  Modal.info({
+                    title: ".doc 转换器诊断",
+                    width: 720,
+                    content: (
+                      <div>
+                        <p style={{ marginTop: 8 }}>
+                          <strong>当前状态：</strong>
+                          {diag.active === "none"
+                            ? "❌ 无可用转换器"
+                            : `✅ ${diag.active}`}
+                        </p>
+                        <p>
+                          <strong>LibreOffice：</strong>
+                          {diag.libreOfficePath ?? "未检测到"}
+                        </p>
+                        <p style={{ marginTop: 12 }}>
+                          <strong>Word COM ProgId 实测（每个都跑了一次）：</strong>
+                        </p>
+                        <List
+                          size="small"
+                          dataSource={diag.comAttempts}
+                          renderItem={(a) => (
+                            <List.Item style={{ display: "block", padding: "4px 0" }}>
+                              <div style={{ fontSize: 12 }}>
+                                {a.ok ? "✅" : "❌"}{" "}
+                                <code>{a.progid}</code>
+                              </div>
+                              {a.error && (
+                                <div
+                                  style={{
+                                    fontSize: 11,
+                                    color: "#999",
+                                    marginLeft: 22,
+                                    wordBreak: "break-all",
+                                  }}
+                                >
+                                  {a.error}
+                                </div>
+                              )}
+                            </List.Item>
+                          )}
+                        />
+                        <p style={{ marginTop: 12, fontSize: 12, color: "#666" }}>
+                          如全部失败：WPS 个人版默认不带 OLE 自动化，
+                          需装 WPS Office 专业版 / Microsoft Office，
+                          或在 WPS 设置里启用"OLE 自动化"。
+                        </p>
+                      </div>
+                    ),
+                  });
+                }}
+              >
+                显示 .doc 转换器诊断
+              </Button>
+            </>
           ),
         });
       }

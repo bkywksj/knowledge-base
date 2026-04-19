@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use tauri::{Manager, State};
 
-use crate::services::converter::{self, DocConverter};
+use crate::services::converter::{self, ConverterDiagnostic, DocConverter};
 use crate::services::source_file::SourceFileService;
 use crate::state::AppState;
 
@@ -11,6 +11,14 @@ use crate::state::AppState;
 #[tauri::command]
 pub fn get_converter_status() -> DocConverter {
     converter::detect_converter()
+}
+
+/// 详细诊断：列出每个 Word ProgId 的实测结果（含 PowerShell 错误细节）
+///
+/// 用于"导入 .doc 失败"时帮用户定位缺哪个 ProgId / 哪个版本的 WPS-Office
+#[tauri::command]
+pub fn diagnose_doc_converter() -> ConverterDiagnostic {
+    converter::diagnose()
 }
 
 /// 把任意路径的文件读成 base64（前端跑 mammoth 时用）

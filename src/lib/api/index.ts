@@ -25,6 +25,7 @@ import type {
   DailyWritingStat,
   PdfImportResult,
   DocConverter,
+  ConverterDiagnostic,
 } from "@/types";
 
 /** 系统相关 API */
@@ -56,6 +57,9 @@ export const sourceFileApi = {
   /** 探测系统可用的 .doc 转换器（启动时检测一次） */
   getConverterStatus: () =>
     invoke<DocConverter>("get_converter_status"),
+  /** 详细诊断：每个 Word ProgId 的实测结果（含 PowerShell 错误） */
+  diagnoseDocConverter: () =>
+    invoke<ConverterDiagnostic>("diagnose_doc_converter"),
   /** 把 .doc 转 .docx，返回 .docx 字节的 base64 */
   convertDocToDocxBase64: (path: string) =>
     invoke<string>("convert_doc_to_docx_base64", { path }),

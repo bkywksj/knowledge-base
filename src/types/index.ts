@@ -44,6 +44,20 @@ export interface PdfImportResult {
 /** .doc 转换器探测结果（serde kebab-case） */
 export type DocConverter = "libre-office" | "windows-com" | "none";
 
+/** 单个 ProgId 的实测结果 */
+export interface ComProgIdAttempt {
+  progid: string;
+  ok: boolean;
+  error: string | null;
+}
+
+/** 转换器完整诊断报告 */
+export interface ConverterDiagnostic {
+  libreOfficePath: string | null;
+  comAttempts: ComProgIdAttempt[];
+  active: DocConverter;
+}
+
 /** 创建/更新笔记入参 */
 export interface NoteInput {
   title: string;
