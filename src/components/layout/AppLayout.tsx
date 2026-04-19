@@ -14,6 +14,9 @@ import { CommandPalette } from "@/components/ui/CommandPalette";
 import { ShortcutsPanel } from "@/components/ui/ShortcutsPanel";
 import { StarryBackground } from "@/components/ui/StarryBackground";
 import { CreateNoteModal } from "@/components/CreateNoteModal";
+import { UpdateBadge } from "@/components/ui/UpdateBadge";
+import { UpdateModal } from "@/components/ui/UpdateModal";
+import { useUpdateChecker } from "@/hooks/useUpdateChecker";
 
 const { Header, Sider, Content } = Layout;
 
@@ -67,6 +70,7 @@ export function AppLayout() {
   const navigate = useNavigate();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const { update, modalOpen, openModal, closeModal } = useUpdateChecker();
 
   const themeMenuItems = [
     { type: "group" as const, label: "亮色主题", children: getThemesByCategory("light").map(t => ({
@@ -185,6 +189,7 @@ export function AppLayout() {
           </div>
           <DragRegion />
           <div style={{ display: "flex", alignItems: "center" }}>
+            <UpdateBadge update={update} onClick={openModal} />
             <Tooltip title="搜索 (Ctrl+K)">
               <Button
                 type="text"
@@ -224,6 +229,7 @@ export function AppLayout() {
       />
       <ShortcutsPanel open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <CreateNoteModal open={createModalOpen} onClose={closeCreateModal} />
+      <UpdateModal open={modalOpen} onClose={closeModal} update={update} />
     </Layout>
   );
 }
