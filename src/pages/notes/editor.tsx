@@ -14,6 +14,7 @@ import {
   Tooltip,
   Modal,
   List,
+  notification,
 } from "antd";
 import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon } from "lucide-react";
 import { useAppStore } from "@/store";
@@ -345,13 +346,25 @@ export default function NoteEditorPage() {
       }
 
       if (missing.length > 0) {
-        const preview = missing.slice(0, 3).map((s) => `[[${s}]]`).join("、");
-        message.warning(
-          `保存成功，但 ${missing.length} 个 wiki 链接未匹配到笔记：${preview}${
-            missing.length > 3 ? "…" : ""
-          }`,
-          5,
-        );
+        notification.warning({
+          message: `已保存，但 ${missing.length} 个 wiki 链接未能匹配到笔记`,
+          description: (
+            <div>
+              <ul style={{ margin: "4px 0 8px", paddingLeft: 20, maxHeight: 160, overflow: "auto" }}>
+                {missing.map((t) => (
+                  <li key={t} style={{ fontSize: 12, wordBreak: "break-all" }}>
+                    <code>[[{t}]]</code>
+                  </li>
+                ))}
+              </ul>
+              <div style={{ fontSize: 12, opacity: 0.75 }}>
+                <code>[[标题]]</code> 必须是<strong>完整且精确</strong>的笔记标题（忽略首尾空白和大小写），不支持通配符 / 省略号。建议正文里输入 <code>[[</code> 从自动补全菜单选择。
+              </div>
+            </div>
+          ),
+          duration: 10,
+          placement: "topRight",
+        });
       } else {
         message.success("保存成功");
       }
