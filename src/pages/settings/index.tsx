@@ -19,6 +19,7 @@ import {
 import { SyncOutlined, PlusOutlined, StarFilled, StarOutlined } from "@ant-design/icons";
 import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import type { Update } from "@tauri-apps/plugin-updater";
 import type { AiModel, AiModelInput, ImportResult, ImportProgress, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput } from "@/types";
@@ -448,7 +449,7 @@ export default function SettingsPage() {
       </div>
 
       <Card title="软件更新">
-        <Space>
+        <Space wrap>
           <Button
             icon={<SyncOutlined spin={checking} />}
             onClick={handleCheckUpdate}
@@ -457,6 +458,13 @@ export default function SettingsPage() {
             检查更新
           </Button>
           <Text type="secondary">当前版本: {appVersion}</Text>
+          <Button
+            type="link"
+            size="small"
+            onClick={() => openUrl("https://kb.ruoyi.plus/")}
+          >
+            官网 https://kb.ruoyi.plus/
+          </Button>
         </Space>
       </Card>
 
