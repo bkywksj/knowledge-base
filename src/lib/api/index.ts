@@ -44,8 +44,8 @@ export const updaterApi = {
 /** PDF 导入与预览 API */
 export const pdfApi = {
   /** 批量导入 PDF 为笔记，返回每条结果（含错误） */
-  importPdfs: (paths: string[]) =>
-    invoke<PdfImportResult[]>("import_pdfs", { paths }),
+  importPdfs: (paths: string[], folderId?: number | null) =>
+    invoke<PdfImportResult[]>("import_pdfs", { paths, folderId }),
   /** 获取笔记关联 PDF 的绝对路径（无则返回 null） */
   getAbsolutePath: (noteId: number) =>
     invoke<string | null>("get_pdf_absolute_path", { noteId }),

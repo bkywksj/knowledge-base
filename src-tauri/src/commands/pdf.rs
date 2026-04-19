@@ -12,13 +12,14 @@ pub fn import_pdfs(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     paths: Vec<String>,
+    folder_id: Option<i64>,
 ) -> Result<Vec<PdfImportResult>, String> {
     let data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?;
 
-    Ok(PdfService::import_many(&data_dir, &state.db, &paths))
+    Ok(PdfService::import_many(&data_dir, &state.db, &paths, folder_id))
 }
 
 /// 获取笔记对应 PDF 的绝对路径

@@ -66,6 +66,7 @@ async function relocateImages(html: string, noteId: number): Promise<string> {
 /** 导入一个 Word 文件（.docx 或 .doc） */
 export async function importWordFile(
   filePath: string,
+  folderId: number | null = null,
 ): Promise<{ note: Note; warnings: string[] }> {
   const lower = filePath.toLowerCase();
   const isDoc = lower.endsWith(".doc") && !lower.endsWith(".docx");
@@ -92,7 +93,7 @@ export async function importWordFile(
   const note = await noteApi.create({
     title,
     content: rawHtml,
-    folder_id: null,
+    folder_id: folderId,
   });
 
   // 4. 抽出图片转存到 images/
@@ -101,7 +102,7 @@ export async function importWordFile(
     await noteApi.update(note.id, {
       title,
       content: finalHtml,
-      folder_id: null,
+      folder_id: folderId,
     });
   }
 
@@ -124,11 +125,12 @@ export async function importWordFile(
 /** 批量导入，每个文件独立处理失败 */
 export async function importWordFiles(
   paths: string[],
+  folderId: number | null = null,
 ): Promise<WordImportResult[]> {
   const results: WordImportResult[] = [];
   for (const p of paths) {
     try {
-      const { note, warnings } = await importWordFile(p);
+      const { note, warnings } = await importWordFile(p, folderId);
       results.push({
         sourcePath: p,
         noteId: note.id,

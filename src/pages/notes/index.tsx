@@ -301,7 +301,10 @@ export default function NoteListPage() {
     }
     const hide = message.loading(`正在导入 ${paths.length} 个 Word 文件...`, 0);
     try {
-      const results = await importWordFiles(paths);
+      const results = await importWordFiles(
+        paths,
+        folderId ? Number(folderId) : null,
+      );
       const ok = results.filter((r) => r.noteId !== null);
       const fail = results.filter((r) => r.noteId === null);
       hide();
@@ -329,7 +332,7 @@ export default function NoteListPage() {
       hide();
       message.error(`导入失败: ${e}`);
     }
-  }, [loadNotes]);
+  }, [folderId, loadNotes]);
 
   const handleImportPdfs = useCallback(async () => {
     const picked = await openDialog({
@@ -341,7 +344,10 @@ export default function NoteListPage() {
     if (paths.length === 0) return;
     const hide = message.loading(`正在导入 ${paths.length} 个 PDF...`, 0);
     try {
-      const results = await pdfApi.importPdfs(paths);
+      const results = await pdfApi.importPdfs(
+        paths,
+        folderId ? Number(folderId) : null,
+      );
       const ok = results.filter((r) => r.noteId !== null);
       const fail = results.filter((r) => r.noteId === null);
       hide();
@@ -369,7 +375,7 @@ export default function NoteListPage() {
       hide();
       message.error(`导入失败: ${e}`);
     }
-  }, [loadNotes]);
+  }, [folderId, loadNotes]);
 
   const handleCreateFromTemplate = useCallback(
     async (template: NoteTemplate) => {

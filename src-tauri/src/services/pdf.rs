@@ -48,6 +48,7 @@ impl PdfService {
         app_data_dir: &Path,
         db: &Database,
         source_path: &str,
+        folder_id: Option<i64>,
     ) -> Result<Note, AppError> {
         let source = Path::new(source_path);
         if !source.exists() {
@@ -70,7 +71,7 @@ impl PdfService {
         let note = db.create_note(&NoteInput {
             title: title.clone(),
             content: text_to_simple_html(&text),
-            folder_id: None,
+            folder_id,
         })?;
 
         // 4. 拷贝原 PDF 到 pdfs/<id>.pdf
@@ -98,10 +99,11 @@ impl PdfService {
         app_data_dir: &Path,
         db: &Database,
         source_paths: &[String],
+        folder_id: Option<i64>,
     ) -> Vec<PdfImportResult> {
         source_paths
             .iter()
-            .map(|p| match Self::import_one(app_data_dir, db, p) {
+            .map(|p| match Self::import_one(app_data_dir, db, p, folder_id) {
                 Ok(note) => PdfImportResult {
                     source_path: p.clone(),
                     note_id: Some(note.id),
