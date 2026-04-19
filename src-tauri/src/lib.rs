@@ -65,7 +65,7 @@ pub fn run() {
             // 开发模式下在窗口标题追加 [DEV] 标识，避免和生产窗口混淆
             if cfg!(debug_assertions) {
                 if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.set_title("Knowledge Base [DEV]");
+                    let _ = window.set_title("知识库 [DEV]");
                 }
             }
 

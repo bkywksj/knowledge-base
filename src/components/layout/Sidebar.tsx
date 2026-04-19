@@ -509,7 +509,7 @@ export function Sidebar() {
             color: token.colorText,
           }}
         >
-          KB{import.meta.env.DEV ? "·D" : ""}
+          知{import.meta.env.DEV ? "·D" : ""}
         </div>
         <Menu
           mode="inline"
@@ -541,7 +541,7 @@ export function Sidebar() {
           color: token.colorText,
         }}
       >
-        Knowledge Base{import.meta.env.DEV ? " [DEV]" : ""}
+        知识库{import.meta.env.DEV ? " [DEV]" : ""}
       </div>
 
       {/* 第1段: 导航菜单 */}

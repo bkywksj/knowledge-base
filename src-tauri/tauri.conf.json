@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Knowledge Base",
+        "title": "知识库",
         "width": 1200,
         "height": 800,
         "minWidth": 900,
