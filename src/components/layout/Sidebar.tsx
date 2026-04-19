@@ -541,7 +541,7 @@ export function Sidebar() {
           color: token.colorText,
         }}
       >
-        知识库{import.meta.env.DEV ? " [DEV]" : ""}
+        本地知识库{import.meta.env.DEV ? " [DEV]" : ""}
       </div>
 
       {/* 第1段: 导航菜单 */}
