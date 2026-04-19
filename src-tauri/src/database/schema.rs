@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 9;
+pub const SCHEMA_VERSION: i32 = 10;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -39,6 +39,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             6 => migrate_v6_to_v7(conn)?,
             7 => migrate_v7_to_v8(conn)?,
             8 => migrate_v8_to_v9(conn)?,
+            9 => migrate_v9_to_v10(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -345,6 +346,15 @@ fn migrate_v7_to_v8(conn: &Connection) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 列出表的所有列名（用 PRAGMA table_info）
+fn list_columns(conn: &Connection, table: &str) -> Result<Vec<String>, AppError> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+    let names = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(names)
+}
+
 /// v8 -> v9: 把 pdf_path 升级为通用源文件路径
 ///
 /// - 新增 source_file_type 列，区分 pdf/docx/doc 等
@@ -362,5 +372,54 @@ fn migrate_v8_to_v9(conn: &Connection) -> Result<(), AppError> {
     )?;
 
     set_version(conn, 9)?;
+    Ok(())
+}
+
+/// v9 -> v10: 自愈迁移
+///
+/// 修复 v9 在某些环境下未完整执行的问题（user_version 已推到 9 但列没补齐）。
+/// 通过 PRAGMA table_info 探测当前列状态，缺啥补啥，幂等可重跑。
+///
+/// 目标终态：notes 表必有 source_file_path 与 source_file_type 两列。
+fn migrate_v9_to_v10(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v9 -> v10 (自愈 source_file_path / source_file_type)");
+
+    let cols = list_columns(conn, "notes")?;
+    let has_path = cols.iter().any(|c| c == "source_file_path");
+    let has_type = cols.iter().any(|c| c == "source_file_type");
+    let has_pdf = cols.iter().any(|c| c == "pdf_path");
+
+    // 处理 source_file_path
+    if !has_path {
+        if has_pdf {
+            log::info!("[v10 自愈] RENAME COLUMN pdf_path -> source_file_path");
+            conn.execute_batch("ALTER TABLE notes RENAME COLUMN pdf_path TO source_file_path;")?;
+        } else {
+            log::info!("[v10 自愈] ADD COLUMN source_file_path");
+            conn.execute_batch("ALTER TABLE notes ADD COLUMN source_file_path TEXT;")?;
+        }
+    } else if has_pdf {
+        // 极端情况：两列都存在，把 pdf_path 残留数据合并过去
+        log::info!("[v10 自愈] 合并残留 pdf_path 数据到 source_file_path");
+        conn.execute_batch(
+            "UPDATE notes SET source_file_path = pdf_path
+             WHERE source_file_path IS NULL AND pdf_path IS NOT NULL;",
+        )?;
+        // 不 DROP COLUMN pdf_path，避免触发 FTS 触发器引用问题；不影响功能
+    }
+
+    // 处理 source_file_type
+    if !has_type {
+        log::info!("[v10 自愈] ADD COLUMN source_file_type");
+        conn.execute_batch("ALTER TABLE notes ADD COLUMN source_file_type TEXT;")?;
+    }
+
+    // 回填类型（只填还没值的行）
+    conn.execute_batch(
+        "UPDATE notes SET source_file_type = 'pdf'
+         WHERE source_file_path IS NOT NULL AND source_file_type IS NULL;",
+    )?;
+
+    set_version(conn, 10)?;
     Ok(())
 }
