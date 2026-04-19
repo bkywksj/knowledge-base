@@ -13,6 +13,7 @@ import { WindowControls } from "./WindowControls";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 import { ShortcutsPanel } from "@/components/ui/ShortcutsPanel";
 import { StarryBackground } from "@/components/ui/StarryBackground";
+import { CreateNoteModal } from "@/components/CreateNoteModal";
 
 const { Header, Sider, Content } = Layout;
 
@@ -59,6 +60,7 @@ export function AppLayout() {
     setLightTheme, setDarkTheme,
     setThemeCategory,
     focusMode, setFocusMode,
+    createModalOpen, openCreateModal, closeCreateModal,
   } = useAppStore();
   const activeTheme = themeCategory === "light" ? lightTheme : darkTheme;
   const { token } = antdTheme.useToken();
@@ -119,7 +121,12 @@ export function AppLayout() {
       e.preventDefault();
       navigate(1);
     }
-  }, [focusMode, setFocusMode, navigate]);
+    // Ctrl/Cmd + N 新建笔记
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
+      e.preventDefault();
+      openCreateModal();
+    }
+  }, [focusMode, setFocusMode, navigate, openCreateModal]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleGlobalKeyDown);
@@ -216,6 +223,7 @@ export function AppLayout() {
         onOpenShortcuts={() => { setPaletteOpen(false); setShortcutsOpen(true); }}
       />
       <ShortcutsPanel open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <CreateNoteModal open={createModalOpen} onClose={closeCreateModal} />
     </Layout>
   );
 }

@@ -544,6 +544,19 @@ export function Sidebar() {
         本地知识库{import.meta.env.DEV ? " [DEV]" : ""}
       </div>
 
+      {/* 全局"新建笔记"按钮（折叠时变图标） */}
+      <div style={{ padding: collapsed ? "8px 6px" : "10px 12px" }}>
+        <Button
+          type="primary"
+          icon={<Plus size={collapsed ? 16 : 14} />}
+          block
+          onClick={() => useAppStore.getState().openCreateModal()}
+          title="新建笔记 (Ctrl+N)"
+        >
+          {!collapsed && "新建笔记"}
+        </Button>
+      </div>
+
       {/* 第1段: 导航菜单 */}
       <Menu
         mode="inline"

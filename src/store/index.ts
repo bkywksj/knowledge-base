@@ -17,6 +17,8 @@ interface AppStore {
   sidebarCollapsed: boolean;
   /** 专注模式 */
   focusMode: boolean;
+  /** "新建笔记" Modal 全局开关 */
+  createModalOpen: boolean;
   /** 获取当前生效的主题 */
   activeTheme: () => ThemeMode;
   /** 切换亮/暗分类 */
@@ -31,6 +33,10 @@ interface AppStore {
   toggleSidebar: () => void;
   /** 设置专注模式 */
   setFocusMode: (on: boolean) => void;
+  /** 打开"新建笔记" Modal */
+  openCreateModal: () => void;
+  /** 关闭"新建笔记" Modal */
+  closeCreateModal: () => void;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -39,6 +45,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   themeCategory: "light",
   sidebarCollapsed: false,
   focusMode: false,
+  createModalOpen: false,
   activeTheme: () => {
     const s = get();
     return s.themeCategory === "light" ? s.lightTheme : s.darkTheme;
@@ -52,6 +59,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setThemeCategory: (category) => set({ themeCategory: category }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   setFocusMode: (on) => set({ focusMode: on }),
+  openCreateModal: () => set({ createModalOpen: true }),
+  closeCreateModal: () => set({ createModalOpen: false }),
 }));
 
 /** 从 tauri-plugin-store 恢复主题设置 */

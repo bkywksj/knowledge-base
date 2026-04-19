@@ -8,7 +8,6 @@ import {
   Typography,
   message,
   Modal,
-  Form,
   Popconfirm,
   Tooltip,
   Card,
@@ -17,10 +16,6 @@ import {
   Segmented,
   Tag,
   Timeline,
-  Dropdown,
-  List,
-  Empty,
-  Spin,
   theme as antdTheme,
 } from "antd";
 import {
@@ -35,19 +30,16 @@ import {
   Clock,
   Pin,
   Calendar,
-  FileText,
-  LayoutTemplate,
-  FileUp,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
-import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
-import { noteApi, exportApi, templateApi, folderApi, pdfApi, sourceFileApi, importApi } from "@/lib/api";
-import { importWordFiles } from "@/lib/wordImport";
+import { save } from "@tauri-apps/plugin-dialog";
+import { noteApi, exportApi, folderApi } from "@/lib/api";
 import { useTabsStore } from "@/store/tabs";
+import { useAppStore } from "@/store";
 import { stripHtml, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
-import type { Note, NoteInput, NoteTemplate, PageResult, Folder } from "@/types";
+import type { Note, PageResult, Folder } from "@/types";
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -98,12 +90,7 @@ export default function NoteListPage() {
   });
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState(searchParams.get("keyword") || "");
-  const [createOpen, setCreateOpen] = useState(false);
-  const [templateOpen, setTemplateOpen] = useState(false);
-  const [templates, setTemplates] = useState<NoteTemplate[]>([]);
-  const [templatesLoading, setTemplatesLoading] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
-  const [form] = Form.useForm<NoteInput>();
 
   const folderId = searchParams.get("folder");
 
@@ -156,25 +143,6 @@ export default function NoteListPage() {
     [viewMode, keyword, folderId],
   );
 
-  const handleCreate = useCallback(
-    async (values: NoteInput) => {
-      try {
-        // 如果当前正在查看某个文件夹，自动将新笔记归入该文件夹
-        if (folderId) {
-          values.folder_id = Number(folderId);
-        }
-        const note = await noteApi.create(values);
-        message.success("创建成功");
-        setCreateOpen(false);
-        form.resetFields();
-        navigate(`/notes/${note.id}`);
-      } catch (e) {
-        message.error(String(e));
-      }
-    },
-    [form, navigate, folderId],
-  );
-
   const handleDelete = useCallback(
     async (id: number) => {
       try {
@@ -223,242 +191,6 @@ export default function NoteListPage() {
     });
   }, [data.total, loadNotes]);
 
-  const openTemplateModal = useCallback(async () => {
-    setTemplateOpen(true);
-    setTemplatesLoading(true);
-    try {
-      const list = await templateApi.list();
-      setTemplates(list);
-    } catch (e) {
-      message.error(`加载模板失败: ${e}`);
-    } finally {
-      setTemplatesLoading(false);
-    }
-  }, []);
-
-  const handleImportMarkdown = useCallback(async () => {
-    const picked = await openDialog({
-      multiple: true,
-      filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
-    });
-    if (!picked) return;
-    const paths = Array.isArray(picked) ? picked : [picked];
-    if (paths.length === 0) return;
-    const hide = message.loading(`正在导入 ${paths.length} 个 Markdown 文件...`, 0);
-    try {
-      const result = await importApi.importSelected(
-        paths,
-        folderId ? Number(folderId) : null,
-      );
-      hide();
-      if (result.imported > 0) {
-        message.success(
-          `成功导入 ${result.imported} 篇` +
-            (result.skipped > 0 ? `，跳过 ${result.skipped} 篇` : ""),
-        );
-      } else if (result.skipped > 0) {
-        message.warning(`全部 ${result.skipped} 篇已跳过`);
-      }
-      if (result.errors.length > 0) {
-        Modal.warning({
-          title: `${result.errors.length} 个文件导入失败`,
-          content: (
-            <List
-              size="small"
-              dataSource={result.errors}
-              renderItem={(err) => (
-                <List.Item>
-                  <Typography.Text type="danger" style={{ fontSize: 12 }}>
-                    {err}
-                  </Typography.Text>
-                </List.Item>
-              )}
-            />
-          ),
-        });
-      }
-      loadNotes(1);
-    } catch (e) {
-      hide();
-      message.error(`导入失败: ${e}`);
-    }
-  }, [folderId, loadNotes]);
-
-  const handleImportWord = useCallback(async () => {
-    // 先看转换器，决定是否允许 .doc
-    const converter = await sourceFileApi.getConverterStatus().catch(() => "none" as const);
-    const exts = converter === "none" ? ["docx"] : ["docx", "doc"];
-    const picked = await openDialog({
-      multiple: true,
-      filters: [{ name: "Word", extensions: exts }],
-    });
-    if (!picked) return;
-    const paths = Array.isArray(picked) ? picked : [picked];
-    if (paths.length === 0) return;
-    if (converter === "none" && paths.some((p) => p.toLowerCase().endsWith(".doc"))) {
-      Modal.warning({
-        title: ".doc 暂不可用",
-        content: "未检测到 LibreOffice 或 Microsoft Office / WPS。安装其一后可导入 .doc。",
-      });
-      return;
-    }
-    const hide = message.loading(`正在导入 ${paths.length} 个 Word 文件...`, 0);
-    try {
-      const results = await importWordFiles(
-        paths,
-        folderId ? Number(folderId) : null,
-      );
-      const ok = results.filter((r) => r.noteId !== null);
-      const fail = results.filter((r) => r.noteId === null);
-      hide();
-      if (ok.length > 0) message.success(`成功导入 ${ok.length} 个 Word 文件`);
-      if (fail.length > 0) {
-        Modal.warning({
-          title: `${fail.length} 个 Word 文件导入失败`,
-          width: 600,
-          content: (
-            <>
-              <List
-                size="small"
-                dataSource={fail}
-                renderItem={(r) => (
-                  <List.Item>
-                    <Typography.Text type="danger" style={{ fontSize: 12 }}>
-                      {r.sourcePath.split(/[\\/]/).pop()}: {r.error}
-                    </Typography.Text>
-                  </List.Item>
-                )}
-              />
-              <Button
-                size="small"
-                style={{ marginTop: 8 }}
-                onClick={async () => {
-                  const diag = await sourceFileApi.diagnoseDocConverter();
-                  Modal.info({
-                    title: ".doc 转换器诊断",
-                    width: 720,
-                    content: (
-                      <div>
-                        <p style={{ marginTop: 8 }}>
-                          <strong>当前状态：</strong>
-                          {diag.active === "none"
-                            ? "❌ 无可用转换器"
-                            : `✅ ${diag.active}`}
-                        </p>
-                        <p>
-                          <strong>LibreOffice：</strong>
-                          {diag.libreOfficePath ?? "未检测到"}
-                        </p>
-                        <p style={{ marginTop: 12 }}>
-                          <strong>Word COM ProgId 实测（每个都跑了一次）：</strong>
-                        </p>
-                        <List
-                          size="small"
-                          dataSource={diag.comAttempts}
-                          renderItem={(a) => (
-                            <List.Item style={{ display: "block", padding: "4px 0" }}>
-                              <div style={{ fontSize: 12 }}>
-                                {a.ok ? "✅" : "❌"}{" "}
-                                <code>{a.progid}</code>
-                              </div>
-                              {a.error && (
-                                <div
-                                  style={{
-                                    fontSize: 11,
-                                    color: "#999",
-                                    marginLeft: 22,
-                                    wordBreak: "break-all",
-                                  }}
-                                >
-                                  {a.error}
-                                </div>
-                              )}
-                            </List.Item>
-                          )}
-                        />
-                        <p style={{ marginTop: 12, fontSize: 12, color: "#666" }}>
-                          如全部失败：WPS 个人版默认不带 OLE 自动化，
-                          需装 WPS Office 专业版 / Microsoft Office，
-                          或在 WPS 设置里启用"OLE 自动化"。
-                        </p>
-                      </div>
-                    ),
-                  });
-                }}
-              >
-                显示 .doc 转换器诊断
-              </Button>
-            </>
-          ),
-        });
-      }
-      loadNotes(1);
-    } catch (e) {
-      hide();
-      message.error(`导入失败: ${e}`);
-    }
-  }, [folderId, loadNotes]);
-
-  const handleImportPdfs = useCallback(async () => {
-    const picked = await openDialog({
-      multiple: true,
-      filters: [{ name: "PDF", extensions: ["pdf"] }],
-    });
-    if (!picked) return;
-    const paths = Array.isArray(picked) ? picked : [picked];
-    if (paths.length === 0) return;
-    const hide = message.loading(`正在导入 ${paths.length} 个 PDF...`, 0);
-    try {
-      const results = await pdfApi.importPdfs(
-        paths,
-        folderId ? Number(folderId) : null,
-      );
-      const ok = results.filter((r) => r.noteId !== null);
-      const fail = results.filter((r) => r.noteId === null);
-      hide();
-      if (ok.length > 0) message.success(`成功导入 ${ok.length} 个 PDF`);
-      if (fail.length > 0) {
-        Modal.warning({
-          title: `${fail.length} 个 PDF 导入失败`,
-          content: (
-            <List
-              size="small"
-              dataSource={fail}
-              renderItem={(r) => (
-                <List.Item>
-                  <Typography.Text type="danger" style={{ fontSize: 12 }}>
-                    {r.sourcePath.split(/[\\/]/).pop()}: {r.error}
-                  </Typography.Text>
-                </List.Item>
-              )}
-            />
-          ),
-        });
-      }
-      loadNotes(1);
-    } catch (e) {
-      hide();
-      message.error(`导入失败: ${e}`);
-    }
-  }, [folderId, loadNotes]);
-
-  const handleCreateFromTemplate = useCallback(
-    async (template: NoteTemplate) => {
-      try {
-        const note = await noteApi.create({
-          title: template.name,
-          content: template.content,
-          folder_id: folderId ? Number(folderId) : undefined,
-        });
-        message.success("从模板创建成功");
-        setTemplateOpen(false);
-        navigate(`/notes/${note.id}`);
-      } catch (e) {
-        message.error(String(e));
-      }
-    },
-    [folderId, navigate],
-  );
 
   const handleSearch = useCallback(() => {
     loadNotes(1, keyword);
@@ -616,47 +348,13 @@ export default function NoteListPage() {
               全部移到回收站
             </Button>
           )}
-          <Dropdown
-            menu={{
-              items: [
-                {
-                  key: "blank",
-                  icon: <FileText size={14} />,
-                  label: "空白笔记",
-                  onClick: () => setCreateOpen(true),
-                },
-                {
-                  key: "template",
-                  icon: <LayoutTemplate size={14} />,
-                  label: "从模板创建",
-                  onClick: openTemplateModal,
-                },
-                { type: "divider" },
-                {
-                  key: "import-md",
-                  icon: <FileUp size={14} />,
-                  label: "导入 Markdown",
-                  onClick: handleImportMarkdown,
-                },
-                {
-                  key: "import-pdf",
-                  icon: <FileUp size={14} />,
-                  label: "导入 PDF",
-                  onClick: handleImportPdfs,
-                },
-                {
-                  key: "import-word",
-                  icon: <FileUp size={14} />,
-                  label: "导入 Word (.docx / .doc)",
-                  onClick: handleImportWord,
-                },
-              ],
-            }}
+          <Button
+            type="primary"
+            icon={<Plus size={16} />}
+            onClick={() => useAppStore.getState().openCreateModal()}
           >
-            <Button type="primary" icon={<Plus size={16} />}>
-              新建笔记
-            </Button>
-          </Dropdown>
+            新建笔记
+          </Button>
         </Space>
       </div>
 
@@ -843,7 +541,7 @@ export default function NoteListPage() {
             <EmptyState
               description="暂无笔记"
               actionText="创建第一篇笔记"
-              onAction={() => setCreateOpen(true)}
+              onAction={() => useAppStore.getState().openCreateModal()}
             />
           )}
         </>
@@ -919,82 +617,13 @@ export default function NoteListPage() {
             <EmptyState
               description="暂无笔记"
               actionText="创建第一篇笔记"
-              onAction={() => setCreateOpen(true)}
+              onAction={() => useAppStore.getState().openCreateModal()}
             />
           )}
         </>
       )}
 
-      {/* 新建笔记弹窗 */}
-      <Modal
-        title="新建笔记"
-        open={createOpen}
-        onCancel={() => {
-          setCreateOpen(false);
-          form.resetFields();
-        }}
-        onOk={() => form.submit()}
-      >
-        <Form form={form} layout="vertical" onFinish={handleCreate}>
-          <Form.Item
-            name="title"
-            label="标题"
-            rules={[{ required: true, message: "请输入笔记标题" }]}
-          >
-            <Input placeholder="输入笔记标题" />
-          </Form.Item>
-          <Form.Item name="content" label="内容" initialValue="">
-            <Input.TextArea rows={4} placeholder="输入笔记内容（可选）" />
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      {/* 模板选择弹窗 */}
-      <Modal
-        title="从模板创建笔记"
-        open={templateOpen}
-        onCancel={() => setTemplateOpen(false)}
-        footer={null}
-        width={500}
-      >
-        {templatesLoading ? (
-          <div className="flex justify-center py-8">
-            <Spin />
-          </div>
-        ) : templates.length > 0 ? (
-          <List
-            dataSource={templates}
-            renderItem={(tpl) => (
-              <List.Item
-                className="cursor-pointer"
-                style={{ padding: "10px 12px", borderRadius: 8 }}
-                onClick={() => handleCreateFromTemplate(tpl)}
-              >
-                <List.Item.Meta
-                  avatar={
-                    <div
-                      className="flex items-center justify-center rounded-lg"
-                      style={{
-                        width: 40,
-                        height: 40,
-                        background: token.colorPrimaryBg,
-                      }}
-                    >
-                      <LayoutTemplate size={18} style={{ color: token.colorPrimary }} />
-                    </div>
-                  }
-                  title={<span style={{ fontSize: 14 }}>{tpl.name}</span>}
-                  description={
-                    <span style={{ fontSize: 12 }}>{tpl.description || "无描述"}</span>
-                  }
-                />
-              </List.Item>
-            )}
-          />
-        ) : (
-          <Empty description="暂无模板，请在设置中添加" />
-        )}
-      </Modal>
+      {/* "新建笔记"已统一到全局 CreateNoteModal（挂在 AppLayout） */}
     </div>
   );
 }
