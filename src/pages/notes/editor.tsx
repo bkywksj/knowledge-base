@@ -5,7 +5,6 @@ import {
   Button,
   Space,
   Typography,
-  message,
   Spin,
   Popconfirm,
   Select,
@@ -239,8 +238,8 @@ function MetaBar({
 export default function NoteEditorPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  // 上下文感知的 notification（避免静态方法丢主题、偶发不显示）
-  const { notification } = AntdApp.useApp();
+  // 上下文感知的 message / notification（避免静态方法丢主题、偶发不显示）
+  const { message, notification } = AntdApp.useApp();
   const { focusMode, setFocusMode } = useAppStore();
   const { openTab, updateTabTitle, setTabDirty } = useTabsStore();
   const [note, setNote] = useState<Note | null>(null);
