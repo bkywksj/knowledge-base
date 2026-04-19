@@ -1,21 +1,16 @@
 import { useEffect, useState } from "react";
-import { Card, Typography, Descriptions, Spin, message, Button, Tooltip, Modal, Tag } from "antd";
+import { Card, Typography, Descriptions, Spin, message, Button, Tooltip } from "antd";
 import { FolderOpen, Copy } from "lucide-react";
-import { RocketOutlined, ThunderboltOutlined, RightOutlined, CopyOutlined, CheckOutlined, AppstoreOutlined } from "@ant-design/icons";
-import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+import { openPath } from "@tauri-apps/plugin-opener";
 import type { SystemInfo } from "@/types";
 import { systemApi } from "@/lib/api";
+import { RecommendCards } from "@/components/ui/RecommendCards";
 
-const { Title, Text, Paragraph } = Typography;
+const { Title, Text } = Typography;
 
 export default function AboutPage() {
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [loading, setLoading] = useState(true);
-  const [promoOpen, setPromoOpen] = useState(false);
-  const [promoCopied, setPromoCopied] = useState(false);
-  const [frameworkOpen, setFrameworkOpen] = useState(false);
-  const [frameworkCopied, setFrameworkCopied] = useState(false);
-  const [workstationOpen, setWorkstationOpen] = useState(false);
 
   useEffect(() => {
     systemApi

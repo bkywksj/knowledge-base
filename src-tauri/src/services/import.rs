@@ -108,7 +108,11 @@ impl ImportService {
             };
 
             match db.create_note(&input) {
-                Ok(_) => imported += 1,
+                Ok(note) => {
+                    // 标记为 markdown 导入，让前端 Tab 栏图标能区分
+                    let _ = db.set_note_source_file(note.id, None, Some("md"));
+                    imported += 1;
+                }
                 Err(e) => {
                     errors.push(format!("{}: 导入失败 - {}", input.title, e));
                 }
