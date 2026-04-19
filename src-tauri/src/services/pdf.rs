@@ -148,13 +148,85 @@ fn text_to_simple_html(text: &str) -> String {
     paragraphs.join("\n")
 }
 
-/// 规范化文本：统一换行、去掉多余空行（pdf-extract 常有形如 \n\n\n\n 的结果）
+/// 规范化文本：清洗 pdf-extract 抽出的常见垃圾字符并修整结构
+///
+/// 处理顺序：
+/// 1. 换行规范化（CRLF → LF）
+/// 2. 逐行清洗：去零宽字符、行首 PUA/豆腐字符还原为 "• "、行内 PUA/替换字符删除
+/// 3. 多余空行压成最多 2 个
 fn normalize_text(raw: &str) -> String {
     let lf = raw.replace("\r\n", "\n").replace('\r', "\n");
-    // 连续 3+ 换行压成 2 个
-    let mut out = String::with_capacity(lf.len());
+    let cleaned: String = lf
+        .split('\n')
+        .map(clean_line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    collapse_blank_lines(&cleaned)
+}
+
+/// 单行清洗：处理零宽字符、行首项目符号字形、行内不可打印字符
+fn clean_line(line: &str) -> String {
+    // 1. 去零宽字符
+    let no_zw: String = line.chars().filter(|c| !is_zero_width(*c)).collect();
+
+    // 2. 行首处理：跳过前导空白，若开头是疑似项目符号字形（PUA / FFFD 等），还原成 "•"
+    let leading_ws: String = no_zw.chars().take_while(|c| c.is_whitespace()).collect();
+    let body = &no_zw[leading_ws.len()..];
+
+    if let Some(first) = body.chars().next() {
+        if is_likely_bullet_glyph(first) {
+            // 吃掉连续多个 bullet 字形（PDF 有时一个 bullet 占多个字符）
+            let bullet_end = body
+                .char_indices()
+                .find(|(_, c)| !is_likely_bullet_glyph(*c))
+                .map(|(i, _)| i)
+                .unwrap_or(body.len());
+            let rest = &body[bullet_end..];
+            return format!(
+                "{}• {}",
+                leading_ws,
+                strip_unprintable(rest).trim_start()
+            );
+        }
+    }
+
+    // 3. 非项目符号行：仅做行内不可打印清洗
+    format!("{}{}", leading_ws, strip_unprintable(body))
+}
+
+/// 删除行内的 PUA 区段字符与替换字符（这些是 pdf-extract 没解出的字形残留）
+fn strip_unprintable(s: &str) -> String {
+    s.chars()
+        .filter(|&c| !is_pua(c) && c != '\u{FFFD}')
+        .collect()
+}
+
+/// 0-宽字符（不可见但污染搜索/光标）
+fn is_zero_width(c: char) -> bool {
+    matches!(
+        c,
+        '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{FEFF}' | '\u{2060}'
+    )
+}
+
+/// Unicode Private Use Area（PDF 嵌入子集字体常用区段，无字形定义）
+fn is_pua(c: char) -> bool {
+    matches!(c as u32, 0xE000..=0xF8FF)
+}
+
+/// 判断是否疑似"被错抽的项目符号字形"
+///
+/// PDF 里项目符号 `•` 在很多字体（如 Wingdings、Symbol、自制嵌入字体）
+/// 走的是 PUA 字形，pdf-extract 输出 \uF0B7 / \uFFFD / 各种 PUA 码点。
+fn is_likely_bullet_glyph(c: char) -> bool {
+    is_pua(c) || c == '\u{FFFD}'
+}
+
+/// 把连续 3+ 个换行压成 2 个，整体 trim
+fn collapse_blank_lines(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
     let mut newline_run = 0usize;
-    for ch in lf.chars() {
+    for ch in s.chars() {
         if ch == '\n' {
             newline_run += 1;
             if newline_run <= 2 {
@@ -166,6 +238,44 @@ fn normalize_text(raw: &str) -> String {
         }
     }
     out.trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pua_at_line_start_becomes_bullet() {
+        let raw = "\u{E020} 将本软件作为独立产品销售\n普通段落";
+        let out = normalize_text(raw);
+        assert!(out.starts_with("• 将本软件作为独立产品销售"));
+        assert!(out.contains("普通段落"));
+    }
+
+    #[test]
+    fn fffd_at_line_start_becomes_bullet() {
+        let raw = "\u{FFFD} 第一项\n\u{FFFD} 第二项";
+        let out = normalize_text(raw);
+        assert_eq!(out, "• 第一项\n• 第二项");
+    }
+
+    #[test]
+    fn zero_width_chars_removed() {
+        let raw = "正\u{200B}文\u{FEFF}内\u{200C}容";
+        assert_eq!(normalize_text(raw), "正文内容");
+    }
+
+    #[test]
+    fn inline_pua_stripped_normal_line_kept() {
+        let raw = "正文里夹\u{E100}个 PUA";
+        assert_eq!(normalize_text(raw), "正文里夹个 PUA");
+    }
+
+    #[test]
+    fn excessive_blank_lines_collapsed() {
+        let raw = "A\n\n\n\nB\n\n\n\n\nC";
+        assert_eq!(normalize_text(raw), "A\n\nB\n\nC");
+    }
 }
 
 fn html_escape(s: &str) -> String {
