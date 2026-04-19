@@ -594,26 +594,9 @@ export function SyncSection() {
         {history.length === 0 ? (
           <Text type="secondary">暂无历史记录</Text>
         ) : (
-          <div style={{ maxHeight: 400, overflow: "auto" }}>
+          <div style={{ maxHeight: 440, overflow: "auto" }}>
             {history.map((h) => (
-              <div
-                key={h.id}
-                style={{
-                  padding: "6px 0",
-                  borderBottom: "1px solid var(--ant-color-border-secondary)",
-                  fontSize: 12,
-                }}
-              >
-                <Space>
-                  <Tag color={h.success ? "green" : "red"}>{h.direction}</Tag>
-                  <Text>{h.startedAt}</Text>
-                  {h.success ? (
-                    <Text type="secondary">{h.statsJson}</Text>
-                  ) : (
-                    <Text type="danger">{h.error}</Text>
-                  )}
-                </Space>
-              </div>
+              <HistoryRow key={h.id} item={h} />
             ))}
           </div>
         )}
@@ -677,5 +660,82 @@ export function SyncSection() {
         )}
       </Modal>
     </Card>
+  );
+}
+
+// ─── 历史行子组件 ────────────────────────────────
+
+const DIRECTION_META: Record<
+  string,
+  { label: string; color: string }
+> = {
+  push: { label: "推送", color: "blue" },
+  pull: { label: "拉取", color: "geekblue" },
+  export: { label: "导出", color: "purple" },
+  import: { label: "导入", color: "cyan" },
+};
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function summarizeStats(json: string): string[] {
+  try {
+    const s = JSON.parse(json);
+    const parts: string[] = [];
+    if (s.notesCount) parts.push(`${s.notesCount} 笔记`);
+    if (s.foldersCount) parts.push(`${s.foldersCount} 文件夹`);
+    if (s.tagsCount) parts.push(`${s.tagsCount} 标签`);
+    if (s.imagesCount) parts.push(`${s.imagesCount} 图片`);
+    if (s.pdfsCount) parts.push(`${s.pdfsCount} PDF`);
+    if (s.sourcesCount) parts.push(`${s.sourcesCount} Word`);
+    if (typeof s.assetsSize === "number" && s.assetsSize > 0) {
+      parts.push(formatBytes(s.assetsSize));
+    }
+    return parts.length > 0 ? parts : ["（空快照）"];
+  } catch {
+    return ["（无法解析统计）"];
+  }
+}
+
+function HistoryRow({ item }: { item: SyncHistoryItem }) {
+  const meta = DIRECTION_META[item.direction] ?? { label: item.direction, color: "default" };
+  const summary = item.success ? summarizeStats(item.statsJson) : [];
+
+  return (
+    <div
+      style={{
+        padding: "10px 4px",
+        borderBottom: "1px solid var(--ant-color-border-secondary)",
+        display: "flex",
+        gap: 12,
+        alignItems: "flex-start",
+      }}
+    >
+      <Tag color={item.success ? meta.color : "red"} style={{ marginTop: 2 }}>
+        {meta.label}
+      </Tag>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, color: "var(--ant-color-text-secondary)", marginBottom: 2 }}>
+          {item.startedAt}
+        </div>
+        {item.success ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px", fontSize: 12 }}>
+            {summary.map((s, i) => (
+              <Text key={i} type="secondary">
+                {s}
+              </Text>
+            ))}
+          </div>
+        ) : (
+          <Text type="danger" style={{ fontSize: 12 }}>
+            {item.error || "未知错误"}
+          </Text>
+        )}
+      </div>
+    </div>
   );
 }
