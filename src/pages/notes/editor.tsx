@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   Input,
@@ -375,6 +375,20 @@ export default function NoteEditorPage() {
       setSaving(false);
     }
   }
+
+  // Ctrl+S / Cmd+S 保存：用 ref 避免 useEffect 每次渲染都 re-subscribe
+  const saveRef = useRef<() => void>(() => {});
+  saveRef.current = handleSave;
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        saveRef.current();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   async function handleDelete() {
     try {
