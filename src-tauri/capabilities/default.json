@@ -15,7 +15,11 @@
     "opener:default",
     {
       "identifier": "opener:allow-open-path",
-      "allow": [{ "path": "$APPDATA/**" }]
+      "allow": [{ "path": "**" }]
+    },
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "http://**" }, { "url": "https://**" }]
     },
     "store:default",
     "log:default",
