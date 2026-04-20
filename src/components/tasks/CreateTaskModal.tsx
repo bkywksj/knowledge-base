@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Modal,
   Input,
@@ -8,16 +8,18 @@ import {
   Button,
   Tag,
   Dropdown,
+  Select,
   App as AntdApp,
   Space,
   theme as antdTheme,
 } from "antd";
-import type { MenuProps } from "antd";
+import type { MenuProps, RefSelectProps } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
 import { Plus, FileText, Folder as FolderIcon, Link as LinkIcon } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { taskApi, noteApi } from "@/lib/api";
-import type { Task, TaskLinkInput, TaskPriority } from "@/types";
+import { relativeTime } from "@/lib/utils";
+import type { Note, Task, TaskLinkInput, TaskPriority } from "@/types";
 
 interface Props {
   open: boolean;
@@ -40,6 +42,14 @@ export function CreateTaskModal({ open, editing, onClose, onSaved }: Props) {
   const [continuous, setContinuous] = useState(false);
   const [urlInputOpen, setUrlInputOpen] = useState(false);
   const [urlInput, setUrlInput] = useState("");
+
+  // 笔记选择器状态（原地下拉）
+  const [notePickerOpen, setNotePickerOpen] = useState(false);
+  const [noteQuery, setNoteQuery] = useState("");
+  const [noteOptions, setNoteOptions] = useState<Note[]>([]);
+  const [noteLoading, setNoteLoading] = useState(false);
+  const noteSelectRef = useRef<RefSelectProps>(null);
+  const noteSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isEdit = !!editing;
 
@@ -69,32 +79,76 @@ export function CreateTaskModal({ open, editing, onClose, onSaved }: Props) {
     setContinuous(false);
     setUrlInputOpen(false);
     setUrlInput("");
+    setNotePickerOpen(false);
+    setNoteQuery("");
+    setNoteOptions([]);
   }, [open, editing]);
 
-  async function handleAddNoteLink() {
+  /** 拉候选笔记：keyword 空 → 最近 8 条，非空 → 模糊搜前 10 条 */
+  const loadNoteCandidates = useCallback(async (keyword: string) => {
+    setNoteLoading(true);
     try {
-      // 用 noteApi.list 拉最近 10 条让用户选
-      const result = await noteApi.list({ page: 1, page_size: 20 });
-      const note = result.items[0];
-      if (!note) {
-        message.warning("还没有笔记可关联");
-        return;
-      }
-      // 简化：用原生 prompt 让用户输入笔记标题关键词，然后精确匹配
-      const keyword = window.prompt("输入要关联的笔记标题（完整）", "");
-      if (!keyword) return;
-      const hit = result.items.find((n) => n.title === keyword.trim());
-      if (!hit) {
-        message.error(`未找到标题为「${keyword}」的笔记`);
-        return;
-      }
+      const result = await noteApi.list({
+        page: 1,
+        page_size: keyword.trim() ? 10 : 8,
+        keyword: keyword.trim() || undefined,
+      });
+      setNoteOptions(result.items);
+    } catch (e) {
+      console.error("加载笔记候选失败:", e);
+      setNoteOptions([]);
+    } finally {
+      setNoteLoading(false);
+    }
+  }, []);
+
+  /** 防抖搜索 */
+  const handleNoteSearch = useCallback(
+    (v: string) => {
+      setNoteQuery(v);
+      if (noteSearchTimerRef.current) clearTimeout(noteSearchTimerRef.current);
+      noteSearchTimerRef.current = setTimeout(() => {
+        loadNoteCandidates(v);
+      }, 300);
+    },
+    [loadNoteCandidates],
+  );
+
+  // 打开笔记选择器时加载"最近"
+  useEffect(() => {
+    if (!notePickerOpen) return;
+    setNoteQuery("");
+    loadNoteCandidates("");
+  }, [notePickerOpen, loadNoteCandidates]);
+
+  // 卸载清 timer
+  useEffect(
+    () => () => {
+      if (noteSearchTimerRef.current) clearTimeout(noteSearchTimerRef.current);
+    },
+    [],
+  );
+
+  /** 打开行内笔记选择器（原地下拉） */
+  function handleAddNoteLink() {
+    setNotePickerOpen(true);
+  }
+
+  /** 选中笔记：加到 links，清空 select 值，保持下拉开，让用户继续选 */
+  function handleNoteSelect(note: Note) {
+    if (links.some((l) => l.kind === "note" && l.target === String(note.id))) {
+      message.info("该笔记已关联");
+    } else {
       setLinks((prev) => [
         ...prev,
-        { kind: "note", target: String(hit.id), label: hit.title },
+        { kind: "note", target: String(note.id), label: note.title },
       ]);
-    } catch (e) {
-      message.error(`关联失败: ${e}`);
     }
+    // 清空搜索词 + 重新拉"最近"
+    setNoteQuery("");
+    loadNoteCandidates("");
+    // 重新 focus 输入框，保持下拉打开
+    setTimeout(() => noteSelectRef.current?.focus(), 0);
   }
 
   async function handleAddPathLink() {
@@ -374,7 +428,91 @@ export function CreateTaskModal({ open, editing, onClose, onSaved }: Props) {
                 </Tag>
               );
             })}
-            {urlInputOpen ? (
+            {notePickerOpen ? (
+              <Select
+                ref={noteSelectRef}
+                autoFocus
+                open
+                showSearch
+                allowClear
+                filterOption={false}
+                placeholder="搜索笔记标题…"
+                value={undefined}
+                loading={noteLoading}
+                searchValue={noteQuery}
+                onSearch={handleNoteSearch}
+                onDropdownVisibleChange={(v) => {
+                  if (!v) setNotePickerOpen(false);
+                }}
+                onBlur={() => {
+                  // blur 时如果下拉已关闭则退出选择模式
+                  setTimeout(() => setNotePickerOpen(false), 150);
+                }}
+                notFoundContent={
+                  noteLoading ? (
+                    <span className="text-xs" style={{ color: token.colorTextTertiary }}>
+                      加载中…
+                    </span>
+                  ) : noteQuery.trim() ? (
+                    <span className="text-xs" style={{ color: token.colorTextTertiary }}>
+                      没有匹配「{noteQuery}」的笔记
+                    </span>
+                  ) : (
+                    <span className="text-xs" style={{ color: token.colorTextTertiary }}>
+                      还没有笔记
+                    </span>
+                  )
+                }
+                style={{ width: 280 }}
+                options={noteOptions.map((n) => ({
+                  value: n.id,
+                  label: n.title,
+                  data: n,
+                }))}
+                optionRender={(opt) => {
+                  const note = (opt.data as { data: Note }).data;
+                  return (
+                    <div className="flex items-center justify-between gap-2 py-0.5">
+                      <span className="truncate flex-1 text-xs">
+                        <FileText
+                          size={10}
+                          style={{
+                            display: "inline",
+                            marginRight: 4,
+                            color: token.colorPrimary,
+                            verticalAlign: -1,
+                          }}
+                        />
+                        {renderHighlight(note.title, noteQuery, token.colorPrimary)}
+                      </span>
+                      <span
+                        className="text-[10px] shrink-0"
+                        style={{ color: token.colorTextTertiary }}
+                      >
+                        {relativeTime(note.updated_at)}
+                      </span>
+                    </div>
+                  );
+                }}
+                onSelect={(v) => {
+                  const note = noteOptions.find((n) => n.id === v);
+                  if (note) handleNoteSelect(note);
+                }}
+                dropdownRender={(menu) => (
+                  <div>
+                    {!noteQuery.trim() && (
+                      <div
+                        className="px-3 pt-2 pb-1 text-[10px]"
+                        style={{ color: token.colorTextTertiary }}
+                      >
+                        最近编辑
+                      </div>
+                    )}
+                    {menu}
+                  </div>
+                )}
+              />
+            ) : urlInputOpen ? (
               <Input
                 size="small"
                 autoFocus
@@ -398,5 +536,20 @@ export function CreateTaskModal({ open, editing, onClose, onSaved }: Props) {
         </div>
       </div>
     </Modal>
+  );
+}
+
+/** 在标题中把匹配词加粗高亮（不区分大小写） */
+function renderHighlight(text: string, keyword: string, color: string): React.ReactNode {
+  const k = keyword.trim();
+  if (!k) return text;
+  const idx = text.toLowerCase().indexOf(k.toLowerCase());
+  if (idx < 0) return text;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <strong style={{ color, fontWeight: 600 }}>{text.slice(idx, idx + k.length)}</strong>
+      {text.slice(idx + k.length)}
+    </>
   );
 }
