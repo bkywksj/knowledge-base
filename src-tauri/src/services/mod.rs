@@ -16,5 +16,6 @@ pub mod pdf;
 pub mod source_file;
 pub mod sync;
 pub mod sync_scheduler;
+pub mod tasks;
 pub mod template;
 pub mod webdav;

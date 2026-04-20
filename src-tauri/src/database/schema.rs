@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 11;
+pub const SCHEMA_VERSION: i32 = 12;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -41,6 +41,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             8 => migrate_v8_to_v9(conn)?,
             9 => migrate_v9_to_v10(conn)?,
             10 => migrate_v10_to_v11(conn)?,
+            11 => migrate_v11_to_v12(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -446,5 +447,44 @@ fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
     )?;
 
     set_version(conn, 11)?;
+    Ok(())
+}
+
+/// v11 -> v12: 新增待办任务表 + 任务关联表
+fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v11 -> v12（待办任务）");
+
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS tasks (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            title        TEXT NOT NULL,
+            description  TEXT,
+            priority     INTEGER NOT NULL DEFAULT 1,  -- 0=urgent / 1=normal / 2=low
+            important    INTEGER NOT NULL DEFAULT 0,  -- 0/1 艾森豪威尔重要性维度
+            status       INTEGER NOT NULL DEFAULT 0,  -- 0=todo / 1=done
+            due_date     TEXT,                        -- 'YYYY-MM-DD'，NULL 表示无截止
+            completed_at TEXT,                        -- 完成时间（ISO）
+            created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_tasks_status    ON tasks(status);
+        CREATE INDEX IF NOT EXISTS idx_tasks_due_date  ON tasks(due_date);
+        CREATE INDEX IF NOT EXISTS idx_tasks_priority  ON tasks(priority);
+
+        -- 任务关联（多态）：一个任务可以挂多个笔记 / 路径 / URL
+        CREATE TABLE IF NOT EXISTS task_links (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            kind       TEXT NOT NULL,          -- 'note' / 'path' / 'url'
+            target     TEXT NOT NULL,          -- note_id 字符串 / 绝对路径 / URL
+            label      TEXT,                   -- 展示文案（如笔记标题）
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_links_task ON task_links(task_id);
+        ",
+    )?;
+
+    set_version(conn, 12)?;
     Ok(())
 }

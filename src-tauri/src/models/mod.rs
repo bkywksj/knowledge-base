@@ -422,3 +422,92 @@ pub struct SyncHistoryItem {
     pub error: Option<String>,
     pub stats_json: String,
 }
+
+// ─── 待办任务 ───────────────────────────────────
+
+/// 任务关联：挂到笔记 / 本地路径 / URL
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskLink {
+    pub id: i64,
+    pub task_id: i64,
+    /// "note" / "path" / "url"
+    pub kind: String,
+    /// note → note_id 字符串；path → 绝对路径；url → 完整 URL
+    pub target: String,
+    /// 显示文案（如笔记标题）
+    pub label: Option<String>,
+}
+
+/// 任务（含关联列表）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Task {
+    pub id: i64,
+    pub title: String,
+    pub description: Option<String>,
+    /// 0=urgent / 1=normal / 2=low
+    pub priority: i32,
+    pub important: bool,
+    /// 0=todo / 1=done
+    pub status: i32,
+    /// 'YYYY-MM-DD'
+    pub due_date: Option<String>,
+    pub completed_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub links: Vec<TaskLink>,
+}
+
+/// 创建任务入参
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateTaskInput {
+    pub title: String,
+    pub description: Option<String>,
+    pub priority: Option<i32>,
+    pub important: Option<bool>,
+    pub due_date: Option<String>,
+    pub links: Option<Vec<TaskLinkInput>>,
+}
+
+/// 更新任务入参（字段缺省表示不改动）
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateTaskInput {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub priority: Option<i32>,
+    pub important: Option<bool>,
+    pub due_date: Option<String>,
+    /// 传 true 显式清空 due_date
+    pub clear_due_date: Option<bool>,
+}
+
+/// 任务关联入参（新建任务时一起传）
+#[derive(Debug, Clone, Deserialize)]
+pub struct TaskLinkInput {
+    pub kind: String,
+    pub target: String,
+    pub label: Option<String>,
+}
+
+/// 任务查询筛选条件
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct TaskQuery {
+    /// Some(0) = 只看未完成, Some(1) = 只看已完成, None = 全部
+    pub status: Option<i32>,
+    /// 关键词（标题 / 描述 LIKE）
+    pub keyword: Option<String>,
+    /// 某个优先级
+    pub priority: Option<i32>,
+}
+
+/// 任务统计（首页卡片 / 侧边栏徽章）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskStats {
+    pub total_todo: usize,
+    pub total_done: usize,
+    pub urgent_todo: usize,
+    pub overdue: usize,
+    pub due_today: usize,
+}
+
+

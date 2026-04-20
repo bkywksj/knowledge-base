@@ -192,6 +192,16 @@ pub fn run() {
             commands::sync::sync_delete_webdav_password,
             commands::sync::sync_list_history,
             commands::sync::sync_scheduler_reload,
+            // 待办模块
+            commands::tasks::list_tasks,
+            commands::tasks::get_task,
+            commands::tasks::create_task,
+            commands::tasks::update_task,
+            commands::tasks::toggle_task_status,
+            commands::tasks::delete_task,
+            commands::tasks::add_task_link,
+            commands::tasks::remove_task_link,
+            commands::tasks::get_task_stats,
         ])
         // ─── 窗口事件处理 ─────────────────────────
         .on_window_event(|window, event| {
