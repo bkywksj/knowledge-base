@@ -33,6 +33,12 @@ import type {
   SyncResult,
   SyncHistoryItem,
   RemoteSnapshot,
+  Task,
+  TaskLinkInput,
+  CreateTaskInput,
+  UpdateTaskInput,
+  TaskQuery,
+  TaskStats,
 } from "@/types";
 
 /** 系统相关 API */
@@ -301,4 +307,20 @@ export const syncApi = {
     invoke<SyncHistoryItem[]>("sync_list_history", { limit }),
   /** 唤醒自动同步调度器（配置变更后调用）*/
   schedulerReload: () => invoke<void>("sync_scheduler_reload"),
+};
+
+/** 待办任务 API */
+export const taskApi = {
+  list: (query?: TaskQuery) => invoke<Task[]>("list_tasks", { query }),
+  get: (id: number) => invoke<Task>("get_task", { id }),
+  create: (input: CreateTaskInput) => invoke<number>("create_task", { input }),
+  update: (id: number, input: UpdateTaskInput) =>
+    invoke<boolean>("update_task", { id, input }),
+  toggleStatus: (id: number) => invoke<number>("toggle_task_status", { id }),
+  delete: (id: number) => invoke<boolean>("delete_task", { id }),
+  addLink: (taskId: number, input: TaskLinkInput) =>
+    invoke<number>("add_task_link", { taskId, input }),
+  removeLink: (linkId: number) =>
+    invoke<boolean>("remove_task_link", { linkId }),
+  stats: () => invoke<TaskStats>("get_task_stats"),
 };

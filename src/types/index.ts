@@ -362,3 +362,69 @@ export interface SyncHistoryItem {
   error: string | null;
   statsJson: string;
 }
+
+// ─── 待办任务 ───────────────────────────────────
+
+export type TaskPriority = 0 | 1 | 2; // 0=urgent / 1=normal / 2=low
+export type TaskStatus = 0 | 1;       // 0=todo / 1=done
+export type TaskLinkKind = "note" | "path" | "url";
+
+export interface TaskLink {
+  id: number;
+  task_id: number;
+  kind: TaskLinkKind;
+  target: string;
+  label: string | null;
+}
+
+export interface Task {
+  id: number;
+  title: string;
+  description: string | null;
+  priority: TaskPriority;
+  important: boolean;
+  status: TaskStatus;
+  due_date: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  links: TaskLink[];
+}
+
+export interface TaskLinkInput {
+  kind: TaskLinkKind;
+  target: string;
+  label?: string | null;
+}
+
+export interface CreateTaskInput {
+  title: string;
+  description?: string | null;
+  priority?: TaskPriority;
+  important?: boolean;
+  due_date?: string | null;
+  links?: TaskLinkInput[];
+}
+
+export interface UpdateTaskInput {
+  title?: string;
+  description?: string | null;
+  priority?: TaskPriority;
+  important?: boolean;
+  due_date?: string | null;
+  clear_due_date?: boolean;
+}
+
+export interface TaskQuery {
+  status?: TaskStatus;
+  keyword?: string;
+  priority?: TaskPriority;
+}
+
+export interface TaskStats {
+  totalTodo: number;
+  totalDone: number;
+  urgentTodo: number;
+  overdue: number;
+  dueToday: number;
+}

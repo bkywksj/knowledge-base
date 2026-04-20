@@ -11,6 +11,7 @@ import SettingsPage from "@/pages/settings";
 import AboutPage from "@/pages/about";
 import GraphPage from "@/pages/graph";
 import AiChatPage from "@/pages/ai";
+import TasksPage from "@/pages/tasks";
 
 const router = createHashRouter([
   {
@@ -26,6 +27,7 @@ const router = createHashRouter([
       { path: "daily", element: <DailyPage /> },
       { path: "graph", element: <GraphPage /> },
       { path: "ai", element: <AiChatPage /> },
+      { path: "tasks", element: <TasksPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "about", element: <AboutPage /> },
     ],

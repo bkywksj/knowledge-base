@@ -27,6 +27,7 @@ import {
   Edit3,
   Trash,
   Plus,
+  CheckSquare,
 } from "lucide-react";
 import { FolderOutlined } from "@ant-design/icons";
 import type { DataNode } from "antd/es/tree";
@@ -41,6 +42,7 @@ const navItems = [
   { key: "/search", icon: <Search size={16} />, label: "搜索" },
   { key: "/daily", icon: <Calendar size={16} />, label: "每日笔记" },
   { key: "/tags", icon: <Tags size={16} />, label: "标签" },
+  { key: "/tasks", icon: <CheckSquare size={16} />, label: "待办" },
   { key: "/graph", icon: <GitBranch size={16} />, label: "知识图谱" },
   { key: "/ai", icon: <Bot size={16} />, label: "AI 问答" },
   { key: "/about", icon: <Info size={16} />, label: "关于" },

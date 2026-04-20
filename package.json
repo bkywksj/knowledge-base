@@ -42,6 +42,7 @@
     "@tiptap/starter-kit": "^3.20.4",
     "@tiptap/suggestion": "^3.22.4",
     "antd": "^6.3.1",
+    "dayjs": "^1.11.20",
     "lowlight": "^3.3.0",
     "lucide-react": "^0.577.0",
     "mammoth": "^1.12.0",
