@@ -354,4 +354,7 @@ export const taskApi = {
   removeLink: (linkId: number) =>
     invoke<boolean>("remove_task_link", { linkId }),
   stats: () => invoke<TaskStats>("get_task_stats"),
+  /** 稍后提醒：向后推 minutes 分钟 + 重置已提醒标记 */
+  snooze: (id: number, minutes: number) =>
+    invoke<boolean>("snooze_task_reminder", { id, minutes }),
 };

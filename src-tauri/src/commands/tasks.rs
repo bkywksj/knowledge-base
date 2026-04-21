@@ -63,3 +63,13 @@ pub fn remove_task_link(state: State<'_, AppState>, link_id: i64) -> Result<bool
 pub fn get_task_stats(state: State<'_, AppState>) -> Result<TaskStats, String> {
     TaskService::stats(&state.db).map_err(|e| e.to_string())
 }
+
+/// 稍后再提醒：把截止时间向后推 N 分钟并重置"已提醒"标记
+#[tauri::command]
+pub fn snooze_task_reminder(
+    state: State<'_, AppState>,
+    id: i64,
+    minutes: i32,
+) -> Result<bool, String> {
+    TaskService::snooze(&state.db, id, minutes).map_err(|e| e.to_string())
+}

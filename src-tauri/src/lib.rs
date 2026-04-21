@@ -57,6 +57,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         // ─── 应用初始化 ─────────────────────────────
         .setup(|app| {
             // 初始化数据库（存放在应用数据目录）
@@ -143,6 +144,12 @@ pub fn run() {
             let app_handle_sched = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 services::sync_scheduler::run_scheduler(app_handle_sched).await;
+            });
+
+            // 启动待办定时提醒调度器（每分钟扫一次到点任务）
+            let app_handle_reminder = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                services::task_reminder::run_reminder_loop(app_handle_reminder).await;
             });
 
             Ok(())
@@ -273,6 +280,7 @@ pub fn run() {
             commands::tasks::add_task_link,
             commands::tasks::remove_task_link,
             commands::tasks::get_task_stats,
+            commands::tasks::snooze_task_reminder,
         ])
         // ─── 窗口事件处理 ─────────────────────────
         .on_window_event(|window, event| {

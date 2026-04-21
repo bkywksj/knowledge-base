@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
 import { Layout, Button, theme as antdTheme, Tooltip, Dropdown, message } from "antd";
-import { MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined } from "@ant-design/icons";
+import { MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined, PushpinOutlined, PushpinFilled } from "@ant-design/icons";
 import { Search, Palette, ArrowLeft, ArrowRight } from "lucide-react";
 import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -67,6 +67,7 @@ export function AppLayout() {
     setThemeCategory,
     focusMode, setFocusMode,
     createModalOpen, openCreateModal, closeCreateModal,
+    alwaysOnTop, setAlwaysOnTop,
   } = useAppStore();
   const activeTheme = themeCategory === "light" ? lightTheme : darkTheme;
   const { token } = antdTheme.useToken();
@@ -144,6 +145,25 @@ export function AppLayout() {
       }
     ).then((fn) => unlisteners.push(fn));
 
+    listen("tray:check-update", async () => {
+      const key = "tray-check-update";
+      message.loading({ content: "正在检查更新…", key, duration: 0 });
+      const r = await checkManually();
+      if (r.error) {
+        message.error({ content: `检查更新失败：${r.error}`, key });
+      } else if (!r.hasUpdate) {
+        message.success({ content: "已是最新版本", key });
+      } else {
+        // 有更新：checkManually 内部已自动打开 UpdateModal
+        message.destroy(key);
+      }
+    }).then((fn) => unlisteners.push(fn));
+
+    // 托盘 CheckMenuItem 切换"窗口置顶"后回传：skipEmit 避免再回流到 Rust
+    listen<boolean>("rust:always-on-top-changed", (e) => {
+      useAppStore.getState().setAlwaysOnTop(e.payload, { skipEmit: true });
+    }).then((fn) => unlisteners.push(fn));
+
     return () => {
       unlisteners.forEach((fn) => fn());
     };
@@ -152,7 +172,7 @@ export function AppLayout() {
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const { update, modalOpen, openModal, closeModal } = useUpdateChecker();
+  const { update, modalOpen, openModal, closeModal, checkManually } = useUpdateChecker();
 
   const themeMenuItems = [
     { type: "group" as const, label: "亮色主题", children: getThemesByCategory("light").map(t => ({
@@ -290,6 +310,14 @@ export function AppLayout() {
               onClick={() => navigate("/settings")}
               title="设置"
             />
+            <Tooltip title={alwaysOnTop ? "取消置顶" : "窗口置顶"}>
+              <Button
+                type="text"
+                icon={alwaysOnTop ? <PushpinFilled /> : <PushpinOutlined />}
+                onClick={() => setAlwaysOnTop(!alwaysOnTop)}
+                style={alwaysOnTop ? { color: token.colorPrimary } : undefined}
+              />
+            </Tooltip>
             <WindowControls />
           </div>
         </Header>

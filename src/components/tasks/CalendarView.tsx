@@ -42,12 +42,13 @@ export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
   const todayYmd = dayjs().format("YYYY-MM-DD");
   const activeTasks = tasks.filter((t) => t.status === 0);
 
-  // 按 due_date 聚合
+  // 按 due_date 聚合（只取日期部分，忽略时分）
   const tasksByDate = useMemo(() => {
     const map: Record<string, Task[]> = {};
     for (const t of activeTasks) {
       if (!t.due_date) continue;
-      (map[t.due_date] ||= []).push(t);
+      const key = t.due_date.slice(0, 10);
+      (map[key] ||= []).push(t);
     }
     return map;
   }, [activeTasks]);
@@ -69,9 +70,13 @@ export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
     const id = Number(e.dataTransfer.getData("text/plain"));
     if (!id) return;
     const task = tasks.find((t) => t.id === id);
-    if (!task || task.due_date === ymd) return;
+    if (!task) return;
+    if (task.due_date && task.due_date.slice(0, 10) === ymd) return;
     try {
-      await taskApi.update(id, { due_date: ymd });
+      // 保留原时分（若有），只改日期部分
+      const timePart =
+        task.due_date && task.due_date.length > 10 ? task.due_date.slice(10) : "";
+      await taskApi.update(id, { due_date: `${ymd}${timePart}` });
       onRefresh();
     } catch (err) {
       message.error(`更改日期失败: ${err}`);

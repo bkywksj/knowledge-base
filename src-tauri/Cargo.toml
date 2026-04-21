@@ -1,6 +1,6 @@
 [package]
 name = "knowledge_base"
-version = "0.2.0"
+version = "1.0.0"
 description = "本地知识库桌面应用 - 全文搜索、双向链接、知识图谱"
 authors = ["抓蛙师"]
 edition = "2021"
@@ -47,6 +47,7 @@ urlencoding = "2"
 aes-gcm = "0.10"
 tauri-plugin-single-instance = { version = "=2.3.0", features = ["deep-link"] }
 tauri-plugin-autostart = "2"
+tauri-plugin-notification = "2"
 
 # ─── 编译优化 ────────────────────────────────────
 

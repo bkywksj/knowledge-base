@@ -12,6 +12,7 @@
     "core:window:allow-close",
     "core:window:allow-hide",
     "core:window:allow-start-dragging",
+    "core:window:allow-set-always-on-top",
     "opener:default",
     {
       "identifier": "opener:allow-open-path",
@@ -28,6 +29,7 @@
     "updater:default",
     "process:default",
     "dialog:default",
-    "autostart:default"
+    "autostart:default",
+    "notification:default"
   ]
 }

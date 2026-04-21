@@ -51,5 +51,25 @@ export function useUpdateChecker(options: Options = {}) {
     if (update) dismissedVersionRef.current = update.version;
   }, [update]);
 
-  return { update, modalOpen, openModal, closeModal };
+  /**
+   * 用户手动触发检查（如托盘菜单"检查更新…"）。
+   * 与自动轮询不同：有更新时强制弹出 Modal（忽略本次会话的"暂不提醒"）；
+   * 已是最新版本或检查失败时由调用方给出明确反馈。
+   */
+  const checkManually = useCallback(async (): Promise<{ hasUpdate: boolean; error?: string }> => {
+    try {
+      const result = await updaterApi.checkUpdate();
+      if (result) {
+        dismissedVersionRef.current = null;
+        setUpdate(result);
+        setModalOpen(true);
+        return { hasUpdate: true };
+      }
+      return { hasUpdate: false };
+    } catch (e) {
+      return { hasUpdate: false, error: String(e) };
+    }
+  }, []);
+
+  return { update, modalOpen, openModal, closeModal, checkManually };
 }

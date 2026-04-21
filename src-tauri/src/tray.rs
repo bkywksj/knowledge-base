@@ -1,7 +1,7 @@
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager,
+    Emitter, Listener, Manager,
 };
 use tauri_plugin_autostart::ManagerExt;
 
@@ -67,6 +67,15 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let always_on_top_ref = always_on_top.clone();
     let autostart_ref = autostart.clone();
 
+    // 监听前端发来的置顶状态变化，同步 CheckMenuItem 勾选
+    // （右上角按钮点击 → Zustand → emit 此事件）
+    let always_on_top_for_sync = always_on_top.clone();
+    app.listen("ui:always-on-top-changed", move |event| {
+        if let Ok(enabled) = serde_json::from_str::<bool>(event.payload()) {
+            let _ = always_on_top_for_sync.set_checked(enabled);
+        }
+    });
+
     let icon = app.default_window_icon().ok_or("应用图标未配置")?.clone();
 
     let tooltip = if cfg!(debug_assertions) {
@@ -108,8 +117,11 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                         log::error!("[tray] 设置窗口置顶失败: {}", e);
                         // 状态回滚
                         let _ = always_on_top_ref.set_checked(!checked);
+                        return;
                     }
                 }
+                // 通知前端同步 Zustand + 右上角按钮 UI
+                let _ = app.emit("rust:always-on-top-changed", checked);
             }
             "autostart" => {
                 let checked = autostart_ref.is_checked().unwrap_or(false);

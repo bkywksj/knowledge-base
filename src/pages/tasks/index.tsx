@@ -53,9 +53,13 @@ function ymdLocal(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+/** 从 due_date（可能带时分）中提取 YYYY-MM-DD 日期部分 */
+function dueDateOnly(due: string): string {
+  return due.slice(0, 10);
+}
+
 function groupTasks(tasks: Task[]) {
   const today = ymdLocal(new Date());
-  const tomorrow = ymdLocal(new Date(Date.now() + 86400000));
   const weekEnd = ymdLocal(new Date(Date.now() + 7 * 86400000));
   const overdue: Task[] = [];
   const todayGroup: Task[] = [];
@@ -71,34 +75,38 @@ function groupTasks(tasks: Task[]) {
       noDate.push(t);
       continue;
     }
-    if (t.due_date < today) {
+    const dueDay = dueDateOnly(t.due_date);
+    if (dueDay < today) {
       overdue.push(t);
-    } else if (t.due_date === today) {
+    } else if (dueDay === today) {
       todayGroup.push(t);
-    } else if (t.due_date <= weekEnd) {
+    } else if (dueDay <= weekEnd) {
       upcoming.push(t);
     } else {
       upcoming.push(t);
     }
   }
-  return { overdue, today: todayGroup, tomorrow, upcoming, noDate, done };
+  return { overdue, today: todayGroup, tomorrow: [] as Task[], upcoming, noDate, done };
 }
 
 function describeDueDate(due: string | null): { text: string; overdue: boolean } {
   if (!due) return { text: "", overdue: false };
   const today = ymdLocal(new Date());
-  if (due === today) return { text: "今天", overdue: false };
-  if (due < today) {
+  const dueDay = dueDateOnly(due);
+  // 带时分时把时分单独展示在末尾
+  const timeSuffix = due.length > 10 ? ` ${due.slice(11, 16)}` : "";
+  if (dueDay === today) return { text: `今天${timeSuffix}`, overdue: false };
+  if (dueDay < today) {
     const diff = Math.floor(
-      (new Date(today).getTime() - new Date(due).getTime()) / 86400000,
+      (new Date(today).getTime() - new Date(dueDay).getTime()) / 86400000,
     );
-    return { text: `逾期 ${diff} 天`, overdue: true };
+    return { text: `逾期 ${diff} 天${timeSuffix}`, overdue: true };
   }
   const diff = Math.floor(
-    (new Date(due).getTime() - new Date(today).getTime()) / 86400000,
+    (new Date(dueDay).getTime() - new Date(today).getTime()) / 86400000,
   );
-  if (diff === 1) return { text: "明天", overdue: false };
-  return { text: `${due}（${diff} 天后）`, overdue: false };
+  if (diff === 1) return { text: `明天${timeSuffix}`, overdue: false };
+  return { text: `${dueDay}（${diff} 天后）${timeSuffix}`, overdue: false };
 }
 
 export default function TasksPage() {

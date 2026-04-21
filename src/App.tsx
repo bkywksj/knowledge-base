@@ -5,6 +5,7 @@ import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { useAppStore } from "@/store";
 import { AppRouter } from "@/Router";
 import { getAntdTokens } from "@/theme/tokens";
+import { TaskReminderListener } from "@/components/tasks/TaskReminderListener";
 
 function App() {
   const themeCategory = useAppStore((s) => s.themeCategory);
@@ -31,6 +32,7 @@ function App() {
       <AntdApp style={{ height: "100%" }}>
         <ErrorBoundary>
           <AppRouter />
+          <TaskReminderListener />
         </ErrorBoundary>
       </AntdApp>
     </ConfigProvider>

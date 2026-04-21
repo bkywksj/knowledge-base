@@ -58,12 +58,13 @@ export function WindowControls() {
     return {};
   }
 
+  // 高度与 antd Button（size=middle）保持一致 = 32，避免同一 Header 里左右两组按钮竖直错位
   const baseStyle: React.CSSProperties = {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
     width: 36,
-    height: 30,
+    height: 32,
     border: "none",
     borderRadius: 6,
     background: "transparent",
@@ -72,6 +73,7 @@ export function WindowControls() {
     transition: "all 0.15s ease",
     outline: "none",
     padding: 0,
+    lineHeight: 1,
   };
 
   return (
@@ -92,7 +94,7 @@ export function WindowControls() {
         onClick={handleMinimize}
         title="最小化"
       >
-        <Minus size={15} strokeWidth={1.5} />
+        <Minus size={16} strokeWidth={1.5} />
       </button>
       <button
         style={{ ...baseStyle, ...getButtonStyle("max") }}
@@ -102,9 +104,9 @@ export function WindowControls() {
         title={isMaximized ? "还原" : "最大化"}
       >
         {isMaximized ? (
-          <Copy size={12} strokeWidth={1.5} />
+          <Copy size={14} strokeWidth={1.5} />
         ) : (
-          <Square size={12} strokeWidth={1.5} />
+          <Square size={14} strokeWidth={1.5} />
         )}
       </button>
       <button
@@ -117,7 +119,7 @@ export function WindowControls() {
         onClick={handleClose}
         title="关闭"
       >
-        <X size={15} strokeWidth={1.5} />
+        <X size={16} strokeWidth={1.5} />
       </button>
     </div>
   );

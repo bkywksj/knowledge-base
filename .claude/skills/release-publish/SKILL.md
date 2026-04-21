@@ -264,6 +264,54 @@ curl -s -o /dev/null -w "R2 update.json HTTP %{http_code}\n" \
   "https://pub-9d9e6c0cb6934fb0a0c505e3c64f39b2.r2.dev/knowledge-base/update.json"
 ```
 
+### 步骤 9.5：更新 R2 versions.json（文档站下载页依赖此文件）
+
+文档站 `knowledge-base-docs` 的 `DownloadSection.vue` 在**构建时**（`config.ts` 顶层 await）
+从 R2 拉取 `versions.json` 并嵌入 bundle（浏览器直连 R2 受 CORS 限制，运行时 fetch 会失败）。
+所以每次发布新版本后，必须更新 R2 的 `versions.json`，文档站重建时才能拿到最新快照。
+
+`versions.json` 格式（对象数组，含 notes/pub_date）：
+
+```json
+{
+  "versions": [
+    { "version": "v0.2.1", "notes": "本次更新说明", "pub_date": "2026-04-21T12:34:56Z" },
+    { "version": "v0.2.0", "notes": "上次更新说明", "pub_date": "..." }
+  ]
+}
+```
+
+```bash
+# NOTES 与步骤 1 询问用户时的"更新说明"保持一致（可多行，用 \n 分隔）
+RELEASE_NOTES="<本次发布说明>"
+PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+R2_PUBLIC="https://pub-9d9e6c0cb6934fb0a0c505e3c64f39b2.r2.dev/knowledge-base"
+
+# 下载当前 versions.json（不存在则初始化空数组）
+curl -s "${R2_PUBLIC}/versions.json" -o /tmp/versions-old.json 2>/dev/null \
+  || echo '{"versions":[]}' > /tmp/versions-old.json
+
+# 用 Node 脚本：把旧格式（字符串）规整为对象格式，去重后在头部插入新版本
+NOTES="$RELEASE_NOTES" PUB="$PUB_DATE" VER="v${VERSION}" node -e "
+const fs = require('fs');
+const old = JSON.parse(fs.readFileSync('/tmp/versions-old.json', 'utf8'));
+const existing = (old.versions || [])
+  .map(v => typeof v === 'string' ? { version: v } : v)
+  .filter(v => v.version && v.version !== process.env.VER);
+const next = { versions: [
+  { version: process.env.VER, notes: process.env.NOTES, pub_date: process.env.PUB },
+  ...existing
+] };
+fs.writeFileSync('/tmp/versions.json', JSON.stringify(next, null, 2));
+"
+
+# 上传覆盖 R2
+$RCLONE copyto /tmp/versions.json r2:downloads/knowledge-base/versions.json --progress
+
+# 验证
+curl -s "${R2_PUBLIC}/versions.json" | head -c 500
+```
+
 ### 步骤 10：推送 release 仓库（产物 + update.json + update-r2.json）到 GitHub + Gitee
 
 ```bash
@@ -311,6 +359,40 @@ if target and target['draft']:
     print('✅ Release 已 publish')
 ```
 
+### 步骤 11.5：触发文档站重建（同步 R2 versions.json 到下载页）
+
+> **为什么需要这步**：文档站 `knowledge-base-docs` 的 `DownloadSection.vue` 在**构建时**
+> 从 R2 拉取 `versions.json` 并嵌入 bundle（避免运行时 CORS + GitHub 限流/国内慢）。
+> 所以每次发布新版本更新 R2 后，必须触发文档站重新构建（腾讯 EdgeOne Pages 会在 git push
+> 检测到 diff 时自动重建），让下载页拿到最新快照。
+
+```bash
+DOCS_DIR="E:/my/桌面软件tauri/knowledge-base-docs"
+cd "$DOCS_DIR"
+
+# 更新版本标记文件（有真实 diff 才会触发 EdgeOne Pages 重建，比空 commit 更稳）
+cat > docs/public/.last-release.json << JSONEOF
+{
+  "version": "v$VERSION",
+  "published_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+JSONEOF
+
+git add docs/public/.last-release.json
+git commit -m "chore: 同步 v$VERSION 发布（触发下载页快照重建）
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
+git pull --rebase origin master
+git push origin master
+
+# 如果推送超时，不要重试，提示用户手动执行：
+#   cd "E:/my/桌面软件tauri/knowledge-base-docs" && git push origin master
+```
+
+推送后腾讯 EdgeOne Pages 会自动重新构建文档站，`config.ts` 里的顶层 await 重新拉取
+R2 versions.json，新版本会作为构建时快照嵌入到 `download.html`。用户打开下载页
+一瞬间就能看到最新版本（无需等待运行时 fetch，也不受 CORS 限制）。
+
 ### 步骤 12：完成报告
 
 ```markdown
@@ -324,7 +406,8 @@ if target and target['draft']:
 | CI 状态 | ✅ 成功（Windows + macOS ARM + macOS Intel）|
 | GitHub Release | https://github.com/bkywksj/knowledge-base/releases/tag/vX.Y.Z |
 | Release 仓库 | <hash> (main) — 9 个产物 + 2 个 update.json |
-| R2 CDN | ✅ 9 个产物 + update.json 已上传 |
+| R2 CDN | ✅ 9 个产物 + update.json + versions.json 已上传 |
+| 文档站（knowledge-base-docs） | ✅ 已推 .last-release.json 触发 EdgeOne Pages 重建，下载页将同步最新版本 |
 | 应用内自动更新 | R2 主 + GitHub raw 备，双端点已生效 |
 ```
 

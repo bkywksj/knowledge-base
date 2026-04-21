@@ -61,4 +61,9 @@ impl TaskService {
     pub fn stats(db: &Database) -> Result<TaskStats, AppError> {
         db.get_task_stats()
     }
+
+    /// 稍后提醒：把截止时间向后推 N 分钟 + 清提醒已触发标记
+    pub fn snooze(db: &Database, id: i64, minutes: i32) -> Result<bool, AppError> {
+        db.snooze_task(id, minutes)
+    }
 }

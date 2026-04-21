@@ -79,7 +79,11 @@ export function TaskCard({ task, onToggle, onClick, onDragStart, compact }: Prop
               style={{ color: token.colorTextTertiary }}
             >
               <Clock size={10} />
-              <span>{task.due_date}</span>
+              <span>
+                {task.due_date.length > 10
+                  ? `${task.due_date.slice(0, 10)} ${task.due_date.slice(11, 16)}`
+                  : task.due_date}
+              </span>
             </div>
           )}
           {task.links.length > 0 && !compact && (

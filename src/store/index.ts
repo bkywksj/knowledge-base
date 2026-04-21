@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { emit } from "@tauri-apps/api/event";
 import { taskApi } from "@/lib/api";
 import type { ThemeMode, ThemeCategory } from "@/theme/tokens";
 
@@ -24,6 +26,8 @@ interface AppStore {
   notesRefreshTick: number;
   /** 未完成 + 紧急的任务数（用于侧边栏红色 Badge） */
   urgentTodoCount: number;
+  /** 窗口置顶状态（UI 真相源；托盘 CheckMenuItem 通过事件同步） */
+  alwaysOnTop: boolean;
   /** 获取当前生效的主题 */
   activeTheme: () => ThemeMode;
   /** 切换亮/暗分类 */
@@ -46,6 +50,12 @@ interface AppStore {
   bumpNotesRefresh: () => void;
   /** 重新拉取任务统计（任务变更后调用，用于刷新侧边栏 Badge） */
   refreshTaskStats: () => Promise<void>;
+  /**
+   * 设置窗口置顶。
+   * - skipEmit=true：不再通知 Rust 侧（用于从 Rust 过来的事件回流，避免循环）
+   * - 默认会 emit `ui:always-on-top-changed` 让托盘 CheckMenuItem 跟随
+   */
+  setAlwaysOnTop: (enabled: boolean, opts?: { skipEmit?: boolean }) => Promise<void>;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -57,6 +67,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   createModalOpen: false,
   notesRefreshTick: 0,
   urgentTodoCount: 0,
+  alwaysOnTop: false,
   activeTheme: () => {
     const s = get();
     return s.themeCategory === "light" ? s.lightTheme : s.darkTheme;
@@ -81,9 +92,25 @@ export const useAppStore = create<AppStore>((set, get) => ({
       // 静默失败：侧边栏 Badge 不是关键路径
     }
   },
+  setAlwaysOnTop: async (enabled, opts) => {
+    try {
+      await getCurrentWindow().setAlwaysOnTop(enabled);
+    } catch (e) {
+      console.error("[alwaysOnTop] set window api failed:", e);
+      return;
+    }
+    set({ alwaysOnTop: enabled });
+    if (!opts?.skipEmit) {
+      try {
+        await emit("ui:always-on-top-changed", enabled);
+      } catch {
+        // emit 失败时托盘勾选会不同步，非关键
+      }
+    }
+  },
 }));
 
-/** 从 tauri-plugin-store 恢复主题设置 */
+/** 从 tauri-plugin-store 恢复持久化的偏好（主题 + 窗口置顶） */
 export async function loadThemeFromStore() {
   try {
     const store = await Store.load(STORE_FILE);
@@ -93,31 +120,39 @@ export async function loadThemeFromStore() {
     if (lt) useAppStore.getState().setLightTheme(lt);
     if (dt) useAppStore.getState().setDarkTheme(dt);
     if (cat) useAppStore.getState().setThemeCategory(cat);
+
+    // 恢复窗口置顶：走 setAlwaysOnTop 让 window API + 托盘 CheckMenuItem 同步生效
+    const aot = await store.get<boolean>("alwaysOnTop");
+    if (aot === true) {
+      // 只在持久化值为 true 时调用，避免无意义的 emit
+      await useAppStore.getState().setAlwaysOnTop(true);
+    }
   } catch {
     // 首次启动时 store 可能不存在
   }
 }
 
-/** 保存主题设置到 tauri-plugin-store */
+/** 保存主题 + 窗口置顶到 tauri-plugin-store */
 export async function saveThemeToStore() {
   try {
-    const { lightTheme, darkTheme, themeCategory } = useAppStore.getState();
+    const { lightTheme, darkTheme, themeCategory, alwaysOnTop } = useAppStore.getState();
     const store = await Store.load(STORE_FILE);
     await store.set("lightTheme", lightTheme);
     await store.set("darkTheme", darkTheme);
     await store.set("themeCategory", themeCategory);
+    await store.set("alwaysOnTop", alwaysOnTop);
     await store.save();
   } catch {
     // 静默失败
   }
 }
 
-// 监听主题变化自动保存
-let _prevThemeKey = "";
+// 监听主题 + 置顶变化自动保存
+let _prevPersistKey = "";
 useAppStore.subscribe((state) => {
-  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}`;
-  if (key !== _prevThemeKey) {
-    _prevThemeKey = key;
+  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}`;
+  if (key !== _prevPersistKey) {
+    _prevPersistKey = key;
     saveThemeToStore();
   }
 });

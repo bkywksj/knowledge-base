@@ -407,10 +407,15 @@ export interface Task {
   priority: TaskPriority;
   important: boolean;
   status: TaskStatus;
+  /** 'YYYY-MM-DD' 或 'YYYY-MM-DD HH:MM:SS'；前者视作当天 23:59:59 */
   due_date: string | null;
   completed_at: string | null;
   created_at: string;
   updated_at: string;
+  /** 提前 N 分钟提醒；null=不提醒 */
+  remind_before_minutes: number | null;
+  /** 上次已触发提醒的时刻，去重用 */
+  reminded_at: string | null;
   links: TaskLink[];
 }
 
@@ -426,6 +431,7 @@ export interface CreateTaskInput {
   priority?: TaskPriority;
   important?: boolean;
   due_date?: string | null;
+  remind_before_minutes?: number | null;
   links?: TaskLinkInput[];
 }
 
@@ -436,6 +442,8 @@ export interface UpdateTaskInput {
   important?: boolean;
   due_date?: string | null;
   clear_due_date?: boolean;
+  remind_before_minutes?: number | null;
+  clear_remind_before_minutes?: boolean;
 }
 
 export interface TaskQuery {

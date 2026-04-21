@@ -20,6 +20,8 @@ import {
 } from "antd";
 import { SyncOutlined, PlusOutlined, CheckCircleFilled, CheckCircleOutlined } from "@ant-design/icons";
 import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate, Power } from "lucide-react";
+import dayjs, { type Dayjs } from "dayjs";
+import { TimePicker } from "antd";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
@@ -156,6 +158,9 @@ export default function SettingsPage() {
   const [startMinimized, setStartMinimized] = useState(false);
   const [autostartLoading, setAutostartLoading] = useState(false);
   const [startMinimizedLoading, setStartMinimizedLoading] = useState(false);
+
+  // 全天任务提醒基准时刻（HH:mm，默认 09:00）
+  const [allDayReminderTime, setAllDayReminderTime] = useState<string>("09:00");
 
   async function loadModels() {
     setModelsLoading(true);
@@ -299,7 +304,26 @@ export default function SettingsPage() {
       .get("start_minimized")
       .then((v) => setStartMinimized(v === "1"))
       .catch(() => {});
+    configApi
+      .get("all_day_reminder_time")
+      .then((v) => {
+        if (v && /^\d{2}:\d{2}(:\d{2})?$/.test(v)) {
+          setAllDayReminderTime(v.slice(0, 5));
+        }
+      })
+      .catch(() => {});
   }, []);
+
+  async function handleAllDayReminderTimeChange(next: Dayjs | null) {
+    const value = next ? next.format("HH:mm") : "09:00";
+    try {
+      await configApi.set("all_day_reminder_time", value);
+      setAllDayReminderTime(value);
+      message.success(`全天任务提醒时刻已设为 ${value}`);
+    } catch (e) {
+      message.error(`保存失败: ${e}`);
+    }
+  }
 
   async function handleAutostartToggle(next: boolean) {
     setAutostartLoading(true);
@@ -724,6 +748,25 @@ export default function SettingsPage() {
             loading={startMinimizedLoading}
             disabled={!autostartEnabled}
             onChange={handleStartMinimizedToggle}
+          />
+        </div>
+      </Card>
+
+      <Card title="待办提醒">
+        <div className="flex items-center justify-between py-1">
+          <div>
+            <div>全天任务的提醒时刻</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              不带具体时间的任务，以该时刻为基准触发提醒（对标 Apple 提醒事项 / MS To Do）
+            </Text>
+          </div>
+          <TimePicker
+            value={dayjs(allDayReminderTime, "HH:mm")}
+            onChange={handleAllDayReminderTimeChange}
+            format="HH:mm"
+            minuteStep={5}
+            allowClear={false}
+            style={{ width: 120 }}
           />
         </div>
       </Card>

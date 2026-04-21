@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 14;
+pub const SCHEMA_VERSION: i32 = 15;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -44,6 +44,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             11 => migrate_v11_to_v12(conn)?,
             12 => migrate_v12_to_v13(conn)?,
             13 => migrate_v13_to_v14(conn)?,
+            14 => migrate_v14_to_v15(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -558,5 +559,30 @@ fn migrate_v13_to_v14(conn: &Connection) -> Result<(), AppError> {
 
     log::info!("[v14] 转换完成");
     set_version(conn, 14)?;
+    Ok(())
+}
+
+/// v14 -> v15: 待办任务增加定时提醒字段
+///
+/// due_date 字段保留原名，但字符串格式从仅 'YYYY-MM-DD' 扩展为可选带时分
+/// ('YYYY-MM-DD HH:MM:SS')。旧数据不迁移，继续视作全天截止。
+///
+/// 新增两列：
+///   · remind_before_minutes：提前 N 分钟提醒，NULL = 不提醒
+///   · reminded_at：上次触发提醒的时刻（ISO），用于去重
+fn migrate_v14_to_v15(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v14 -> v15 (tasks 定时提醒字段)");
+
+    let cols = list_columns(conn, "tasks")?;
+    if !cols.iter().any(|c| c == "remind_before_minutes") {
+        conn.execute_batch(
+            "ALTER TABLE tasks ADD COLUMN remind_before_minutes INTEGER;",
+        )?;
+    }
+    if !cols.iter().any(|c| c == "reminded_at") {
+        conn.execute_batch("ALTER TABLE tasks ADD COLUMN reminded_at TEXT;")?;
+    }
+
+    set_version(conn, 15)?;
     Ok(())
 }

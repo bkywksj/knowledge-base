@@ -484,11 +484,15 @@ pub struct Task {
     pub important: bool,
     /// 0=todo / 1=done
     pub status: i32,
-    /// 'YYYY-MM-DD'
+    /// 'YYYY-MM-DD' 或 'YYYY-MM-DD HH:MM:SS'；前者视作当天 23:59:59
     pub due_date: Option<String>,
     pub completed_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// 提前 N 分钟提醒；None=不提醒；需要 due_date 带时分才精确
+    pub remind_before_minutes: Option<i32>,
+    /// 上次触发提醒的时刻（ISO 'YYYY-MM-DD HH:MM:SS'），去重用
+    pub reminded_at: Option<String>,
     pub links: Vec<TaskLink>,
 }
 
@@ -500,6 +504,7 @@ pub struct CreateTaskInput {
     pub priority: Option<i32>,
     pub important: Option<bool>,
     pub due_date: Option<String>,
+    pub remind_before_minutes: Option<i32>,
     pub links: Option<Vec<TaskLinkInput>>,
 }
 
@@ -513,6 +518,9 @@ pub struct UpdateTaskInput {
     pub due_date: Option<String>,
     /// 传 true 显式清空 due_date
     pub clear_due_date: Option<bool>,
+    pub remind_before_minutes: Option<i32>,
+    /// 传 true 显式清空 remind_before_minutes
+    pub clear_remind_before_minutes: Option<bool>,
 }
 
 /// 任务关联入参（新建任务时一起传）

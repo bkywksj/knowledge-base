@@ -41,7 +41,7 @@ impl super::Database {
 
         let sql = format!(
             "SELECT id, title, description, priority, important, status, due_date,
-                    completed_at, created_at, updated_at
+                    completed_at, created_at, updated_at, remind_before_minutes, reminded_at
              FROM tasks
              {}
              ORDER BY status ASC,
@@ -66,6 +66,8 @@ impl super::Database {
                     completed_at: row.get(7)?,
                     created_at: row.get(8)?,
                     updated_at: row.get(9)?,
+                    remind_before_minutes: row.get(10)?,
+                    reminded_at: row.get(11)?,
                     links: Vec::new(),
                 })
             })?
@@ -112,7 +114,7 @@ impl super::Database {
         let task: Option<Task> = conn
             .query_row(
                 "SELECT id, title, description, priority, important, status, due_date,
-                        completed_at, created_at, updated_at
+                        completed_at, created_at, updated_at, remind_before_minutes, reminded_at
                  FROM tasks WHERE id = ?1",
                 params![id],
                 |row| {
@@ -127,6 +129,8 @@ impl super::Database {
                         completed_at: row.get(7)?,
                         created_at: row.get(8)?,
                         updated_at: row.get(9)?,
+                        remind_before_minutes: row.get(10)?,
+                        reminded_at: row.get(11)?,
                         links: Vec::new(),
                     })
                 },
@@ -164,14 +168,15 @@ impl super::Database {
             .map_err(|e| AppError::Custom(e.to_string()))?;
         let tx = conn.transaction()?;
         tx.execute(
-            "INSERT INTO tasks (title, description, priority, important, due_date)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO tasks (title, description, priority, important, due_date, remind_before_minutes)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 input.title,
                 input.description,
                 input.priority.unwrap_or(1),
                 if input.important.unwrap_or(false) { 1 } else { 0 },
                 input.due_date,
+                input.remind_before_minutes,
             ],
         )?;
         let task_id = tx.last_insert_rowid();
@@ -212,9 +217,21 @@ impl super::Database {
         }
         if input.clear_due_date.unwrap_or(false) {
             sets.push("due_date = NULL");
+            // 清空截止时间时一并清掉提醒已触发标记，避免复用时卡住
+            sets.push("reminded_at = NULL");
         } else if let Some(dd) = input.due_date {
             sets.push("due_date = ?");
             binds.push(Box::new(dd));
+            // 截止时间变更也重置提醒触发标记
+            sets.push("reminded_at = NULL");
+        }
+        if input.clear_remind_before_minutes.unwrap_or(false) {
+            sets.push("remind_before_minutes = NULL");
+        } else if let Some(rm) = input.remind_before_minutes {
+            sets.push("remind_before_minutes = ?");
+            binds.push(Box::new(rm));
+            // 改动提醒时机时重置已触发，使新设置立即生效
+            sets.push("reminded_at = NULL");
         }
         if sets.is_empty() {
             return Ok(false);
@@ -287,6 +304,101 @@ impl super::Database {
         Ok(affected > 0)
     }
 
+    // ─── 提醒调度 ─────────────────────────────
+
+    /// 捞出所有"到提醒点了但还没提醒过"的未完成任务。
+    ///
+    /// 条件：status=0 AND 有 due_date AND 有 remind_before_minutes AND reminded_at IS NULL
+    /// 且 now >= (due_datetime - remind_before_minutes 分钟)
+    ///
+    /// 纯日期 due_date 的提醒基准时刻由 `all_day_base_time` 参数指定，
+    /// 格式 'HH:MM:SS'（如 "09:00:00"）。对齐 Apple Reminders / MS To Do 的默认 09:00。
+    pub fn list_due_reminders(
+        &self,
+        all_day_base_time: &str,
+    ) -> Result<Vec<Task>, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+
+        let sql = "
+            SELECT id, title, description, priority, important, status, due_date,
+                   completed_at, created_at, updated_at, remind_before_minutes, reminded_at
+            FROM tasks
+            WHERE status = 0
+              AND reminded_at IS NULL
+              AND due_date IS NOT NULL
+              AND remind_before_minutes IS NOT NULL
+              AND datetime(
+                    CASE WHEN LENGTH(due_date) <= 10
+                         THEN due_date || ' ' || ?1
+                         ELSE due_date END,
+                    '-' || remind_before_minutes || ' minutes'
+                  ) <= datetime('now','localtime')
+        ";
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt
+            .query_map(params![all_day_base_time], |row| {
+                Ok(Task {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    description: row.get(2)?,
+                    priority: row.get(3)?,
+                    important: row.get::<_, i32>(4)? != 0,
+                    status: row.get(5)?,
+                    due_date: row.get(6)?,
+                    completed_at: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                    remind_before_minutes: row.get(10)?,
+                    reminded_at: row.get(11)?,
+                    links: Vec::new(),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// 标记任务已触发提醒（写入当前时刻到 reminded_at）
+    pub fn mark_task_reminded(&self, id: i64) -> Result<(), AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        conn.execute(
+            "UPDATE tasks SET reminded_at = datetime('now','localtime') WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
+    /// 稍后再提醒：清 reminded_at 并把 due_date 向后推 N 分钟
+    ///
+    /// 原 due_date 为纯日期时会被补 23:59:59 再推。
+    pub fn snooze_task(&self, id: i64, minutes: i32) -> Result<bool, AppError> {
+        if minutes <= 0 {
+            return Err(AppError::InvalidInput("snooze 分钟数必须大于 0".into()));
+        }
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let affected = conn.execute(
+            "UPDATE tasks
+               SET due_date = datetime(
+                     CASE WHEN LENGTH(IFNULL(due_date,'')) <= 10
+                          THEN IFNULL(due_date, DATE('now','localtime')) || ' 23:59:59'
+                          ELSE due_date END,
+                     '+' || ?1 || ' minutes'),
+                   reminded_at = NULL,
+                   updated_at = datetime('now','localtime')
+             WHERE id = ?2",
+            params![minutes, id],
+        )?;
+        Ok(affected > 0)
+    }
+
     // ─── 统计 ─────────────────────────────────
 
     pub fn get_task_stats(&self) -> Result<TaskStats, AppError> {
@@ -309,15 +421,19 @@ impl super::Database {
             [],
             |row| row.get(0),
         )?;
+        // 纯日期('YYYY-MM-DD') 视作当天 23:59:59；带时分的按实际时刻比较
         let overdue: usize = conn.query_row(
             "SELECT COUNT(*) FROM tasks WHERE status = 0 AND due_date IS NOT NULL
-                AND due_date < DATE('now','localtime')",
+                AND datetime(CASE WHEN LENGTH(due_date) <= 10
+                                  THEN due_date || ' 23:59:59'
+                                  ELSE due_date END)
+                    < datetime('now','localtime')",
             [],
             |row| row.get(0),
         )?;
         let due_today: usize = conn.query_row(
-            "SELECT COUNT(*) FROM tasks WHERE status = 0
-                AND due_date = DATE('now','localtime')",
+            "SELECT COUNT(*) FROM tasks WHERE status = 0 AND due_date IS NOT NULL
+                AND DATE(due_date) = DATE('now','localtime')",
             [],
             |row| row.get(0),
         )?;
