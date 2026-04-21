@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, Typography, Descriptions, Spin, message, Button, Tooltip } from "antd";
-import { SyncOutlined } from "@ant-design/icons";
+import { SyncOutlined, SettingOutlined } from "@ant-design/icons";
 import { FolderOpen, ExternalLink } from "lucide-react";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import type { Update } from "@tauri-apps/plugin-updater";
@@ -14,6 +15,7 @@ const OFFICIAL_SITE = "https://kb.ruoyi.plus/";
 const { Title, Text } = Typography;
 
 export default function AboutPage() {
+  const navigate = useNavigate();
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
@@ -56,9 +58,17 @@ export default function AboutPage() {
 
   return (
     <div className="max-w-2xl mx-auto" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div>
-        <Title level={3} style={{ marginBottom: 4 }}>关于</Title>
-        <Text type="secondary">系统信息和应用版本</Text>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <Title level={3} style={{ marginBottom: 4 }}>关于</Title>
+          <Text type="secondary">系统信息和应用版本</Text>
+        </div>
+        <Button
+          icon={<SettingOutlined />}
+          onClick={() => navigate("/settings")}
+        >
+          前往设置
+        </Button>
       </div>
 
       <Card title="系统信息">
