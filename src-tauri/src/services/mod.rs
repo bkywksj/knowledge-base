@@ -10,6 +10,7 @@ pub mod tag;
 pub mod trash;
 pub mod import;
 pub mod export;
+pub mod markdown;
 pub mod converter;
 pub mod image;
 pub mod pdf;

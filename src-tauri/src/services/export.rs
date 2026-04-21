@@ -6,6 +6,7 @@ use tauri::{Emitter, Runtime};
 use crate::database::Database;
 use crate::error::AppError;
 use crate::models::{ExportProgress, ExportResult};
+use crate::services::markdown::html_to_markdown;
 
 pub struct ExportService;
 
@@ -216,12 +217,4 @@ fn sanitize_filename(name: &str) -> String {
     } else {
         trimmed
     }
-}
-
-/// 将 HTML 转换为 Markdown
-fn html_to_markdown(html: &str) -> String {
-    if html.trim().is_empty() {
-        return String::new();
-    }
-    html2md::parse_html(html)
 }
