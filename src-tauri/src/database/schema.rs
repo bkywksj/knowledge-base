@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 13;
+pub const SCHEMA_VERSION: i32 = 14;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -43,6 +43,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             10 => migrate_v10_to_v11(conn)?,
             11 => migrate_v11_to_v12(conn)?,
             12 => migrate_v12_to_v13(conn)?,
+            13 => migrate_v13_to_v14(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -519,5 +520,43 @@ fn migrate_v12_to_v13(conn: &Connection) -> Result<(), AppError> {
     )?;
 
     set_version(conn, 13)?;
+    Ok(())
+}
+
+/// v13 -> v14: 批量把 notes.content 从 HTML 转成 Markdown
+///
+/// 配合前端 Tiptap 切换到 Markdown I/O 模式，数据库内容格式也从 HTML 切到 MD。
+/// 依赖 v13 已经把原 HTML 备份到 content_html，本步骤可随时回滚。
+///
+/// 回滚 SQL（仅开发者手动执行）：
+///   UPDATE notes SET content = content_html WHERE content_html IS NOT NULL;
+fn migrate_v13_to_v14(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v13 -> v14 (notes.content HTML → Markdown)");
+
+    // 1) 取出所有待转换的笔记（content 非空且未被清空的）
+    let mut stmt = conn.prepare(
+        "SELECT id, content FROM notes WHERE content IS NOT NULL AND content != ''",
+    )?;
+    let rows: Vec<(i64, String)> = stmt
+        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
+        .filter_map(|r| r.ok())
+        .collect();
+    drop(stmt);
+
+    log::info!("[v14] 准备转换 {} 条笔记", rows.len());
+
+    // 2) 一次事务内批量更新
+    let tx = conn.unchecked_transaction()?;
+    for (id, html) in &rows {
+        let md = crate::services::markdown::html_to_markdown(html);
+        tx.execute(
+            "UPDATE notes SET content = ?1 WHERE id = ?2",
+            rusqlite::params![md, id],
+        )?;
+    }
+    tx.commit()?;
+
+    log::info!("[v14] 转换完成");
+    set_version(conn, 14)?;
     Ok(())
 }

@@ -6,7 +6,6 @@ use walkdir::WalkDir;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::models::{ImportProgress, ImportResult, NoteInput, ScannedFile};
-use crate::services::markdown::markdown_to_html;
 
 pub struct ImportService;
 
@@ -98,12 +97,10 @@ impl ImportService {
             // 提取标题：优先用第一个 # 标题行，否则用文件名
             let title = extract_title(&content).unwrap_or(file_name);
 
-            // 将 Markdown 转换为 HTML
-            let html_content = markdown_to_html(&content);
-
+            // 数据库 content 现在就是 Markdown，直接存；编辑器端会自行渲染
             let input = NoteInput {
                 title,
-                content: html_content,
+                content,
                 folder_id,
             };
 

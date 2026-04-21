@@ -14,6 +14,15 @@ import { TableCell } from "@tiptap/extension-table-cell";
 import { TableHeader } from "@tiptap/extension-table-header";
 import { TextAlign } from "@tiptap/extension-text-align";
 import ImageResize from "tiptap-extension-resize-image";
+// tiptap-markdown 未提供 TS 声明，用 import 后以 any 访问
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+import { Markdown } from "tiptap-markdown";
+
+/** 从编辑器读出 Markdown 字符串（tiptap-markdown 注入的 storage 无类型） */
+function getEditorMarkdown(editor: { storage: unknown }): string {
+  const storage = editor.storage as { markdown?: { getMarkdown: () => string } };
+  return storage.markdown?.getMarkdown() ?? "";
+}
 import { common, createLowlight } from "lowlight";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useRef, useCallback, useMemo } from "react";
@@ -27,20 +36,6 @@ import { WikiLinkSuggestion } from "./WikiLinkSuggestion";
 import "tippy.js/dist/tippy.css";
 
 const lowlight = createLowlight(common);
-
-/** 检测内容是否为 HTML（简单判断是否包含标签） */
-function isHtml(str: string): boolean {
-  return /<[a-z][\s\S]*>/i.test(str);
-}
-
-/** 将纯文本转为简单 HTML 段落 */
-function textToHtml(text: string): string {
-  if (!text.trim()) return "";
-  return text
-    .split("\n")
-    .map((line) => `<p>${line || "<br>"}</p>`)
-    .join("");
-}
 
 /** 将 File 对象转为 base64（不含 data URL 前缀） */
 function fileToBase64(file: File): Promise<string> {
@@ -58,8 +53,10 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 interface TiptapEditorProps {
+  /** 笔记内容（Markdown 字符串） */
   content: string;
-  onChange: (html: string) => void;
+  /** 保存回调，参数为 Markdown 字符串 */
+  onChange: (markdown: string) => void;
   placeholder?: string;
   /** 当前笔记 ID，用于图片保存 */
   noteId?: number;
@@ -147,11 +144,21 @@ export function TiptapEditor({
         onClick: (title: string) => wikiClickRef.current?.(title),
       }),
       WikiLinkSuggestion,
+      // Markdown 序列化/反序列化：setContent 吃 Markdown，editor.storage.markdown.getMarkdown() 吐 Markdown
+      Markdown.configure({
+        html: true,               // 允许内联 HTML 片段（表格等复杂结构）
+        tightLists: true,         // 紧凑列表
+        bulletListMarker: "-",
+        linkify: true,
+        breaks: false,
+        transformPastedText: true,
+        transformCopiedText: false,
+      }),
     ],
-    content: isHtml(content) ? content : textToHtml(content),
+    content,
     onUpdate: ({ editor }) => {
       if (!isExternalUpdate.current) {
-        onChange(editor.getHTML());
+        onChange(getEditorMarkdown(editor));
       }
     },
     editorProps: {
@@ -180,10 +187,10 @@ export function TiptapEditor({
   // 外部 content 变化时同步（如初次加载）
   useEffect(() => {
     if (!editor) return;
-    const htmlContent = isHtml(content) ? content : textToHtml(content);
-    if (htmlContent !== editor.getHTML()) {
+    const current = getEditorMarkdown(editor);
+    if (content !== current) {
       isExternalUpdate.current = true;
-      editor.commands.setContent(htmlContent, { emitUpdate: false });
+      editor.commands.setContent(content, { emitUpdate: false });
       isExternalUpdate.current = false;
     }
   }, [content, editor]);

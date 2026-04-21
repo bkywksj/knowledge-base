@@ -6,7 +6,6 @@ use tauri::{Emitter, Runtime};
 use crate::database::Database;
 use crate::error::AppError;
 use crate::models::{ExportProgress, ExportResult};
-use crate::services::markdown::html_to_markdown;
 
 pub struct ExportService;
 
@@ -125,11 +124,8 @@ impl ExportService {
                 },
             );
 
-            // HTML → Markdown 转换
-            let markdown = html_to_markdown(content);
-
-            // 写入文件
-            match std::fs::write(&file_path, &markdown) {
+            // content 已经是 Markdown，直接写盘
+            match std::fs::write(&file_path, content) {
                 Ok(_) => exported += 1,
                 Err(e) => {
                     errors.push(format!("{}: 写入失败 - {}", title, e));
@@ -164,14 +160,12 @@ impl ExportService {
             .query_row([note_id], |row| row.get(0))
             .map_err(|_| AppError::NotFound(format!("笔记 {} 不存在", note_id)))?;
 
-        let markdown = html_to_markdown(&content);
-
-        // 确保父目录存在
+        // content 已经是 Markdown，直接写盘
         if let Some(parent) = Path::new(file_path).parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        std::fs::write(file_path, markdown)?;
+        std::fs::write(file_path, content)?;
         Ok(())
     }
 }
