@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>任务 · 日历视图 · 知识库</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#1677ff',
+            'primary-light': '#e6f4ff',
+            urgent: '#ff4d4f',
+            warn: '#faad14',
+            low: '#8c8c8c',
+            done: '#52c41a',
+          },
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] }
+        }
+      }
+    }
+  </script>
+  <style>
+    .cell { min-height: 110px }
+    .cell-today { background: #e6f4ff }
+    .cell-other-month { background: #fafafa; color: #bfbfbf }
+    .event { border-left-width: 3px; font-size: 10px; line-height: 1.15 }
+    .dot { width:6px;height:6px;border-radius:50%;display:inline-block;flex-shrink:0 }
+  </style>
+</head>
+<body class="bg-gray-50 font-sans text-sm text-gray-800">
+
+  <nav class="fixed left-0 top-0 h-screen w-56 bg-white border-r border-gray-200 flex flex-col">
+    <div class="h-12 flex items-center px-4"><i data-lucide="book-open-text" class="w-5 h-5 text-primary mr-2"></i><span class="font-bold">知识库</span></div>
+    <button class="mx-3 mb-3 flex items-center justify-center gap-1 bg-primary text-white rounded-md py-2 text-sm hover:opacity-90 transition cursor-pointer"><i data-lucide="pen-line" class="w-4 h-4"></i>新建笔记</button>
+    <div class="flex-1 overflow-y-auto">
+      <a class="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-50 cursor-pointer transition"><i data-lucide="home" class="w-4 h-4 mr-3"></i>首页</a>
+      <a class="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-50 cursor-pointer transition"><i data-lucide="file-text" class="w-4 h-4 mr-3"></i>笔记</a>
+      <a class="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-50 cursor-pointer transition"><i data-lucide="search" class="w-4 h-4 mr-3"></i>搜索</a>
+      <a class="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-50 cursor-pointer transition"><i data-lucide="calendar-days" class="w-4 h-4 mr-3"></i>每日笔记</a>
+      <a class="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-50 cursor-pointer transition"><i data-lucide="tags" class="w-4 h-4 mr-3"></i>标签</a>
+      <a class="flex items-center px-4 py-2 text-primary bg-primary-light border-r-2 border-primary cursor-pointer"><i data-lucide="check-square" class="w-4 h-4 mr-3"></i>待办<span class="ml-auto bg-urgent text-white text-[10px] leading-none px-1.5 py-0.5 rounded-full">4</span></a>
+      <a class="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-50 cursor-pointer transition"><i data-lucide="git-branch" class="w-4 h-4 mr-3"></i>知识图谱</a>
+      <a class="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-50 cursor-pointer transition"><i data-lucide="bot" class="w-4 h-4 mr-3"></i>AI 问答</a>
+      <a class="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-50 cursor-pointer transition"><i data-lucide="info" class="w-4 h-4 mr-3"></i>关于</a>
+    </div>
+  </nav>
+
+  <div class="ml-56 flex flex-col min-h-screen">
+    <header class="h-12 bg-white border-b border-gray-200 flex items-center justify-between px-4 sticky top-0 z-10">
+      <div class="flex items-center gap-2"><i data-lucide="panel-left-close" class="w-4 h-4 text-gray-500 cursor-pointer"></i><i data-lucide="arrow-left" class="w-4 h-4 text-gray-500 cursor-pointer"></i><i data-lucide="arrow-right" class="w-4 h-4 text-gray-500 cursor-pointer"></i></div>
+      <div class="flex items-center gap-3">
+        <button class="flex items-center gap-1 text-xs border border-done text-done rounded-full px-2 h-6 hover:bg-green-50 cursor-pointer transition"><i data-lucide="arrow-up-circle" class="w-3 h-3"></i>有可用更新</button>
+        <i data-lucide="search" class="w-4 h-4 text-gray-500 cursor-pointer"></i>
+        <i data-lucide="palette" class="w-4 h-4 text-gray-500 cursor-pointer"></i>
+        <i data-lucide="settings" class="w-4 h-4 text-gray-500 cursor-pointer"></i>
+      </div>
+    </header>
+
+    <main class="flex-1 p-6">
+      <div class="flex items-end justify-between mb-4">
+        <div>
+          <h1 class="text-lg font-semibold flex items-center gap-2"><i data-lucide="check-square" class="w-5 h-5 text-primary"></i>待办 · 日历</h1>
+          <p class="text-xs text-gray-500 mt-1">按 <code class="bg-gray-100 px-1 rounded">due_date</code> 展示 · 点格子新建 · 拖任务改日期</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="inline-flex bg-gray-100 rounded-md p-0.5 text-xs">
+            <button class="px-3 py-1 rounded text-gray-600 hover:text-gray-900 cursor-pointer transition">列表</button>
+            <button class="px-3 py-1 rounded text-gray-600 hover:text-gray-900 cursor-pointer transition">看板</button>
+            <button class="px-3 py-1 rounded bg-white shadow-sm text-gray-900 cursor-pointer">日历</button>
+          </div>
+          <button class="bg-primary text-white px-3 py-1.5 rounded-md text-xs hover:opacity-90 transition cursor-pointer flex items-center gap-1"><i data-lucide="plus" class="w-3.5 h-3.5"></i>新建任务</button>
+        </div>
+      </div>
+
+      <!-- 月份工具条 -->
+      <div class="bg-white rounded-t-lg border border-gray-200 px-4 py-2 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <button class="border rounded px-2 py-1 text-xs hover:border-primary hover:text-primary transition cursor-pointer">今天</button>
+          <button class="w-7 h-7 border rounded flex items-center justify-center hover:border-primary hover:text-primary transition cursor-pointer"><i data-lucide="chevron-left" class="w-3.5 h-3.5"></i></button>
+          <button class="w-7 h-7 border rounded flex items-center justify-center hover:border-primary hover:text-primary transition cursor-pointer"><i data-lucide="chevron-right" class="w-3.5 h-3.5"></i></button>
+          <span class="ml-2 font-semibold text-base">2026 年 4 月</span>
+        </div>
+        <div class="flex items-center gap-4 text-xs text-gray-500">
+          <span class="flex items-center gap-1"><span class="dot bg-urgent"></span>紧急 3</span>
+          <span class="flex items-center gap-1"><span class="dot bg-primary"></span>一般 3</span>
+          <span class="flex items-center gap-1"><span class="dot bg-low"></span>不急 2</span>
+          <span class="flex items-center gap-1 text-done"><i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>已完成 23</span>
+          <div class="inline-flex bg-gray-100 rounded-md p-0.5">
+            <button class="px-2 py-0.5 rounded bg-white shadow-sm cursor-pointer">月</button>
+            <button class="px-2 py-0.5 rounded text-gray-600 hover:text-gray-900 cursor-pointer transition">周</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 日历网格 -->
+      <div class="bg-white rounded-b-lg border border-t-0 border-gray-200 overflow-hidden">
+        <!-- 星期表头 -->
+        <div class="grid grid-cols-7 text-[10px] font-semibold text-gray-500 bg-gray-50 border-b">
+          <div class="px-2 py-1">周一</div>
+          <div class="px-2 py-1">周二</div>
+          <div class="px-2 py-1">周三</div>
+          <div class="px-2 py-1">周四</div>
+          <div class="px-2 py-1">周五</div>
+          <div class="px-2 py-1 text-gray-400">周六</div>
+          <div class="px-2 py-1 text-gray-400">周日</div>
+        </div>
+
+        <!-- 第 1 行（3/30 - 4/5）第 14 周 -->
+        <div class="grid grid-cols-7 border-b divide-x divide-gray-100">
+          <div class="cell cell-other-month p-1.5"><div class="text-[10px]">3月30</div></div>
+          <div class="cell cell-other-month p-1.5"><div class="text-[10px]">31</div></div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">4月1</div></div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">2</div></div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">3</div></div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">4</div></div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">5</div></div>
+        </div>
+
+        <!-- 第 2 行（4/6 - 4/12）-->
+        <div class="grid grid-cols-7 border-b divide-x divide-gray-100">
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">6</div></div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">7</div></div>
+          <div class="cell p-1.5">
+            <div class="text-[10px] font-semibold">8</div>
+            <div class="event mt-1 px-1 py-0.5 bg-green-50 border-done rounded text-done"><s>v0.1.1 发布</s></div>
+          </div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">9</div></div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">10</div></div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">11</div></div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">12</div></div>
+        </div>
+
+        <!-- 第 3 行（4/13 - 4/19）-->
+        <div class="grid grid-cols-7 border-b divide-x divide-gray-100">
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">13</div></div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">14</div></div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">15</div></div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">16</div></div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">17</div></div>
+          <div class="cell p-1.5">
+            <div class="text-[10px] font-semibold">18</div>
+            <div class="event mt-1 px-1 py-0.5 bg-red-50 border-urgent rounded text-urgent">补齐 v0.2.0 变更日志</div>
+          </div>
+          <div class="cell p-1.5">
+            <div class="text-[10px] font-semibold">19</div>
+            <div class="event mt-1 px-1 py-0.5 bg-green-50 border-done rounded text-done"><s>v0.2.0 发布</s></div>
+          </div>
+        </div>
+
+        <!-- 第 4 行（4/20 - 4/26）当前周 -->
+        <div class="grid grid-cols-7 border-b divide-x divide-gray-100">
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">20</div></div>
+          <div class="cell cell-today p-1.5 relative">
+            <div class="text-[10px] font-semibold flex items-center gap-1">21 <span class="bg-primary text-white text-[9px] leading-none px-1 py-0.5 rounded">今天</span></div>
+            <div class="space-y-1 mt-1">
+              <div class="event px-1 py-0.5 bg-red-50 border-urgent rounded text-urgent truncate">14:30 对齐合同条款</div>
+              <div class="event px-1 py-0.5 bg-blue-50 border-primary rounded text-primary truncate">整理 Rust 所有权笔记</div>
+            </div>
+          </div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">22</div></div>
+          <div class="cell p-1.5">
+            <div class="text-[10px] font-semibold">23</div>
+            <div class="event mt-1 px-1 py-0.5 bg-red-50 border-urgent rounded text-urgent truncate">v0.2.1 反馈汇总</div>
+          </div>
+          <div class="cell p-1.5">
+            <div class="text-[10px] font-semibold">24</div>
+            <div class="event mt-1 px-1 py-0.5 bg-blue-50 border-primary rounded text-primary truncate">拼写检查插件调研</div>
+          </div>
+          <div class="cell p-1.5">
+            <div class="text-[10px] font-semibold text-gray-400">25</div>
+            <div class="event mt-1 px-1 py-0.5 bg-blue-50 border-primary rounded text-primary truncate">Giscus 评论系统</div>
+            <div class="event mt-1 px-1 py-0.5 bg-gray-100 border-low rounded text-gray-600 truncate">读《深度工作》Ch4</div>
+          </div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold text-gray-400">26</div></div>
+        </div>
+
+        <!-- 第 5 行（4/27 - 5/3）-->
+        <div class="grid grid-cols-7 border-b divide-x divide-gray-100">
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">27</div></div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">28</div></div>
+          <div class="cell p-1.5"><div class="text-[10px] font-semibold">29</div></div>
+          <div class="cell p-1.5">
+            <div class="text-[10px] font-semibold">30</div>
+            <div class="event mt-1 px-1 py-0.5 bg-blue-50 border-primary rounded text-primary truncate">月末复盘</div>
+          </div>
+          <div class="cell cell-other-month p-1.5"><div class="text-[10px]">5月1</div></div>
+          <div class="cell cell-other-month p-1.5"><div class="text-[10px]">2</div></div>
+          <div class="cell cell-other-month p-1.5"><div class="text-[10px]">3</div></div>
+        </div>
+      </div>
+
+      <!-- 底部：无日期任务抽屉 -->
+      <div class="mt-4 bg-white rounded-lg border border-gray-200 p-3">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-semibold text-gray-700 flex items-center gap-1"><i data-lucide="inbox" class="w-3.5 h-3.5"></i>未安排日期 · 1</span>
+          <span class="text-[10px] text-gray-400">可拖到日期格子里</span>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <div class="kanban-card bg-gray-50 rounded-md border border-gray-200 px-3 py-2 cursor-move flex items-center gap-2">
+            <span class="dot bg-low"></span>
+            <span class="text-xs">研究 Obsidian Tasks 插件交互细节</span>
+            <span class="text-[10px] text-gray-400 ml-2">无截止</span>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>lucide.createIcons();</script>
+<!--
+================================================================
+组件映射（AntD）
+================================================================
+| 原型元素   | AntD 组件 |
+|------------|-----------|
+| 月份导航   | Button + DatePicker.MonthPicker |
+| 日历网格   | 自定义 grid-cols-7（Calendar 组件定制能力受限，建议自己撸）|
+| 事件块     | Tag / 自定义 div |
+| 周/月切换  | Segmented |
+| 拖拽      | @dnd-kit/core（与看板共用）|
+================================================================
+-->
+</body>
+</html>

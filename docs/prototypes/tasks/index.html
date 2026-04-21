@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>任务管理模块原型 · 索引</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script>tailwind.config = { theme: { extend: { colors: { primary: '#1677ff' } } } }</script>
+</head>
+<body class="bg-gray-50 font-sans min-h-screen">
+<div class="max-w-5xl mx-auto py-10 px-6">
+  <h1 class="text-2xl font-bold mb-1">任务管理模块 · UI 原型</h1>
+  <p class="text-sm text-gray-500 mb-8">v1 设计稿 · Tauri + React + Ant Design + TailwindCSS</p>
+
+  <div class="grid grid-cols-2 gap-5">
+    <a href="01-list.html" target="preview" class="block bg-white rounded-lg border hover:border-primary hover:shadow-md transition p-5 cursor-pointer">
+      <div class="flex items-center gap-2 mb-2"><i data-lucide="list" class="w-5 h-5 text-primary"></i><h2 class="font-semibold">1. 列表视图</h2></div>
+      <p class="text-xs text-gray-500">主入口 · 按时间分组（逾期 / 今天 / 本周 / 已完成）· 紧急度圆点 · 关联 chip · hover 快捷操作</p>
+    </a>
+    <a href="02-kanban.html" target="preview" class="block bg-white rounded-lg border hover:border-primary hover:shadow-md transition p-5 cursor-pointer">
+      <div class="flex items-center gap-2 mb-2"><i data-lucide="columns-3" class="w-5 h-5 text-primary"></i><h2 class="font-semibold">2. 看板视图</h2></div>
+      <p class="text-xs text-gray-500">按紧急度分三列 · 拖拽改优先级 · 紧凑卡片 · 空列可引导新建</p>
+    </a>
+    <a href="03-calendar.html" target="preview" class="block bg-white rounded-lg border hover:border-primary hover:shadow-md transition p-5 cursor-pointer">
+      <div class="flex items-center gap-2 mb-2"><i data-lucide="calendar-days" class="w-5 h-5 text-primary"></i><h2 class="font-semibold">3. 日历视图</h2></div>
+      <p class="text-xs text-gray-500">月视图 · 事件色带（紧急=红 / 一般=蓝 / 不急=灰 / 已完成=绿删除线）· 底部"未安排日期"抽屉</p>
+    </a>
+    <a href="04-create-modal.html" target="preview" class="block bg-white rounded-lg border hover:border-primary hover:shadow-md transition p-5 cursor-pointer">
+      <div class="flex items-center gap-2 mb-2"><i data-lucide="plus-circle" class="w-5 h-5 text-primary"></i><h2 class="font-semibold">4. 新建任务 Modal</h2></div>
+      <p class="text-xs text-gray-500">标题 + 紧急度 + 截止时间（今天/明天/本周末快捷）+ 关联（笔记/目录/链接三选）· Cmd↵ 保存</p>
+    </a>
+  </div>
+
+  <div class="mt-8 bg-white rounded-lg border p-5 text-xs text-gray-600 leading-relaxed">
+    <h3 class="font-semibold text-gray-900 mb-2">设计要点回顾</h3>
+    <ul class="list-disc pl-5 space-y-1">
+      <li><strong>紧急度三色</strong>：红 / 蓝 / 灰，对应 urgent / normal / low，一维足够覆盖"紧急任务 vs 不急任务"的诉求</li>
+      <li><strong>关联多态</strong>：笔记（蓝色 chip）/ 目录路径（紫色 chip）/ 外部链接（绿色 chip），点击用 tauri-plugin-opener 跳转</li>
+      <li><strong>与现有 UI 一致</strong>：左侧边栏沿用当前导航结构，"待办"作为一级入口，未完成数显红色徽章</li>
+      <li><strong>快捷输入</strong>：新建标题支持 <code>[[笔记标题]]</code> 自动挂关联；Ctrl/Cmd+Enter 保存；今天/明天/本周末快捷日期</li>
+      <li><strong>分组而非过滤</strong>：列表视图用"逾期/今天/本周"分组标题，比单一筛选器更有信息密度</li>
+    </ul>
+  </div>
+</div>
+<script>lucide.createIcons();</script>
+</body>
+</html>

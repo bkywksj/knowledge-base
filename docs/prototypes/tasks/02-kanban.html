@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>任务 · 看板视图 · 知识库</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#1677ff',
+            'primary-light': '#e6f4ff',
+            urgent: '#ff4d4f',
+            warn: '#faad14',
+            low: '#8c8c8c',
+            done: '#52c41a',
+          },
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] }
+        }
+      }
+    }
+  </script>
+  <style>
+    .check-circle { width:14px;height:14px;border:1.5px solid #d9d9d9;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s;flex-shrink:0 }
+    .check-circle:hover { border-color:#1677ff }
+    .dot { width:6px;height:6px;border-radius:50%;display:inline-block;flex-shrink:0 }
+    .kanban-card { transition: box-shadow .15s, transform .15s }
+    .kanban-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.08); transform: translateY(-1px) }
+  </style>
+</head>
+<body class="bg-gray-50 font-sans text-sm text-gray-800">
+
+  <nav class="fixed left-0 top-0 h-screen w-56 bg-white border-r border-gray-200 flex flex-col">
+    <div class="h-12 flex items-center px-4"><i data-lucide="book-open-text" class="w-5 h-5 text-primary mr-2"></i><span class="font-bold">知识库</span></div>
+    <button class="mx-3 mb-3 flex items-center justify-center gap-1 bg-primary text-white rounded-md py-2 text-sm hover:opacity-90 transition cursor-pointer"><i data-lucide="pen-line" class="w-4 h-4"></i>新建笔记</button>
+    <div class="flex-1 overflow-y-auto">
+      <a class="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-50 cursor-pointer transition"><i data-lucide="home" class="w-4 h-4 mr-3"></i>首页</a>
+      <a class="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-50 cursor-pointer transition"><i data-lucide="file-text" class="w-4 h-4 mr-3"></i>笔记</a>
+      <a class="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-50 cursor-pointer transition"><i data-lucide="search" class="w-4 h-4 mr-3"></i>搜索</a>
+      <a class="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-50 cursor-pointer transition"><i data-lucide="calendar-days" class="w-4 h-4 mr-3"></i>每日笔记</a>
+      <a class="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-50 cursor-pointer transition"><i data-lucide="tags" class="w-4 h-4 mr-3"></i>标签</a>
+      <a class="flex items-center px-4 py-2 text-primary bg-primary-light border-r-2 border-primary cursor-pointer"><i data-lucide="check-square" class="w-4 h-4 mr-3"></i>待办<span class="ml-auto bg-urgent text-white text-[10px] leading-none px-1.5 py-0.5 rounded-full">4</span></a>
+      <a class="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-50 cursor-pointer transition"><i data-lucide="git-branch" class="w-4 h-4 mr-3"></i>知识图谱</a>
+      <a class="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-50 cursor-pointer transition"><i data-lucide="bot" class="w-4 h-4 mr-3"></i>AI 问答</a>
+      <a class="flex items-center px-4 py-2 text-gray-600 hover:bg-gray-50 cursor-pointer transition"><i data-lucide="info" class="w-4 h-4 mr-3"></i>关于</a>
+    </div>
+  </nav>
+
+  <div class="ml-56 flex flex-col min-h-screen">
+    <header class="h-12 bg-white border-b border-gray-200 flex items-center justify-between px-4 sticky top-0 z-10">
+      <div class="flex items-center gap-2"><i data-lucide="panel-left-close" class="w-4 h-4 text-gray-500 cursor-pointer"></i><i data-lucide="arrow-left" class="w-4 h-4 text-gray-500 cursor-pointer"></i><i data-lucide="arrow-right" class="w-4 h-4 text-gray-500 cursor-pointer"></i></div>
+      <div class="flex items-center gap-3">
+        <button class="flex items-center gap-1 text-xs border border-done text-done rounded-full px-2 h-6 hover:bg-green-50 cursor-pointer transition"><i data-lucide="arrow-up-circle" class="w-3 h-3"></i>有可用更新</button>
+        <i data-lucide="search" class="w-4 h-4 text-gray-500 cursor-pointer"></i>
+        <i data-lucide="palette" class="w-4 h-4 text-gray-500 cursor-pointer"></i>
+        <i data-lucide="settings" class="w-4 h-4 text-gray-500 cursor-pointer"></i>
+      </div>
+    </header>
+
+    <main class="flex-1 p-6">
+      <div class="flex items-end justify-between mb-4">
+        <div>
+          <h1 class="text-lg font-semibold flex items-center gap-2"><i data-lucide="check-square" class="w-5 h-5 text-primary"></i>待办 · 看板</h1>
+          <p class="text-xs text-gray-500 mt-1">按<strong class="text-gray-700">紧急度</strong>分列 · 拖拽卡片可直接改紧急度</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="inline-flex bg-gray-100 rounded-md p-0.5 text-xs">
+            <button class="px-3 py-1 rounded text-gray-600 hover:text-gray-900 cursor-pointer transition">列表</button>
+            <button class="px-3 py-1 rounded bg-white shadow-sm text-gray-900 cursor-pointer">看板</button>
+            <button class="px-3 py-1 rounded text-gray-600 hover:text-gray-900 cursor-pointer transition">日历</button>
+          </div>
+          <select class="border border-gray-300 rounded-md px-2 py-1.5 text-xs cursor-pointer">
+            <option>按紧急度分列</option>
+            <option>按状态分列（To do / Done）</option>
+            <option>按截止时间分列（今/本周/本月）</option>
+          </select>
+          <button class="bg-primary text-white px-3 py-1.5 rounded-md text-xs hover:opacity-90 transition cursor-pointer flex items-center gap-1"><i data-lucide="plus" class="w-3.5 h-3.5"></i>新建任务</button>
+        </div>
+      </div>
+
+      <!-- 看板：三列 -->
+      <div class="grid grid-cols-3 gap-4">
+        <!-- 列 1：紧急 -->
+        <div class="bg-red-50/50 rounded-lg border border-red-100 flex flex-col">
+          <div class="px-3 py-2 flex items-center justify-between border-b border-red-100">
+            <div class="flex items-center gap-1.5"><span class="dot bg-urgent"></span><span class="text-xs font-semibold text-urgent">紧急</span><span class="text-[10px] bg-white px-1.5 py-0.5 rounded text-gray-600">3</span></div>
+            <i data-lucide="plus" class="w-3.5 h-3.5 text-gray-400 hover:text-urgent cursor-pointer"></i>
+          </div>
+          <div class="p-2 flex flex-col gap-2 overflow-y-auto">
+            <!-- 卡片 -->
+            <div class="kanban-card bg-white rounded-md border border-gray-200 p-3 cursor-pointer">
+              <div class="flex items-start gap-2">
+                <span class="check-circle mt-0.5"></span>
+                <div class="flex-1">
+                  <p class="text-xs font-medium">补齐 v0.2.0 变更日志</p>
+                  <div class="flex items-center gap-1 mt-2 text-[10px]">
+                    <span class="bg-red-50 text-urgent px-1.5 py-0.5 rounded">逾期 2 天</span>
+                  </div>
+                  <div class="flex flex-wrap items-center gap-1 mt-2 text-[10px] text-gray-500">
+                    <span class="flex items-center gap-0.5 bg-gray-100 px-1.5 py-0.5 rounded"><i data-lucide="folder" class="w-2.5 h-2.5"></i>release-notes</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="kanban-card bg-white rounded-md border border-gray-200 p-3 cursor-pointer">
+              <div class="flex items-start gap-2">
+                <span class="check-circle mt-0.5"></span>
+                <div class="flex-1">
+                  <p class="text-xs font-medium">和合作方对齐合同个人版条款</p>
+                  <div class="flex items-center gap-1 mt-2 text-[10px] text-gray-500">
+                    <i data-lucide="clock" class="w-2.5 h-2.5"></i>今天 14:30
+                  </div>
+                  <div class="flex flex-wrap items-center gap-1 mt-2 text-[10px] text-gray-500">
+                    <span class="flex items-center gap-0.5 bg-gray-100 px-1.5 py-0.5 rounded"><i data-lucide="file-text" class="w-2.5 h-2.5"></i>合同个人版</span>
+                    <span class="flex items-center gap-0.5 bg-gray-100 px-1.5 py-0.5 rounded"><i data-lucide="link" class="w-2.5 h-2.5"></i>腾讯电子签</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="kanban-card bg-white rounded-md border border-gray-200 p-3 cursor-pointer">
+              <div class="flex items-start gap-2">
+                <span class="check-circle mt-0.5"></span>
+                <div class="flex-1">
+                  <p class="text-xs font-medium">v0.2.0 收集反馈 → 列 v0.2.1 小版本</p>
+                  <div class="flex items-center gap-1 mt-2 text-[10px] text-gray-500">
+                    <i data-lucide="calendar" class="w-2.5 h-2.5"></i>4 月 23 日 · 2 天后
+                  </div>
+                  <div class="flex flex-wrap items-center gap-1 mt-2 text-[10px] text-gray-500">
+                    <span class="flex items-center gap-0.5 bg-gray-100 px-1.5 py-0.5 rounded"><i data-lucide="folder" class="w-2.5 h-2.5"></i>knowledge-base-release</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列 2：一般 -->
+        <div class="bg-blue-50/50 rounded-lg border border-blue-100 flex flex-col">
+          <div class="px-3 py-2 flex items-center justify-between border-b border-blue-100">
+            <div class="flex items-center gap-1.5"><span class="dot bg-primary"></span><span class="text-xs font-semibold text-primary">一般</span><span class="text-[10px] bg-white px-1.5 py-0.5 rounded text-gray-600">3</span></div>
+            <i data-lucide="plus" class="w-3.5 h-3.5 text-gray-400 hover:text-primary cursor-pointer"></i>
+          </div>
+          <div class="p-2 flex flex-col gap-2 overflow-y-auto">
+            <div class="kanban-card bg-white rounded-md border border-gray-200 p-3 cursor-pointer">
+              <div class="flex items-start gap-2">
+                <span class="check-circle mt-0.5"></span>
+                <div class="flex-1">
+                  <p class="text-xs font-medium">整理 Rust 所有权学习笔记</p>
+                  <div class="flex items-center gap-1 mt-2 text-[10px] text-gray-500"><i data-lucide="calendar" class="w-2.5 h-2.5"></i>今天</div>
+                  <div class="flex flex-wrap items-center gap-1 mt-2 text-[10px] text-gray-500">
+                    <span class="flex items-center gap-0.5 bg-gray-100 px-1.5 py-0.5 rounded"><i data-lucide="folder" class="w-2.5 h-2.5"></i>knowledge_base</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="kanban-card bg-white rounded-md border border-gray-200 p-3 cursor-pointer">
+              <div class="flex items-start gap-2">
+                <span class="check-circle mt-0.5"></span>
+                <div class="flex-1">
+                  <p class="text-xs font-medium">给编辑器做拼写检查插件调研</p>
+                  <div class="flex items-center gap-1 mt-2 text-[10px] text-gray-500"><i data-lucide="calendar" class="w-2.5 h-2.5"></i>4 月 24 日</div>
+                  <div class="flex flex-wrap items-center gap-1 mt-2 text-[10px] text-gray-500">
+                    <span class="flex items-center gap-0.5 bg-gray-100 px-1.5 py-0.5 rounded"><i data-lucide="file-text" class="w-2.5 h-2.5"></i>编辑器路线图</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="kanban-card bg-white rounded-md border border-gray-200 p-3 cursor-pointer">
+              <div class="flex items-start gap-2">
+                <span class="check-circle mt-0.5"></span>
+                <div class="flex-1">
+                  <p class="text-xs font-medium">给文档站加评论系统 Giscus</p>
+                  <div class="flex items-center gap-1 mt-2 text-[10px] text-gray-500"><i data-lucide="calendar" class="w-2.5 h-2.5"></i>4 月 25 日</div>
+                  <div class="flex flex-wrap items-center gap-1 mt-2 text-[10px] text-gray-500">
+                    <span class="flex items-center gap-0.5 bg-gray-100 px-1.5 py-0.5 rounded"><i data-lucide="folder" class="w-2.5 h-2.5"></i>knowledge-base-docs</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列 3：不急 -->
+        <div class="bg-gray-100/50 rounded-lg border border-gray-200 flex flex-col">
+          <div class="px-3 py-2 flex items-center justify-between border-b border-gray-200">
+            <div class="flex items-center gap-1.5"><span class="dot bg-low"></span><span class="text-xs font-semibold text-gray-600">不急</span><span class="text-[10px] bg-white px-1.5 py-0.5 rounded text-gray-600">2</span></div>
+            <i data-lucide="plus" class="w-3.5 h-3.5 text-gray-400 hover:text-gray-700 cursor-pointer"></i>
+          </div>
+          <div class="p-2 flex flex-col gap-2 overflow-y-auto">
+            <div class="kanban-card bg-white rounded-md border border-gray-200 p-3 cursor-pointer">
+              <div class="flex items-start gap-2">
+                <span class="check-circle mt-0.5"></span>
+                <div class="flex-1">
+                  <p class="text-xs font-medium">读《深度工作》第 4 章</p>
+                  <div class="flex items-center gap-1 mt-2 text-[10px] text-gray-500"><i data-lucide="calendar" class="w-2.5 h-2.5"></i>周末</div>
+                  <div class="flex flex-wrap items-center gap-1 mt-2 text-[10px] text-gray-500">
+                    <span class="flex items-center gap-0.5 bg-gray-100 px-1.5 py-0.5 rounded"><i data-lucide="file-text" class="w-2.5 h-2.5"></i>读书笔记/深度工作</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="kanban-card bg-white rounded-md border border-gray-200 p-3 cursor-pointer">
+              <div class="flex items-start gap-2">
+                <span class="check-circle mt-0.5"></span>
+                <div class="flex-1">
+                  <p class="text-xs font-medium">研究 Obsidian Tasks 插件交互细节</p>
+                  <div class="flex items-center gap-1 mt-2 text-[10px] text-gray-400">无截止</div>
+                  <div class="flex flex-wrap items-center gap-1 mt-2 text-[10px] text-gray-500">
+                    <span class="flex items-center gap-0.5 bg-gray-100 px-1.5 py-0.5 rounded"><i data-lucide="link" class="w-2.5 h-2.5"></i>GitHub 仓库</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 空占位 -->
+            <button class="border border-dashed border-gray-300 rounded-md py-2 text-[10px] text-gray-400 hover:border-primary hover:text-primary transition cursor-pointer">
+              <i data-lucide="plus" class="w-3 h-3 inline-block mr-0.5"></i>拖一张紧急的来降级，或直接新建
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>lucide.createIcons();</script>
+<!--
+================================================================
+组件映射（AntD）
+================================================================
+| 原型元素   | AntD 组件 |
+|------------|-----------|
+| 看板列     | 自定义 div grid + 可拖拽库（建议 react-dnd 或 @dnd-kit/core）|
+| 卡片       | Card size="small" 或自定义 div |
+| 紧急度切换 | 拖拽改列 = 改 priority 字段 |
+| 分列维度   | Select onChange 切换 "按紧急度/状态/截止时间" 分组 |
+| 关联 chip  | Tag + icon |
+================================================================
+-->
+</body>
+</html>
