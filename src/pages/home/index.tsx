@@ -17,7 +17,7 @@ import {
   FileText,
   FolderOpen,
   Tags,
-  Link2,
+  LetterText,
   Calendar,
   Search,
   ArrowRight,
@@ -112,13 +112,6 @@ export default function HomePage() {
         onClick: () => navigate("/tags"),
       },
       {
-        key: "links",
-        title: "链接",
-        value: stats?.total_links ?? 0,
-        icon: <Link2 size={16} style={{ color: token.colorInfo }} />,
-        onClick: () => navigate("/graph"),
-      },
-      {
         key: "today",
         title: "今日更新",
         value: stats?.today_updated ?? 0,
@@ -155,6 +148,12 @@ export default function HomePage() {
               逾期 {taskStats?.overdue}
             </span>
           ) : undefined,
+      },
+      {
+        key: "words",
+        title: "总字数",
+        value: stats?.total_words ?? 0,
+        icon: <LetterText size={16} style={{ color: token.colorTextSecondary }} />,
       },
     ],
     [stats, taskStats, token, navigate, handleTodayNote],
