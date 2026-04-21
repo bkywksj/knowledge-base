@@ -29,7 +29,10 @@ import {
 import { openPath } from "@tauri-apps/plugin-opener";
 import { taskApi } from "@/lib/api";
 import type { Task, TaskPriority } from "@/types";
+
+type ViewMode = "list" | "kanban";
 import { CreateTaskModal } from "@/components/tasks/CreateTaskModal";
+import { KanbanView } from "@/components/tasks/KanbanView";
 
 const { Text, Paragraph } = Typography;
 
@@ -106,12 +109,23 @@ export default function TasksPage() {
   const [statusFilter, setStatusFilter] = useState<"todo" | "done" | "all">("todo");
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const [presetPriority, setPresetPriority] = useState<TaskPriority | undefined>(undefined);
 
   const loadTasks = useCallback(async () => {
     setLoading(true);
     try {
+      // 看板视图只展示未完成；列表视图按用户选的 status 过滤
+      const statusArg =
+        viewMode === "kanban"
+          ? 0
+          : statusFilter === "all"
+            ? undefined
+            : statusFilter === "todo"
+              ? 0
+              : 1;
       const list = await taskApi.list({
-        status: statusFilter === "all" ? undefined : statusFilter === "todo" ? 0 : 1,
+        status: statusArg,
         keyword: keyword.trim() || undefined,
       });
       setTasks(list);
@@ -120,7 +134,7 @@ export default function TasksPage() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, keyword, message]);
+  }, [viewMode, statusFilter, keyword, message]);
 
   useEffect(() => {
     loadTasks();
@@ -178,18 +192,32 @@ export default function TasksPage() {
         <div className="flex items-center gap-2">
           <Segmented
             size="small"
-            value={statusFilter}
-            onChange={(v) => setStatusFilter(v as "todo" | "done" | "all")}
+            value={viewMode}
+            onChange={(v) => setViewMode(v as ViewMode)}
             options={[
-              { label: "进行中", value: "todo" },
-              { label: "已完成", value: "done" },
-              { label: "全部", value: "all" },
+              { label: "列表", value: "list" },
+              { label: "看板", value: "kanban" },
             ]}
           />
+          {viewMode === "list" && (
+            <Segmented
+              size="small"
+              value={statusFilter}
+              onChange={(v) => setStatusFilter(v as "todo" | "done" | "all")}
+              options={[
+                { label: "进行中", value: "todo" },
+                { label: "已完成", value: "done" },
+                { label: "全部", value: "all" },
+              ]}
+            />
+          )}
           <Button
             type="primary"
             icon={<Plus size={14} />}
-            onClick={() => setCreateOpen(true)}
+            onClick={() => {
+              setPresetPriority(undefined);
+              setCreateOpen(true);
+            }}
           >
             新建任务
           </Button>
@@ -210,6 +238,16 @@ export default function TasksPage() {
         <div className="flex justify-center py-12">
           <Spin />
         </div>
+      ) : viewMode === "kanban" ? (
+        <KanbanView
+          tasks={tasks}
+          onRefresh={loadTasks}
+          onEdit={setEditing}
+          onNew={(p) => {
+            setPresetPriority(p);
+            setCreateOpen(true);
+          }}
+        />
       ) : tasks.length === 0 ? (
         <Empty
           description={
@@ -289,6 +327,7 @@ export default function TasksPage() {
 
       <CreateTaskModal
         open={createOpen}
+        presetPriority={presetPriority}
         onClose={() => setCreateOpen(false)}
         onSaved={() => {
           setCreateOpen(false);

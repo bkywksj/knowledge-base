@@ -24,11 +24,13 @@ import type { Note, Task, TaskLinkInput, TaskPriority } from "@/types";
 interface Props {
   open: boolean;
   editing?: Task | null;
+  /** 新建时预设紧急度（看板某列 + 号传进来） */
+  presetPriority?: TaskPriority;
   onClose: () => void;
   onSaved: () => void;
 }
 
-export function CreateTaskModal({ open, editing, onClose, onSaved }: Props) {
+export function CreateTaskModal({ open, editing, presetPriority, onClose, onSaved }: Props) {
   const { message } = AntdApp.useApp();
   const { token } = antdTheme.useToken();
 
@@ -71,7 +73,7 @@ export function CreateTaskModal({ open, editing, onClose, onSaved }: Props) {
     } else {
       setTitle("");
       setDescription("");
-      setPriority(1);
+      setPriority(presetPriority ?? 1);
       setImportant(false);
       setDueDate(null);
       setLinks([]);
@@ -82,7 +84,7 @@ export function CreateTaskModal({ open, editing, onClose, onSaved }: Props) {
     setNotePickerOpen(false);
     setNoteQuery("");
     setNoteOptions([]);
-  }, [open, editing]);
+  }, [open, editing, presetPriority]);
 
   /** 拉候选笔记：keyword 空 → 最近 8 条，非空 → 模糊搜前 10 条 */
   const loadNoteCandidates = useCallback(async (keyword: string) => {
