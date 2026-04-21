@@ -11,6 +11,7 @@ import {
   Form,
   Input,
   Select,
+  AutoComplete,
   Popconfirm,
   Progress,
   Alert,
@@ -61,6 +62,45 @@ const MODEL_ID_PLACEHOLDERS: Record<string, string> = {
   deepseek: "如: deepseek-chat / deepseek-reasoner",
   zhipu: "如: glm-4-plus / glm-4-flash / glm-4-air",
   claude: "如: anthropic/claude-sonnet-4.6 (经 OpenRouter 等兼容代理)",
+};
+
+/** 各 provider 的常用模型预置（下拉联想；也可手动输入任意值） */
+const MODEL_PRESETS: Record<string, { value: string; label: string }[]> = {
+  ollama: [
+    { value: "qwen2.5:7b", label: "qwen2.5:7b" },
+    { value: "qwen2.5:14b", label: "qwen2.5:14b" },
+    { value: "qwen2.5:3b", label: "qwen2.5:3b" },
+    { value: "llama3.2:3b", label: "llama3.2:3b" },
+    { value: "llama3.1:8b", label: "llama3.1:8b" },
+    { value: "gemma2:9b", label: "gemma2:9b" },
+    { value: "phi3:mini", label: "phi3:mini" },
+  ],
+  openai: [
+    { value: "gpt-4o", label: "gpt-4o" },
+    { value: "gpt-4o-mini", label: "gpt-4o-mini" },
+    { value: "gpt-4-turbo", label: "gpt-4-turbo" },
+    { value: "gpt-3.5-turbo", label: "gpt-3.5-turbo" },
+    { value: "o1-mini", label: "o1-mini" },
+    { value: "o1-preview", label: "o1-preview" },
+  ],
+  deepseek: [
+    { value: "deepseek-chat", label: "deepseek-chat (V3 通用)" },
+    { value: "deepseek-reasoner", label: "deepseek-reasoner (推理)" },
+  ],
+  zhipu: [
+    { value: "glm-4-plus", label: "glm-4-plus (旗舰)" },
+    { value: "glm-4-0520", label: "glm-4-0520" },
+    { value: "glm-4-air", label: "glm-4-air (轻量)" },
+    { value: "glm-4-airx", label: "glm-4-airx" },
+    { value: "glm-4-flash", label: "glm-4-flash (免费)" },
+    { value: "glm-4-long", label: "glm-4-long (长上下文)" },
+  ],
+  claude: [
+    { value: "anthropic/claude-sonnet-4.6", label: "anthropic/claude-sonnet-4.6 (OpenRouter)" },
+    { value: "anthropic/claude-opus-4.7", label: "anthropic/claude-opus-4.7 (OpenRouter)" },
+    { value: "claude-sonnet-4-5-20250929", label: "claude-sonnet-4-5-20250929" },
+    { value: "claude-haiku-4-5-20251001", label: "claude-haiku-4-5-20251001" },
+  ],
 };
 
 export default function SettingsPage() {
@@ -910,13 +950,21 @@ export default function SettingsPage() {
           <Form.Item
             name="model_id"
             label="模型标识"
-            rules={[{ required: true, message: "请输入模型标识" }]}
+            tooltip="可从下拉选预置模型，也可直接输入任意自定义名称"
+            rules={[{ required: true, message: "请输入或选择模型标识" }]}
           >
-            <Input
+            <AutoComplete
+              options={MODEL_PRESETS[watchedProvider] || []}
               placeholder={
                 MODEL_ID_PLACEHOLDERS[watchedProvider] ||
                 "如: gpt-4o-mini / qwen2.5:7b"
               }
+              filterOption={(input, option) =>
+                (option?.value as string)
+                  ?.toLowerCase()
+                  .includes(input.toLowerCase())
+              }
+              allowClear
             />
           </Form.Item>
         </Form>
