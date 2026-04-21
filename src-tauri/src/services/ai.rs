@@ -426,7 +426,9 @@ impl AiService {
         if use_rag {
             let notes = db.search_notes_for_rag(user_message, 5)?;
             if !notes.is_empty() {
-                rag_context.push_str("以下是与用户问题相关的笔记内容，请参考这些内容回答：\n\n");
+                rag_context.push_str(
+                    "以下是通过关键词检索到的笔记内容（可能相关，也可能无关）：\n\n",
+                );
                 for (id, title, content) in &notes {
                     let plain = strip_html(content);
                     let snippet: String = plain.chars().take(500).collect();
@@ -534,10 +536,18 @@ impl AiService {
 
         // 系统提示
         let mut system_prompt = String::from(
-            "你是一个知识库助手，帮助用户回答问题。请使用中文回答。回答要准确、简洁。",
+            "你是一个知识库助手，帮助用户回答问题。请使用中文回答，回答要准确、简洁。\n\n\
+             原则：\n\
+             1. 只根据已知信息作答，不要编造事实。\n\
+             2. 不确定或信息不足时，请明确说明，不要强行给出结论。",
         );
         if !rag_context.is_empty() {
-            system_prompt.push_str("\n\n");
+            system_prompt.push_str(
+                "\n\n接下来会提供检索到的笔记片段。请先判断这些笔记是否真的与用户问题相关：\n\
+                 · 若相关：基于笔记内容回答，必要时引用标题。\n\
+                 · 若不相关（例如笔记内容与用户问的主题明显无关）：\
+                 请直接回答「未在笔记中找到相关内容」，不要从无关笔记里拼凑答案。\n\n",
+            );
             system_prompt.push_str(rag_context);
         }
 
