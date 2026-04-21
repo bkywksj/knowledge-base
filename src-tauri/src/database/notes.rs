@@ -464,4 +464,41 @@ impl Database {
         }
         Ok(())
     }
+
+    /// 按 source_file_path 查找未被删除的笔记，返回 (id, content)
+    ///
+    /// 用于 .md 文件重复打开去重：若已有导入过的同路径笔记，直接跳过去而不是新建。
+    pub fn find_active_note_by_source_path(
+        &self,
+        path: &str,
+    ) -> Result<Option<(i64, String)>, AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "SELECT id, content FROM notes
+             WHERE source_file_path = ?1 AND is_deleted = 0
+             LIMIT 1",
+        )?;
+        let result = stmt
+            .query_row([path], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })
+            .ok();
+        Ok(result)
+    }
+
+    /// 只更新笔记正文，不动 title/folder_id/source_file_path 等元数据
+    ///
+    /// 用于"外部编辑过 md 源文件 → 重新打开时同步回笔记"的场景。
+    pub fn update_note_content(&self, id: i64, content: &str) -> Result<(), AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let affected = conn.execute(
+            "UPDATE notes SET content = ?1, updated_at = datetime('now','localtime')
+             WHERE id = ?2",
+            params![content, id],
+        )?;
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("笔记 {} 不存在", id)));
+        }
+        Ok(())
+    }
 }

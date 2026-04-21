@@ -128,12 +128,20 @@ impl ImportService {
         Ok(result)
     }
 
-    /// 打开单个 Markdown 文件：读取 → 创建新笔记 → 返回 note id
+    /// 打开单个 Markdown 文件：
+    /// - 首次：创建新笔记并记录 source_file_path，返回 id
+    /// - 重复打开同一文件：直接返回已有笔记 id；若文件内容已变化则同步写回笔记
     ///
     /// 用于"菜单导入单个 md 文件"和"双击 md 文件由本应用打开"两个触发场景。
     /// 与 import_selected_files 的区别：不发进度事件、不处理批量、直接返回 id 方便前端跳转。
     pub fn import_single_markdown(db: &Database, file_path: &str) -> Result<i64, AppError> {
         let path = Path::new(file_path);
+
+        // 路径规范化（绝对路径 + 大小写/斜杠统一），保证"同文件多种写法"去重
+        let canonical: String = std::fs::canonicalize(path)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| file_path.to_string());
+
         let file_name = path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -148,6 +156,22 @@ impl ImportService {
             return Err(AppError::InvalidInput(format!("文件内容为空: {}", file_path)));
         }
 
+        // 去重：已有同 source_file_path 的活跃笔记 → 复用
+        if let Some((existing_id, existing_content)) =
+            db.find_active_note_by_source_path(&canonical)?
+        {
+            // 外部修改过文件 → 同步最新内容到笔记
+            if existing_content != content {
+                db.update_note_content(existing_id, &content)?;
+                log::info!(
+                    "[open-md] 检测到 {} 内容变化，已同步到笔记 #{}",
+                    canonical, existing_id
+                );
+            }
+            return Ok(existing_id);
+        }
+
+        // 首次打开：创建笔记并记录来源
         let title = extract_title(&content).unwrap_or(file_name);
         let input = NoteInput {
             title,
@@ -155,7 +179,7 @@ impl ImportService {
             folder_id: None,
         };
         let note = db.create_note(&input)?;
-        let _ = db.set_note_source_file(note.id, None, Some("md"));
+        let _ = db.set_note_source_file(note.id, Some(&canonical), Some("md"));
         Ok(note.id)
     }
 }
