@@ -30,9 +30,10 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { taskApi } from "@/lib/api";
 import type { Task, TaskPriority } from "@/types";
 
-type ViewMode = "list" | "kanban";
+type ViewMode = "list" | "kanban" | "calendar";
 import { CreateTaskModal } from "@/components/tasks/CreateTaskModal";
 import { KanbanView } from "@/components/tasks/KanbanView";
+import { CalendarView } from "@/components/tasks/CalendarView";
 
 const { Text, Paragraph } = Typography;
 
@@ -111,13 +112,14 @@ export default function TasksPage() {
   const [editing, setEditing] = useState<Task | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [presetPriority, setPresetPriority] = useState<TaskPriority | undefined>(undefined);
+  const [presetDueDate, setPresetDueDate] = useState<string | undefined>(undefined);
 
   const loadTasks = useCallback(async () => {
     setLoading(true);
     try {
-      // 看板视图只展示未完成；列表视图按用户选的 status 过滤
+      // 看板 / 日历视图只展示未完成；列表视图按用户选的 status 过滤
       const statusArg =
-        viewMode === "kanban"
+        viewMode === "kanban" || viewMode === "calendar"
           ? 0
           : statusFilter === "all"
             ? undefined
@@ -197,6 +199,7 @@ export default function TasksPage() {
             options={[
               { label: "列表", value: "list" },
               { label: "看板", value: "kanban" },
+              { label: "日历", value: "calendar" },
             ]}
           />
           {viewMode === "list" && (
@@ -216,6 +219,7 @@ export default function TasksPage() {
             icon={<Plus size={14} />}
             onClick={() => {
               setPresetPriority(undefined);
+              setPresetDueDate(undefined);
               setCreateOpen(true);
             }}
           >
@@ -245,6 +249,17 @@ export default function TasksPage() {
           onEdit={setEditing}
           onNew={(p) => {
             setPresetPriority(p);
+            setCreateOpen(true);
+          }}
+        />
+      ) : viewMode === "calendar" ? (
+        <CalendarView
+          tasks={tasks}
+          onRefresh={loadTasks}
+          onEdit={setEditing}
+          onNewOnDate={(ymd) => {
+            setPresetPriority(undefined);
+            setPresetDueDate(ymd);
             setCreateOpen(true);
           }}
         />
@@ -328,9 +343,14 @@ export default function TasksPage() {
       <CreateTaskModal
         open={createOpen}
         presetPriority={presetPriority}
-        onClose={() => setCreateOpen(false)}
+        presetDueDate={presetDueDate}
+        onClose={() => {
+          setCreateOpen(false);
+          setPresetDueDate(undefined);
+        }}
         onSaved={() => {
           setCreateOpen(false);
+          setPresetDueDate(undefined);
           loadTasks();
         }}
       />

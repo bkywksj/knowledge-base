@@ -26,11 +26,20 @@ interface Props {
   editing?: Task | null;
   /** 新建时预设紧急度（看板某列 + 号传进来） */
   presetPriority?: TaskPriority;
+  /** 新建时预设截止日期 YYYY-MM-DD（日历双击格子传进来） */
+  presetDueDate?: string;
   onClose: () => void;
   onSaved: () => void;
 }
 
-export function CreateTaskModal({ open, editing, presetPriority, onClose, onSaved }: Props) {
+export function CreateTaskModal({
+  open,
+  editing,
+  presetPriority,
+  presetDueDate,
+  onClose,
+  onSaved,
+}: Props) {
   const { message } = AntdApp.useApp();
   const { token } = antdTheme.useToken();
 
@@ -75,7 +84,7 @@ export function CreateTaskModal({ open, editing, presetPriority, onClose, onSave
       setDescription("");
       setPriority(presetPriority ?? 1);
       setImportant(false);
-      setDueDate(null);
+      setDueDate(presetDueDate ? dayjs(presetDueDate) : null);
       setLinks([]);
     }
     setContinuous(false);
@@ -84,7 +93,7 @@ export function CreateTaskModal({ open, editing, presetPriority, onClose, onSave
     setNotePickerOpen(false);
     setNoteQuery("");
     setNoteOptions([]);
-  }, [open, editing, presetPriority]);
+  }, [open, editing, presetPriority, presetDueDate]);
 
   /** 拉候选笔记：keyword 空 → 最近 8 条，非空 → 模糊搜前 10 条 */
   const loadNoteCandidates = useCallback(async (keyword: string) => {
