@@ -123,7 +123,9 @@ export default function HomePage() {
         title: "今日更新",
         value: stats?.today_updated ?? 0,
         icon: <Calendar size={16} style={{ color: token.colorError }} />,
-        onClick: handleTodayNote,
+        // 今日更新 = 今天被编辑的笔记数，跳笔记列表（默认按 updated_at DESC）
+        // 今日日记入口挪到下方"今日笔记"按钮
+        onClick: () => navigate("/notes"),
       },
       {
         key: "tasks",
