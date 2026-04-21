@@ -186,6 +186,24 @@ impl Database {
         Ok(())
     }
 
+    /// 仅当对话标题仍为默认值时才重命名（首条消息后自动改标题用）
+    ///
+    /// 返回是否真的改了名，方便调用方决定要不要 emit 事件。
+    pub fn rename_ai_conversation_if_default(
+        &self,
+        id: i64,
+        new_title: &str,
+    ) -> Result<bool, AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let affected = conn.execute(
+            "UPDATE ai_conversations
+             SET title = ?1, updated_at = datetime('now', 'localtime')
+             WHERE id = ?2 AND title = '新对话'",
+            rusqlite::params![new_title, id],
+        )?;
+        Ok(affected > 0)
+    }
+
     /// 切换对话使用的 AI 模型
     pub fn update_ai_conversation_model(&self, id: i64, model_id: i64) -> Result<(), AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;

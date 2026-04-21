@@ -150,6 +150,29 @@ fn format_openai_api_error(status: reqwest::StatusCode, body: &str) -> String {
     }
 }
 
+/// 从用户首条消息生成会话标题：去首尾空白、压缩换行、截断至 24 个字符。
+///
+/// 超过限制时追加省略号；空串返回空串（调用方据此跳过重命名）。
+fn derive_conversation_title(user_message: &str) -> String {
+    const MAX_CHARS: usize = 24;
+    let cleaned: String = user_message
+        .replace(['\r', '\n', '\t'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let chars: Vec<char> = trimmed.chars().collect();
+    if chars.len() <= MAX_CHARS {
+        trimmed.to_string()
+    } else {
+        let prefix: String = chars.iter().take(MAX_CHARS).collect();
+        format!("{}…", prefix)
+    }
+}
+
 /// 去除 HTML 标签，提取纯文本（用于 RAG 上下文）
 fn strip_html(html: &str) -> String {
     let mut result = String::with_capacity(html.len());
@@ -462,6 +485,14 @@ impl AiService {
                     // 成功：保存 AI 回复
                     db.add_ai_message(conversation_id, "assistant", &response, None)?;
                     db.touch_ai_conversation(conversation_id)?;
+
+                    // 若会话仍是"新对话"默认名，用用户首问的前 24 个字符作为标题
+                    let auto_title = derive_conversation_title(user_message);
+                    if !auto_title.is_empty() {
+                        let _ = db
+                            .rename_ai_conversation_if_default(conversation_id, &auto_title);
+                    }
+
                     let _ = app.emit("ai:done", conversation_id);
                     return Ok(());
                 }
