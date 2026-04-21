@@ -5,6 +5,7 @@ import {
   Input,
   Empty,
   message,
+  Modal,
   Select,
   Switch,
   Tooltip,
@@ -27,6 +28,37 @@ import type { AiConversation, AiMessage, AiModel } from "@/types";
 import { relativeTime } from "@/lib/utils";
 
 const { TextArea } = Input;
+
+/**
+ * 显示 AI 相关错误：
+ * - 多行（含 \n）用 Modal.error，保留换行、可细读
+ * - 单行用短 toast
+ */
+function showAiError(err: unknown) {
+  const raw = String(err ?? "未知错误");
+  if (raw.includes("\n")) {
+    Modal.error({
+      title: "AI 请求失败",
+      content: (
+        <pre
+          style={{
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            fontFamily: "inherit",
+            margin: 0,
+            maxHeight: 360,
+            overflow: "auto",
+          }}
+        >
+          {raw}
+        </pre>
+      ),
+      width: 520,
+    });
+  } else {
+    message.error(`发送失败: ${raw}`);
+  }
+}
 
 export default function AiChatPage() {
   const { token } = antdTheme.useToken();
@@ -184,7 +216,7 @@ export default function AiChatPage() {
       setStreaming(false);
       await cleanup();
       setStreamingText("");
-      message.error(`发送失败: ${e}`);
+      showAiError(e);
     }
   }, [inputText, activeConvId, streaming, useRag]);
 

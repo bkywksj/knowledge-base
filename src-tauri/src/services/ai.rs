@@ -97,6 +97,59 @@ fn format_ollama_send_error(e: &reqwest::Error, url: &str) -> String {
     }
 }
 
+/// 将 OpenAI 兼容接口（OpenAI / DeepSeek / 智谱 / Claude 代理）的 HTTP 错误
+/// 转成用户友好的中文提示。优先解析 body 里的 `error.message`。
+fn format_openai_api_error(status: reqwest::StatusCode, body: &str) -> String {
+    // 尝试从 body 提取 OpenAI 风格的 error.message
+    let api_msg = serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|v| {
+            v.get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| body.chars().take(200).collect());
+
+    let (title, hint) = match status.as_u16() {
+        401 => (
+            "API Key 无效或已过期",
+            "请到设置页重新检查 API Key；注意不同厂商 Key 不通用（OpenAI/DeepSeek/智谱 各有各的）。",
+        ),
+        402 => (
+            "账户余额不足",
+            "请到对应厂商控制台充值：\n\
+             · DeepSeek: https://platform.deepseek.com\n\
+             · OpenAI:   https://platform.openai.com/account/billing\n\
+             · 智谱 GLM: https://open.bigmodel.cn\n\
+             想免费试用可切到「智谱 GLM」→ 模型选 glm-4-flash。",
+        ),
+        403 => (
+            "无访问权限",
+            "该 API Key 没有此模型/接口的权限，检查后台是否开通对应能力。",
+        ),
+        404 => (
+            "模型或接口不存在",
+            "检查「模型标识」是否填对（如 deepseek-chat / glm-4-flash / gpt-4o-mini），以及 API 地址是否正确。",
+        ),
+        429 => (
+            "请求被限流",
+            "短时间内请求过多，稍等片刻再试；付费账户限流更宽松。",
+        ),
+        500..=599 => (
+            "服务端暂时故障",
+            "不是你的配置问题，稍后再试；如持续报错可到厂商状态页查看。",
+        ),
+        _ => ("AI 服务返回错误", ""),
+    };
+
+    if hint.is_empty() {
+        format!("{} ({})\n详情: {}", title, status, api_msg)
+    } else {
+        format!("{} ({})\n{}\n\n详情: {}", title, status, hint, api_msg)
+    }
+}
+
 /// 去除 HTML 标签，提取纯文本（用于 RAG 上下文）
 fn strip_html(html: &str) -> String {
     let mut result = String::with_capacity(html.len());
@@ -275,7 +328,7 @@ impl AiService {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(AppError::Custom(format!("API 返回错误 {}: {}", status, body)));
+            return Err(AppError::Custom(format_openai_api_error(status, &body)));
         }
 
         let mut stream = response.bytes_stream();
@@ -599,10 +652,7 @@ impl AiService {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(AppError::Custom(format!(
-                "API 返回错误 {}: {}",
-                status, body
-            )));
+            return Err(AppError::Custom(format_openai_api_error(status, &body)));
         }
 
         let mut stream = response.bytes_stream();
