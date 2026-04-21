@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
+  Badge,
   Menu,
   Tree,
   Button,
@@ -35,7 +36,7 @@ import { useAppStore } from "@/store";
 import { folderApi } from "@/lib/api";
 import type { Folder } from "@/types";
 
-/** 导航菜单项 */
+/** 导航菜单项（静态部分，用于路由高亮匹配） */
 const navItems = [
   { key: "/", icon: <Home size={16} />, label: "首页" },
   { key: "/notes", icon: <FileText size={16} />, label: "笔记" },
@@ -100,7 +101,37 @@ export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
+  const urgentTodoCount = useAppStore((s) => s.urgentTodoCount);
+  const refreshTaskStats = useAppStore((s) => s.refreshTaskStats);
   const { token } = antdTheme.useToken();
+
+  // 应用启动时拉一次紧急任务数，后续由任务页在变更后触发 refreshTaskStats
+  useEffect(() => {
+    refreshTaskStats();
+  }, [refreshTaskStats]);
+
+  // 在导航项"待办"上叠加红色 Badge（紧急数=0 时自动隐藏，不占空间）
+  const menuItems = useMemo(
+    () =>
+      navItems.map((item) => {
+        if (item.key !== "/tasks") return item;
+        return {
+          ...item,
+          label: (
+            <span className="flex items-center justify-between gap-2">
+              <span>{item.label}</span>
+              <Badge
+                count={urgentTodoCount}
+                size="small"
+                overflowCount={99}
+                style={{ marginRight: 4 }}
+              />
+            </span>
+          ),
+        };
+      }),
+    [urgentTodoCount],
+  );
 
   const [folders, setFolders] = useState<Folder[]>([]);
   const [folderExpanded, setFolderExpanded] = useState(true);
@@ -516,7 +547,7 @@ export function Sidebar() {
         <Menu
           mode="inline"
           selectedKeys={selectedNav ? [selectedNav.key] : []}
-          items={navItems}
+          items={menuItems}
           onClick={({ key }) => navigate(key)}
           style={{ border: "none", flex: 1 }}
         />
@@ -563,7 +594,7 @@ export function Sidebar() {
       <Menu
         mode="inline"
         selectedKeys={selectedNav ? [selectedNav.key] : []}
-        items={navItems}
+        items={menuItems}
         onClick={({ key }) => navigate(key)}
         style={{ border: "none", flexShrink: 0 }}
       />

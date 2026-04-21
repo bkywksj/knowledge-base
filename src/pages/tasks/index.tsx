@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { taskApi } from "@/lib/api";
+import { useAppStore } from "@/store";
 import type { Task, TaskPriority } from "@/types";
 
 type ViewMode = "list" | "kanban" | "calendar";
@@ -131,6 +132,8 @@ export default function TasksPage() {
         keyword: keyword.trim() || undefined,
       });
       setTasks(list);
+      // 每次重拉任务列表时，顺带刷新侧边栏紧急任务数
+      useAppStore.getState().refreshTaskStats();
     } catch (e) {
       message.error(`加载任务失败: ${e}`);
     } finally {

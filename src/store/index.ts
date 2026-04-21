@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
+import { taskApi } from "@/lib/api";
 import type { ThemeMode, ThemeCategory } from "@/theme/tokens";
 
 // 开发/生产数据隔离：dev 用 dev-settings.json，prod 用 settings.json
@@ -21,6 +22,8 @@ interface AppStore {
   createModalOpen: boolean;
   /** 笔记列表刷新触发器：递增即触发各页面重新拉数据 */
   notesRefreshTick: number;
+  /** 未完成 + 紧急的任务数（用于侧边栏红色 Badge） */
+  urgentTodoCount: number;
   /** 获取当前生效的主题 */
   activeTheme: () => ThemeMode;
   /** 切换亮/暗分类 */
@@ -41,6 +44,8 @@ interface AppStore {
   closeCreateModal: () => void;
   /** 触发所有监听笔记列表的页面刷新（导入/创建后调用） */
   bumpNotesRefresh: () => void;
+  /** 重新拉取任务统计（任务变更后调用，用于刷新侧边栏 Badge） */
+  refreshTaskStats: () => Promise<void>;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -51,6 +56,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   focusMode: false,
   createModalOpen: false,
   notesRefreshTick: 0,
+  urgentTodoCount: 0,
   activeTheme: () => {
     const s = get();
     return s.themeCategory === "light" ? s.lightTheme : s.darkTheme;
@@ -67,6 +73,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
   openCreateModal: () => set({ createModalOpen: true }),
   closeCreateModal: () => set({ createModalOpen: false }),
   bumpNotesRefresh: () => set((s) => ({ notesRefreshTick: s.notesRefreshTick + 1 })),
+  refreshTaskStats: async () => {
+    try {
+      const stats = await taskApi.stats();
+      set({ urgentTodoCount: stats.urgentTodo });
+    } catch {
+      // 静默失败：侧边栏 Badge 不是关键路径
+    }
+  },
 }));
 
 /** 从 tauri-plugin-store 恢复主题设置 */
