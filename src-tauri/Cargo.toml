@@ -46,6 +46,7 @@ hostname = "0.4"
 urlencoding = "2"
 aes-gcm = "0.10"
 tauri-plugin-single-instance = { version = "=2.3.0", features = ["deep-link"] }
+tauri-plugin-autostart = "2"
 
 # ─── 编译优化 ────────────────────────────────────
 

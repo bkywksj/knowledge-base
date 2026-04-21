@@ -42,7 +42,7 @@ pub async fn run_scheduler(app: AppHandle) {
         tokio::select! {
             _ = tokio::time::sleep(interval) => {
                 // 到点触发一次自动 push
-                auto_push(&app).await;
+                push_once(&app, "scheduler").await;
             }
             _ = notify.notified() => {
                 // 配置变更，重新读
@@ -81,8 +81,18 @@ async fn wait_reload(app: &AppHandle) {
     notify.notified().await;
 }
 
-/// 执行一次自动 push
-async fn auto_push(app: &AppHandle) {
+/// 执行一次 WebDAV push（复用给定时调度器 & 托盘手动触发）
+///
+/// 根据 `origin` 决定完成后 emit 的事件名：
+/// - `"scheduler"` → `sync:auto-triggered`（设置页 SyncSection 监听）
+/// - `"tray"`      → `sync:manual-push-result`（AppLayout 全局监听，弹 toast）
+pub async fn push_once(app: &AppHandle, origin: &str) {
+    let event_name = if origin == "tray" {
+        "sync:manual-push-result"
+    } else {
+        "sync:auto-triggered"
+    };
+
     let state = app.state::<AppState>();
     let db = &state.db;
 
@@ -100,9 +110,9 @@ async fn auto_push(app: &AppHandle) {
 
     if url.is_empty() || username.is_empty() {
         let err = "WebDAV URL 或用户名未配置";
-        log::warn!("[sync-scheduler] {}, 跳过", err);
+        log::warn!("[sync-scheduler/{}] {}, 跳过", origin, err);
         let _ = app.emit(
-            "sync:auto-triggered",
+            event_name,
             serde_json::json!({ "success": false, "error": err }),
         );
         return;
@@ -112,17 +122,17 @@ async fn auto_push(app: &AppHandle) {
         Ok(Some(p)) => p,
         Ok(None) => {
             let err = "未保存 WebDAV 密码";
-            log::warn!("[sync-scheduler] {}, 跳过", err);
+            log::warn!("[sync-scheduler/{}] {}, 跳过", origin, err);
             let _ = app.emit(
-                "sync:auto-triggered",
+                event_name,
                 serde_json::json!({ "success": false, "error": err }),
             );
             return;
         }
         Err(e) => {
-            log::error!("[sync-scheduler] 读取密码失败: {}", e);
+            log::error!("[sync-scheduler/{}] 读取密码失败: {}", origin, e);
             let _ = app.emit(
-                "sync:auto-triggered",
+                event_name,
                 serde_json::json!({ "success": false, "error": e.to_string() }),
             );
             return;
@@ -148,7 +158,8 @@ async fn auto_push(app: &AppHandle) {
     match &result {
         Ok(r) => {
             log::info!(
-                "[sync-scheduler] 自动推送成功 (notes={}, assets_size={})",
+                "[sync-scheduler/{}] 推送成功 (notes={}, assets_size={})",
+                origin,
                 r.stats.notes_count,
                 r.stats.assets_size
             );
@@ -157,17 +168,17 @@ async fn auto_push(app: &AppHandle) {
                 let _ = db.sync_history_finish(id, true, None, &stats_json);
             }
             let _ = app.emit(
-                "sync:auto-triggered",
+                event_name,
                 serde_json::json!({ "success": true, "stats": &r.stats }),
             );
         }
         Err(e) => {
-            log::error!("[sync-scheduler] 自动推送失败: {}", e);
+            log::error!("[sync-scheduler/{}] 推送失败: {}", origin, e);
             if let Some(id) = history_id {
                 let _ = db.sync_history_finish(id, false, Some(&e.to_string()), "{}");
             }
             let _ = app.emit(
-                "sync:auto-triggered",
+                event_name,
                 serde_json::json!({ "success": false, "error": e.to_string() }),
             );
         }

@@ -27,6 +27,7 @@
     "core:tray:default",
     "updater:default",
     "process:default",
-    "dialog:default"
+    "dialog:default",
+    "autostart:default"
   ]
 }

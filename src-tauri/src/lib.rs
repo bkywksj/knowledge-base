@@ -43,6 +43,11 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
+        // 开机启动：传 `--start-minimized` 给系统注册项，启动时由下方 setup 判断是否隐藏窗口
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--start-minimized"]),
+        ))
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(
             tauri_plugin_log::Builder::default()
@@ -114,6 +119,25 @@ pub fn run() {
             // 初始化系统托盘
             tray::setup_tray(app)?;
             log::info!("系统托盘初始化完成");
+
+            // 开机启动时若带 --start-minimized 参数 且 用户在设置里开启了"启动最小化到托盘"，
+            // 则隐藏主窗口到托盘。手动双击图标启动（无 --start-minimized）则正常显示。
+            if std::env::args().any(|a| a == "--start-minimized") {
+                let start_minimized = app
+                    .state::<AppState>()
+                    .db
+                    .get_config("start_minimized")
+                    .ok()
+                    .flatten()
+                    .as_deref()
+                    == Some("1");
+                if start_minimized {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.hide();
+                        log::info!("[autostart] 启动最小化已启用，主窗口已隐藏到托盘");
+                    }
+                }
+            }
 
             // 启动自动同步调度器（后台 tokio 任务，按配置周期触发 WebDAV push）
             let app_handle_sched = app.handle().clone();

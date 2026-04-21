@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { check } from "@tauri-apps/plugin-updater";
+import {
+  enable as autostartEnable,
+  disable as autostartDisable,
+  isEnabled as autostartIsEnabled,
+} from "@tauri-apps/plugin-autostart";
 import type {
   AppConfig,
   SystemInfo,
@@ -56,6 +61,17 @@ export const systemApi = {
 /** 更新相关 API */
 export const updaterApi = {
   checkUpdate: () => check(),
+};
+
+/** 开机启动 API
+ *
+ * 依赖 tauri-plugin-autostart：启用后系统启动时会以
+ * `--start-minimized` 参数唤起本应用，Rust 侧据此决定是否隐藏窗口。
+ */
+export const autostartApi = {
+  isEnabled: () => autostartIsEnabled(),
+  enable: () => autostartEnable(),
+  disable: () => autostartDisable(),
 };
 
 /** PDF 导入与预览 API */

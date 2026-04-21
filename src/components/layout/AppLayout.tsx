@@ -114,6 +114,42 @@ export function AppLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 托盘菜单事件（新建/今日/搜索/同步结果），在应用全局只注册一次
+  useEffect(() => {
+    const unlisteners: UnlistenFn[] = [];
+
+    listen("tray:new-note", () => {
+      openCreateModal();
+    }).then((fn) => unlisteners.push(fn));
+
+    listen("tray:open-daily", () => {
+      navigate("/daily");
+    }).then((fn) => unlisteners.push(fn));
+
+    listen("tray:open-search", () => {
+      setPaletteOpen(true);
+    }).then((fn) => unlisteners.push(fn));
+
+    listen<{ success: boolean; error?: string; stats?: { notesCount?: number } }>(
+      "sync:manual-push-result",
+      (e) => {
+        if (e.payload.success) {
+          const n = e.payload.stats?.notesCount;
+          message.success(
+            typeof n === "number" ? `已同步 ${n} 条笔记到云端` : "同步成功"
+          );
+        } else {
+          message.error(`同步失败：${e.payload.error || "未知错误"}`);
+        }
+      }
+    ).then((fn) => unlisteners.push(fn));
+
+    return () => {
+      unlisteners.forEach((fn) => fn());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const { update, modalOpen, openModal, closeModal } = useUpdateChecker();

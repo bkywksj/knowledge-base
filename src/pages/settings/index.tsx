@@ -16,15 +16,17 @@ import {
   Progress,
   Alert,
   List,
+  Switch,
 } from "antd";
 import { SyncOutlined, PlusOutlined, CheckCircleFilled, CheckCircleOutlined } from "@ant-design/icons";
-import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate } from "lucide-react";
+import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate, Power } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Update } from "@tauri-apps/plugin-updater";
 import type { AiModel, AiModelInput, ImportResult, ImportProgress, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput, OrphanImageScan } from "@/types";
-import { systemApi, updaterApi, aiModelApi, importApi, exportApi, folderApi, templateApi, pdfApi, sourceFileApi, imageMaintApi } from "@/lib/api";
+import { systemApi, updaterApi, aiModelApi, importApi, exportApi, folderApi, templateApi, pdfApi, sourceFileApi, imageMaintApi, autostartApi, configApi } from "@/lib/api";
 import { importWordFiles } from "@/lib/wordImport";
 import { Checkbox } from "antd";
 import { UpdateModal } from "@/components/ui/UpdateModal";
@@ -147,6 +149,13 @@ export default function SettingsPage() {
   const [orphanScan, setOrphanScan] = useState<OrphanImageScan | null>(null);
   const [orphanScanning, setOrphanScanning] = useState(false);
   const [orphanCleaning, setOrphanCleaning] = useState(false);
+  const [orphanPreviewOpen, setOrphanPreviewOpen] = useState(false);
+
+  // 启动设置
+  const [autostartEnabled, setAutostartEnabled] = useState(false);
+  const [startMinimized, setStartMinimized] = useState(false);
+  const [autostartLoading, setAutostartLoading] = useState(false);
+  const [startMinimizedLoading, setStartMinimizedLoading] = useState(false);
 
   async function loadModels() {
     setModelsLoading(true);
@@ -284,7 +293,39 @@ export default function SettingsPage() {
       .getSystemInfo()
       .then((info) => setAppVersion(info.appVersion))
       .catch(() => {});
+    // 读取启动设置：autostart 状态来自系统注册项，start_minimized 存在 app_config 表
+    autostartApi.isEnabled().then(setAutostartEnabled).catch(() => {});
+    configApi
+      .get("start_minimized")
+      .then((v) => setStartMinimized(v === "1"))
+      .catch(() => {});
   }, []);
+
+  async function handleAutostartToggle(next: boolean) {
+    setAutostartLoading(true);
+    try {
+      if (next) await autostartApi.enable();
+      else await autostartApi.disable();
+      setAutostartEnabled(next);
+      message.success(next ? "已开启开机启动" : "已关闭开机启动");
+    } catch (e) {
+      message.error(`设置失败: ${e}`);
+    } finally {
+      setAutostartLoading(false);
+    }
+  }
+
+  async function handleStartMinimizedToggle(next: boolean) {
+    setStartMinimizedLoading(true);
+    try {
+      await configApi.set("start_minimized", next ? "1" : "0");
+      setStartMinimized(next);
+    } catch (e) {
+      message.error(`保存失败: ${e}`);
+    } finally {
+      setStartMinimizedLoading(false);
+    }
+  }
 
   /** 扁平化文件夹树为选项列表 */
   function flattenFolders(list: Folder[], prefix = ""): { value: number; label: string }[] {
@@ -647,6 +688,46 @@ export default function SettingsPage() {
         </Space>
       </Card>
 
+      <Card
+        title={
+          <span className="flex items-center gap-2">
+            <Power size={16} />
+            启动设置
+          </span>
+        }
+      >
+        <div className="flex items-center justify-between py-1">
+          <div>
+            <div>开机自动启动</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              登录系统后自动打开知识库，用于定时提醒等后台任务
+            </Text>
+          </div>
+          <Switch
+            checked={autostartEnabled}
+            loading={autostartLoading}
+            onChange={handleAutostartToggle}
+          />
+        </div>
+        <div
+          className="flex items-center justify-between py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div>
+            <div>启动时最小化到托盘</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              仅在开机自动启动时生效；手动双击打开仍会正常显示窗口
+            </Text>
+          </div>
+          <Switch
+            checked={startMinimized}
+            loading={startMinimizedLoading}
+            disabled={!autostartEnabled}
+            onChange={handleStartMinimizedToggle}
+          />
+        </div>
+      </Card>
+
       {/* 导入笔记（Markdown / PDF / Word） */}
       <Card
         title={
@@ -929,23 +1010,116 @@ export default function SettingsPage() {
                   </span>
                 }
                 action={
-                  <Popconfirm
-                    title="确认清理？"
-                    description={`将删除 ${orphanScan.paths.length} 个文件，不可撤销。`}
-                    okText="删除"
-                    okType="danger"
-                    cancelText="取消"
-                    onConfirm={handleCleanOrphans}
-                  >
-                    <Button size="small" danger loading={orphanCleaning}>
-                      立即清理
+                  <Space size="small">
+                    <Button size="small" onClick={() => setOrphanPreviewOpen(true)}>
+                      查看
                     </Button>
-                  </Popconfirm>
+                    <Popconfirm
+                      title="确认清理？"
+                      description={`将删除 ${orphanScan.paths.length} 个文件，不可撤销。`}
+                      okText="删除"
+                      okType="danger"
+                      cancelText="取消"
+                      onConfirm={handleCleanOrphans}
+                    >
+                      <Button size="small" danger loading={orphanCleaning}>
+                        立即清理
+                      </Button>
+                    </Popconfirm>
+                  </Space>
                 }
               />
             ))}
         </Space>
       </Card>
+
+      {/* 孤儿图片预览弹窗 */}
+      <Modal
+        title={`孤儿图片预览（${orphanScan?.paths.length ?? 0} / ${orphanScan?.count ?? 0}）`}
+        open={orphanPreviewOpen}
+        onCancel={() => setOrphanPreviewOpen(false)}
+        footer={[
+          <Button key="close" onClick={() => setOrphanPreviewOpen(false)}>
+            关闭
+          </Button>,
+          <Popconfirm
+            key="clean"
+            title="确认清理这些图片？"
+            description={`将删除 ${orphanScan?.paths.length ?? 0} 个文件，不可撤销。`}
+            okText="删除"
+            okType="danger"
+            cancelText="取消"
+            onConfirm={async () => {
+              await handleCleanOrphans();
+              setOrphanPreviewOpen(false);
+            }}
+          >
+            <Button danger loading={orphanCleaning}>
+              立即清理
+            </Button>
+          </Popconfirm>,
+        ]}
+        width={760}
+        styles={{ body: { maxHeight: "60vh", overflow: "auto" } }}
+      >
+        {orphanScan?.truncated && (
+          <Alert
+            type="info"
+            showIcon
+            className="mb-3"
+            message={`共 ${orphanScan.count} 张孤儿图片，仅预览前 ${orphanScan.paths.length} 张。清理后会重新扫描剩余文件。`}
+          />
+        )}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+            gap: 12,
+          }}
+        >
+          {orphanScan?.paths.map((p) => (
+            <div
+              key={p}
+              style={{
+                border: "1px solid #e5e7eb",
+                borderRadius: 6,
+                overflow: "hidden",
+                background: "#fafafa",
+              }}
+            >
+              <div
+                style={{
+                  height: 100,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: "#fff",
+                }}
+              >
+                <img
+                  src={convertFileSrc(p)}
+                  alt={p}
+                  style={{
+                    maxWidth: "100%",
+                    maxHeight: "100%",
+                    objectFit: "contain",
+                  }}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                  }}
+                />
+              </div>
+              <div
+                className="text-xs px-2 py-1 truncate"
+                style={{ color: "#666" }}
+                title={p}
+              >
+                {p.split(/[\\/]/).pop()}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Modal>
 
       <RecommendCards />
 
