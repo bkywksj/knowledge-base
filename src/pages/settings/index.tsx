@@ -17,7 +17,7 @@ import {
   Alert,
   List,
 } from "antd";
-import { SyncOutlined, PlusOutlined, StarFilled, StarOutlined } from "@ant-design/icons";
+import { SyncOutlined, PlusOutlined, CheckCircleFilled, CheckCircleOutlined } from "@ant-design/icons";
 import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -550,13 +550,14 @@ export default function SettingsPage() {
             size="small"
             icon={
               record.is_default ? (
-                <StarFilled style={{ color: "#faad14" }} />
+                <CheckCircleFilled style={{ color: "#52c41a" }} />
               ) : (
-                <StarOutlined />
+                <CheckCircleOutlined />
               )
             }
+            disabled={record.is_default}
             onClick={() => handleSetDefault(record.id)}
-            title="设为默认"
+            title={record.is_default ? "当前默认模型" : "设为默认"}
           />
           <Button
             type="text"
