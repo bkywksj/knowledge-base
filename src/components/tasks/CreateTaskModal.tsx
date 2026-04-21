@@ -281,23 +281,19 @@ export function CreateTaskModal({
     >
       <div className="flex flex-col gap-4 pt-1">
         {/* 标题 */}
-        <Input
-          autoFocus
-          size="large"
-          placeholder="做什么？（必填）"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onPressEnter={handleSave}
-          variant="borderless"
-          style={{
-            fontSize: 16,
-            fontWeight: 500,
-            borderBottom: `2px solid ${token.colorPrimary}`,
-            borderRadius: 0,
-            paddingLeft: 0,
-            paddingRight: 0,
-          }}
-        />
+        <div>
+          <div className="text-[11px] mb-1" style={{ color: token.colorTextSecondary }}>
+            标题 <span style={{ color: token.colorError }}>*</span>
+          </div>
+          <Input
+            autoFocus
+            placeholder="做什么？"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onPressEnter={handleSave}
+            style={{ fontSize: 15 }}
+          />
+        </div>
 
         {/* 紧急度 + 重要性 */}
         <div className="flex items-center gap-4">
