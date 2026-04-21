@@ -571,7 +571,15 @@ export default function NoteEditorPage() {
         <Space align="center">
           <Button
             icon={<ArrowLeft size={16} />}
-            onClick={() => navigate("/notes")}
+            onClick={() => {
+              // 有历史栈（从 /tasks、/search、/daily 等跳进来）就 back
+              // 否则回笔记列表作为默认目的地
+              if (window.history.length > 1) {
+                navigate(-1);
+              } else {
+                navigate("/notes");
+              }
+            }}
           >
             返回
           </Button>
