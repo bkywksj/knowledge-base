@@ -230,6 +230,22 @@ export interface OpenMarkdownResult {
   wasSynced: boolean;
 }
 
+/** 孤儿图片扫描结果 */
+export interface OrphanImageScan {
+  count: number;
+  totalBytes: number;
+  paths: string[];
+  /** paths 是否因数量过多被截断（真正孤儿数仍在 count 中） */
+  truncated: boolean;
+}
+
+/** 孤儿图片清理结果 */
+export interface OrphanImageClean {
+  deleted: number;
+  freedBytes: number;
+  failed: string[];
+}
+
 // ─── 导出 ─────────────────────────────────────
 
 /** 导出结果 */

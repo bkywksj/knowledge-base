@@ -262,6 +262,32 @@ pub struct OpenMarkdownResult {
     pub was_synced: bool,
 }
 
+/// 孤儿图片扫描结果（只扫不删）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrphanImageScan {
+    /// 孤儿数量
+    pub count: usize,
+    /// 总字节数
+    pub total_bytes: u64,
+    /// 孤儿文件绝对路径列表（上限 500 条避免过大）
+    pub paths: Vec<String>,
+    /// 实际发现的孤儿是否被截断显示
+    pub truncated: bool,
+}
+
+/// 孤儿图片清理结果
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrphanImageClean {
+    /// 成功删除数量
+    pub deleted: usize,
+    /// 释放字节数
+    pub freed_bytes: u64,
+    /// 删除失败的文件（路径 + 错误消息）
+    pub failed: Vec<String>,
+}
+
 // ─── 导出 ─────────────────────────────────────
 
 /// 导出结果

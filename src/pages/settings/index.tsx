@@ -23,8 +23,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import type { Update } from "@tauri-apps/plugin-updater";
-import type { AiModel, AiModelInput, ImportResult, ImportProgress, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput } from "@/types";
-import { systemApi, updaterApi, aiModelApi, importApi, exportApi, folderApi, templateApi, pdfApi, sourceFileApi } from "@/lib/api";
+import type { AiModel, AiModelInput, ImportResult, ImportProgress, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput, OrphanImageScan } from "@/types";
+import { systemApi, updaterApi, aiModelApi, importApi, exportApi, folderApi, templateApi, pdfApi, sourceFileApi, imageMaintApi } from "@/lib/api";
 import { importWordFiles } from "@/lib/wordImport";
 import { Checkbox } from "antd";
 import { UpdateModal } from "@/components/ui/UpdateModal";
@@ -143,6 +143,11 @@ export default function SettingsPage() {
   const [editingTpl, setEditingTpl] = useState<NoteTemplate | null>(null);
   const [tplForm] = Form.useForm<NoteTemplateInput>();
 
+  // 孤儿图片清理
+  const [orphanScan, setOrphanScan] = useState<OrphanImageScan | null>(null);
+  const [orphanScanning, setOrphanScanning] = useState(false);
+  const [orphanCleaning, setOrphanCleaning] = useState(false);
+
   async function loadModels() {
     setModelsLoading(true);
     try {
@@ -207,6 +212,40 @@ export default function SettingsPage() {
       content: tpl.content,
     });
     setTplModalOpen(true);
+  }
+
+  async function handleScanOrphans() {
+    setOrphanScanning(true);
+    try {
+      const result = await imageMaintApi.scanOrphans();
+      setOrphanScan(result);
+    } catch (e) {
+      message.error(`扫描失败: ${e}`);
+    } finally {
+      setOrphanScanning(false);
+    }
+  }
+
+  async function handleCleanOrphans() {
+    if (!orphanScan || orphanScan.paths.length === 0) return;
+    setOrphanCleaning(true);
+    try {
+      const result = await imageMaintApi.cleanOrphans(orphanScan.paths);
+      const freedMb = (result.freedBytes / 1024 / 1024).toFixed(2);
+      if (result.failed.length > 0) {
+        message.warning(
+          `清理完成：删除 ${result.deleted} 个，失败 ${result.failed.length} 个，释放 ${freedMb} MB`,
+        );
+      } else {
+        message.success(`清理完成：删除 ${result.deleted} 个文件，释放 ${freedMb} MB`);
+      }
+      // 清理后重新扫，看是否还有（或是否截断过）
+      await handleScanOrphans();
+    } catch (e) {
+      message.error(`清理失败: ${e}`);
+    } finally {
+      setOrphanCleaning(false);
+    }
   }
 
   async function handleTemplateSave() {
@@ -848,6 +887,65 @@ export default function SettingsPage() {
       </Card>
 
       <SyncSection />
+
+      {/* 维护：孤儿图片清理 */}
+      <Card
+        title={
+          <Space>
+            <Trash2 size={16} />
+            <span>维护</span>
+          </Space>
+        }
+        className="mb-4"
+      >
+        <Space direction="vertical" style={{ width: "100%" }} size="middle">
+          <div>
+            <Button
+              icon={<SyncOutlined />}
+              onClick={handleScanOrphans}
+              loading={orphanScanning}
+            >
+              扫描孤儿图片
+            </Button>
+            <Typography.Text type="secondary" className="ml-3 text-xs">
+              笔记删掉图片后，磁盘上的文件不会自动删，用这里手动清理
+            </Typography.Text>
+          </div>
+
+          {orphanScan &&
+            (orphanScan.count === 0 ? (
+              <Alert type="success" showIcon message="没有孤儿图片，磁盘干净" />
+            ) : (
+              <Alert
+                type="warning"
+                showIcon
+                message={
+                  <span>
+                    发现 <b>{orphanScan.count}</b> 张孤儿图片，共{" "}
+                    <b>{(orphanScan.totalBytes / 1024 / 1024).toFixed(2)} MB</b>
+                    {orphanScan.truncated && (
+                      <span className="text-xs">（列表已截断至前 500 条，可多次清理）</span>
+                    )}
+                  </span>
+                }
+                action={
+                  <Popconfirm
+                    title="确认清理？"
+                    description={`将删除 ${orphanScan.paths.length} 个文件，不可撤销。`}
+                    okText="删除"
+                    okType="danger"
+                    cancelText="取消"
+                    onConfirm={handleCleanOrphans}
+                  >
+                    <Button size="small" danger loading={orphanCleaning}>
+                      立即清理
+                    </Button>
+                  </Popconfirm>
+                }
+              />
+            ))}
+        </Space>
+      </Card>
 
       <RecommendCards />
 

@@ -208,6 +208,8 @@ pub fn run() {
             commands::image::save_note_image_from_path,
             commands::image::delete_note_images,
             commands::image::get_images_dir,
+            commands::image::scan_orphan_images,
+            commands::image::clean_orphan_images,
             // 模板模块
             commands::template::list_templates,
             commands::template::get_template,

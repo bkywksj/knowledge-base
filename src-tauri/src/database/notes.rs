@@ -294,6 +294,20 @@ impl Database {
         Ok(path.flatten())
     }
 
+    /// 列出所有活跃（未删除）笔记的 content，用于孤儿图片扫描
+    ///
+    /// 扫描流程会把所有 content 拼成一个字符串，逐个图片文件名检查是否被引用。
+    pub fn list_all_active_contents(&self) -> Result<Vec<String>, AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "SELECT content FROM notes WHERE is_deleted = 0 AND content IS NOT NULL",
+        )?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     /// 列出回收站内所有笔记的 (id, source_file_path) —— 用于清理时遍历
     pub fn list_trash_ids_with_sources(&self) -> Result<Vec<(i64, Option<String>)>, AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;

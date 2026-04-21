@@ -19,6 +19,8 @@ import type {
   AiMessage,
   ImportResult,
   OpenMarkdownResult,
+  OrphanImageScan,
+  OrphanImageClean,
   ScannedFile,
   ExportResult,
   NoteTemplate,
@@ -229,6 +231,13 @@ export const importApi = {
   /** 打开单个 md 文件；返回 note id 与是否已同步 */
   openMarkdownFile: (filePath: string) =>
     invoke<OpenMarkdownResult>("open_markdown_file", { filePath }),
+};
+
+/** 图片维护 API（孤儿图片扫描/清理） */
+export const imageMaintApi = {
+  scanOrphans: () => invoke<OrphanImageScan>("scan_orphan_images"),
+  cleanOrphans: (paths: string[]) =>
+    invoke<OrphanImageClean>("clean_orphan_images", { paths }),
 };
 
 /** 导出 API */
