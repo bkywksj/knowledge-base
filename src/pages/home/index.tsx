@@ -23,7 +23,6 @@ import {
   ArrowRight,
   PenLine,
   Pin,
-  LetterText,
   Bot,
   GitBranch,
   History,
@@ -125,12 +124,6 @@ export default function HomePage() {
         value: stats?.today_updated ?? 0,
         icon: <Calendar size={16} style={{ color: token.colorError }} />,
         onClick: handleTodayNote,
-      },
-      {
-        key: "words",
-        title: "总字数",
-        value: stats?.total_words ?? 0,
-        icon: <LetterText size={16} style={{ color: token.colorTextSecondary }} />,
       },
       {
         key: "tasks",
