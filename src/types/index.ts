@@ -223,6 +223,13 @@ export interface ImportProgress {
   file_name: string;
 }
 
+/** "打开单个 md 文件"返回结果 */
+export interface OpenMarkdownResult {
+  noteId: number;
+  /** 检测到源文件有变化并已同步回笔记 */
+  wasSynced: boolean;
+}
+
 // ─── 导出 ─────────────────────────────────────
 
 /** 导出结果 */

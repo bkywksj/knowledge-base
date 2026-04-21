@@ -18,6 +18,7 @@ import type {
   AiConversation,
   AiMessage,
   ImportResult,
+  OpenMarkdownResult,
   ScannedFile,
   ExportResult,
   NoteTemplate,
@@ -225,9 +226,9 @@ export const importApi = {
     invoke<ScannedFile[]>("scan_markdown_folder", { path }),
   importSelected: (filePaths: string[], folderId?: number | null) =>
     invoke<ImportResult>("import_selected_files", { filePaths, folderId }),
-  /** 打开单个 md 文件，返回新笔记 id */
+  /** 打开单个 md 文件；返回 note id 与是否已同步 */
   openMarkdownFile: (filePath: string) =>
-    invoke<number>("open_markdown_file", { filePath }),
+    invoke<OpenMarkdownResult>("open_markdown_file", { filePath }),
 };
 
 /** 导出 API */

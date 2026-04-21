@@ -1,6 +1,6 @@
 use tauri::AppHandle;
 
-use crate::models::{ImportResult, ScannedFile};
+use crate::models::{ImportResult, OpenMarkdownResult, ScannedFile};
 use crate::services;
 use crate::state::AppState;
 
@@ -34,7 +34,7 @@ pub fn import_selected_files(
 pub fn open_markdown_file(
     state: tauri::State<'_, AppState>,
     file_path: String,
-) -> Result<i64, String> {
+) -> Result<OpenMarkdownResult, String> {
     services::import::ImportService::import_single_markdown(&state.db, &file_path)
         .map_err(|e| e.to_string())
 }

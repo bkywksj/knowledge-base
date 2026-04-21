@@ -80,9 +80,12 @@ export function AppLayout() {
 
     async function openByPath(path: string) {
       try {
-        const id = await importApi.openMarkdownFile(path);
+        const result = await importApi.openMarkdownFile(path);
+        if (result.wasSynced) {
+          message.info("已根据最新 md 文件同步笔记内容");
+        }
         useAppStore.getState().bumpNotesRefresh();
-        navigate(`/notes/${id}`);
+        navigate(`/notes/${result.noteId}`);
       } catch (e) {
         message.error(`打开 ${path} 失败: ${e}`);
       }

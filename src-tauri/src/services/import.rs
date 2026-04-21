@@ -5,7 +5,7 @@ use walkdir::WalkDir;
 
 use crate::database::Database;
 use crate::error::AppError;
-use crate::models::{ImportProgress, ImportResult, NoteInput, ScannedFile};
+use crate::models::{ImportProgress, ImportResult, NoteInput, OpenMarkdownResult, ScannedFile};
 
 pub struct ImportService;
 
@@ -129,12 +129,15 @@ impl ImportService {
     }
 
     /// 打开单个 Markdown 文件：
-    /// - 首次：创建新笔记并记录 source_file_path，返回 id
-    /// - 重复打开同一文件：直接返回已有笔记 id；若文件内容已变化则同步写回笔记
+    /// - 首次：创建新笔记并记录 source_file_path
+    /// - 重复打开同一文件：复用已有笔记；若文件内容变化则同步回笔记
     ///
-    /// 用于"菜单导入单个 md 文件"和"双击 md 文件由本应用打开"两个触发场景。
-    /// 与 import_selected_files 的区别：不发进度事件、不处理批量、直接返回 id 方便前端跳转。
-    pub fn import_single_markdown(db: &Database, file_path: &str) -> Result<i64, AppError> {
+    /// 返回 (note_id, was_synced)：was_synced=true 表示发生了内容同步，
+    /// 前端可据此显示轻量 toast。
+    pub fn import_single_markdown(
+        db: &Database,
+        file_path: &str,
+    ) -> Result<OpenMarkdownResult, AppError> {
         let path = Path::new(file_path);
 
         // 路径规范化（绝对路径 + 大小写/斜杠统一），保证"同文件多种写法"去重
@@ -161,14 +164,18 @@ impl ImportService {
             db.find_active_note_by_source_path(&canonical)?
         {
             // 外部修改过文件 → 同步最新内容到笔记
-            if existing_content != content {
+            let was_synced = existing_content != content;
+            if was_synced {
                 db.update_note_content(existing_id, &content)?;
                 log::info!(
                     "[open-md] 检测到 {} 内容变化，已同步到笔记 #{}",
                     canonical, existing_id
                 );
             }
-            return Ok(existing_id);
+            return Ok(OpenMarkdownResult {
+                note_id: existing_id,
+                was_synced,
+            });
         }
 
         // 首次打开：创建笔记并记录来源
@@ -180,7 +187,10 @@ impl ImportService {
         };
         let note = db.create_note(&input)?;
         let _ = db.set_note_source_file(note.id, Some(&canonical), Some("md"));
-        Ok(note.id)
+        Ok(OpenMarkdownResult {
+            note_id: note.id,
+            was_synced: false,
+        })
     }
 }
 

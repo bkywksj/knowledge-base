@@ -188,7 +188,7 @@ export function Sidebar() {
     }
   }
 
-  /** 打开本机 .md 文件 → 导入为新笔记 → 跳转到该笔记 */
+  /** 打开本机 .md 文件 → 导入/复用笔记 → 跳转 */
   async function handleOpenMarkdown() {
     try {
       const picked = await openDialog({
@@ -197,9 +197,12 @@ export function Sidebar() {
       });
       const path = Array.isArray(picked) ? picked[0] : picked;
       if (!path) return;
-      const noteId = await importApi.openMarkdownFile(path);
+      const result = await importApi.openMarkdownFile(path);
+      if (result.wasSynced) {
+        message.info("已根据最新 md 文件同步笔记内容");
+      }
       useAppStore.getState().bumpNotesRefresh();
-      navigate(`/notes/${noteId}`);
+      navigate(`/notes/${result.noteId}`);
     } catch (e) {
       message.error(`打开失败: ${e}`);
     }

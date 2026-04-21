@@ -253,6 +253,15 @@ pub struct ImportProgress {
     pub file_name: String,
 }
 
+/// "打开单个 md 文件"返回结果：含新建/复用的 note id + 是否触发了内容同步
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenMarkdownResult {
+    pub note_id: i64,
+    /// true = 检测到源文件内容有变化，已覆盖回笔记（前端可据此提示）
+    pub was_synced: bool,
+}
+
 // ─── 导出 ─────────────────────────────────────
 
 /// 导出结果
