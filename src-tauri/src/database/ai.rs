@@ -262,9 +262,25 @@ impl Database {
 
     // ─── RAG 搜索 DAO ───────────────────────────
 
+    /// 判断字符是否属于 CJK 区段（中日韩统一表意文字）
+    ///
+    /// Rust 的 `char::is_alphanumeric()` 对中文也返回 true，无法用来切分中英文。
+    fn is_cjk(ch: char) -> bool {
+        let c = ch as u32;
+        (0x4E00..=0x9FFF).contains(&c)   // CJK Unified Ideographs
+            || (0x3400..=0x4DBF).contains(&c) // CJK Extension A
+            || (0x3040..=0x30FF).contains(&c) // Hiragana + Katakana
+    }
+
     /// 从用户输入中提取有意义的关键词（过滤停用词和标点）
+    ///
+    /// 策略：
+    /// - ASCII 字母数字：按空格/标点切分为整词（如 "Claude API"）
+    /// - CJK 字符：按 bigram（2-gram）切分（"合同内容" → ["合同", "同内", "内容"]）
+    ///   之所以不整串保留，是因为中文没有空格，整串几乎无法与笔记内容精确匹配；
+    ///   bigram 对 LIKE '%xx%' 的召回足够好。
     fn extract_keywords(query: &str) -> Vec<String> {
-        // 中文停用词
+        // 中文停用词（含常见疑问词、代词、虚词，避免 bigram 噪声）
         const STOP_WORDS: &[&str] = &[
             "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都", "一", "一个",
             "上", "也", "很", "到", "说", "要", "去", "你", "会", "着", "没有", "看", "好",
@@ -272,28 +288,54 @@ impl Database {
             "里面", "这个", "那个", "还", "能", "可以", "被", "把", "给", "让", "用", "从",
             "写", "中", "吧", "呢", "啊", "哦", "嗯", "请", "帮", "关于", "介绍", "描述",
             "内容", "告诉", "解释", "如何", "为什么", "哪些", "什么样",
+            // 高噪声 bigram（常与其他词粘连产生）
+            "看看", "帮我", "一下", "有没", "没有", "里的", "里面", "那些",
         ];
 
-        let mut keywords = Vec::new();
-        let mut current = String::new();
+        let mut keywords: Vec<String> = Vec::new();
+        let mut ascii_buf = String::new();
+        let mut cjk_buf: Vec<char> = Vec::new();
+
+        fn flush_cjk(cjk: &mut Vec<char>, out: &mut Vec<String>) {
+            match cjk.len() {
+                0 => {}
+                1 => out.push(cjk[0].to_string()),
+                _ => {
+                    for w in cjk.windows(2) {
+                        out.push(w.iter().collect());
+                    }
+                }
+            }
+            cjk.clear();
+        }
 
         for ch in query.chars() {
-            if ch.is_alphanumeric() || ch == '_' {
-                current.push(ch);
+            if Self::is_cjk(ch) {
+                if !ascii_buf.is_empty() {
+                    keywords.push(std::mem::take(&mut ascii_buf));
+                }
+                cjk_buf.push(ch);
+            } else if ch.is_alphanumeric() || ch == '_' {
+                flush_cjk(&mut cjk_buf, &mut keywords);
+                ascii_buf.push(ch);
             } else {
-                if !current.is_empty() {
-                    keywords.push(std::mem::take(&mut current));
+                flush_cjk(&mut cjk_buf, &mut keywords);
+                if !ascii_buf.is_empty() {
+                    keywords.push(std::mem::take(&mut ascii_buf));
                 }
             }
         }
-        if !current.is_empty() {
-            keywords.push(current);
+        flush_cjk(&mut cjk_buf, &mut keywords);
+        if !ascii_buf.is_empty() {
+            keywords.push(ascii_buf);
         }
 
-        // 过滤停用词和单个常见字符
+        // 过滤停用词 + 去重，保留顺序
+        let mut seen = std::collections::HashSet::new();
         keywords
             .into_iter()
-            .filter(|w| !STOP_WORDS.contains(&w.as_str()) && w.len() > 0)
+            .filter(|w| !w.is_empty() && !STOP_WORDS.contains(&w.as_str()))
+            .filter(|w| seen.insert(w.clone()))
             .collect()
     }
 
