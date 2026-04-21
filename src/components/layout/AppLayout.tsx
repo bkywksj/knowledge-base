@@ -1,9 +1,12 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
-import { Layout, Button, theme as antdTheme, Tooltip, Dropdown } from "antd";
+import { Layout, Button, theme as antdTheme, Tooltip, Dropdown, message } from "antd";
 import { MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined } from "@ant-design/icons";
 import { Search, Palette, ArrowLeft, ArrowRight } from "lucide-react";
 import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
+import { importApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import { getThemesByCategory } from "@/theme/tokens";
 import type { ThemeMode } from "@/theme/tokens";
@@ -68,6 +71,46 @@ export function AppLayout() {
   const activeTheme = themeCategory === "light" ? lightTheme : darkTheme;
   const { token } = antdTheme.useToken();
   const navigate = useNavigate();
+
+  // 双击 md 打开本应用 / 应用内"打开 md"按钮后的系统级落点：
+  // 1) 首次启动：后端把 argv 里的 md 路径存到 AppState，这里拉一次
+  // 2) 已打开应用时：single-instance 插件把新 argv emit 成 "open-md-file" 事件
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+
+    async function openByPath(path: string) {
+      try {
+        const id = await importApi.openMarkdownFile(path);
+        useAppStore.getState().bumpNotesRefresh();
+        navigate(`/notes/${id}`);
+      } catch (e) {
+        message.error(`打开 ${path} 失败: ${e}`);
+      }
+    }
+
+    // 启动时拉一次
+    invoke<string | null>("take_pending_open_md_path")
+      .then((path) => {
+        if (path) openByPath(path);
+      })
+      .catch(() => {
+        // 启动期没有 md 参数属于正常
+      });
+
+    // 监听"第二实例带来的 md 路径"
+    listen<string>("open-md-file", (ev) => {
+      if (ev.payload) openByPath(ev.payload);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+
+    return () => {
+      unlisten?.();
+    };
+    // 依赖只放 navigate，避免重复注册
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const { update, modalOpen, openModal, closeModal } = useUpdateChecker();

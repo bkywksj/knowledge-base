@@ -7,12 +7,41 @@ mod state;
 mod tray;
 
 use state::AppState;
-use tauri::{Manager, WindowEvent};
+use tauri::{Emitter, Manager, WindowEvent};
+
+/// 从命令行参数中提取 .md / .markdown 文件的绝对路径（取第一个）
+fn extract_md_path_from_args<I: IntoIterator<Item = String>>(args: I) -> Option<String> {
+    for a in args {
+        if a.starts_with('-') {
+            continue;
+        }
+        let lower = a.to_lowercase();
+        if lower.ends_with(".md") || lower.ends_with(".markdown") {
+            // 返回原始值（保留大小写），后续按绝对路径读
+            return Some(a);
+        }
+    }
+    None
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         // ─── 插件注册 ───────────────────────────────
+        // 单实例：已有窗口时把新双击的 md 文件转发给现有窗口
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // 聚焦主窗口
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            // 解析新 argv 里的 md 路径并广播给前端
+            if let Some(md_path) = extract_md_path_from_args(argv.into_iter().skip(1)) {
+                log::info!("[single-instance] 新实例传入 md: {}", md_path);
+                let _ = app.emit("open-md-file", md_path);
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(
@@ -60,7 +89,20 @@ pub fn run() {
             log::info!("源文件存储目录: {}", sources_dir.display());
 
             // 注册全局状态（data_dir 用于服务层清理资产文件）
-            app.manage(AppState::new(db, data_dir.clone()));
+            let state = AppState::new(db, data_dir.clone());
+
+            // 若应用是由"双击 md 文件"启动的，暂存路径到 state，
+            // 等前端 mount 完成后通过 take_pending_open_md_path 取走并打开
+            if let Some(md_path) =
+                extract_md_path_from_args(std::env::args().skip(1))
+            {
+                log::info!("[launch] 启动参数带入 md: {}", md_path);
+                if let Ok(mut guard) = state.pending_open_md_path.lock() {
+                    *guard = Some(md_path);
+                }
+            }
+
+            app.manage(state);
 
             // 开发模式下在窗口标题追加 [DEV] 标识，避免和生产窗口混淆
             if cfg!(debug_assertions) {
@@ -155,6 +197,7 @@ pub fn run() {
             commands::import::scan_markdown_folder,
             commands::import::import_selected_files,
             commands::import::open_markdown_file,
+            commands::import::take_pending_open_md_path,
             // 导出模块
             commands::export::export_notes,
             commands::export::export_single_note,

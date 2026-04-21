@@ -38,3 +38,17 @@ pub fn open_markdown_file(
     services::import::ImportService::import_single_markdown(&state.db, &file_path)
         .map_err(|e| e.to_string())
 }
+
+/// 取出首次启动时由命令行带入的 .md 文件路径（幂等，取一次就清空）
+///
+/// 前端 App 初始化完成后调用：若返回 Some，则自动打开这个 md 文件。
+#[tauri::command]
+pub fn take_pending_open_md_path(
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let mut guard = state
+        .pending_open_md_path
+        .lock()
+        .map_err(|e| e.to_string())?;
+    Ok(guard.take())
+}

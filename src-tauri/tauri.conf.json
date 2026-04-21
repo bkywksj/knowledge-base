@@ -52,6 +52,14 @@
       "icons/icon.ico"
     ],
     "resources": [],
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown"],
+        "name": "Markdown 文件",
+        "description": "由知识库打开",
+        "role": "Editor"
+      }
+    ],
     "copyright": "Copyright (c) 2026 AgileFR",
     "category": "Productivity",
     "shortDescription": "本地知识库桌面应用",

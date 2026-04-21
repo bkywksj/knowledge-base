@@ -26,6 +26,10 @@ pub fn html_to_markdown(html: &str) -> String {
 ///
 /// 修正点：pulldown-cmark 会在 `</code>` 前插入尾部换行符，导致
 /// Tiptap CodeBlock 渲染时多出一个空行，这里统一剥除。
+///
+/// 当前无调用方（Tiptap 已切 MD I/O，编辑器自行渲染），保留给未来的
+/// "MD 预览"/"分享 HTML 片段" 等场景。
+#[allow(dead_code)]
 pub fn markdown_to_html(md: &str) -> String {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
