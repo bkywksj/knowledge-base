@@ -27,12 +27,13 @@ import {
   Bot,
   GitBranch,
   History,
+  CheckSquare,
 } from "lucide-react";
 import { Tooltip as AntTooltip } from "antd";
-import { noteApi, dailyApi, systemApi } from "@/lib/api";
+import { noteApi, dailyApi, systemApi, taskApi } from "@/lib/api";
 import { stripHtml, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
-import type { Note, DashboardStats, DailyWritingStat } from "@/types";
+import type { Note, DashboardStats, DailyWritingStat, TaskStats } from "@/types";
 
 const { Text, Paragraph } = Typography;
 
@@ -43,21 +44,24 @@ export default function HomePage() {
   const [pinnedNotes, setPinnedNotes] = useState<Note[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [trend, setTrend] = useState<DailyWritingStat[]>([]);
+  const [taskStats, setTaskStats] = useState<TaskStats | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [loading, setLoading] = useState(true);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     try {
-      const [notesResult, dashStats, trendData] = await Promise.all([
+      const [notesResult, dashStats, trendData, taskStatsData] = await Promise.all([
         noteApi.list({ page: 1, page_size: 8 }),
         systemApi.getDashboardStats(),
         systemApi.getWritingTrend(14),
+        taskApi.stats().catch(() => null),
       ]);
       setRecentNotes(notesResult.items.filter((n) => !n.is_pinned));
       setPinnedNotes(notesResult.items.filter((n) => n.is_pinned));
       setStats(dashStats);
       setTrend(trendData);
+      setTaskStats(taskStatsData);
     } catch (e) {
       console.error("加载首页数据失败:", e);
     } finally {
@@ -128,8 +132,37 @@ export default function HomePage() {
         value: stats?.total_words ?? 0,
         icon: <LetterText size={16} style={{ color: token.colorTextSecondary }} />,
       },
+      {
+        key: "tasks",
+        title: "待办",
+        value: taskStats?.totalTodo ?? 0,
+        icon: <CheckSquare size={16} style={{ color: token.colorError }} />,
+        onClick: () => navigate("/tasks"),
+        suffix:
+          (taskStats?.urgentTodo ?? 0) > 0 ? (
+            <AntTooltip title={`紧急 ${taskStats?.urgentTodo} 条`}>
+              <span
+                className="inline-block ml-1 rounded-full text-[10px] leading-none"
+                style={{
+                  background: token.colorError,
+                  color: "#fff",
+                  padding: "2px 5px",
+                }}
+              >
+                {taskStats?.urgentTodo}
+              </span>
+            </AntTooltip>
+          ) : (taskStats?.overdue ?? 0) > 0 ? (
+            <span
+              className="inline-block ml-1 text-[10px]"
+              style={{ color: token.colorError }}
+            >
+              逾期 {taskStats?.overdue}
+            </span>
+          ) : undefined,
+      },
     ],
-    [stats, token, navigate, handleTodayNote],
+    [stats, taskStats, token, navigate, handleTodayNote],
   );
 
   const displayedRecent = useMemo(() => recentNotes.slice(0, 6), [recentNotes]);
@@ -164,6 +197,7 @@ export default function HomePage() {
                 title={<span className="text-xs">{item.title}</span>}
                 value={item.value}
                 prefix={item.icon}
+                suffix={"suffix" in item ? item.suffix : undefined}
                 valueStyle={{ fontSize: 20 }}
               />
             </Card>
