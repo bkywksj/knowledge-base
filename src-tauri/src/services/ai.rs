@@ -45,6 +45,33 @@ impl AiEventEmitter for ChatEmitter {
 
 pub struct AiService;
 
+/// 构造用于 Ollama 的 HTTP 客户端：始终绕过系统代理。
+///
+/// Ollama 是本地 / 内网服务（localhost、127.0.0.1、192.168.x、10.x、Tailscale 100.64.0.0/10 等），
+/// 走 Clash 等系统 HTTP 代理只会被劫持导致连接失败。
+fn build_ollama_client() -> Client {
+    Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap_or_else(|_| Client::new())
+}
+
+/// 将 reqwest 错误格式化为对用户友好的 Ollama 错误提示
+fn format_ollama_send_error(e: &reqwest::Error, url: &str) -> String {
+    if e.is_connect() || e.is_timeout() {
+        format!(
+            "无法连接到 Ollama 服务 ({})。请确认：\n\
+             1. Ollama 已启动（命令行运行 `ollama serve`）\n\
+             2. 设置里的 API 地址正确\n\
+             3. 若设置了系统代理，确保其不拦截本地请求\n\
+             原始错误: {}",
+            url, e
+        )
+    } else {
+        format!("Ollama 请求失败: {}", e)
+    }
+}
+
 /// 去除 HTML 标签，提取纯文本（用于 RAG 上下文）
 fn strip_html(html: &str) -> String {
     let mut result = String::with_capacity(html.len());
@@ -139,8 +166,8 @@ impl AiService {
         messages: &[Value],
         mut cancel_rx: watch::Receiver<bool>,
     ) -> Result<String, AppError> {
-        let client = Client::new();
         let url = format!("{}/api/chat", model.api_url.trim_end_matches('/'));
+        let client = build_ollama_client();
         let response = client
             .post(&url)
             .json(&json!({
@@ -150,7 +177,7 @@ impl AiService {
             }))
             .send()
             .await
-            .map_err(|e| AppError::Custom(format!("Ollama 请求失败: {}", e)))?;
+            .map_err(|e| AppError::Custom(format_ollama_send_error(&e, &url)))?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -448,8 +475,8 @@ impl AiService {
         messages: &[Value],
         mut cancel_rx: watch::Receiver<bool>,
     ) -> Result<String, AppError> {
-        let client = Client::new();
         let url = format!("{}/api/chat", model.api_url.trim_end_matches('/'));
+        let client = build_ollama_client();
 
         let response = client
             .post(&url)
@@ -460,7 +487,7 @@ impl AiService {
             }))
             .send()
             .await
-            .map_err(|e| AppError::Custom(format!("Ollama 请求失败: {}", e)))?;
+            .map_err(|e| AppError::Custom(format_ollama_send_error(&e, &url)))?;
 
         if !response.status().is_success() {
             let status = response.status();
