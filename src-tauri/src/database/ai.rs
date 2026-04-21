@@ -377,7 +377,15 @@ impl Database {
     }
 
     /// 搜索相关笔记用于 RAG 上下文
-    /// 策略：先用 FTS5（关键词 OR）搜索，无结果则用 LIKE 模糊搜索兜底
+    ///
+    /// 策略（中文友好 + 命中数排序）：
+    /// 1. LIKE 按每条笔记 **命中不同关键词的数量** 降序排（含"合同"+"内容"的笔记高于只含"合同"的）
+    /// 2. 若 query 里有 ASCII 单词，额外跑 FTS5 补充（英文 unicode61 可正确 tokenize）
+    /// 3. 合并去重：LIKE 命中数高的优先，FTS5 用来填补 LIKE 漏掉的
+    ///
+    /// 为何不用 FTS5 为主：SQLite 默认 `unicode61` tokenizer 对中文按
+    /// 连续 CJK 段切分（"合同内容" 是一个 token），bigram 关键词根本匹不上；
+    /// 反而会因为"总结"/"句话"这类噪声 bigram 误召回无关笔记。
     pub fn search_notes_for_rag(
         &self,
         query: &str,
@@ -387,46 +395,8 @@ impl Database {
 
         let keywords = Self::extract_keywords(query);
 
-        // 1. 尝试 FTS5 搜索（关键词用 OR 连接，提高召回率）
-        if !keywords.is_empty() {
-            let fts_query = keywords
-                .iter()
-                .map(|k| Self::escape_fts5(k))
-                .collect::<Vec<_>>()
-                .join(" OR ");
-
-            let fts_result = conn.prepare(
-                "SELECT n.id, n.title, n.content
-                 FROM notes_fts fts
-                 JOIN notes n ON n.id = fts.rowid
-                 WHERE notes_fts MATCH ?1
-                   AND n.is_deleted = 0
-                 ORDER BY rank
-                 LIMIT ?2",
-            );
-
-            if let Ok(mut stmt) = fts_result {
-                let results: Vec<(i64, String, String)> = stmt
-                    .query_map(rusqlite::params![fts_query, limit], |row| {
-                        Ok((
-                            row.get::<_, i64>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                        ))
-                    })
-                    .ok()
-                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
-                    .unwrap_or_default();
-
-                if !results.is_empty() {
-                    return Ok(results);
-                }
-            }
-        }
-
-        // 2. FTS5 无结果时，用 LIKE 模糊搜索兜底
+        // 收集 LIKE 检索用的模式（%xx%）
         let like_keywords: Vec<String> = if keywords.is_empty() {
-            // 无关键词时，用原始查询的连续中文片段
             query
                 .split(|c: char| !c.is_alphanumeric())
                 .filter(|s| s.len() >= 2)
@@ -436,43 +406,110 @@ impl Database {
             keywords.iter().map(|k| format!("%{}%", k)).collect()
         };
 
-        if like_keywords.is_empty() {
-            return Ok(Vec::new());
+        let mut combined: Vec<(i64, String, String)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        // ─── 主通道：LIKE + 命中数排序 ────────────────────
+        if !like_keywords.is_empty() {
+            // 按命中不同关键词的个数降序（SUM(CASE WHEN ... THEN 1 ELSE 0 END) AS hits）
+            let hit_exprs: Vec<String> = like_keywords
+                .iter()
+                .enumerate()
+                .map(|(i, _)| {
+                    format!(
+                        "(CASE WHEN n.title LIKE ?{0} OR n.content LIKE ?{0} \
+                         THEN 1 ELSE 0 END)",
+                        i + 1
+                    )
+                })
+                .collect();
+            let hits_sum = hit_exprs.join(" + ");
+            let where_clauses: Vec<String> = like_keywords
+                .iter()
+                .enumerate()
+                .map(|(i, _)| {
+                    format!("(n.title LIKE ?{0} OR n.content LIKE ?{0})", i + 1)
+                })
+                .collect();
+
+            let sql = format!(
+                "SELECT n.id, n.title, n.content, ({hits}) AS hits
+                 FROM notes n
+                 WHERE n.is_deleted = 0 AND ({where_})
+                 ORDER BY hits DESC, n.updated_at DESC
+                 LIMIT ?{limit_param}",
+                hits = hits_sum,
+                where_ = where_clauses.join(" OR "),
+                limit_param = like_keywords.len() + 1,
+            );
+
+            let mut stmt = conn.prepare(&sql)?;
+            let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = like_keywords
+                .iter()
+                .map(|k| Box::new(k.clone()) as Box<dyn rusqlite::types::ToSql>)
+                .collect();
+            params.push(Box::new(limit as i64));
+
+            let rows = stmt
+                .query_map(
+                    rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    },
+                )?
+                .filter_map(|r| r.ok());
+
+            for r in rows {
+                if seen.insert(r.0) {
+                    combined.push(r);
+                }
+            }
         }
 
-        // 构建 OR 条件的 LIKE 查询
-        let where_clauses: Vec<String> = like_keywords
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("(n.title LIKE ?{0} OR n.content LIKE ?{0})", i + 1))
-            .collect();
-        let sql = format!(
-            "SELECT n.id, n.title, n.content FROM notes n
-             WHERE n.is_deleted = 0 AND ({})
-             ORDER BY n.updated_at DESC
-             LIMIT ?{}",
-            where_clauses.join(" OR "),
-            like_keywords.len() + 1
-        );
+        // ─── 补充通道：有 ASCII 词才跑 FTS5 ────────────────
+        let has_ascii_kw = keywords.iter().any(|k| k.is_ascii());
+        if has_ascii_kw && combined.len() < limit {
+            let fts_query = keywords
+                .iter()
+                .map(|k| Self::escape_fts5(k))
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT n.id, n.title, n.content
+                 FROM notes_fts fts
+                 JOIN notes n ON n.id = fts.rowid
+                 WHERE notes_fts MATCH ?1
+                   AND n.is_deleted = 0
+                 ORDER BY rank
+                 LIMIT ?2",
+            ) {
+                let rows = stmt
+                    .query_map(rusqlite::params![fts_query, limit as i64], |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    })
+                    .ok()
+                    .map(|rs| rs.filter_map(|r| r.ok()).collect::<Vec<_>>())
+                    .unwrap_or_default();
+                for r in rows {
+                    if combined.len() >= limit {
+                        break;
+                    }
+                    if seen.insert(r.0) {
+                        combined.push(r);
+                    }
+                }
+            }
+        }
 
-        let mut stmt = conn.prepare(&sql)?;
-        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = like_keywords
-            .iter()
-            .map(|k| Box::new(k.clone()) as Box<dyn rusqlite::types::ToSql>)
-            .collect();
-        params.push(Box::new(limit as i64));
-
-        let results = stmt
-            .query_map(rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())), |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        Ok(results)
+        combined.truncate(limit);
+        Ok(combined)
     }
 }
