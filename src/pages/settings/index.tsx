@@ -40,7 +40,7 @@ const PROVIDERS = [
   { value: "openai", label: "OpenAI" },
   { value: "deepseek", label: "DeepSeek" },
   { value: "zhipu", label: "智谱 AI (GLM)" },
-  { value: "claude", label: "Claude (OpenAI 兼容代理)" },
+  { value: "claude", label: "Claude" },
 ];
 
 /** 提供商默认 API 地址
