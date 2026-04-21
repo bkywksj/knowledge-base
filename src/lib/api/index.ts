@@ -209,6 +209,8 @@ export const aiChatApi = {
     invoke<void>("delete_ai_conversation", { id }),
   renameConversation: (id: number, title: string) =>
     invoke<void>("rename_ai_conversation", { id, title }),
+  updateConversationModel: (id: number, modelId: number) =>
+    invoke<void>("update_ai_conversation_model", { id, modelId }),
   listMessages: (conversationId: number) =>
     invoke<AiMessage[]>("list_ai_messages", { conversationId }),
   sendMessage: (conversationId: number, message: string, useRag?: boolean) =>

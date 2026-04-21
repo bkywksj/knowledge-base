@@ -5,9 +5,9 @@ import {
   Input,
   Empty,
   message,
+  Select,
   Switch,
   Tooltip,
-  Typography,
   Dropdown,
   theme as antdTheme,
 } from "antd";
@@ -26,7 +26,6 @@ import { aiChatApi, aiModelApi } from "@/lib/api";
 import type { AiConversation, AiMessage, AiModel } from "@/types";
 import { relativeTime } from "@/lib/utils";
 
-const { Text } = Typography;
 const { TextArea } = Input;
 
 export default function AiChatPage() {
@@ -116,6 +115,19 @@ export default function AiChatPage() {
     }
   }
 
+  async function handleChangeConvModel(modelId: number) {
+    if (!activeConvId) return;
+    try {
+      await aiChatApi.updateConversationModel(activeConvId, modelId);
+      // 本地同步更新，省去 list 往返
+      setConversations((prev) =>
+        prev.map((c) => (c.id === activeConvId ? { ...c, model_id: modelId } : c)),
+      );
+    } catch (e) {
+      message.error(`切换模型失败: ${e}`);
+    }
+  }
+
   const handleSend = useCallback(async () => {
     if (!inputText.trim() || !activeConvId || streaming) return;
 
@@ -194,7 +206,6 @@ export default function AiChatPage() {
   }
 
   const activeConv = conversations.find((c) => c.id === activeConvId);
-  const activeModel = models.find((m) => m.id === activeConv?.model_id);
 
   return (
     <div className="flex h-full" style={{ overflow: "hidden" }}>
@@ -305,23 +316,27 @@ export default function AiChatPage() {
                 background: token.colorBgContainer,
               }}
             >
-              <div className="flex items-center gap-2">
-                <span className="font-medium" style={{ color: token.colorText }}>
+              <div className="flex items-center gap-2 min-w-0">
+                <span
+                  className="font-medium truncate"
+                  style={{ color: token.colorText }}
+                >
                   {activeConv?.title || "对话"}
                 </span>
-                {activeModel && (
-                  <Text
-                    type="secondary"
-                    className="text-xs"
-                    style={{
-                      background: token.colorFillTertiary,
-                      padding: "1px 8px",
-                      borderRadius: 4,
-                    }}
-                  >
-                    {activeModel.name}
-                  </Text>
-                )}
+                <Tooltip title="切换当前会话使用的 AI 模型">
+                  <Select
+                    size="small"
+                    value={activeConv?.model_id}
+                    style={{ width: 180 }}
+                    disabled={streaming || models.length === 0}
+                    onChange={handleChangeConvModel}
+                    options={models.map((m) => ({
+                      value: m.id,
+                      label: m.is_default ? `${m.name} (默认)` : m.name,
+                    }))}
+                    placeholder="选择模型"
+                  />
+                </Tooltip>
               </div>
               <div className="flex items-center gap-2">
                 <Tooltip title="启用 RAG：搜索相关笔记作为上下文">

@@ -186,6 +186,19 @@ impl Database {
         Ok(())
     }
 
+    /// 切换对话使用的 AI 模型
+    pub fn update_ai_conversation_model(&self, id: i64, model_id: i64) -> Result<(), AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let affected = conn.execute(
+            "UPDATE ai_conversations SET model_id = ?1, updated_at = datetime('now', 'localtime') WHERE id = ?2",
+            rusqlite::params![model_id, id],
+        )?;
+        if affected == 0 {
+            return Err(AppError::Custom(format!("对话 {} 不存在", id)));
+        }
+        Ok(())
+    }
+
     /// 更新对话的 updated_at
     pub fn touch_ai_conversation(&self, id: i64) -> Result<(), AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;

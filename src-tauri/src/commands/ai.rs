@@ -110,6 +110,19 @@ pub fn rename_ai_conversation(
         .map_err(|e| e.to_string())
 }
 
+/// 切换对话使用的 AI 模型
+#[tauri::command]
+pub fn update_ai_conversation_model(
+    state: State<'_, AppState>,
+    id: i64,
+    model_id: i64,
+) -> Result<(), String> {
+    state
+        .db
+        .update_ai_conversation_model(id, model_id)
+        .map_err(|e| e.to_string())
+}
+
 // ─── AI 消息 Commands ────────────────────────
 
 /// 获取对话消息列表
