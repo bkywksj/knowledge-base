@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 12;
+pub const SCHEMA_VERSION: i32 = 13;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -42,6 +42,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             9 => migrate_v9_to_v10(conn)?,
             10 => migrate_v10_to_v11(conn)?,
             11 => migrate_v11_to_v12(conn)?,
+            12 => migrate_v12_to_v13(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -486,5 +487,37 @@ fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
     )?;
 
     set_version(conn, 12)?;
+    Ok(())
+}
+
+/// v12 -> v13: 为 HTML → Markdown 迁移做准备
+///
+/// 思路：笔记存储最终要切到 Markdown，但现存 content 全是 HTML。
+/// 本次迁移只做**一次性备份**，不动任何代码逻辑：
+///   1. notes 表新增 content_html 字段（幂等）
+///   2. 把现有 content（HTML）整段拷贝到 content_html 做兜底
+///
+/// 后续阶段：
+///   · 阶段 2：接入 tiptap-markdown，编辑器切 MD I/O
+///   · 阶段 3：批量把 content_html → Markdown 写回 content
+///   · 阶段 4：清理 strip_html 等遗留逻辑
+///
+/// 即便后续翻车，content_html 始终保留原始 HTML，可以随时回滚。
+fn migrate_v12_to_v13(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v12 -> v13 (notes 新增 content_html 备份字段)");
+
+    let cols = list_columns(conn, "notes")?;
+    if !cols.iter().any(|c| c == "content_html") {
+        conn.execute_batch("ALTER TABLE notes ADD COLUMN content_html TEXT;")?;
+    }
+
+    // 幂等回填：仅对尚未备份的行执行
+    conn.execute_batch(
+        "UPDATE notes
+            SET content_html = content
+          WHERE content_html IS NULL AND content IS NOT NULL;",
+    )?;
+
+    set_version(conn, 13)?;
     Ok(())
 }
