@@ -29,11 +29,13 @@ import {
   Trash,
   Plus,
   CheckSquare,
+  FolderOpen,
 } from "lucide-react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderOutlined } from "@ant-design/icons";
 import type { DataNode } from "antd/es/tree";
 import { useAppStore } from "@/store";
-import { folderApi } from "@/lib/api";
+import { folderApi, importApi } from "@/lib/api";
 import type { Folder } from "@/types";
 
 /** 导航菜单项（静态部分，用于路由高亮匹配） */
@@ -183,6 +185,23 @@ export function Sidebar() {
       setFolders(list);
     } catch (e) {
       console.error("加载文件夹失败:", e);
+    }
+  }
+
+  /** 打开本机 .md 文件 → 导入为新笔记 → 跳转到该笔记 */
+  async function handleOpenMarkdown() {
+    try {
+      const picked = await openDialog({
+        multiple: false,
+        filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
+      });
+      const path = Array.isArray(picked) ? picked[0] : picked;
+      if (!path) return;
+      const noteId = await importApi.openMarkdownFile(path);
+      useAppStore.getState().bumpNotesRefresh();
+      navigate(`/notes/${noteId}`);
+    } catch (e) {
+      message.error(`打开失败: ${e}`);
     }
   }
 
@@ -577,17 +596,28 @@ export function Sidebar() {
         知识库{import.meta.env.DEV ? " [DEV]" : ""}
       </div>
 
-      {/* 全局"新建笔记"按钮（折叠时变图标） */}
-      <div style={{ padding: collapsed ? "8px 6px" : "10px 12px" }}>
+      {/* 全局"新建笔记"+ "打开 md 文件"按钮 */}
+      <div
+        style={{
+          padding: collapsed ? "8px 6px" : "10px 12px",
+          display: "flex",
+          gap: 6,
+        }}
+      >
         <Button
           type="primary"
           icon={<Plus size={collapsed ? 16 : 14} />}
-          block
+          style={{ flex: 1 }}
           onClick={() => useAppStore.getState().openCreateModal()}
           title="新建笔记 (Ctrl+N)"
         >
           {!collapsed && "新建笔记"}
         </Button>
+        <Button
+          icon={<FolderOpen size={collapsed ? 16 : 14} />}
+          onClick={handleOpenMarkdown}
+          title="打开本机 .md 文件"
+        />
       </div>
 
       {/* 第1段: 导航菜单 */}

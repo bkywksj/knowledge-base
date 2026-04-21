@@ -127,6 +127,37 @@ impl ImportService {
 
         Ok(result)
     }
+
+    /// 打开单个 Markdown 文件：读取 → 创建新笔记 → 返回 note id
+    ///
+    /// 用于"菜单导入单个 md 文件"和"双击 md 文件由本应用打开"两个触发场景。
+    /// 与 import_selected_files 的区别：不发进度事件、不处理批量、直接返回 id 方便前端跳转。
+    pub fn import_single_markdown(db: &Database, file_path: &str) -> Result<i64, AppError> {
+        let path = Path::new(file_path);
+        let file_name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("未命名")
+            .to_string();
+
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            AppError::Custom(format!("读取文件失败: {} ({})", file_path, e))
+        })?;
+
+        if content.trim().is_empty() {
+            return Err(AppError::InvalidInput(format!("文件内容为空: {}", file_path)));
+        }
+
+        let title = extract_title(&content).unwrap_or(file_name);
+        let input = NoteInput {
+            title,
+            content,
+            folder_id: None,
+        };
+        let note = db.create_note(&input)?;
+        let _ = db.set_note_source_file(note.id, None, Some("md"));
+        Ok(note.id)
+    }
 }
 
 /// 从 Markdown 内容提取标题（第一个 # 开头的行）

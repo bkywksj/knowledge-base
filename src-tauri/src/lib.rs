@@ -154,6 +154,7 @@ pub fn run() {
             // 导入模块
             commands::import::scan_markdown_folder,
             commands::import::import_selected_files,
+            commands::import::open_markdown_file,
             // 导出模块
             commands::export::export_notes,
             commands::export::export_single_note,
