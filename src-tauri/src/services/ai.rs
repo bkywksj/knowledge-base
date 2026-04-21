@@ -56,6 +56,31 @@ fn build_ollama_client() -> Client {
         .unwrap_or_else(|_| Client::new())
 }
 
+/// 根据用户配置的 api_url 构造 OpenAI 兼容的 chat/completions 完整 URL。
+///
+/// 兼容三类写法：
+/// - `https://api.openai.com`                 → `.../v1/chat/completions`（补默认 v1）
+/// - `https://api.deepseek.com/v1`            → `.../v1/chat/completions`（已带版本段，只补端点）
+/// - `https://open.bigmodel.cn/api/paas/v4`   → `.../paas/v4/chat/completions`（智谱等非 /v1 版本）
+/// - `https://x.y/v1/chat/completions`        → 原样使用
+fn build_openai_chat_url(api_url: &str) -> String {
+    let base = api_url.trim_end_matches('/');
+    if base.ends_with("/chat/completions") {
+        return base.to_string();
+    }
+    // 检测最后一段是否为 vN / vN.M 形式的版本号
+    let has_version_segment = base.rsplit('/').next().is_some_and(|seg| {
+        seg.starts_with('v')
+            && seg.len() > 1
+            && seg[1..].chars().all(|c| c.is_ascii_digit() || c == '.')
+    });
+    if has_version_segment {
+        format!("{}/chat/completions", base)
+    } else {
+        format!("{}/v1/chat/completions", base)
+    }
+}
+
 /// 将 reqwest 错误格式化为对用户友好的 Ollama 错误提示
 fn format_ollama_send_error(e: &reqwest::Error, url: &str) -> String {
     if e.is_connect() || e.is_timeout() {
@@ -144,7 +169,8 @@ impl AiService {
             "ollama" => {
                 Self::stream_ollama_generic(&write_app, &model, &messages, cancel_rx).await?
             }
-            "openai" | "claude" => {
+            // OpenAI 兼容协议族：OpenAI / Claude 兼容代理 / DeepSeek / 智谱 GLM
+            "openai" | "claude" | "deepseek" | "zhipu" => {
                 Self::stream_openai_generic(&write_app, &model, &messages, cancel_rx).await?
             }
             _ => {
@@ -231,7 +257,7 @@ impl AiService {
         mut cancel_rx: watch::Receiver<bool>,
     ) -> Result<String, AppError> {
         let client = Client::new();
-        let url = format!("{}/v1/chat/completions", model.api_url.trim_end_matches('/'));
+        let url = build_openai_chat_url(&model.api_url);
         let mut request = client
             .post(&url)
             .header("Content-Type", "application/json")
@@ -365,7 +391,8 @@ impl AiService {
                 "ollama" => {
                     Self::stream_ollama(&app, &model, &messages, cancel_rx.clone()).await
                 }
-                "openai" | "claude" => {
+                // OpenAI 兼容协议族：OpenAI / Claude 兼容代理 / DeepSeek / 智谱 GLM
+                "openai" | "claude" | "deepseek" | "zhipu" => {
                     Self::stream_openai_compatible(&app, &model, &messages, cancel_rx.clone())
                         .await
                 }
@@ -547,10 +574,7 @@ impl AiService {
         mut cancel_rx: watch::Receiver<bool>,
     ) -> Result<String, AppError> {
         let client = Client::new();
-        let url = format!(
-            "{}/v1/chat/completions",
-            model.api_url.trim_end_matches('/')
-        );
+        let url = build_openai_chat_url(&model.api_url);
 
         let mut request = client
             .post(&url)

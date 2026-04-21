@@ -38,14 +38,29 @@ const { Title, Text } = Typography;
 const PROVIDERS = [
   { value: "ollama", label: "Ollama (本地)" },
   { value: "openai", label: "OpenAI" },
-  { value: "claude", label: "Claude (兼容)" },
+  { value: "deepseek", label: "DeepSeek" },
+  { value: "zhipu", label: "智谱 AI (GLM)" },
+  { value: "claude", label: "Claude (OpenAI 兼容代理)" },
 ];
 
-/** 提供商默认 URL */
+/** 提供商默认 API 地址
+ * 后端会智能拼接 `/chat/completions`，所以 URL 末尾可带也可不带 `/v1` / `/paas/v4` 之类版本段。
+ */
 const DEFAULT_URLS: Record<string, string> = {
   ollama: "http://localhost:11434",
-  openai: "https://api.openai.com",
-  claude: "https://api.openai.com",
+  openai: "https://api.openai.com/v1",
+  deepseek: "https://api.deepseek.com/v1",
+  zhipu: "https://open.bigmodel.cn/api/paas/v4",
+  claude: "https://openrouter.ai/api/v1",
+};
+
+/** 各 provider 的模型标识占位提示 */
+const MODEL_ID_PLACEHOLDERS: Record<string, string> = {
+  ollama: "如: qwen2.5:7b / llama3.2:3b",
+  openai: "如: gpt-4o-mini / gpt-4o",
+  deepseek: "如: deepseek-chat / deepseek-reasoner",
+  zhipu: "如: glm-4-plus / glm-4-flash / glm-4-air",
+  claude: "如: anthropic/claude-sonnet-4.6 (经 OpenRouter 等兼容代理)",
 };
 
 export default function SettingsPage() {
@@ -60,6 +75,8 @@ export default function SettingsPage() {
   const [modelModalOpen, setModelModalOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<AiModel | null>(null);
   const [form] = Form.useForm<AiModelInput>();
+  // 表单内 provider 变化 → 动态占位
+  const watchedProvider = Form.useWatch("provider", form) || "ollama";
 
   // 导入状态
   const [importing, setImporting] = useState(false);
@@ -883,7 +900,7 @@ export default function SettingsPage() {
             label="API 地址"
             rules={[{ required: true, message: "请输入 API 地址" }]}
           >
-            <Input placeholder="https://api.openai.com" />
+            <Input placeholder={DEFAULT_URLS[watchedProvider] || "https://api.openai.com/v1"} />
           </Form.Item>
 
           <Form.Item name="api_key" label="API Key">
@@ -895,7 +912,12 @@ export default function SettingsPage() {
             label="模型标识"
             rules={[{ required: true, message: "请输入模型标识" }]}
           >
-            <Input placeholder="如: gpt-4o-mini / llama3 / claude-sonnet-4-20250514" />
+            <Input
+              placeholder={
+                MODEL_ID_PLACEHOLDERS[watchedProvider] ||
+                "如: gpt-4o-mini / qwen2.5:7b"
+              }
+            />
           </Form.Item>
         </Form>
       </Modal>
