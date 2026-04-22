@@ -2,14 +2,19 @@
 //!
 //! 密码存储走 OS keyring（避免 DB 明文），详见 services::sync::get_webdav_password
 
+use std::path::Path;
+
 use base64::Engine;
-use reqwest::header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE};
+use futures::StreamExt;
+use reqwest::header::{HeaderMap, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
 use reqwest::{Client, Method, StatusCode};
+use tokio::io::AsyncWriteExt;
+use tokio_util::io::ReaderStream;
 
 use crate::error::AppError;
 
 pub struct WebDavClient {
-    client: Client,
+    client: &'static Client,
     base_url: String,
     auth_header: String,
 }
@@ -19,7 +24,8 @@ impl WebDavClient {
         let auth = base64::engine::general_purpose::STANDARD
             .encode(format!("{}:{}", username, password));
         Self {
-            client: Client::new(),
+            // 复用全局 reqwest Client，避免每次 push/pull 都重建连接池 + TLS 会话
+            client: crate::services::http_client::shared(),
             base_url: url.trim_end_matches('/').to_string(),
             auth_header: format!("Basic {}", auth),
         }
@@ -61,18 +67,37 @@ impl WebDavClient {
         Ok(())
     }
 
-    /// 上传二进制数据（大文件支持）
-    pub async fn upload_bytes(&self, filename: &str, bytes: Vec<u8>) -> Result<(), AppError> {
-        let resp = self
+    /// 流式上传本地文件：通过 `ReaderStream` 把文件逐块喂给 reqwest，
+    /// 全程不把整份 ZIP 载入内存。适合 WebDAV 同步大快照。
+    pub async fn upload_file(&self, filename: &str, local_path: &Path) -> Result<(), AppError> {
+        let file = tokio::fs::File::open(local_path)
+            .await
+            .map_err(|e| AppError::Custom(format!("打开待上传文件失败: {}", e)))?;
+        // 提前拿到文件大小用作 Content-Length，方便服务端记录进度（没拿到也不致命）
+        let content_length = file.metadata().await.ok().map(|m| m.len());
+        let stream = ReaderStream::new(file);
+        let body = reqwest::Body::wrap_stream(stream);
+
+        let mut req = self
             .client
             .put(self.file_url(filename))
             .headers(self.headers())
-            .header(CONTENT_TYPE, "application/octet-stream")
-            .body(bytes)
+            .header(CONTENT_TYPE, "application/octet-stream");
+        if let Some(len) = content_length {
+            req = req.header(CONTENT_LENGTH, len);
+        }
+
+        let resp = req
+            .body(body)
             .send()
             .await
             .map_err(|e| AppError::Custom(format!("上传失败: {}", e)))?;
 
+        Self::check_put_status(resp).await
+    }
+
+    /// 统一处理 PUT 响应状态
+    async fn check_put_status(resp: reqwest::Response) -> Result<(), AppError> {
         let status = resp.status();
         if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
             return Err(AppError::Custom("认证失败，请检查用户名/密码".into()));
@@ -94,10 +119,49 @@ impl WebDavClient {
 
     /// 下载二进制数据
     pub async fn download_bytes(&self, filename: &str) -> Result<Vec<u8>, AppError> {
-        let resp = self
-            .client
-            .get(self.file_url(filename))
-            .headers(self.headers())
+        let resp = Self::send_get(&self.client, &self.file_url(filename), &self.headers()).await?;
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| AppError::Custom(format!("读取响应失败: {}", e)))?;
+        Ok(bytes.to_vec())
+    }
+
+    /// 流式下载到本地文件：逐块把响应体写入目标文件，
+    /// 全程不把整份 ZIP 载入内存。上层调用方应确保目标目录存在且可写。
+    pub async fn download_to_file(
+        &self,
+        filename: &str,
+        dest_path: &Path,
+    ) -> Result<(), AppError> {
+        let resp = Self::send_get(&self.client, &self.file_url(filename), &self.headers()).await?;
+        let mut file = tokio::fs::File::create(dest_path)
+            .await
+            .map_err(|e| AppError::Custom(format!("创建本地文件失败: {}", e)))?;
+
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk
+                .map_err(|e| AppError::Custom(format!("下载过程中断: {}", e)))?;
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| AppError::Custom(format!("写入本地文件失败: {}", e)))?;
+        }
+        file.flush()
+            .await
+            .map_err(|e| AppError::Custom(format!("落盘失败: {}", e)))?;
+        Ok(())
+    }
+
+    /// 共用的 GET 请求 + 状态码检查（download_bytes / download_to_file 共用）
+    async fn send_get(
+        client: &Client,
+        url: &str,
+        headers: &HeaderMap,
+    ) -> Result<reqwest::Response, AppError> {
+        let resp = client
+            .get(url)
+            .headers(headers.clone())
             .send()
             .await
             .map_err(|e| AppError::Custom(format!("下载失败: {}", e)))?;
@@ -112,11 +176,7 @@ impl WebDavClient {
         if !status.is_success() {
             return Err(AppError::Custom(format!("下载失败，服务器返回 {}", status)));
         }
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| AppError::Custom(format!("读取响应失败: {}", e)))?;
-        Ok(bytes.to_vec())
+        Ok(resp)
     }
 
     /// 列出目录下的文件名（PROPFIND Depth:1，用正则抽取 <d:href>）

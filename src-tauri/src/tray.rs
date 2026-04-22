@@ -144,7 +144,10 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 bring_main_to_front(app);
             }
             "quit" => {
-                app.exit(0);
+                // 走前端确认流程：让 React 检查未保存草稿，弹 Modal 给用户三选一
+                // 前端确认后通过 tauri-plugin-process 的 exit() 真正退出
+                bring_main_to_front(app);
+                let _ = app.emit("tray:request-exit", ());
             }
             _ => {}
         })

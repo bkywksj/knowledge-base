@@ -163,6 +163,29 @@ export function Sidebar() {
     ts: number;
   } | null>(null);
 
+  // Dropdown 的 trigger 为空数组时 antd 不会自己监听"外部点击关闭"，
+  // 这里手动挂全局 mousedown / Esc 监听，点到 .ant-dropdown 外或按 Esc 就关闭。
+  // 另外遇到右键再次打开新菜单（同一帧内 contextMenu 被 setState 替换）时，
+  // 用 capture 阶段的 mousedown，只对 button !== 2（非右键）做关闭，避免打架。
+  useEffect(() => {
+    if (!contextMenu) return;
+    function handleMouseDown(e: MouseEvent) {
+      if (e.button === 2) return; // 右键另建新菜单，由 onRightClick 处理
+      const target = e.target as HTMLElement | null;
+      if (target && target.closest(".ant-dropdown")) return;
+      setContextMenu(null);
+    }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setContextMenu(null);
+    }
+    document.addEventListener("mousedown", handleMouseDown, true);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown, true);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [contextMenu]);
+
   // 双击检测：记录最近一次点击时间，300ms 内同一节点再次点击视为双击
   const lastClickRef = useRef<{ key: string; time: number } | null>(null);
   // 按 Esc 取消编辑时置为 true，随后的 onBlur 跳过提交
@@ -229,6 +252,7 @@ export function Sidebar() {
       setNewRootName("");
       setCreatingRoot(false);
       loadFolders();
+      useAppStore.getState().bumpFoldersRefresh();
     } catch (e) {
       message.error(String(e));
     }
@@ -257,6 +281,7 @@ export function Sidebar() {
         prev.includes(parentKey) ? prev : [...prev, parentKey],
       );
       loadFolders();
+      useAppStore.getState().bumpFoldersRefresh();
     } catch (e) {
       message.error(String(e));
     }
@@ -300,6 +325,7 @@ export function Sidebar() {
       setEditingKey(null);
       setEditingName("");
       loadFolders();
+      useAppStore.getState().bumpFoldersRefresh();
     } catch (e) {
       message.error(String(e));
     }
@@ -320,6 +346,7 @@ export function Sidebar() {
           // 清理选中态
           if (selectedKey === key) setSelectedKey(null);
           loadFolders();
+          useAppStore.getState().bumpFoldersRefresh();
         } catch (e) {
           message.error(String(e));
           throw e; // 让 Modal 保持打开状态以便用户看到错误
@@ -368,6 +395,7 @@ export function Sidebar() {
           await folderApi.reorder([dragId, ...siblings]);
         }
         loadFolders();
+        useAppStore.getState().bumpFoldersRefresh();
         return;
       }
 
@@ -388,6 +416,7 @@ export function Sidebar() {
       }
       await folderApi.reorder(newOrder);
       loadFolders();
+      useAppStore.getState().bumpFoldersRefresh();
     } catch (e) {
       message.error(String(e));
     }
@@ -404,17 +433,23 @@ export function Sidebar() {
     const now = Date.now();
     const last = lastClickRef.current;
     if (last && last.key === key && now - last.time < 300) {
-      // 双击：进入重命名（单击已经触发过一次跳转，这里直接覆盖为编辑态）
+      // 双击：进入重命名（覆盖第一次单击的跳转）
       lastClickRef.current = null;
       const name = findFolderName(folders, Number(key));
       if (name !== null) startRename(key, name);
       return;
     }
 
-    // 单击：立即跳转，无延迟
     lastClickRef.current = { key, time: now };
-    setSelectedKey(key);
-    navigate(`/notes?folder=${key}`);
+
+    // 单击：若已选中 → 取消筛选回到全部笔记；否则进入该文件夹筛选
+    if (selectedKey === key) {
+      setSelectedKey(null);
+      navigate("/notes");
+    } else {
+      setSelectedKey(key);
+      navigate(`/notes?folder=${key}`);
+    }
   }
 
   // ─── F2 快捷键 ─────────────────────────────
@@ -632,20 +667,31 @@ export function Sidebar() {
         style={{ border: "none", flexShrink: 0 }}
       />
 
-      {/* 分割线 */}
+      {/* 分割线（和上面的导航菜单拉开距离） */}
       <div
         style={{
           height: 1,
-          margin: "4px 16px",
+          marginTop: 20,
+          marginLeft: 16,
+          marginRight: 16,
+          marginBottom: 10,
           background: token.colorBorderSecondary,
         }}
       />
 
       {/* 第2段: 文件夹树 */}
-      <div className="flex-1 overflow-auto" style={{ minHeight: 0 }}>
+      <div className="flex-1 overflow-auto" style={{ minHeight: 0, paddingTop: 4 }}>
         <div
-          className="flex items-center justify-between px-4 py-1.5 cursor-pointer select-none"
-          style={{ color: token.colorTextSecondary, fontSize: 12 }}
+          className="flex items-center justify-between cursor-pointer select-none"
+          style={{
+            color: token.colorTextSecondary,
+            fontSize: 12,
+            // 用 inline style 写死 + 加大数值，避免 HMR 半生效 / tailwind preflight 覆盖
+            paddingLeft: 16,
+            paddingRight: 16,
+            paddingTop: 20,
+            paddingBottom: 10,
+          }}
           onClick={() => setFolderExpanded(!folderExpanded)}
         >
           <span className="flex items-center gap-1">
@@ -666,7 +712,7 @@ export function Sidebar() {
 
         {folderExpanded && (
           <div
-            style={{ padding: "0 8px" }}
+            style={{ padding: "0 12px" }}
             tabIndex={0}
             onKeyDown={handleTreeKeyDown}
           >

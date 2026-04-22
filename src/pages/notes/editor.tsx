@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   Input,
@@ -13,9 +13,12 @@ import {
   Tooltip,
   Modal,
   List,
+  Popover,
+  Tree,
   App as AntdApp,
+  theme as antdTheme,
 } from "antd";
-import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, CornerUpLeft, Folder as FolderIcon } from "lucide-react";
 import { useAppStore } from "@/store";
 import { useTabsStore } from "@/store/tabs";
 import { noteApi, tagApi, folderApi, linkApi, exportApi, sourceFileApi } from "@/lib/api";
@@ -76,27 +79,208 @@ function BacklinksPanel({
   );
 }
 
-/** 将树形文件夹结构扁平化 */
-function flattenFolders(
+/** 把树形文件夹映射为 antd Tree 的节点（key = 文件夹 id） */
+type FolderTreeNode = {
+  key: number;
+  title: ReactNode;
+  rawTitle: string;
+  children?: FolderTreeNode[];
+};
+function foldersToAntTree(folders: Folder[]): FolderTreeNode[] {
+  return folders.map((f) => ({
+    key: f.id,
+    rawTitle: f.name,
+    title: (
+      <span className="inline-flex items-center gap-1.5" style={{ fontSize: 13 }}>
+        <FolderIcon size={13} style={{ opacity: 0.6 }} />
+        {f.name}
+      </span>
+    ),
+    children: f.children?.length ? foldersToAntTree(f.children) : undefined,
+  }));
+}
+
+/** 收集树里所有节点 id，供 defaultExpandAll 用（antd Tree 的 defaultExpandAll
+ *  只在首次挂载生效；这里直接算出全部 key 给 expandedKeys 便于受控展开） */
+function collectAllKeys(nodes: FolderTreeNode[]): number[] {
+  const out: number[] = [];
+  for (const n of nodes) {
+    out.push(n.key);
+    if (n.children?.length) out.push(...collectAllKeys(n.children));
+  }
+  return out;
+}
+
+/** 根据目标 folderId 从树中回溯，得到祖先链（根 → 子 → … → 目标）
+ *  返回 `[{id, name}]` 数组；找不到返回空数组。 */
+function buildFolderPath(
   folders: Folder[],
-  prefix = ""
-): { label: string; value: number }[] {
-  const result: { label: string; value: number }[] = [];
-  for (const folder of folders) {
-    const label = prefix ? `${prefix} / ${folder.name}` : folder.name;
-    result.push({ label, value: folder.id });
-    if (folder.children?.length) {
-      result.push(...flattenFolders(folder.children, label));
+  targetId: number,
+): { id: number; name: string }[] {
+  for (const f of folders) {
+    if (f.id === targetId) {
+      return [{ id: f.id, name: f.name }];
+    }
+    if (f.children?.length) {
+      const sub = buildFolderPath(f.children, targetId);
+      if (sub.length > 0) {
+        return [{ id: f.id, name: f.name }, ...sub];
+      }
     }
   }
-  return result;
+  return [];
+}
+
+/** 面包屑路径 + Popover 里 TreeSelect 编辑的文件夹切换器
+ *
+ *  - 展示态：`🗂 工作 › 项目A`（未分类则显示"未分类"）
+ *  - 点击 → Popover，含 TreeSelect（原生树形展开 + 搜索）和"移到根目录"快捷按钮
+ *  - 选中即 onChange + 自动关闭 Popover */
+function FolderPathEditor({
+  folders,
+  folderId,
+  onChange,
+}: {
+  folders: Folder[];
+  folderId: number | null;
+  onChange: (folderId: number | null) => void;
+}) {
+  const { token } = antdTheme.useToken();
+  const [open, setOpen] = useState(false);
+  const path = useMemo(
+    () => (folderId != null ? buildFolderPath(folders, folderId) : []),
+    [folders, folderId],
+  );
+  const treeData = useMemo(() => foldersToAntTree(folders), [folders]);
+  // 打开时默认展开所有节点，用户进来就能看全
+  const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([]);
+  useEffect(() => {
+    if (open) {
+      setExpandedKeys(collectAllKeys(treeData));
+    }
+  }, [open, treeData]);
+
+  const popoverContent = (
+    <div style={{ width: 260 }}>
+      <div
+        style={{
+          fontSize: 11,
+          color: token.colorTextTertiary,
+          padding: "2px 4px 6px",
+          letterSpacing: 0.3,
+        }}
+      >
+        移动到
+      </div>
+      <div
+        style={{
+          maxHeight: 280,
+          overflowY: "auto",
+          margin: "0 -4px",
+          padding: "0 4px",
+        }}
+      >
+        {treeData.length === 0 ? (
+          <div
+            style={{
+              textAlign: "center",
+              padding: "16px 8px",
+              color: token.colorTextTertiary,
+              fontSize: 12,
+            }}
+          >
+            还没有文件夹
+            <br />
+            <span style={{ fontSize: 11 }}>到侧边栏的"文件夹"里新建</span>
+          </div>
+        ) : (
+          <Tree
+            blockNode
+            treeData={treeData}
+            selectedKeys={folderId != null ? [folderId] : []}
+            expandedKeys={expandedKeys}
+            onExpand={(keys) => setExpandedKeys(keys)}
+            onSelect={(keys) => {
+              if (keys.length > 0) {
+                onChange(keys[0] as number);
+                setOpen(false);
+              }
+            }}
+          />
+        )}
+      </div>
+      <Divider style={{ margin: "8px 0" }} />
+      <Button
+        size="small"
+        type="text"
+        block
+        disabled={folderId == null}
+        icon={<CornerUpLeft size={13} />}
+        onClick={() => {
+          onChange(null);
+          setOpen(false);
+        }}
+        style={{ textAlign: "left", justifyContent: "flex-start" }}
+      >
+        移到根目录
+      </Button>
+    </div>
+  );
+
+  return (
+    <Popover
+      trigger="click"
+      open={open}
+      onOpenChange={setOpen}
+      placement="bottomLeft"
+      content={popoverContent}
+      destroyOnHidden
+    >
+      <div
+        className="inline-flex items-center gap-1 cursor-pointer select-none"
+        style={{
+          padding: "2px 8px",
+          borderRadius: 6,
+          fontSize: 13,
+          color: token.colorText,
+          background: open ? token.colorFillTertiary : "transparent",
+          transition: "background-color .15s",
+        }}
+        onMouseEnter={(e) =>
+          (e.currentTarget.style.background = token.colorFillQuaternary)
+        }
+        onMouseLeave={(e) =>
+          (e.currentTarget.style.background = open
+            ? token.colorFillTertiary
+            : "transparent")
+        }
+      >
+        <FolderOpen size={14} style={{ color: token.colorTextTertiary }} />
+        {path.length === 0 ? (
+          <span style={{ color: token.colorTextTertiary }}>未分类</span>
+        ) : (
+          path.map((seg, idx) => (
+            <span key={seg.id} className="inline-flex items-center">
+              {idx > 0 && (
+                <ChevronRight
+                  size={12}
+                  style={{ color: token.colorTextQuaternary, margin: "0 2px" }}
+                />
+              )}
+              <span>{seg.name}</span>
+            </span>
+          ))
+        )}
+      </div>
+    </Popover>
+  );
 }
 
 /** 标签与文件夹元数据区域 */
 function MetaBar({
   noteTags,
   allTags,
-  folderOptions,
+  folders,
   folderId,
   onTagsChange,
   onFolderChange,
@@ -104,7 +288,7 @@ function MetaBar({
 }: {
   noteTags: Tag[];
   allTags: Tag[];
-  folderOptions: { label: string; value: number }[];
+  folders: Folder[];
   folderId: number | null;
   onTagsChange: (tagIds: number[]) => void;
   onFolderChange: (folderId: number | null) => void;
@@ -123,19 +307,12 @@ function MetaBar({
 
   return (
     <div className="flex items-center gap-3 py-2 flex-wrap">
-      {/* 文件夹选择 */}
-      <div className="flex items-center gap-1">
-        <FolderOpen size={14} className="text-gray-400 shrink-0" />
-        <Select
-          size="small"
-          placeholder="选择文件夹"
-          allowClear
-          style={{ minWidth: 140 }}
-          value={folderId ?? undefined}
-          onChange={(val) => onFolderChange(val ?? null)}
-          options={folderOptions}
-        />
-      </div>
+      {/* 文件夹路径面包屑（点击切换目录） */}
+      <FolderPathEditor
+        folders={folders}
+        folderId={folderId}
+        onChange={onFolderChange}
+      />
 
       <Divider type="vertical" style={{ height: 20 }} />
 
@@ -241,7 +418,7 @@ export default function NoteEditorPage() {
   // 上下文感知的 message / notification（避免静态方法丢主题、偶发不显示）
   const { message, notification } = AntdApp.useApp();
   const { focusMode, setFocusMode } = useAppStore();
-  const { openTab, updateTabTitle, setTabDirty } = useTabsStore();
+  const { openTab, updateTabTitle, setTabDirty, setDraft, getDraft, clearDraft } = useTabsStore();
   const [note, setNote] = useState<Note | null>(null);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
@@ -253,10 +430,8 @@ export default function NoteEditorPage() {
   const [noteTags, setNoteTags] = useState<Tag[]>([]);
   const [allTags, setAllTags] = useState<Tag[]>([]);
 
-  // 文件夹状态
-  const [folderOptions, setFolderOptions] = useState<
-    { label: string; value: number }[]
-  >([]);
+  // 文件夹状态（保留原始树形结构供 FolderPathEditor 的面包屑 / TreeSelect 使用）
+  const [folders, setFolders] = useState<Folder[]>([]);
 
   // 反向链接状态
   const [backlinks, setBacklinks] = useState<NoteLink[]>([]);
@@ -275,7 +450,7 @@ export default function NoteEditorPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [noteData, tags, folders, existingTags, links] = await Promise.all([
+      const [noteData, tags, folderTree, existingTags, links] = await Promise.all([
         noteApi.get(noteId),
         tagApi.list(),
         folderApi.list(),
@@ -283,33 +458,77 @@ export default function NoteEditorPage() {
         linkApi.getBacklinks(noteId),
       ]);
       setNote(noteData);
-      setTitle(noteData.title);
-      setContent(noteData.content);
-      setDirty(false);
       setAllTags(tags);
       setNoteTags(existingTags);
-      setFolderOptions(flattenFolders(folders));
+      setFolders(folderTree);
       setBacklinks(links);
       openTab({
         id: noteData.id,
         title: noteData.title,
         sourceFileType: noteData.source_file_type,
       });
+
+      // 如果 store 里有未保存的草稿（上次切 tab/跳转 wiki 时缓存），优先恢复
+      const draft = getDraft(noteId);
+      if (draft && (draft.title !== noteData.title || draft.content !== noteData.content)) {
+        setTitle(draft.title);
+        setContent(draft.content);
+        setDirty(true);
+        // store dirty 保持 true（关闭 tab / 退出时确认提示能命中）
+        setTabDirty(noteId, true);
+      } else {
+        setTitle(noteData.title);
+        setContent(noteData.content);
+        setDirty(false);
+        // 草稿已和 DB 一致（其他场景 clear 漏了），主动清掉
+        if (draft) clearDraft(noteId);
+      }
     } catch (e) {
       message.error(String(e));
       navigate("/notes");
     } finally {
       setLoading(false);
     }
-  }, [noteId, navigate, openTab]);
+  }, [noteId, navigate, openTab, getDraft, clearDraft, setTabDirty]);
 
   useEffect(() => {
     if (id) loadData();
   }, [id, loadData]);
 
-  async function handleSave() {
+  // 订阅全局 folders/tags tick：侧边栏/标签页 CRUD 后局部刷新下拉选项，
+  // 无需关闭重开 tab。用 ref 跳过首次渲染，避免与 loadData 重复请求。
+  const foldersTick = useAppStore((s) => s.foldersRefreshTick);
+  const tagsTick = useAppStore((s) => s.tagsRefreshTick);
+  const skipFoldersInit = useRef(true);
+  const skipTagsInit = useRef(true);
+  useEffect(() => {
+    if (skipFoldersInit.current) {
+      skipFoldersInit.current = false;
+      return;
+    }
+    folderApi
+      .list()
+      .then((folderTree) => setFolders(folderTree))
+      .catch(() => {
+        // 刷新失败不打断当前编辑，下次打开时 loadData 会再拉
+      });
+  }, [foldersTick]);
+  useEffect(() => {
+    if (skipTagsInit.current) {
+      skipTagsInit.current = false;
+      return;
+    }
+    tagApi.list().then(setAllTags).catch(() => {});
+  }, [tagsTick]);
+
+  /**
+   * 保存当前笔记。
+   * silent=true 用于"跳转前自动保存"场景：不弹"保存成功"toast，避免干扰用户操作；
+   *             但若有未匹配的 wiki 链接仍会弹 warning（这种信息必须告知）。
+   */
+  async function handleSave(silent = false) {
     if (!title.trim()) {
-      message.warning("标题不能为空");
+      if (!silent) message.warning("标题不能为空");
       return;
     }
     setSaving(true);
@@ -323,6 +542,8 @@ export default function NoteEditorPage() {
       setDirty(false);
       setTabDirty(noteId, false);
       updateTabTitle(noteId, updated.title);
+      // 内容已落库，清掉草稿快照
+      clearDraft(noteId);
 
       // 解析 [[]] 链接并同步
       const wikiTitles = extractWikiLinks(content);
@@ -366,7 +587,7 @@ export default function NoteEditorPage() {
           duration: 10,
           placement: "topRight",
         });
-      } else {
+      } else if (!silent) {
         message.success("保存成功");
       }
     } catch (e) {
@@ -375,6 +596,41 @@ export default function NoteEditorPage() {
       setSaving(false);
     }
   }
+
+  /**
+   * 跳转前保护：若当前有未保存修改，先静默保存再跳转，避免内容被新页面 loadData 覆盖丢失。
+   * 用于所有 navigate 到其他笔记/路由的场景（wiki 链接点击、消歧选择、模糊匹配等）。
+   */
+  async function ensureSavedBeforeNavigate() {
+    if (dirty && title.trim()) {
+      await handleSave(true);
+    }
+  }
+
+  // dirty 时把 (title, content) 节流写入 store 草稿。
+  // 用途：editor unmount 后（切 tab / 跳 wiki）下次回来能恢复；关 tab / 退出时能批量持久化。
+  useEffect(() => {
+    if (!dirty) return;
+    const t = setTimeout(() => {
+      setDraft(noteId, { title, content });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [dirty, title, content, noteId, setDraft]);
+
+  // unmount 时强制 flush 一次 draft（防止 400ms debounce 未触发的最后输入丢失）
+  // 用 ref 捕获最新 state，避免闭包陷阱
+  const flushRef = useRef<{ dirty: boolean; title: string; content: string }>({
+    dirty: false, title: "", content: "",
+  });
+  flushRef.current = { dirty, title, content };
+  useEffect(() => {
+    return () => {
+      const f = flushRef.current;
+      if (f.dirty && f.title.trim()) {
+        setDraft(noteId, { title: f.title, content: f.content });
+      }
+    };
+  }, [noteId, setDraft]);
 
   // Ctrl+S / Cmd+S 保存：用 ref 避免 useEffect 每次渲染都 re-subscribe
   const saveRef = useRef<() => void>(() => {});
@@ -419,6 +675,7 @@ export default function NoteEditorPage() {
 
       // 精确命中 1 条：直接跳
       if (exactMatches.length === 1) {
+        await ensureSavedBeforeNavigate();
         navigate(`/notes/${exactMatches[0][0]}`);
         return;
       }
@@ -430,6 +687,7 @@ export default function NoteEditorPage() {
         );
         const valid = notes.filter((n): n is Note => n !== null);
         if (valid.length === 1) {
+          await ensureSavedBeforeNavigate();
           navigate(`/notes/${valid[0].id}`);
           return;
         }
@@ -441,6 +699,7 @@ export default function NoteEditorPage() {
 
       // 无精确匹配但有模糊匹配：跳转相近的第一条
       if (results.length > 0) {
+        await ensureSavedBeforeNavigate();
         navigate(`/notes/${results[0][0]}`);
         message.info(`未找到同名笔记，跳转到相近的「${results[0][1]}」`);
         return;
@@ -452,8 +711,9 @@ export default function NoteEditorPage() {
     }
   }
 
-  function handleDisambigSelect(targetId: number) {
+  async function handleDisambigSelect(targetId: number) {
     setDisambigOpen(false);
+    await ensureSavedBeforeNavigate();
     navigate(`/notes/${targetId}`);
   }
 
@@ -521,6 +781,8 @@ export default function NoteEditorPage() {
       const tag = existing ?? (await tagApi.create(trimmed));
       if (!existing) {
         setAllTags((prev) => [...prev, tag]);
+        // 通知其他消费者（标签页/其他编辑器 tab）刷新标签列表
+        useAppStore.getState().bumpTagsRefresh();
       }
       await tagApi.addToNote(noteId, tag.id);
       const updatedTags = await tagApi.getNoteTags(noteId);
@@ -608,7 +870,7 @@ export default function NoteEditorPage() {
             type="primary"
             icon={<Save size={16} />}
             loading={saving}
-            onClick={handleSave}
+            onClick={() => handleSave()}
             disabled={!dirty}
           >
             保存
@@ -662,7 +924,7 @@ export default function NoteEditorPage() {
             <MetaBar
               noteTags={noteTags}
               allTags={allTags}
-              folderOptions={folderOptions}
+              folders={folders}
               folderId={note?.folder_id ?? null}
               onTagsChange={handleTagsChange}
               onFolderChange={handleFolderChange}
@@ -682,7 +944,10 @@ export default function NoteEditorPage() {
           {/* 反向链接 */}
           <BacklinksPanel
             backlinks={backlinks}
-            onNavigate={(id) => navigate(`/notes/${id}`)}
+            onNavigate={async (id) => {
+              await ensureSavedBeforeNavigate();
+              navigate(`/notes/${id}`);
+            }}
           />
         </div>
       </div>

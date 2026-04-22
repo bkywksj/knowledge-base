@@ -54,6 +54,20 @@ const CFG_KEY_INTERVAL = "sync.auto_interval_min";
 const CFG_KEY_URL = "sync.webdav_url";
 const CFG_KEY_USER = "sync.webdav_username";
 
+/**
+ * 失焦时把 WebDAV URL / 用户名写入 app_config，独立于密码保存流程。
+ *
+ * 历史问题：URL/用户名的持久化原本只挂在"保存密码"成功路径里。
+ * 若用户填完直接点推送、或测试成功后选择"不保存密码"，配置不会入库，
+ * 下次重启时 Input 空白，被当成"配置丢失"。失败静默不打扰用户。
+ */
+function persistUrl(v: string) {
+  configApi.set(CFG_KEY_URL, v.trim()).catch(() => {});
+}
+function persistUsername(v: string) {
+  configApi.set(CFG_KEY_USER, v.trim()).catch(() => {});
+}
+
 export function SyncSection() {
   // 同步范围 & 模式
   const [scope, setScope] = useState<SyncScope>({ ...DEFAULT_SYNC_SCOPE });
@@ -220,6 +234,9 @@ export function SyncSection() {
     try {
       await syncApi.webdavTest(url, username, password);
       message.success("连接成功");
+      // 测试成功 → URL/用户名确定可用，先落库（与是否保存密码解耦）
+      persistUrl(url);
+      persistUsername(username);
       // 测试成功后询问是否把密码保存到钥匙串
       Modal.confirm({
         title: "是否保存密码到系统钥匙串？",
@@ -257,6 +274,9 @@ export function SyncSection() {
     try {
       const config = { url, username, password: password || undefined };
       const result = await syncApi.webdavPush(scope, config);
+      // 推送成功即证明配置可用，兜底落库（避免用户跳过测试直接推，下次重启丢配置）
+      persistUrl(url);
+      persistUsername(username);
       message.success(`已推送 ${result.stats.notesCount} 条笔记到云端`);
       loadHistory();
       loadCloudPreview();
@@ -286,6 +306,9 @@ export function SyncSection() {
     try {
       const config = { url, username, password: password || undefined };
       const m = await syncApi.webdavPull(importMode, config);
+      // 拉取成功即证明配置可用，兜底落库
+      persistUrl(url);
+      persistUsername(username);
       message.success(
         `已拉取：来自 ${m.device}（${m.exportedAt}），${m.stats.notesCount} 条笔记`,
       );
@@ -493,11 +516,13 @@ export function SyncSection() {
             placeholder="WebDAV URL（如 https://dav.jianguoyun.com/dav/文件夹/）"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
+            onBlur={() => persistUrl(url)}
           />
           <Input
             placeholder="用户名（邮箱）"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
+            onBlur={() => persistUsername(username)}
           />
           <Input.Password
             placeholder={hasSavedPw ? "•••••（已保存到钥匙串，留空使用）" : "应用密码（不是登录密码）"}

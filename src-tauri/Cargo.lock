@@ -2541,7 +2541,7 @@ dependencies = [
 
 [[package]]
 name = "knowledge_base"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -2570,6 +2570,7 @@ dependencies = [
  "tauri-plugin-updater",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "urlencoding",
  "walkdir",
  "zip 2.4.2",

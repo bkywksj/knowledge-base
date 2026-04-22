@@ -25,7 +25,7 @@ function getEditorMarkdown(editor: { storage: unknown }): string {
 }
 import { common, createLowlight } from "lowlight";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useEffect, useRef, useCallback, useMemo } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { message } from "antd";
 import { theme as antdTheme } from "antd";
 import { imageApi } from "@/lib/api";
@@ -78,6 +78,27 @@ export function TiptapEditor({
   useEffect(() => {
     wikiClickRef.current = onWikiLinkClick;
   }, [onWikiLinkClick]);
+
+  // onUpdate 防抖：每次按键都序列化整篇文档（O(doc size)）代价不低，长笔记在 WKWebView 上肉眼可感。
+  // 用 ref 承载最新 onChange，避免依赖变化重建 editor；用 timer ref 做 300ms 尾触发，
+  // unmount / editor blur 时强制 flush，保证保存按钮永远能拿到最新 markdown。
+  const onChangeRef = useRef(onChange);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingEditorRef = useRef<{ storage: unknown } | null>(null);
+  const flushNow = useCallback(() => {
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    const pending = pendingEditorRef.current;
+    if (pending) {
+      pendingEditorRef.current = null;
+      onChangeRef.current(getEditorMarkdown(pending));
+    }
+  }, []);
 
   /** 处理图片文件：保存到本地并插入编辑器 */
   const handleImageFiles = useCallback(
@@ -157,9 +178,21 @@ export function TiptapEditor({
     ],
     content,
     onUpdate: ({ editor }) => {
-      if (!isExternalUpdate.current) {
-        onChange(getEditorMarkdown(editor));
-      }
+      if (isExternalUpdate.current) return;
+      pendingEditorRef.current = editor;
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = setTimeout(() => {
+        flushTimerRef.current = null;
+        const pending = pendingEditorRef.current;
+        if (pending) {
+          pendingEditorRef.current = null;
+          onChangeRef.current(getEditorMarkdown(pending));
+        }
+      }, 300);
+    },
+    onBlur: () => {
+      // 失焦立即 flush，避免用户切走 / 点击保存后读到 300ms 之内的旧内容
+      flushNow();
     },
     editorProps: {
       handlePaste: (_view, event) => {
@@ -195,23 +228,44 @@ export function TiptapEditor({
     }
   }, [content, editor]);
 
+  // unmount 时强制 flush 防抖中的最后一次编辑，避免切 tab / 跳转时丢失末尾未传给父组件的内容
+  useEffect(() => {
+    return () => {
+      flushNow();
+    };
+  }, [flushNow]);
+
   const { token } = antdTheme.useToken();
 
-  // 编辑器统计信息
-  const stats = useMemo(() => {
-    if (!editor) return { chars: 0, words: 0, readingTime: "< 1 min" };
-    const text = editor.getText();
-    const chars = text.length;
-    // 中文按字数，英文按空格分词
-    const cjkCount = (text.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) || []).length;
-    const nonCjk = text.replace(/[\u4e00-\u9fff\u3400-\u4dbf]/g, " ");
-    const engWords = nonCjk.split(/\s+/).filter((w) => w.length > 0).length;
-    const words = cjkCount + engWords;
-    // 按 400 字/分钟估算阅读时间
-    const minutes = Math.ceil(words / 400);
-    const readingTime = minutes < 1 ? "< 1 min" : `${minutes} min`;
-    return { chars, words, readingTime };
-  }, [editor, editor?.getText()]);
+  // 编辑器统计信息：打字时不实时算，停顿 300ms 后再遍历整篇。
+  // 旧实现把 `editor.getText()` 放在 useMemo 依赖里，每次 render 都要 O(n) 遍历文档 +
+  // 2 次全文正则替换；长笔记在 Mac WKWebView 上会明显卡顿。
+  const [stats, setStats] = useState({ chars: 0, words: 0, readingTime: "< 1 min" });
+  useEffect(() => {
+    if (!editor) {
+      setStats({ chars: 0, words: 0, readingTime: "< 1 min" });
+      return;
+    }
+    const timer = setTimeout(() => {
+      const text = editor.getText();
+      const chars = text.length;
+      // 中文按字数，英文按空格分词
+      const cjkCount = (text.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) || []).length;
+      const nonCjk = text.replace(/[\u4e00-\u9fff\u3400-\u4dbf]/g, " ");
+      const engWords = nonCjk.split(/\s+/).filter((w) => w.length > 0).length;
+      const words = cjkCount + engWords;
+      // 按 400 字/分钟估算阅读时间
+      const minutes = Math.ceil(words / 400);
+      setStats({
+        chars,
+        words,
+        readingTime: minutes < 1 ? "< 1 min" : `${minutes} min`,
+      });
+    }, 300);
+    return () => clearTimeout(timer);
+    // 依赖 content prop：父组件在 onChange 后会更新 content，
+    // 这反过来表示编辑器内容刚刚变过，此时触发一次 debounced 重算即可。
+  }, [editor, content]);
 
   if (!editor) return null;
 

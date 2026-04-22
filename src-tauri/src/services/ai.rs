@@ -45,15 +45,14 @@ impl AiEventEmitter for ChatEmitter {
 
 pub struct AiService;
 
-/// 构造用于 Ollama 的 HTTP 客户端：始终绕过系统代理。
+/// 获取用于 Ollama 的 HTTP 客户端：始终绕过系统代理。
 ///
 /// Ollama 是本地 / 内网服务（localhost、127.0.0.1、192.168.x、10.x、Tailscale 100.64.0.0/10 等），
 /// 走 Clash 等系统 HTTP 代理只会被劫持导致连接失败。
-fn build_ollama_client() -> Client {
-    Client::builder()
-        .no_proxy()
-        .build()
-        .unwrap_or_else(|_| Client::new())
+///
+/// 返回全局单例引用，避免每次流式请求都重建连接池。
+fn build_ollama_client() -> &'static Client {
+    crate::services::http_client::shared_no_proxy()
 }
 
 /// 根据用户配置的 api_url 构造 OpenAI 兼容的 chat/completions 完整 URL。
@@ -381,7 +380,7 @@ impl AiService {
         messages: &[Value],
         mut cancel_rx: watch::Receiver<bool>,
     ) -> Result<String, AppError> {
-        let client = Client::new();
+        let client = crate::services::http_client::shared();
         let url = build_openai_chat_url(&model.api_url);
         let mut request = client
             .post(&url)
@@ -716,7 +715,7 @@ impl AiService {
         messages: &[Value],
         mut cancel_rx: watch::Receiver<bool>,
     ) -> Result<String, AppError> {
-        let client = Client::new();
+        let client = crate::services::http_client::shared();
         let url = build_openai_chat_url(&model.api_url);
 
         let mut request = client

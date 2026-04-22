@@ -23,62 +23,70 @@ impl ExportService {
         let output_path = Path::new(output_dir);
         std::fs::create_dir_all(output_path)?;
 
-        let conn = db.conn_lock()?;
+        // ★ 关键点：把所有需要读的数据一次性拉出来后**立即释放 DB 锁**，
+        // 然后再做耗时的文件 I/O。否则整个导出期间（可能数秒～数十秒）
+        // 其他 Command 的任何 DB 操作都会被这把锁阻塞。
+        let (folder_names, folder_parents, notes) = {
+            let conn = db.conn_lock()?;
 
-        // 1. 构建文件夹 id -> name 映射 和 id -> parent_id 映射
-        let mut folder_names: HashMap<i64, String> = HashMap::new();
-        let mut folder_parents: HashMap<i64, Option<i64>> = HashMap::new();
-        {
-            let mut stmt = conn.prepare("SELECT id, name, parent_id FROM folders")?;
-            let rows = stmt.query_map([], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<i64>>(2)?,
-                ))
-            })?;
-            for row in rows {
-                let (id, name, parent_id) = row?;
-                folder_names.insert(id, name);
-                folder_parents.insert(id, parent_id);
+            // 1. 构建文件夹 id -> name 映射 和 id -> parent_id 映射
+            let mut folder_names: HashMap<i64, String> = HashMap::new();
+            let mut folder_parents: HashMap<i64, Option<i64>> = HashMap::new();
+            {
+                let mut stmt = conn.prepare("SELECT id, name, parent_id FROM folders")?;
+                let rows = stmt.query_map([], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                    ))
+                })?;
+                for row in rows {
+                    let (id, name, parent_id) = row?;
+                    folder_names.insert(id, name);
+                    folder_parents.insert(id, parent_id);
+                }
             }
-        }
 
-        // 2. 查询笔记
-        let notes: Vec<(i64, String, String, Option<i64>, bool, Option<String>)> = {
-            let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
-                if let Some(fid) = folder_id {
-                    (
-                        "SELECT id, title, content, folder_id, is_daily, daily_date \
-                         FROM notes WHERE is_deleted = 0 AND folder_id = ?1 \
-                         ORDER BY updated_at DESC"
-                            .into(),
-                        vec![Box::new(fid)],
-                    )
-                } else {
-                    (
-                        "SELECT id, title, content, folder_id, is_daily, daily_date \
-                         FROM notes WHERE is_deleted = 0 \
-                         ORDER BY updated_at DESC"
-                            .into(),
-                        vec![],
-                    )
-                };
+            // 2. 查询笔记
+            let notes: Vec<(i64, String, String, Option<i64>, bool, Option<String>)> = {
+                let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
+                    if let Some(fid) = folder_id {
+                        (
+                            "SELECT id, title, content, folder_id, is_daily, daily_date \
+                             FROM notes WHERE is_deleted = 0 AND folder_id = ?1 \
+                             ORDER BY updated_at DESC"
+                                .into(),
+                            vec![Box::new(fid)],
+                        )
+                    } else {
+                        (
+                            "SELECT id, title, content, folder_id, is_daily, daily_date \
+                             FROM notes WHERE is_deleted = 0 \
+                             ORDER BY updated_at DESC"
+                                .into(),
+                            vec![],
+                        )
+                    };
 
-            let mut stmt = conn.prepare(&sql)?;
-            let params_refs: Vec<&dyn rusqlite::types::ToSql> =
-                params_vec.iter().map(|p| p.as_ref()).collect();
-            let rows = stmt.query_map(params_refs.as_slice(), |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, Option<i64>>(3)?,
-                    row.get::<_, bool>(4)?,
-                    row.get::<_, Option<String>>(5)?,
-                ))
-            })?;
-            rows.collect::<Result<Vec<_>, _>>()?
+                let mut stmt = conn.prepare(&sql)?;
+                let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+                    params_vec.iter().map(|p| p.as_ref()).collect();
+                let rows = stmt.query_map(params_refs.as_slice(), |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                        row.get::<_, bool>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                    ))
+                })?;
+                rows.collect::<Result<Vec<_>, _>>()?
+            };
+
+            (folder_names, folder_parents, notes)
+            // conn 在这里随着 block 结束自动 drop，锁释放
         };
 
         let total = notes.len();

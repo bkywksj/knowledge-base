@@ -1,19 +1,25 @@
 import { useNavigate, useLocation } from "react-router-dom";
-import { useCallback, useEffect, useRef } from "react";
-import { theme as antdTheme, Dropdown, Tooltip, type MenuProps } from "antd";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { theme as antdTheme, Dropdown, Tooltip, Modal, Button, App as AntdApp, type MenuProps } from "antd";
 import { X, ListTree } from "lucide-react";
-import { useTabsStore } from "@/store/tabs";
+import { useTabsStore, type NoteTab } from "@/store/tabs";
 import { FileTypeIcon } from "@/components/FileTypeIcon";
+import { noteApi } from "@/lib/api";
 
 export function TabBar() {
-  const { tabs, activeId, closeTab, closeOtherTabs, closeTabsToRight } =
+  const { tabs, activeId, closeTab, closeOtherTabs, closeTabsToRight, getDraft, clearDraft } =
     useTabsStore();
   const navigate = useNavigate();
   const location = useLocation();
   const { token } = antdTheme.useToken();
+  const { message } = AntdApp.useApp();
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const tabRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+
+  // dirty tab 关闭确认 Modal 的目标 tab；null 表示未弹出
+  const [confirmTab, setConfirmTab] = useState<NoteTab | null>(null);
+  const [closing, setClosing] = useState(false);
 
   const handleSelect = useCallback(
     (id: number) => {
@@ -22,12 +28,11 @@ export function TabBar() {
     [navigate],
   );
 
-  const handleClose = useCallback(
-    (id: number, e?: React.MouseEvent) => {
-      e?.stopPropagation();
+  /** 真正执行关闭（含路由跳转），调用方需先处理好 dirty */
+  const doClose = useCallback(
+    (id: number) => {
       const wasActive = activeId === id;
-      const isViewing =
-        wasActive && location.pathname === `/notes/${id}`;
+      const isViewing = wasActive && location.pathname === `/notes/${id}`;
       const nextActive = closeTab(id);
       tabRefs.current.delete(id);
       if (isViewing) {
@@ -37,6 +42,49 @@ export function TabBar() {
     },
     [activeId, closeTab, navigate, location.pathname],
   );
+
+  const handleClose = useCallback(
+    (id: number, e?: React.MouseEvent) => {
+      e?.stopPropagation();
+      const tab = tabs.find((t) => t.id === id);
+      if (tab?.dirty) {
+        // 有未保存内容：弹三选一 Modal
+        setConfirmTab(tab);
+        return;
+      }
+      doClose(id);
+    },
+    [tabs, doClose],
+  );
+
+  /** 用户选择"保存并关闭" */
+  async function handleSaveAndClose() {
+    if (!confirmTab) return;
+    const draft = getDraft(confirmTab.id);
+    if (!draft || !draft.title.trim()) {
+      message.warning("无可保存的草稿（标题为空）");
+      return;
+    }
+    setClosing(true);
+    try {
+      await noteApi.update(confirmTab.id, { title: draft.title.trim(), content: draft.content });
+      clearDraft(confirmTab.id);
+      doClose(confirmTab.id);
+      setConfirmTab(null);
+    } catch (e) {
+      message.error(`保存失败：${e}`);
+    } finally {
+      setClosing(false);
+    }
+  }
+
+  /** 用户选择"放弃修改并关闭" */
+  function handleDiscardAndClose() {
+    if (!confirmTab) return;
+    clearDraft(confirmTab.id);
+    doClose(confirmTab.id);
+    setConfirmTab(null);
+  }
 
   // Ctrl+W 关闭当前活跃 tab
   useEffect(() => {
@@ -121,6 +169,28 @@ export function TabBar() {
           <ListTree size={16} />
         </button>
       </Tooltip>
+
+      {/* dirty tab 关闭确认 */}
+      <Modal
+        open={confirmTab !== null}
+        title={confirmTab ? `「${confirmTab.title || "未命名"}」尚未保存` : ""}
+        onCancel={() => !closing && setConfirmTab(null)}
+        maskClosable={!closing}
+        closable={!closing}
+        footer={[
+          <Button key="discard" danger disabled={closing} onClick={handleDiscardAndClose}>
+            放弃修改并关闭
+          </Button>,
+          <Button key="cancel" disabled={closing} onClick={() => setConfirmTab(null)}>
+            取消
+          </Button>,
+          <Button key="save" type="primary" loading={closing} onClick={handleSaveAndClose}>
+            保存并关闭
+          </Button>,
+        ]}
+      >
+        <p>关闭此笔记会丢失尚未持久化的修改。请选择操作。</p>
+      </Modal>
 
       {/* 中间可滚动 tab 容器 */}
       <div

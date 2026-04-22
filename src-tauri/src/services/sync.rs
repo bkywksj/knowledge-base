@@ -8,7 +8,7 @@
 //!   （密钥从 hostname + 固定 salt 派生；复制 db 到别的机器无法解密）
 
 use std::fs;
-use std::io::{Cursor, Read, Write};
+use std::io::{BufReader, BufWriter, Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use zip::write::SimpleFileOptions;
@@ -30,112 +30,111 @@ pub struct SyncService;
 impl SyncService {
     // ─── 导出 ──────────────────────────────────
 
-    /// 生成全量快照 ZIP 字节
-    /// data_dir: 应用数据目录（含 dev- 前缀的实际目录）
-    /// scope: 哪些数据要包含
-    pub fn build_snapshot(
+    /// 把全量快照流式写入任意 `Write + Seek`（文件 / 内存缓冲）。
+    ///
+    /// 关键点：所有资产文件通过 `std::io::copy` 从磁盘直接拷进 ZipWriter，
+    /// 不再一次性 `fs::read` 整份到内存。大知识库场景下内存峰值从 "资产总大小"
+    /// 降到 "单个文件缓冲 + ZipWriter 压缩窗口" 级别，可避免 Mac 侧 GB 级占用。
+    pub fn build_snapshot_to_writer<W: Write + Seek>(
+        writer: W,
         data_dir: &Path,
         db: &Database,
         scope: &SyncScope,
         app_version: &str,
-    ) -> Result<(Vec<u8>, SyncStats), AppError> {
-        let mut buffer: Vec<u8> = Vec::new();
+    ) -> Result<SyncStats, AppError> {
         let mut stats = SyncStats::default();
+        let mut zip = ZipWriter::new(writer);
+        let opt = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .unix_permissions(0o644);
 
-        {
-            let mut zip = ZipWriter::new(Cursor::new(&mut buffer));
-            let opt = SimpleFileOptions::default()
-                .compression_method(zip::CompressionMethod::Deflated)
-                .unix_permissions(0o644);
-
-            // 1. app.db —— 用 VACUUM INTO 生成干净副本（绕开 WAL）
-            if scope.notes {
-                let tmp_db = data_dir.join(".sync-tmp-app.db");
-                // 若残留则删
-                let _ = fs::remove_file(&tmp_db);
-                db.vacuum_into(&tmp_db)?;
-                let db_bytes = fs::read(&tmp_db)?;
-                let _ = fs::remove_file(&tmp_db);
-                zip.start_file(DB_FILE_IN_ZIP, opt)?;
-                zip.write_all(&db_bytes)?;
-
-                // 统计
-                stats.notes_count = db.count_notes_active()?;
-                stats.folders_count = db.count_folders()?;
-                stats.tags_count = db.count_tags()?;
+        // 1. app.db —— 用 VACUUM INTO 生成干净副本（绕开 WAL），然后流式复制进 ZIP
+        if scope.notes {
+            let tmp_db = data_dir.join(".sync-tmp-app.db");
+            let _ = fs::remove_file(&tmp_db);
+            db.vacuum_into(&tmp_db)?;
+            zip.start_file(DB_FILE_IN_ZIP, opt)?;
+            {
+                let mut f = fs::File::open(&tmp_db)?;
+                std::io::copy(&mut f, &mut zip)?;
             }
+            let _ = fs::remove_file(&tmp_db);
 
-            // 2. kb_assets/images/
-            if scope.images {
-                let images_dir = data_dir.join(assets_dir_name());
-                let (count, size) = add_dir_to_zip(
-                    &mut zip,
-                    &images_dir,
-                    &format!("{}/", assets_dir_name()),
-                    opt,
-                )?;
-                stats.images_count = count;
-                stats.assets_size += size;
-            }
-
-            // 3. pdfs/
-            if scope.pdfs {
-                let pdfs_dir = data_dir.join(pdfs_dir_name());
-                let (count, size) = add_dir_to_zip(
-                    &mut zip,
-                    &pdfs_dir,
-                    &format!("{}/", pdfs_dir_name()),
-                    opt,
-                )?;
-                stats.pdfs_count = count;
-                stats.assets_size += size;
-            }
-
-            // 4. sources/
-            if scope.sources {
-                let sources_dir = data_dir.join(sources_dir_name());
-                let (count, size) = add_dir_to_zip(
-                    &mut zip,
-                    &sources_dir,
-                    &format!("{}/", sources_dir_name()),
-                    opt,
-                )?;
-                stats.sources_count = count;
-                stats.assets_size += size;
-            }
-
-            // 5. settings.json
-            if scope.settings {
-                let settings_file = data_dir.join(settings_file_name());
-                if settings_file.exists() {
-                    let bytes = fs::read(&settings_file)?;
-                    zip.start_file(SETTINGS_FILE_IN_ZIP, opt)?;
-                    zip.write_all(&bytes)?;
-                }
-            }
-
-            // 6. manifest.json
-            let manifest = SyncManifest {
-                schema_version: MANIFEST_VERSION,
-                device: hostname::get()
-                    .map(|h| h.to_string_lossy().into_owned())
-                    .unwrap_or_else(|_| "unknown".into()),
-                exported_at: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
-                app_version: app_version.to_string(),
-                scope: scope.clone(),
-                stats: stats.clone(),
-            };
-            let manifest_json = serde_json::to_string_pretty(&manifest)?;
-            zip.start_file(MANIFEST_FILE, opt)?;
-            zip.write_all(manifest_json.as_bytes())?;
-
-            zip.finish()?;
+            // 统计
+            stats.notes_count = db.count_notes_active()?;
+            stats.folders_count = db.count_folders()?;
+            stats.tags_count = db.count_tags()?;
         }
 
-        Ok((buffer, stats))
+        // 2. kb_assets/images/
+        if scope.images {
+            let images_dir = data_dir.join(assets_dir_name());
+            let (count, size) = add_dir_to_zip(
+                &mut zip,
+                &images_dir,
+                &format!("{}/", assets_dir_name()),
+                opt,
+            )?;
+            stats.images_count = count;
+            stats.assets_size += size;
+        }
+
+        // 3. pdfs/
+        if scope.pdfs {
+            let pdfs_dir = data_dir.join(pdfs_dir_name());
+            let (count, size) = add_dir_to_zip(
+                &mut zip,
+                &pdfs_dir,
+                &format!("{}/", pdfs_dir_name()),
+                opt,
+            )?;
+            stats.pdfs_count = count;
+            stats.assets_size += size;
+        }
+
+        // 4. sources/
+        if scope.sources {
+            let sources_dir = data_dir.join(sources_dir_name());
+            let (count, size) = add_dir_to_zip(
+                &mut zip,
+                &sources_dir,
+                &format!("{}/", sources_dir_name()),
+                opt,
+            )?;
+            stats.sources_count = count;
+            stats.assets_size += size;
+        }
+
+        // 5. settings.json（通常很小，直接读）
+        if scope.settings {
+            let settings_file = data_dir.join(settings_file_name());
+            if settings_file.exists() {
+                zip.start_file(SETTINGS_FILE_IN_ZIP, opt)?;
+                let mut f = fs::File::open(&settings_file)?;
+                std::io::copy(&mut f, &mut zip)?;
+            }
+        }
+
+        // 6. manifest.json
+        let manifest = SyncManifest {
+            schema_version: MANIFEST_VERSION,
+            device: hostname::get()
+                .map(|h| h.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "unknown".into()),
+            exported_at: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
+            app_version: app_version.to_string(),
+            scope: scope.clone(),
+            stats: stats.clone(),
+        };
+        let manifest_json = serde_json::to_string_pretty(&manifest)?;
+        zip.start_file(MANIFEST_FILE, opt)?;
+        zip.write_all(manifest_json.as_bytes())?;
+
+        zip.finish()?;
+        Ok(stats)
     }
 
-    /// 导出到本地文件
+    /// 导出到本地文件（流式写盘，不占用对等内存）
     pub fn export_to_file(
         data_dir: &Path,
         db: &Database,
@@ -143,8 +142,9 @@ impl SyncService {
         app_version: &str,
         target_path: &Path,
     ) -> Result<SyncResult, AppError> {
-        let (bytes, stats) = Self::build_snapshot(data_dir, db, scope, app_version)?;
-        fs::write(target_path, bytes)?;
+        let file = fs::File::create(target_path)?;
+        let writer = BufWriter::new(file);
+        let stats = Self::build_snapshot_to_writer(writer, data_dir, db, scope, app_version)?;
         Ok(SyncResult {
             stats,
             finished_at: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
@@ -153,14 +153,14 @@ impl SyncService {
 
     // ─── 导入 ──────────────────────────────────
 
-    /// 从字节应用快照
-    pub fn apply_snapshot(
+    /// 从任意 `Read + Seek`（本地文件 / 内存游标）流式展开快照，避免把整个
+    /// ZIP 载入内存。ZipArchive 需要 Seek，因此下载场景要先落盘到临时文件。
+    pub fn apply_snapshot_from_reader<R: Read + Seek>(
         data_dir: &Path,
         db_path: &Path,
-        bytes: &[u8],
+        reader: R,
         mode: SyncImportMode,
     ) -> Result<SyncManifest, AppError> {
-        let reader = Cursor::new(bytes);
         let mut archive = ZipArchive::new(reader)
             .map_err(|e| AppError::Custom(format!("解析 ZIP 失败: {}", e)))?;
 
@@ -297,20 +297,22 @@ impl SyncService {
         }
     }
 
-    /// 从本地文件导入
+    /// 从本地文件导入（流式读取，避免把整份 ZIP 载入内存）
     pub fn import_from_file(
         data_dir: &Path,
         db_path: &Path,
         source_path: &Path,
         mode: SyncImportMode,
     ) -> Result<SyncManifest, AppError> {
-        let bytes = fs::read(source_path)?;
-        Self::apply_snapshot(data_dir, db_path, &bytes, mode)
+        let file = fs::File::open(source_path)?;
+        let reader = BufReader::new(file);
+        Self::apply_snapshot_from_reader(data_dir, db_path, reader, mode)
     }
 
     // ─── WebDAV 云同步 ──────────────────────────
 
-    /// 推送到 WebDAV
+    /// 推送到 WebDAV：先把快照流式写入临时文件，再流式上传，
+    /// 全程不把整份 ZIP 驻留在内存中。
     pub async fn webdav_push(
         data_dir: &Path,
         db: &Database,
@@ -320,17 +322,31 @@ impl SyncService {
         username: &str,
         password: &str,
     ) -> Result<SyncResult, AppError> {
-        let (bytes, stats) = Self::build_snapshot(data_dir, db, scope, app_version)?;
+        let tmp_zip = data_dir.join(".sync-tmp-upload.zip");
+        let _ = fs::remove_file(&tmp_zip);
+
+        // 1. 流式构建快照到临时文件
+        let stats = {
+            let file = fs::File::create(&tmp_zip)?;
+            let writer = BufWriter::new(file);
+            Self::build_snapshot_to_writer(writer, data_dir, db, scope, app_version)?
+        };
+
+        // 2. 流式上传临时文件，无论成败都清理临时文件
         let filename = device_zip_name();
         let client = WebDavClient::new(url, username, password);
-        client.upload_bytes(&filename, bytes).await?;
+        let upload_result = client.upload_file(&filename, &tmp_zip).await;
+        let _ = fs::remove_file(&tmp_zip);
+        upload_result?;
+
         Ok(SyncResult {
             stats,
             finished_at: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
         })
     }
 
-    /// 从 WebDAV 拉取（以 device 名优先，找不到则尝试通用 kb-sync.zip）
+    /// 从 WebDAV 拉取：先流式下载到临时文件，再流式解包，
+    /// 避免把整份 ZIP 驻留在内存中。
     pub async fn webdav_pull(
         data_dir: &Path,
         db_path: &Path,
@@ -344,8 +360,25 @@ impl SyncService {
         let filename = preferred_filename
             .map(|s| s.to_string())
             .unwrap_or_else(device_zip_name);
-        let bytes = client.download_bytes(&filename).await?;
-        Self::apply_snapshot(data_dir, db_path, &bytes, mode)
+
+        let tmp_zip = data_dir.join(".sync-tmp-pull.zip");
+        let _ = fs::remove_file(&tmp_zip);
+
+        // 1. 流式下载到临时文件
+        if let Err(e) = client.download_to_file(&filename, &tmp_zip).await {
+            let _ = fs::remove_file(&tmp_zip);
+            return Err(e);
+        }
+
+        // 2. 流式读取并展开
+        let apply_result = (|| {
+            let file = fs::File::open(&tmp_zip)?;
+            let reader = BufReader::new(file);
+            Self::apply_snapshot_from_reader(data_dir, db_path, reader, mode)
+        })();
+
+        let _ = fs::remove_file(&tmp_zip);
+        apply_result
     }
 
     /// 列出云端所有 `kb-sync-*.zip` 快照（多设备场景）
@@ -436,7 +469,10 @@ impl SyncService {
 
 /// 把本地目录递归加入 ZIP，prefix 是 ZIP 内的路径前缀（需以 '/' 结尾）
 /// 返回 (文件数, 总字节数)
-fn add_dir_to_zip<W: Write + std::io::Seek>(
+///
+/// 使用 `std::io::copy` 把文件内容流式喂给 ZipWriter，不再 `fs::read` 整份读入内存。
+/// 这样即便单个资产是 GB 级大文件，内存占用也只是拷贝缓冲 + ZlibEncoder 窗口。
+fn add_dir_to_zip<W: Write + Seek>(
     zip: &mut ZipWriter<W>,
     local_dir: &Path,
     prefix: &str,
@@ -457,11 +493,11 @@ fn add_dir_to_zip<W: Write + std::io::Seek>(
             .map_err(|e| AppError::Custom(format!("路径拼接失败: {}", e)))?;
         let rel_str = rel.to_string_lossy().replace('\\', "/");
         let zip_path = format!("{}{}", prefix, rel_str);
-        let bytes = fs::read(path)?;
         zip.start_file(zip_path, opt)?;
-        zip.write_all(&bytes)?;
+        let mut f = fs::File::open(path)?;
+        let n = std::io::copy(&mut f, zip)?;
         count += 1;
-        size += bytes.len() as u64;
+        size += n;
     }
     Ok((count, size))
 }

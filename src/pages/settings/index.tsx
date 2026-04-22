@@ -19,7 +19,7 @@ import {
   Switch,
 } from "antd";
 import { SyncOutlined, PlusOutlined, CheckCircleFilled, CheckCircleOutlined } from "@ant-design/icons";
-import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate, Power } from "lucide-react";
+import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate, Power, ExternalLink } from "lucide-react";
 import dayjs, { type Dayjs } from "dayjs";
 import { TimePicker } from "antd";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -29,6 +29,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Update } from "@tauri-apps/plugin-updater";
 import type { AiModel, AiModelInput, ImportResult, ImportProgress, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput, OrphanImageScan } from "@/types";
 import { systemApi, updaterApi, aiModelApi, importApi, exportApi, folderApi, templateApi, pdfApi, sourceFileApi, imageMaintApi, autostartApi, configApi } from "@/lib/api";
+import { useAppStore } from "@/store";
 import { importWordFiles } from "@/lib/wordImport";
 import { Checkbox } from "antd";
 import { UpdateModal } from "@/components/ui/UpdateModal";
@@ -38,6 +39,11 @@ import { TiptapEditor } from "@/components/editor";
 import type { Folder } from "@/types";
 
 const { Title, Text } = Typography;
+
+/** 作者社区信息 */
+const BILIBILI_URL = "https://space.bilibili.com/520725002";
+const ZSXQ_NAME = "后端转AI实战派";
+const ZSXQ_ID = "91839984";
 
 /** 模型提供商选项 */
 const PROVIDERS = [
@@ -71,13 +77,26 @@ const MODEL_ID_PLACEHOLDERS: Record<string, string> = {
 /** 各 provider 的常用模型预置（下拉联想；也可手动输入任意值） */
 const MODEL_PRESETS: Record<string, { value: string; label: string }[]> = {
   ollama: [
+    // ── Qwen3 系列（2025 通义千问最新） ──
+    { value: "qwen3:4b", label: "qwen3:4b (千问3 / 入门)" },
+    { value: "qwen3:8b", label: "qwen3:8b (千问3 / 推荐)" },
+    { value: "qwen3:14b", label: "qwen3:14b (千问3 / 进阶)" },
+    { value: "qwen3:32b", label: "qwen3:32b (千问3 / 旗舰)" },
+    { value: "qwen3:30b-a3b", label: "qwen3:30b-a3b (千问3 / MoE)" },
+    // ── QwQ 推理 ──
+    { value: "qwq:32b", label: "qwq:32b (千问推理 / o1 同级)" },
+    // ── Qwen2.5 主力尺寸 ──
     { value: "qwen2.5:7b", label: "qwen2.5:7b" },
     { value: "qwen2.5:14b", label: "qwen2.5:14b" },
-    { value: "qwen2.5:3b", label: "qwen2.5:3b" },
-    { value: "llama3.2:3b", label: "llama3.2:3b" },
+    { value: "qwen2.5:32b", label: "qwen2.5:32b" },
+    { value: "qwen2.5:72b", label: "qwen2.5:72b" },
+    // ── Qwen2.5-Coder（编程场景） ──
+    { value: "qwen2.5-coder:7b", label: "qwen2.5-coder:7b (编程)" },
+    { value: "qwen2.5-coder:14b", label: "qwen2.5-coder:14b (编程)" },
+    { value: "qwen2.5-coder:32b", label: "qwen2.5-coder:32b (编程)" },
+    // ── 其他主流本地模型 ──
     { value: "llama3.1:8b", label: "llama3.1:8b" },
     { value: "gemma2:9b", label: "gemma2:9b" },
-    { value: "phi3:mini", label: "phi3:mini" },
   ],
   openai: [
     { value: "gpt-4o", label: "gpt-4o" },
@@ -290,9 +309,15 @@ export default function SettingsPage() {
     }
   }
 
+  // 订阅全局 foldersRefreshTick：Sidebar 修改文件夹后自动刷新设置页的文件夹选项
+  const foldersRefreshTick = useAppStore((s) => s.foldersRefreshTick);
+  useEffect(() => {
+    loadFolders();
+  }, [foldersRefreshTick]);
+
   useEffect(() => {
     loadModels();
-    loadFolders();
+    // loadFolders 已由 foldersRefreshTick useEffect 在首次挂载时触发
     loadTemplates();
     systemApi
       .getSystemInfo()
@@ -1163,6 +1188,46 @@ export default function SettingsPage() {
           ))}
         </div>
       </Modal>
+
+      <Card title="作者 & 社区">
+        <div className="flex items-center justify-between py-1">
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div>
+              <Text strong style={{ fontSize: 13 }}>B 站主页</Text>
+            </div>
+            <Text
+              type="secondary"
+              style={{ fontSize: 12, wordBreak: "break-all" }}
+            >
+              {BILIBILI_URL}
+            </Text>
+          </div>
+          <Button
+            type="link"
+            size="small"
+            icon={<ExternalLink size={14} />}
+            onClick={() => openUrl(BILIBILI_URL)}
+          >
+            打开
+          </Button>
+        </div>
+        <div
+          className="py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div>
+            <Text strong style={{ fontSize: 13 }}>知识星球</Text>
+          </div>
+          <div style={{ marginTop: 2 }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {ZSXQ_NAME} · 星球号{" "}
+            </Text>
+            <Text copyable={{ text: ZSXQ_ID }} strong style={{ fontSize: 13 }}>
+              {ZSXQ_ID}
+            </Text>
+          </div>
+        </div>
+      </Card>
 
       <RecommendCards />
 

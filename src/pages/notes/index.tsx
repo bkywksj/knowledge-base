@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, startTransition } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, startTransition, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Table,
@@ -16,6 +16,9 @@ import {
   Segmented,
   Tag,
   Timeline,
+  Popover,
+  Tree,
+  Divider,
   theme as antdTheme,
 } from "antd";
 import {
@@ -30,6 +33,9 @@ import {
   Clock,
   Pin,
   Calendar,
+  Folder as FolderIcon,
+  CornerUpLeft,
+  Filter as FilterIcon,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ColumnsType, TablePaginationConfig } from "antd/es/table";
@@ -77,6 +83,176 @@ const NoteDecorators = ({ note, warningColor }: { note: Note; warningColor: stri
   </span>
 );
 
+/** 把 Folder[] 映射为 antd Tree 的节点结构（key = folder id） */
+type FolderTreeNode = {
+  key: number;
+  title: ReactNode;
+  children?: FolderTreeNode[];
+};
+function foldersToAntTree(folders: Folder[]): FolderTreeNode[] {
+  return folders.map((f) => ({
+    key: f.id,
+    title: (
+      <span className="inline-flex items-center gap-1.5" style={{ fontSize: 13 }}>
+        <FolderIcon size={13} style={{ opacity: 0.6 }} />
+        {f.name}
+      </span>
+    ),
+    children: f.children?.length ? foldersToAntTree(f.children) : undefined,
+  }));
+}
+function collectAllFolderKeys(nodes: FolderTreeNode[]): number[] {
+  const out: number[] = [];
+  for (const n of nodes) {
+    out.push(n.key);
+    if (n.children?.length) out.push(...collectAllFolderKeys(n.children));
+  }
+  return out;
+}
+
+/** 笔记列表"目录"列的单元格：
+ *  - 展示当前文件夹名或"—"（无目录）
+ *  - 点击 → Popover 里 Tree 选择新文件夹 → 调 moveToFolder → 刷新列表
+ *  - 保留"筛选此文件夹"快捷入口（原表格里的跳转语义） */
+function FolderChangeCell({
+  noteId,
+  currentFolderId,
+  folders,
+  folderMap,
+  onChanged,
+  onFilterClick,
+}: {
+  noteId: number;
+  currentFolderId: number | null;
+  folders: Folder[];
+  folderMap: Map<number, string>;
+  onChanged: () => void;
+  onFilterClick: (folderId: number) => void;
+}) {
+  const { token } = antdTheme.useToken();
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const treeData = useMemo(() => foldersToAntTree(folders), [folders]);
+  const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([]);
+  useEffect(() => {
+    if (open) setExpandedKeys(collectAllFolderKeys(treeData));
+  }, [open, treeData]);
+
+  async function applyMove(folderId: number | null) {
+    if (folderId === currentFolderId) {
+      setOpen(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      await noteApi.moveToFolder(noteId, folderId);
+      useAppStore.getState().bumpFoldersRefresh();
+      onChanged();
+      setOpen(false);
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const currentName =
+    currentFolderId != null ? folderMap.get(currentFolderId) ?? null : null;
+
+  const popoverContent = (
+    <div style={{ width: 240 }}>
+      <div
+        style={{
+          fontSize: 11,
+          color: token.colorTextTertiary,
+          padding: "2px 4px 6px",
+          letterSpacing: 0.3,
+        }}
+      >
+        移动到
+      </div>
+      <div style={{ maxHeight: 260, overflowY: "auto", margin: "0 -4px", padding: "0 4px" }}>
+        {treeData.length === 0 ? (
+          <div
+            style={{
+              textAlign: "center",
+              padding: "12px 8px",
+              color: token.colorTextTertiary,
+              fontSize: 12,
+            }}
+          >
+            还没有文件夹
+          </div>
+        ) : (
+          <Tree
+            blockNode
+            treeData={treeData}
+            selectedKeys={currentFolderId != null ? [currentFolderId] : []}
+            expandedKeys={expandedKeys}
+            onExpand={(keys) => setExpandedKeys(keys)}
+            onSelect={(keys) => {
+              if (keys.length > 0) applyMove(keys[0] as number);
+            }}
+            disabled={saving}
+          />
+        )}
+      </div>
+      <Divider style={{ margin: "8px 0" }} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <Button
+          size="small"
+          type="text"
+          block
+          disabled={currentFolderId == null || saving}
+          icon={<CornerUpLeft size={13} />}
+          onClick={() => applyMove(null)}
+          style={{ textAlign: "left", justifyContent: "flex-start" }}
+        >
+          移到根目录
+        </Button>
+        {currentFolderId != null && (
+          <Button
+            size="small"
+            type="text"
+            block
+            icon={<FilterIcon size={13} />}
+            onClick={() => {
+              onFilterClick(currentFolderId);
+              setOpen(false);
+            }}
+            style={{ textAlign: "left", justifyContent: "flex-start" }}
+          >
+            筛选此文件夹下的笔记
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <Popover
+      trigger="click"
+      open={open}
+      onOpenChange={setOpen}
+      placement="bottomLeft"
+      destroyOnHidden
+      content={popoverContent}
+    >
+      {currentName ? (
+        <a style={{ fontSize: 12 }} onClick={(e) => e.preventDefault()}>
+          {currentName}
+        </a>
+      ) : (
+        <span
+          style={{ fontSize: 12, color: token.colorTextTertiary, cursor: "pointer" }}
+        >
+          —
+        </span>
+      )}
+    </Popover>
+  );
+}
+
 export default function NoteListPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -96,20 +272,25 @@ export default function NoteListPage() {
 
   // 文件夹 id → name 映射（用于显示目录列）
   const [folderMap, setFolderMap] = useState<Map<number, string>>(new Map());
+  // 原始文件夹树，供"目录"列的 Popover 选择器用
+  const [folders, setFolders] = useState<Folder[]>([]);
 
+  // 依赖全局 foldersRefreshTick：Sidebar 新建/改名/删文件夹后自动重建 id→name 映射
+  const foldersRefreshTick = useAppStore((s) => s.foldersRefreshTick);
   useEffect(() => {
-    folderApi.list().then((folders) => {
+    folderApi.list().then((list) => {
+      setFolders(list);
       const map = new Map<number, string>();
-      function flatten(list: Folder[]) {
-        for (const f of list) {
+      function flatten(flist: Folder[]) {
+        for (const f of flist) {
           map.set(f.id, f.name);
           if (f.children?.length) flatten(f.children);
         }
       }
-      flatten(folders);
+      flatten(list);
       setFolderMap(map);
     });
-  }, []);
+  }, [foldersRefreshTick]);
 
   useEffect(() => {
     loadNotes(1);
@@ -241,21 +422,18 @@ export default function NoteListPage() {
         title: "目录",
         dataIndex: "folder_id",
         key: "folder",
-        width: 100,
+        width: 120,
         ellipsis: true,
-        render: (fid: number | null) =>
-          fid && folderMap.get(fid) ? (
-            <a
-              onClick={() => navigate(`/notes?folder=${fid}`)}
-              style={{ fontSize: 12 }}
-            >
-              {folderMap.get(fid)}
-            </a>
-          ) : (
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              —
-            </Text>
-          ),
+        render: (fid: number | null, record: Note) => (
+          <FolderChangeCell
+            noteId={record.id}
+            currentFolderId={fid}
+            folders={folders}
+            folderMap={folderMap}
+            onChanged={() => loadNotes(data.page)}
+            onFilterClick={(id) => navigate(`/notes?folder=${id}`)}
+          />
+        ),
       },
       {
         title: "字数",
@@ -310,7 +488,7 @@ export default function NoteListPage() {
         ),
       },
     ],
-    [navigate, token.colorWarning, handleDelete, handleExport, folderMap],
+    [navigate, token.colorWarning, handleDelete, handleExport, folderMap, folders, loadNotes, data.page],
   );
 
   // 时间线分组（缓存）

@@ -1,11 +1,15 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Input, List, Typography, Empty, Spin } from "antd";
+import { Input, Typography, Empty, Spin } from "antd";
 import { Search as SearchIcon, FileText } from "lucide-react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { searchApi } from "@/lib/api";
 import type { SearchResult } from "@/types";
 
 const { Text } = Typography;
+
+/** 搜索结果单行高度估算（含 title + snippet + 日期三行 + 上下 padding） */
+const ESTIMATED_ROW_HEIGHT = 92;
 
 export default function SearchPage() {
   const navigate = useNavigate();
@@ -16,6 +20,14 @@ export default function SearchPage() {
   const [searched, setSearched] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const initializedRef = useRef(false);
+  // 虚拟滚动容器（仅在结果数较多时启用）
+  const scrollParentRef = useRef<HTMLDivElement | null>(null);
+  const virtualizer = useVirtualizer({
+    count: results.length,
+    getScrollElement: () => scrollParentRef.current,
+    estimateSize: () => ESTIMATED_ROW_HEIGHT,
+    overscan: 6,
+  });
 
   // 从 URL 参数 ?q= 初始化搜索
   useEffect(() => {
@@ -88,36 +100,62 @@ export default function SearchPage() {
               找到 {results.length} 条结果
             </Text>
           </div>
-          <List
-            dataSource={results}
-            renderItem={(item) => (
-              <List.Item
-                className="cursor-pointer"
-                onClick={() => navigate(`/notes/${item.id}`)}
-                style={{ padding: "12px 0" }}
-              >
-                <List.Item.Meta
-                  avatar={<FileText size={20} style={{ marginTop: 4 }} />}
-                  title={
-                    <Text ellipsis style={{ maxWidth: 500 }}>
-                      {item.title}
-                    </Text>
-                  }
-                  description={
-                    <div>
+          {/* 虚拟滚动：只渲染可见 + overscan 的结果行，千级结果也不卡 */}
+          <div
+            ref={scrollParentRef}
+            style={{
+              // 留出搜索框 + 结果计数 + 边距的空间，剩余区域做滚动容器
+              height: "calc(100vh - 180px)",
+              overflowY: "auto",
+              contain: "strict",
+            }}
+          >
+            <div
+              style={{
+                height: virtualizer.getTotalSize(),
+                width: "100%",
+                position: "relative",
+              }}
+            >
+              {virtualizer.getVirtualItems().map((vItem) => {
+                const item = results[vItem.index];
+                return (
+                  <div
+                    key={item.id}
+                    data-index={vItem.index}
+                    ref={virtualizer.measureElement}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      transform: `translateY(${vItem.start}px)`,
+                      padding: "12px 0",
+                      borderBottom: "1px solid rgba(0,0,0,0.06)",
+                      cursor: "pointer",
+                      display: "flex",
+                      gap: 12,
+                    }}
+                    onClick={() => navigate(`/notes/${item.id}`)}
+                  >
+                    <FileText size={20} style={{ marginTop: 4, flexShrink: 0 }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <Text ellipsis style={{ display: "block", maxWidth: 500, fontWeight: 500 }}>
+                        {item.title}
+                      </Text>
                       <div
-                        style={{ fontSize: 13, marginBottom: 4 }}
+                        style={{ fontSize: 13, marginTop: 4, marginBottom: 4 }}
                         dangerouslySetInnerHTML={{ __html: item.snippet }}
                       />
                       <Text type="secondary" style={{ fontSize: 12 }}>
                         {item.updated_at.slice(0, 10)}
                       </Text>
                     </div>
-                  }
-                />
-              </List.Item>
-            )}
-          />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </>
       ) : !searched ? (
         <div className="flex flex-col items-center py-12">

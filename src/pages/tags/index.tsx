@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Card,
@@ -9,16 +9,20 @@ import {
   Modal,
   Form,
   Input,
-  List,
   Popconfirm,
   message,
   theme as antdTheme,
 } from "antd";
 import { Plus, Tags, FileText, Edit3, Trash2, Check } from "lucide-react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { tagApi } from "@/lib/api";
 import { stripHtml, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { useAppStore } from "@/store";
 import type { Tag, Note, PageResult } from "@/types";
+
+/** 笔记列表单行高度估算（title + 一行 snippet） */
+const NOTE_ROW_HEIGHT = 62;
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -70,6 +74,15 @@ export default function TagsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTag, setEditingTag] = useState<Tag | null>(null);
   const [form] = Form.useForm<{ name: string; color: string }>();
+
+  // 虚拟滚动容器：某些热门标签可能关联几百条笔记，一次性渲染会让切换标签卡顿
+  const notesScrollRef = useRef<HTMLDivElement | null>(null);
+  const notesVirtualizer = useVirtualizer({
+    count: notes.items.length,
+    getScrollElement: () => notesScrollRef.current,
+    estimateSize: () => NOTE_ROW_HEIGHT,
+    overscan: 6,
+  });
 
   useEffect(() => {
     loadTags();
@@ -124,6 +137,7 @@ export default function TagsPage() {
       setModalOpen(false);
       form.resetFields();
       await loadTags();
+      useAppStore.getState().bumpTagsRefresh();
     } catch (e) {
       message.error(String(e));
     }
@@ -138,6 +152,7 @@ export default function TagsPage() {
         setNotes({ items: [], total: 0, page: 1, page_size: 20 });
       }
       await loadTags();
+      useAppStore.getState().bumpTagsRefresh();
     } catch (e) {
       message.error(String(e));
     }
@@ -225,40 +240,67 @@ export default function TagsPage() {
           loading={notesLoading}
         >
           {notes.items.length > 0 ? (
-            <List
-              dataSource={notes.items}
-              renderItem={(note) => (
-                <List.Item
-                  className="cursor-pointer"
-                  style={{ padding: "8px 0" }}
-                  onClick={() => navigate(`/notes/${note.id}`)}
-                  actions={[
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      {relativeTime(note.updated_at)}
-                    </Text>,
-                  ]}
-                >
-                  <List.Item.Meta
-                    title={
-                      <Text ellipsis style={{ maxWidth: 400 }}>
-                        {note.title}
+            // 虚拟滚动：只渲染可见行，热门标签（几百条笔记）切换也保持流畅
+            <div
+              ref={notesScrollRef}
+              style={{
+                maxHeight: 480,
+                overflowY: "auto",
+                contain: "strict",
+              }}
+            >
+              <div
+                style={{
+                  height: notesVirtualizer.getTotalSize(),
+                  width: "100%",
+                  position: "relative",
+                }}
+              >
+                {notesVirtualizer.getVirtualItems().map((vItem) => {
+                  const note = notes.items[vItem.index];
+                  return (
+                    <div
+                      key={note.id}
+                      data-index={vItem.index}
+                      ref={notesVirtualizer.measureElement}
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        transform: `translateY(${vItem.start}px)`,
+                        padding: "8px 0",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "flex-start",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        borderBottom: "1px solid rgba(0,0,0,0.06)",
+                      }}
+                      onClick={() => navigate(`/notes/${note.id}`)}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <Text ellipsis style={{ display: "block", maxWidth: 400 }}>
+                          {note.title}
+                        </Text>
+                        {note.content ? (
+                          <Paragraph
+                            type="secondary"
+                            ellipsis={{ rows: 1 }}
+                            style={{ marginBottom: 0, fontSize: 12, marginTop: 2 }}
+                          >
+                            {stripHtml(note.content).slice(0, 100)}
+                          </Paragraph>
+                        ) : null}
+                      </div>
+                      <Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
+                        {relativeTime(note.updated_at)}
                       </Text>
-                    }
-                    description={
-                      note.content ? (
-                        <Paragraph
-                          type="secondary"
-                          ellipsis={{ rows: 1 }}
-                          style={{ marginBottom: 0, fontSize: 12 }}
-                        >
-                          {stripHtml(note.content).slice(0, 100)}
-                        </Paragraph>
-                      ) : null
-                    }
-                  />
-                </List.Item>
-              )}
-            />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           ) : (
             <EmptyState description="该标签下暂无笔记" />
           )}

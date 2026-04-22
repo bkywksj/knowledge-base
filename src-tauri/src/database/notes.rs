@@ -9,12 +9,16 @@ impl Database {
     // ─── 笔记 DAO ─────────────────────────────────
 
     /// 创建笔记
+    ///
+    /// 同步维护 `title_normalized` 列（v17 引入），用于 wiki 链接查找走索引而非全表扫。
     pub fn create_note(&self, input: &NoteInput) -> Result<Note, AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
 
+        let normalized = crate::database::links::normalize_title(&input.title);
         conn.execute(
-            "INSERT INTO notes (title, content, folder_id) VALUES (?1, ?2, ?3)",
-            params![input.title, input.content, input.folder_id],
+            "INSERT INTO notes (title, content, folder_id, title_normalized)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![input.title, input.content, input.folder_id, normalized],
         )?;
 
         let id = conn.last_insert_rowid();
@@ -22,14 +26,18 @@ impl Database {
     }
 
     /// 更新笔记
+    ///
+    /// 同步维护 `title_normalized` 列（v17 引入）。
     pub fn update_note(&self, id: i64, input: &NoteInput) -> Result<Note, AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
 
+        let normalized = crate::database::links::normalize_title(&input.title);
         let affected = conn.execute(
             "UPDATE notes SET title = ?1, content = ?2, folder_id = ?3,
+                    title_normalized = ?4,
                     updated_at = datetime('now', 'localtime')
-             WHERE id = ?4",
-            params![input.title, input.content, input.folder_id, id],
+             WHERE id = ?5",
+            params![input.title, input.content, input.folder_id, normalized, id],
         )?;
 
         if affected == 0 {
@@ -403,9 +411,11 @@ impl Database {
 
         // 不存在则创建
         let title = format!("{} 的日记", date);
+        let normalized = crate::database::links::normalize_title(&title);
         conn.execute(
-            "INSERT INTO notes (title, content, is_daily, daily_date) VALUES (?1, '', 1, ?2)",
-            params![title, date],
+            "INSERT INTO notes (title, content, is_daily, daily_date, title_normalized)
+             VALUES (?1, '', 1, ?2, ?3)",
+            params![title, date, normalized],
         )?;
 
         let id = conn.last_insert_rowid();

@@ -11,6 +11,9 @@ import { RecommendCards } from "@/components/ui/RecommendCards";
 import { UpdateModal } from "@/components/ui/UpdateModal";
 
 const OFFICIAL_SITE = "https://kb.ruoyi.plus/";
+const BILIBILI_URL = "https://space.bilibili.com/520725002";
+const ZSXQ_NAME = "后端转AI实战派";
+const ZSXQ_ID = "91839984";
 
 const { Title, Text } = Typography;
 
@@ -126,6 +129,34 @@ export default function AboutPage() {
         ) : (
           <Text type="danger">无法获取系统信息</Text>
         )}
+      </Card>
+
+      <Card title="作者 & 社区">
+        <Descriptions column={1} bordered size="small">
+          <Descriptions.Item label="B 站主页">
+            <div className="flex items-center justify-between gap-2">
+              <Text style={{ fontSize: 13 }}>{BILIBILI_URL}</Text>
+              <Tooltip title="在浏览器中打开">
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<ExternalLink size={14} />}
+                  onClick={() => openUrl(BILIBILI_URL)}
+                />
+              </Tooltip>
+            </div>
+          </Descriptions.Item>
+          <Descriptions.Item label="知识星球">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Text style={{ fontSize: 13 }}>{ZSXQ_NAME}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>·</Text>
+              <Text style={{ fontSize: 13 }}>星球号</Text>
+              <Text copyable={{ text: ZSXQ_ID }} strong style={{ fontSize: 13 }}>
+                {ZSXQ_ID}
+              </Text>
+            </div>
+          </Descriptions.Item>
+        </Descriptions>
       </Card>
 
       {info && (

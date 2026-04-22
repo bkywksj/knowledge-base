@@ -24,6 +24,10 @@ interface AppStore {
   createModalOpen: boolean;
   /** 笔记列表刷新触发器：递增即触发各页面重新拉数据 */
   notesRefreshTick: number;
+  /** 文件夹列表刷新触发器：Sidebar CRUD 后递增，编辑器/列表/设置页自动重拉 */
+  foldersRefreshTick: number;
+  /** 标签列表刷新触发器：标签页/编辑器 CRUD 后递增，其他消费者自动重拉 */
+  tagsRefreshTick: number;
   /** 未完成 + 紧急的任务数（用于侧边栏红色 Badge） */
   urgentTodoCount: number;
   /** 窗口置顶状态（UI 真相源；托盘 CheckMenuItem 通过事件同步） */
@@ -48,6 +52,10 @@ interface AppStore {
   closeCreateModal: () => void;
   /** 触发所有监听笔记列表的页面刷新（导入/创建后调用） */
   bumpNotesRefresh: () => void;
+  /** 触发所有文件夹下拉/列表刷新（Sidebar 增删改/拖拽后调用） */
+  bumpFoldersRefresh: () => void;
+  /** 触发所有标签下拉/列表刷新（标签页或编辑器新建标签后调用） */
+  bumpTagsRefresh: () => void;
   /** 重新拉取任务统计（任务变更后调用，用于刷新侧边栏 Badge） */
   refreshTaskStats: () => Promise<void>;
   /**
@@ -66,6 +74,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   focusMode: false,
   createModalOpen: false,
   notesRefreshTick: 0,
+  foldersRefreshTick: 0,
+  tagsRefreshTick: 0,
   urgentTodoCount: 0,
   alwaysOnTop: false,
   activeTheme: () => {
@@ -84,6 +94,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   openCreateModal: () => set({ createModalOpen: true }),
   closeCreateModal: () => set({ createModalOpen: false }),
   bumpNotesRefresh: () => set((s) => ({ notesRefreshTick: s.notesRefreshTick + 1 })),
+  bumpFoldersRefresh: () => set((s) => ({ foldersRefreshTick: s.foldersRefreshTick + 1 })),
+  bumpTagsRefresh: () => set((s) => ({ tagsRefreshTick: s.tagsRefreshTick + 1 })),
   refreshTaskStats: async () => {
     try {
       const stats = await taskApi.stats();

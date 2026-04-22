@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 15;
+pub const SCHEMA_VERSION: i32 = 17;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -45,6 +45,8 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             12 => migrate_v12_to_v13(conn)?,
             13 => migrate_v13_to_v14(conn)?,
             14 => migrate_v14_to_v15(conn)?,
+            15 => migrate_v15_to_v16(conn)?,
+            16 => migrate_v16_to_v17(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -584,5 +586,79 @@ fn migrate_v14_to_v15(conn: &Connection) -> Result<(), AppError> {
     }
 
     set_version(conn, 15)?;
+    Ok(())
+}
+
+/// v15 -> v16: 补 note_links.source_id 索引
+///
+/// 原先只建了 idx_note_links_target（反向链接查询走这条），
+/// 但保存笔记时 `DELETE FROM note_links WHERE source_id = ?1` 没有 source_id 单列索引可用。
+/// 笔记数量大时该 DELETE 会退化为全表扫描，导致保存明显变慢。
+fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v15 -> v16 (补 note_links.source_id 索引)");
+
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_note_links_source ON note_links(source_id);",
+    )?;
+
+    set_version(conn, 16)?;
+    Ok(())
+}
+
+/// v16 -> v17: notes 新增 title_normalized 列 + 索引，解除 wiki 链接匹配的全表扫
+///
+/// 背景：`find_note_id_by_title_loose` 是 [[wiki-link]] 编辑器自动补全、保存时链接同步
+/// 的热路径。老实现 `SELECT id, title FROM notes WHERE is_deleted = 0` 全表拉回来，
+/// 再在 Rust 侧对每行 title 做 `normalize_title`（去转义 + 空白折叠 + lowercase）再比较。
+/// 10k 笔记时每次调用要几十毫秒，打字时卡顿肉眼可见。
+///
+/// 本迁移：
+/// 1) ALTER TABLE 新增 title_normalized 列（幂等）
+/// 2) 用 Rust 侧 `normalize_title` 批量回填（保证和运行时比较使用同一套规则）
+/// 3) 建部分索引 `idx_notes_title_normalized WHERE is_deleted = 0`
+///
+/// 之后 `find_note_id_by_title_loose` 直接 `WHERE title_normalized = ?`，走 O(log n) 索引。
+///
+/// **DAO 协议**：`create_note` / `update_note` / `get_or_create_daily` 写入时必须同步
+/// 维护 `title_normalized`。老数据一次性回填后不再需要运行时 fallback。
+fn migrate_v16_to_v17(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v16 -> v17 (notes.title_normalized + 索引)");
+
+    let cols = list_columns(conn, "notes")?;
+    if !cols.iter().any(|c| c == "title_normalized") {
+        conn.execute_batch("ALTER TABLE notes ADD COLUMN title_normalized TEXT;")?;
+    }
+
+    // 回填：仅对 title_normalized IS NULL 的行（幂等可重跑）
+    let mut stmt = conn.prepare(
+        "SELECT id, title FROM notes WHERE title_normalized IS NULL",
+    )?;
+    let rows: Vec<(i64, String)> = stmt
+        .query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+    drop(stmt);
+
+    log::info!("[v17] 准备回填 {} 条笔记的 title_normalized", rows.len());
+
+    let tx = conn.unchecked_transaction()?;
+    for (id, title) in &rows {
+        let norm = crate::database::links::normalize_title(title);
+        tx.execute(
+            "UPDATE notes SET title_normalized = ?1 WHERE id = ?2",
+            rusqlite::params![norm, id],
+        )?;
+    }
+    tx.commit()?;
+
+    // 部分索引：只对活跃笔记建索引，更紧凑
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_notes_title_normalized
+         ON notes(title_normalized) WHERE is_deleted = 0;",
+    )?;
+
+    set_version(conn, 17)?;
     Ok(())
 }

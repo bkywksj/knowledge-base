@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Button,
   Input,
@@ -118,6 +118,20 @@ export default function DailyPage() {
       setSaving(false);
     }
   }
+
+  // Ctrl+S / Cmd+S 保存：用 ref 引用最新 handleSave，避免 useEffect 重复订阅
+  const saveRef = useRef<() => void>(() => {});
+  saveRef.current = handleSave;
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        saveRef.current();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   function goToDate(d: string) {
     if (dirty) {

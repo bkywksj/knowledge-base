@@ -1,6 +1,6 @@
 [package]
 name = "knowledge_base"
-version = "1.0.0"
+version = "1.1.0"
 description = "本地知识库桌面应用 - 全文搜索、双向链接、知识图谱"
 authors = ["抓蛙师"]
 edition = "2021"
@@ -31,7 +31,8 @@ chrono = { version = "0.4", features = ["serde"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 reqwest = { version = "0.12", features = ["json", "stream"] }
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "fs", "io-util"] }
+tokio-util = { version = "0.7", features = ["io"] }
 futures = "0.3"
 tauri-plugin-dialog = "2"
 walkdir = "2"

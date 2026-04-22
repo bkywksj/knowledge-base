@@ -114,15 +114,28 @@ impl ImageService {
 
     /// 扫描孤儿图片（只扫不删）
     ///
-    /// 判定方式：遍历所有活跃笔记 content 拼成 haystack，
-    /// 图片目录下每个文件若其唯一文件名在 haystack 中未出现 → 视为孤儿。
-    /// 唯一名包含时间戳+纳秒，冲突概率可忽略。
+    /// 判定方式：图片文件名形如 `YYYYMMDDHHMMSS_<nanos>.ext`，
+    /// 扫描所有笔记 content 抓出所有"带图片扩展名的 token"塞进 HashSet，
+    /// 磁盘文件若名字不在 set 里则视为孤儿。
+    ///
+    /// **旧实现的问题**：把所有笔记 content 拼成一个 GB 级 haystack，再对磁盘上
+    /// 每个图片文件名做 O(n*m) 子串匹配 `haystack.contains(name)`。笔记库大时：
+    ///   - haystack 内存峰值可达数百 MB（所有正文拷贝 + `join` 再拷贝一次）
+    ///   - 每次 contains() 线性扫描整个 haystack
+    ///
+    /// **新实现**：流式扫描 content，用手写状态机一次扫过提取所有 `<name>.<ext>` token。
+    /// 判定孤儿时直接 `HashSet::contains`，O(1) 查表。
     pub fn scan_orphans(db: &Database, app_data_dir: &Path) -> Result<OrphanImageScan, AppError> {
+        use std::collections::HashSet;
         const DISPLAY_LIMIT: usize = 500;
 
-        // 1) 收集所有笔记正文拼一个大串
+        // 1) 构建"笔记里引用的图片文件名"集合：扫 content 抓时间戳前缀的文件名 token
         let contents = db.list_all_active_contents()?;
-        let haystack: String = contents.join("\n");
+        let mut referenced: HashSet<String> = HashSet::new();
+        for c in &contents {
+            collect_image_filenames(c, &mut referenced);
+        }
+        drop(contents); // 及早释放大字符串数组
 
         // 2) 遍历图片目录
         let images_root = Self::images_dir(app_data_dir);
@@ -148,7 +161,8 @@ impl ImageService {
                 Some(n) => n,
                 None => continue,
             };
-            if haystack.contains(name) {
+            // referenced 里的文件名在 collect 时已小写化，这里也小写再比
+            if referenced.contains(&name.to_lowercase()) {
                 continue;
             }
             // 是孤儿
@@ -210,5 +224,89 @@ impl ImageService {
             freed_bytes,
             failed,
         })
+    }
+}
+
+/// 从一段笔记正文中提取所有"疑似图片文件名"并塞入 set。
+///
+/// 规则：识别以下扩展名的 token（忽略大小写）：`png jpg jpeg gif webp svg bmp`。
+/// 找到 `.<ext>` 后向前回溯到首个分隔符（空白、`/`、`\`、`"`、`'`、`(`、`)`、`<`、`>`、`[`、`]`、`!`、`#`、`?`），
+/// 得到完整文件名（不含路径）。无正则依赖，一次线性扫过。
+fn collect_image_filenames(text: &str, out: &mut std::collections::HashSet<String>) {
+    const EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"];
+    let lower = text.to_lowercase();
+    let bytes = lower.as_bytes();
+
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'.' {
+            i += 1;
+            continue;
+        }
+        // 尝试匹配 `.<ext>`（后面紧跟非字母数字或到末尾）
+        let ext_start = i + 1;
+        let mut matched: Option<(usize, usize)> = None; // (start, end_exclusive)
+        for ext in EXTS {
+            let end = ext_start + ext.len();
+            if end > bytes.len() {
+                continue;
+            }
+            if &bytes[ext_start..end] != ext.as_bytes() {
+                continue;
+            }
+            // 后一个字符必须不是字母数字，避免把 `.pngx` 错当 `.png`
+            let ok = end == bytes.len() || !bytes[end].is_ascii_alphanumeric();
+            if ok {
+                matched = Some((ext_start, end));
+                break;
+            }
+        }
+        let Some((_ext_s, end)) = matched else {
+            i += 1;
+            continue;
+        };
+
+        // 向前回溯找到文件名起点（到首个分隔符或开头）
+        let mut start = i; // i 指向 `.`
+        while start > 0 {
+            let b = bytes[start - 1];
+            if matches!(
+                b,
+                b' ' | b'\t'
+                    | b'\n'
+                    | b'\r'
+                    | b'/'
+                    | b'\\'
+                    | b'"'
+                    | b'\''
+                    | b'('
+                    | b')'
+                    | b'<'
+                    | b'>'
+                    | b'['
+                    | b']'
+                    | b'!'
+                    | b'#'
+                    | b'?'
+                    | b'&'
+                    | b'='
+                    | b','
+                    | b';'
+                    | b':'
+            ) {
+                break;
+            }
+            start -= 1;
+        }
+
+        if start < i {
+            // &lower[start..end] 是纯 ASCII 文件名（扩展名是 ASCII，文件名部分来自保存逻辑也是 ASCII）
+            let token = &lower[start..end];
+            // 限制长度防止把整段 token 都当文件名（比如异常数据里可能有超长 token）
+            if token.len() <= 128 {
+                out.insert(token.to_string());
+            }
+        }
+        i = end;
     }
 }

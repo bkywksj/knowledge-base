@@ -19,9 +19,17 @@ import { StarryBackground } from "@/components/ui/StarryBackground";
 import { CreateNoteModal } from "@/components/CreateNoteModal";
 import { UpdateBadge } from "@/components/ui/UpdateBadge";
 import { UpdateModal } from "@/components/ui/UpdateModal";
+import { ExitConfirmListener } from "@/components/ui/ExitConfirmListener";
 import { useUpdateChecker } from "@/hooks/useUpdateChecker";
 
 const { Header, Sider, Content } = Layout;
+
+// macOS 上使用 titleBarStyle: "Overlay" 保留原生红黄绿按钮（见 tauri.macos.conf.json）。
+// 避免 `decorations: false` 触发 NSWindow setStyleMask 反复重建（2026-04-22 卡死根因）。
+// 因此 Mac 下需隐藏自绘 WindowControls，并给 Header 左侧留出 ~80px 让位给系统按钮。
+const IS_MAC =
+  typeof navigator !== "undefined" && /Mac OS X|Macintosh/.test(navigator.userAgent);
+const HEADER_LEFT_PADDING = IS_MAC ? 80 : 16;
 
 function getAppWindow(): Window | null {
   try {
@@ -249,6 +257,9 @@ export function AppLayout() {
           width={220}
           style={{
             borderRight: `1px solid ${token.colorBorderSecondary}`,
+            // Mac 上 titleBarStyle: "Overlay" 使系统红黄绿按钮悬浮在窗口左上角，
+            // 给 Sider 顶部留出高度避免按钮压住菜单项
+            paddingTop: IS_MAC ? 28 : 0,
           }}
         >
           <Sidebar />
@@ -266,7 +277,7 @@ export function AppLayout() {
             borderBottom: `1px solid ${token.colorBorderSecondary}`,
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 4, paddingLeft: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, paddingLeft: HEADER_LEFT_PADDING }}>
             <Button
               type="text"
               icon={
@@ -318,7 +329,7 @@ export function AppLayout() {
                 style={alwaysOnTop ? { color: token.colorPrimary } : undefined}
               />
             </Tooltip>
-            <WindowControls />
+            {!IS_MAC && <WindowControls />}
           </div>
         </Header>
         )}
@@ -340,6 +351,7 @@ export function AppLayout() {
       <ShortcutsPanel open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <CreateNoteModal open={createModalOpen} onClose={closeCreateModal} />
       <UpdateModal open={modalOpen} onClose={closeModal} update={update} />
+      <ExitConfirmListener />
     </Layout>
   );
 }

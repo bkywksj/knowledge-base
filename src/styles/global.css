@@ -66,6 +66,15 @@ body,
   overflow: hidden;
 }
 
+/* antd Tree 内部节点紧贴外容器左缘与上缘，外层 padding 影响不到它。
+   - padding-left: 让展开三角"▼"和文件夹图标不贴侧边栏左墙
+   - padding-top:  让第一个节点的"选中高亮背景矩形"离上方"文件夹"标题有一点空隙，
+                   避免蓝色选中态顶边直接贴标题下边 */
+.sidebar-folder-tree .ant-tree-list-holder-inner {
+  padding-left: 6px;
+  padding-top: 6px;
+}
+
 /* ─── 笔记编辑器页面布局（Typora 风格） ────────── */
 
 .editor-page {
