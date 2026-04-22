@@ -173,6 +173,55 @@ fn derive_conversation_title(user_message: &str) -> String {
     }
 }
 
+/// 围绕用户问题关键词命中点，从笔记正文中截取窗口片段供 RAG 上下文使用。
+///
+/// 旧实现 `chars().take(500)` 只取开头 500 字，命中段在文档后半部时 AI 完全看不到。
+/// 改为：复用 `Database::extract_keywords` 得到和检索一致的关键词集合，取**最早命中位置**
+/// 居中的 `window` 字符窗口；未命中则降级为从头取 `window` 字符；首尾被裁剪用 `…` 标记，
+/// 提示 AI 这是片段而非整篇。
+fn extract_window_for_rag(content: &str, query: &str, window: usize) -> String {
+    let chars: Vec<char> = content.chars().collect();
+    if chars.len() <= window {
+        return content.to_string();
+    }
+
+    let keywords = crate::database::Database::extract_keywords(query);
+    let lower_content: String = content.to_lowercase();
+
+    let mut earliest_char_idx: Option<usize> = None;
+    for kw in &keywords {
+        let kw_lower = kw.to_lowercase();
+        if let Some(byte_pos) = lower_content.find(&kw_lower) {
+            let char_idx = lower_content[..byte_pos].chars().count();
+            earliest_char_idx = Some(earliest_char_idx.map_or(char_idx, |c| c.min(char_idx)));
+        }
+    }
+
+    match earliest_char_idx {
+        Some(hit) => {
+            let half = window / 2;
+            let tentative_start = hit.saturating_sub(half);
+            let end = (tentative_start + window).min(chars.len());
+            // 贴底时反推 start，保证窗口始终是 window 大小
+            let start = end.saturating_sub(window);
+            let body: String = chars[start..end].iter().collect();
+            let mut buf = String::with_capacity(body.len() + 6);
+            if start > 0 {
+                buf.push('…');
+            }
+            buf.push_str(&body);
+            if end < chars.len() {
+                buf.push('…');
+            }
+            buf
+        }
+        None => {
+            let body: String = chars.iter().take(window).collect();
+            format!("{}…", body)
+        }
+    }
+}
+
 /// 去除 HTML 标签，提取纯文本（用于 RAG 上下文）
 fn strip_html(html: &str) -> String {
     let mut result = String::with_capacity(html.len());
@@ -431,7 +480,7 @@ impl AiService {
                 );
                 for (id, title, content) in &notes {
                     let plain = strip_html(content);
-                    let snippet: String = plain.chars().take(500).collect();
+                    let snippet = extract_window_for_rag(&plain, user_message, 4000);
                     rag_context.push_str(&format!("---\n标题: {}\n内容: {}\n\n", title, snippet));
                     ref_ids.push(*id);
                 }
