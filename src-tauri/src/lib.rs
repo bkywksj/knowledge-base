@@ -7,7 +7,9 @@ mod state;
 mod tray;
 
 use state::AppState;
-use tauri::{Emitter, Manager, WindowEvent};
+use tauri::{Manager, WindowEvent};
+#[cfg(not(debug_assertions))]
+use tauri::Emitter;
 
 /// 从命令行参数中提取 .md / .markdown 文件的绝对路径（取第一个）
 fn extract_md_path_from_args<I: IntoIterator<Item = String>>(args: I) -> Option<String> {
@@ -26,22 +28,29 @@ fn extract_md_path_from_args<I: IntoIterator<Item = String>>(args: I) -> Option<
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // ─── 单实例插件：仅生产模式启用 ─────────────────────
+    // dev 模式跳过，方便开发版与已安装的正式版同时打开（两套数据通过 `dev-` 前缀隔离）。
+    // 否则 tauri-plugin-single-instance 按 identifier 锁定，dev/prod 共用 `com.agilefr.kb`
+    // 会导致后启动的一方被视为"第二实例"直接退出。
+    #[cfg(not(debug_assertions))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        // 聚焦主窗口
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+        // 解析新 argv 里的 md 路径并广播给前端
+        if let Some(md_path) = extract_md_path_from_args(argv.into_iter().skip(1)) {
+            log::info!("[single-instance] 新实例传入 md: {}", md_path);
+            let _ = app.emit("open-md-file", md_path);
+        }
+    }));
+
+    builder
         // ─── 插件注册 ───────────────────────────────
-        // 单实例：已有窗口时把新双击的 md 文件转发给现有窗口
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            // 聚焦主窗口
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
-            // 解析新 argv 里的 md 路径并广播给前端
-            if let Some(md_path) = extract_md_path_from_args(argv.into_iter().skip(1)) {
-                log::info!("[single-instance] 新实例传入 md: {}", md_path);
-                let _ = app.emit("open-md-file", md_path);
-            }
-        }))
         .plugin(tauri_plugin_opener::init())
         // 开机启动：传 `--start-minimized` 给系统注册项，启动时由下方 setup 判断是否隐藏窗口
         .plugin(tauri_plugin_autostart::init(
