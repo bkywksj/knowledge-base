@@ -310,7 +310,7 @@ impl Database {
     /// - CJK 字符：按 bigram（2-gram）切分（"合同内容" → ["合同", "同内", "内容"]）
     ///   之所以不整串保留，是因为中文没有空格，整串几乎无法与笔记内容精确匹配；
     ///   bigram 对 LIKE '%xx%' 的召回足够好。
-    fn extract_keywords(query: &str) -> Vec<String> {
+    pub(crate) fn extract_keywords(query: &str) -> Vec<String> {
         // 中文停用词（含常见疑问词、代词、虚词，避免 bigram 噪声）
         const STOP_WORDS: &[&str] = &[
             "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都", "一", "一个",
