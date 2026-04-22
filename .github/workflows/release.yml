@@ -83,7 +83,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'Knowledge Base ${{ github.ref_name }}'
+          releaseName: '知识库 ${{ github.ref_name }}'
           releaseBody: 'See the assets to download and install this version.'
           releaseDraft: true
           prerelease: false
