@@ -1,0 +1,28 @@
+{
+  "_comment": "文档站点同步元数据。由 /update-docs 命令维护，不要手动编辑。",
+  "version": "1.0.0",
+  "docsProject": "{{DOCS_PROJECT_NAME}}",
+  "docsLocation": "sibling",
+  "docsPath": "../{{DOCS_PROJECT_NAME}}",
+  "themeColor": "{{THEME_COLOR}}",
+  "lastSyncCommit": "{{INITIAL_COMMIT}}",
+  "lastSyncTime": "{{INITIAL_TIME}}",
+  "coveredSections": ["guide", "api", "backend", "frontend"],
+  "updateHistory": [
+    {
+      "commit": "{{INITIAL_COMMIT}}",
+      "time": "{{INITIAL_TIME}}",
+      "type": "init",
+      "affectedDocs": [
+        "index.md",
+        "guide/introduction.md",
+        "guide/quickstart.md",
+        "guide/structure.md",
+        "backend/architecture.md",
+        "frontend/overview.md",
+        "api/commands.md"
+      ],
+      "sourceChanges": []
+    }
+  ]
+}

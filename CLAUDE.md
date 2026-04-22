@@ -539,6 +539,7 @@ cd src-tauri && cargo test
 | `/progress` | 项目进度报告 |
 | `/next` | 下一步建议 |
 | `/release` | 发布新版本（CI 全自动构建 + 推送） |
+| `/update-docs` | 文档站点管理（VitePress 初始化 / 增量更新 / 全量重建） |
 
 ---
 

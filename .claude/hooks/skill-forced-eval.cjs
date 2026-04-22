@@ -84,6 +84,7 @@ const instructions = `## 强制技能激活流程（必须执行）
 - i18n-development: 国际化/i18n/多语言/翻译/locale/语言切换
 - notification-system: 通知/notification/系统通知/托盘通知/消息提醒
 - performance-doctor: 性能/优化/内存/渲染/打包体积/Rust性能/WebView优化
+- docs-management: 文档站点/VitePress/docs 站点/用户手册/更新文档/文档同步/.docs-meta.json/website 目录/文档仓库
 
 **L4 框架专属：**
 - tauri-commands: Tauri Command/IPC通信/#[tauri::command]/invoke/generate_handler
