@@ -30,6 +30,7 @@ import {
   Plus,
   CheckSquare,
   FolderOpen,
+  FolderInput,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderOutlined } from "@ant-design/icons";
@@ -37,6 +38,8 @@ import type { DataNode } from "antd/es/tree";
 import { useAppStore } from "@/store";
 import { folderApi, importApi } from "@/lib/api";
 import type { Folder } from "@/types";
+import { NewNoteButton } from "@/components/NewNoteButton";
+import { createBlankAndOpen } from "@/lib/noteCreator";
 
 /** 导航菜单项（静态部分，用于路由高亮匹配） */
 const navItems = [
@@ -483,9 +486,35 @@ export function Sidebar() {
         icon: <FileText size={14} />,
         label: "在此新建笔记",
         onClick: () => {
-          navigate(`/notes?folder=${key}&new=1`);
+          createBlankAndOpen(Number(key), navigate);
           close();
         },
+      },
+      { type: "divider" },
+      {
+        key: "import",
+        icon: <FolderInput size={14} />,
+        label: "导入到此",
+        children: [
+          {
+            key: "import-md-files",
+            icon: <FileText size={14} />,
+            label: "Markdown 文件…",
+            onClick: () => {
+              void handleImportMdFiles(key);
+              close();
+            },
+          },
+          {
+            key: "import-md-folder",
+            icon: <FolderOpen size={14} />,
+            label: "Markdown 文件夹（保留层级）…",
+            onClick: () => {
+              void handleImportMdFolder(key);
+              close();
+            },
+          },
+        ],
       },
       { type: "divider" },
       {
@@ -509,6 +538,127 @@ export function Sidebar() {
         },
       },
     ];
+  }
+
+  // ─── 导入到当前文件夹 ─────────────────────
+  //
+  // 两个入口复用 importApi：
+  //   · handleImportMdFiles   —— 多选 md 文件，平铺到 folderId 下
+  //   · handleImportMdFolder  —— 选目录后扫描，保留层级、默认 preserveRoot=true，
+  //     只做一次轻确认（不展示逐文件勾选列表；要逐文件选走设置页）
+
+  async function handleImportMdFiles(folderKey: string) {
+    const folderId = Number(folderKey);
+    try {
+      const picked = await openDialog({
+        multiple: true,
+        filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
+      });
+      if (!picked) return;
+      const paths = Array.isArray(picked) ? picked : [picked];
+      if (paths.length === 0) return;
+      const hide = message.loading(`正在导入 ${paths.length} 个 Markdown 文件…`, 0);
+      try {
+        const result = await importApi.importSelected(paths, folderId);
+        hide();
+        if (result.imported > 0) {
+          message.success(`已导入 ${result.imported} 篇到此文件夹`);
+        } else if (result.skipped > 0) {
+          message.info(`全部 ${result.skipped} 篇已跳过（空文件）`);
+        }
+        if (result.errors.length > 0) {
+          message.warning(`${result.errors.length} 个文件失败，详见控制台`);
+          console.warn("[import] 失败明细:", result.errors);
+        }
+        useAppStore.getState().bumpNotesRefresh();
+        useAppStore.getState().bumpFoldersRefresh();
+      } catch (e) {
+        hide();
+        message.error(`导入失败: ${e}`);
+      }
+    } catch (e) {
+      message.error(`选择文件失败: ${e}`);
+    }
+  }
+
+  async function handleImportMdFolder(folderKey: string) {
+    const folderId = Number(folderKey);
+    try {
+      const picked = await openDialog({
+        directory: true,
+        title: "选择要导入的 Markdown 文件夹",
+      });
+      if (!picked || Array.isArray(picked)) return;
+      const rootPath = picked;
+      const hide = message.loading("扫描中…", 0);
+      let files;
+      try {
+        files = await importApi.scan(rootPath);
+      } catch (e) {
+        hide();
+        message.error(`扫描失败: ${e}`);
+        return;
+      }
+      hide();
+      if (files.length === 0) {
+        message.info("该文件夹下没有 .md 文件");
+        return;
+      }
+      const subdirCount = new Set(
+        files.map((f) => f.relative_dir).filter(Boolean),
+      ).size;
+      const rootName =
+        rootPath.split(/[\\/]/).filter(Boolean).pop() ?? "导入";
+      Modal.confirm({
+        title: "确认导入",
+        content: (
+          <div style={{ fontSize: 13, lineHeight: 1.7 }}>
+            扫描到 <strong>{files.length}</strong> 个 .md 文件
+            {subdirCount > 0 && `，分布在 ${subdirCount} 个子目录中`}。
+            <br />
+            将保留源目录层级，并在当前文件夹下创建
+            <strong style={{ margin: "0 4px" }}>{rootName}</strong>
+            作为根文件夹。
+          </div>
+        ),
+        okText: "开始导入",
+        cancelText: "取消",
+        async onOk() {
+          const paths = files!.map((f) => f.path);
+          const hide2 = message.loading(
+            `正在导入 ${paths.length} 个文件…`,
+            0,
+          );
+          try {
+            const result = await importApi.importSelected(
+              paths,
+              folderId,
+              rootPath,
+              true,
+            );
+            hide2();
+            if (result.imported > 0) {
+              message.success(
+                `已导入 ${result.imported} 篇到此文件夹，保留层级`,
+              );
+            }
+            if (result.errors.length > 0) {
+              message.warning(
+                `${result.errors.length} 个文件失败，详见控制台`,
+              );
+              console.warn("[import] 失败明细:", result.errors);
+            }
+            useAppStore.getState().bumpNotesRefresh();
+            useAppStore.getState().bumpFoldersRefresh();
+          } catch (e) {
+            hide2();
+            message.error(`导入失败: ${e}`);
+          }
+        },
+      });
+    } catch (e) {
+      message.error(`选择目录失败: ${e}`);
+    }
   }
 
   // ─── 自定义节点渲染 ─────────────────────────
@@ -642,15 +792,9 @@ export function Sidebar() {
           gap: 6,
         }}
       >
-        <Button
-          type="primary"
-          icon={<Plus size={collapsed ? 16 : 14} />}
-          style={{ flex: 1 }}
-          onClick={() => useAppStore.getState().openCreateModal()}
-          title="新建笔记 (Ctrl+N)"
-        >
-          {!collapsed && "新建笔记"}
-        </Button>
+        <div style={{ flex: 1, display: "flex" }}>
+          <NewNoteButton block={!collapsed} collapsed={collapsed} />
+        </div>
         <Button
           icon={<FolderOpen size={collapsed ? 16 : 14} />}
           onClick={handleOpenMarkdown}
