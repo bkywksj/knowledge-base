@@ -1,0 +1,69 @@
+[package]
+name = "knowledge_base"
+version = "1.1.0"
+description = "本地知识库桌面应用 - 全文搜索、双向链接、知识图谱"
+authors = ["抓蛙师"]
+edition = "2021"
+license = "AGPL-3.0-or-later"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "knowledge_base_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "protocol-asset"] }
+tauri-plugin-opener = "2"
+tauri-plugin-store = "2"
+tauri-plugin-log = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+rusqlite = { version = "0.31", features = ["bundled"] }
+log = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+tokio = { version = "1", features = ["sync", "fs", "io-util"] }
+tokio-util = { version = "0.7", features = ["io"] }
+futures = "0.3"
+tauri-plugin-dialog = "2"
+walkdir = "2"
+pulldown-cmark = "0.13.1"
+html2md = "0.2"
+base64 = "0.22.1"
+pdf-extract = "0.9"
+# ─── 同步功能 ────────────────────────────────────
+zip = "2.2"
+sha2 = "0.10"
+hostname = "0.4"
+urlencoding = "2"
+aes-gcm = "0.10"
+tauri-plugin-single-instance = { version = "=2.3.0", features = ["deep-link"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-notification = "2"
+
+# ─── 编译优化 ────────────────────────────────────
+
+[profile.dev]
+opt-level = 0
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+# 注意：不能设置 panic = "abort"，否则 html2md 的子依赖会因 panic 策略冲突编译失败
+

@@ -1,0 +1,36 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Tauri signing keys (NEVER commit private keys)
+src-tauri/keys/
+
+# Release config (contains local paths)
+.claude/release-config.json
+
+# 设计稿/原型/临时输出（不进仓库）
+output/
+
+# B 站调试产物（本地保留，不进任何远程仓库）
+bili_*.json

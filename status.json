@@ -1,0 +1,37 @@
+{
+  "framework": "Tauri",
+  "directoryName": "tauri",
+  "language": "Rust + TypeScript",
+  "languageVersion": "Rust 2021 edition / TypeScript 5.8",
+  "techStack": {
+    "backend": "Rust + Tauri 2.x",
+    "frontend": "React 19 + TypeScript + Vite 7",
+    "desktop": "Tauri 2 (WebView)",
+    "serialization": "serde + serde_json",
+    "plugins": ["tauri-plugin-opener"]
+  },
+  "createdAt": "2026-03-05",
+  "updatedAt": "2026-03-05",
+  "sourcePath": "D:\\desktop\\my\\framework\\ruoyi-plus-uniapp\\定制skills\\frameworks\\tauri",
+  "phase": 7,
+  "progress": {
+    "phase0_init": "completed",
+    "phase1_analysis": "completed",
+    "phase2_claude_md": "completed",
+    "phase3_core_skills": "completed",
+    "phase4_hooks_commands": "completed",
+    "phase5_extend_skills": "completed",
+    "phase6_quality_check": "completed",
+    "phase7_export": "completed"
+  },
+  "skills": {
+    "total": 31,
+    "completed": 31,
+    "categories": {
+      "L1_direct_reuse": { "total": 8, "completed": 8 },
+      "L2_template_adapt": { "total": 0, "completed": 0 },
+      "L3_deep_customize": { "total": 15, "completed": 15 },
+      "L4_framework_specific": { "total": 8, "completed": 8 }
+    }
+  }
+}

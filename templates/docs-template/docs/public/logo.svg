@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="{{THEME_COLOR}}"/>
+      <stop offset="100%" stop-color="{{THEME_COLOR}}" stop-opacity="0.6"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="96" height="96" rx="20" fill="url(#g)"/>
+  <text x="64" y="82" text-anchor="middle" font-family="Arial, sans-serif" font-size="48" font-weight="700" fill="#fff">{{LOGO_LETTER}}</text>
+</svg>

@@ -1,0 +1,475 @@
+@import "tailwindcss";
+@import "./themes.css";
+
+:root {
+  --sidebar-width: 220px;
+  --header-height: 48px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* 自定义滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+/* 暗色模式滚动条 — 见 themes.css */
+
+/* ─── Lucide 图标垂直居中 ──────────────────────── */
+
+.lucide {
+  vertical-align: middle;
+}
+
+/* Ant Design Segmented 图标居中 */
+.ant-segmented-item-label {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ─── 暗色模式卡片增强 — 见 themes.css ────────── */
+
+/* ─── 侧边栏 Menu 背景继承 ─────────────────────── */
+
+.ant-layout-sider .ant-menu {
+  background: transparent !important;
+}
+
+/* 暗色模式 Menu — 见 themes.css */
+
+/* ─── 侧边栏文件夹树：整行点击区 ─────────────── */
+
+.sidebar-folder-tree .ant-tree-node-content-wrapper {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+.sidebar-folder-tree .ant-tree-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* antd Tree 内部节点紧贴外容器左缘与上缘，外层 padding 影响不到它。
+   - padding-left: 让展开三角"▼"和文件夹图标不贴侧边栏左墙
+   - padding-top:  让第一个节点的"选中高亮背景矩形"离上方"文件夹"标题有一点空隙，
+                   避免蓝色选中态顶边直接贴标题下边 */
+.sidebar-folder-tree .ant-tree-list-holder-inner {
+  padding-left: 6px;
+  padding-top: 6px;
+}
+
+/* ─── 笔记编辑器页面布局（Typora 风格） ────────── */
+
+.editor-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  margin: -24px;  /* 抵消 Content 的 padding */
+}
+
+.editor-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--ant-color-border, #d9d9d9);
+  background: var(--ant-color-bg-container, #fff);
+  flex-shrink: 0;
+}
+
+.editor-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--ant-color-bg-container, #fff);
+}
+
+.editor-content-area {
+  padding: 24px 48px 80px;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.editor-title .ant-input {
+  font-size: 28px !important;
+  font-weight: 700 !important;
+  padding: 12px 0 !important;
+  line-height: 1.4 !important;
+}
+
+.editor-meta {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--ant-color-border-secondary, #f0f0f0);
+  margin-bottom: 16px;
+}
+
+/* ─── Tiptap 编辑器样式 ─────────────────────────── */
+
+.tiptap-wrapper {
+  border: 1px solid var(--ant-color-border, #d9d9d9);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* 编辑器页面内的 tiptap 无边框样式 + 撑满剩余高度 */
+.editor-content-area .tiptap-wrapper {
+  border: none;
+  border-radius: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-content-area .tiptap-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-content-area .tiptap-content .tiptap {
+  flex: 1;
+}
+
+.tiptap-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--ant-color-border-secondary, #f0f0f0);
+  /* 与正文同色 + 轻磨砂，消除灰色底的突兀感 */
+  background: color-mix(in srgb, var(--ant-color-bg-container, #fff) 85%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+/* 编辑器页面内的 toolbar 全宽吸顶 */
+.editor-content-area .tiptap-toolbar {
+  margin: 0 -48px;
+  padding: 6px 48px;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+}
+
+/* 工具栏按钮：圆润、无边框、轻量 */
+.tiptap-toolbar .ant-btn {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border: none !important;
+  border-radius: 6px;
+  background: transparent !important;
+  color: var(--ant-color-text-secondary, #666);
+  box-shadow: none !important;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.tiptap-toolbar .ant-btn:hover:not(:disabled) {
+  background: var(--ant-color-fill-tertiary, rgba(0, 0, 0, 0.04)) !important;
+  color: var(--ant-color-text, #222) !important;
+}
+
+.tiptap-toolbar .ant-btn:disabled {
+  opacity: 0.35;
+}
+
+/* 活动态：主色淡底 */
+.toolbar-btn-active {
+  color: var(--ant-color-primary, #1677ff) !important;
+  background: var(--ant-color-primary-bg, #e6f4ff) !important;
+}
+
+.tiptap-toolbar .toolbar-btn-active:hover:not(:disabled) {
+  background: var(--ant-color-primary-bg-hover, #bae0ff) !important;
+  color: var(--ant-color-primary, #1677ff) !important;
+}
+
+/* 暗色模式工具栏 — 见 themes.css */
+
+.tiptap-content .tiptap {
+  outline: none;
+  padding: 20px 0;
+  min-height: 400px;
+  font-size: 15px;
+  line-height: 1.8;
+}
+
+/* 非编辑器页面的 tiptap 保持内边距 */
+:not(.editor-content-area) > .tiptap-wrapper .tiptap-content .tiptap {
+  padding: 16px 20px;
+}
+
+/* 标题 */
+.tiptap h1 { font-size: 1.8em; font-weight: 700; margin: 0.6em 0 0.4em; }
+.tiptap h2 { font-size: 1.4em; font-weight: 600; margin: 0.5em 0 0.3em; }
+.tiptap h3 { font-size: 1.15em; font-weight: 600; margin: 0.4em 0 0.2em; }
+
+/* 段落 */
+.tiptap p { margin: 0.3em 0; }
+
+/* 列表 */
+.tiptap ul { list-style: disc; padding-left: 1.5em; }
+.tiptap ol { list-style: decimal; padding-left: 1.5em; }
+.tiptap li { margin: 0.15em 0; }
+.tiptap li p { margin: 0; }
+
+/* 任务列表 */
+.tiptap ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+.tiptap ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.tiptap ul[data-type="taskList"] li > label {
+  margin-top: 3px;
+}
+.tiptap ul[data-type="taskList"] li > div {
+  flex: 1;
+}
+.tiptap ul[data-type="taskList"] li[data-checked="true"] > div {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+/* 引用 */
+.tiptap blockquote {
+  border-left: 3px solid var(--ant-color-primary, #1677ff);
+  padding-left: 1em;
+  margin: 0.5em 0;
+  color: var(--ant-color-text-secondary, #666);
+}
+
+/* 代码块：透明磨砂底 + 细边线，消除灰色突兀感 */
+.tiptap pre {
+  background: color-mix(in srgb, var(--ant-color-text, #000) 3.5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ant-color-text, #000) 8%, transparent);
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin: 0.6em 0;
+  overflow-x: auto;
+  font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+  font-size: 0.9em;
+  line-height: 1.6;
+}
+.tiptap pre code {
+  background: transparent;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* 行内代码：低对比淡色，和正文融合 */
+.tiptap code {
+  background: color-mix(in srgb, var(--ant-color-text, #000) 6%, transparent);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.88em;
+  font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+}
+
+/* 高亮 */
+.tiptap mark {
+  background: #fff3bf;
+  padding: 1px 2px;
+  border-radius: 2px;
+}
+/* 暗色模式 mark — 见 themes.css */
+
+/* 链接 */
+.tiptap-link {
+  color: var(--ant-color-primary, #1677ff);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* 内联 wiki 链接 [[标题]] — Ctrl/Cmd + 点击跳转 */
+.tiptap .wiki-link {
+  color: var(--ant-color-primary, #1677ff);
+  background: color-mix(in srgb, var(--ant-color-primary, #1677ff) 8%, transparent);
+  border-radius: 3px;
+  padding: 0 2px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.tiptap .wiki-link:hover {
+  background: color-mix(in srgb, var(--ant-color-primary, #1677ff) 18%, transparent);
+  text-decoration: underline;
+}
+
+/* 笔记 Tab 栏的滚动容器 — 隐藏 webkit 滚动条 */
+.tabbar-scroller::-webkit-scrollbar {
+  display: none;
+}
+
+/* Tippy.js wiki-suggestion 主题 — 去掉默认黑色背景/边距 */
+.tippy-box[data-theme~="wiki-suggestion"] {
+  background: transparent;
+  color: inherit;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+.tippy-box[data-theme~="wiki-suggestion"] > .tippy-content {
+  background: transparent;
+  padding: 0;
+}
+.tippy-box[data-theme~="wiki-suggestion"] > .tippy-arrow {
+  display: none;
+}
+
+/* 分割线 */
+.tiptap hr {
+  border: none;
+  border-top: 1px solid var(--ant-color-border, #d9d9d9);
+  margin: 1em 0;
+}
+
+/* 图片（支持拖拽调整尺寸） */
+.tiptap img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  margin: 0.5em 0;
+}
+
+/* 图片 resize 暗色 — 见 themes.css */
+
+/* 表格 */
+.tiptap table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5em 0;
+  table-layout: fixed;
+  overflow: hidden;
+}
+
+.tiptap table td,
+.tiptap table th {
+  border: 1px solid var(--ant-color-border, #d9d9d9);
+  padding: 6px 10px;
+  vertical-align: top;
+  position: relative;
+  min-width: 60px;
+}
+
+.tiptap table th {
+  /* 用 5% 文本色叠加替代主题 bg-layout，避免某些"玻璃感"主题下表头偏深偏紫 */
+  background: color-mix(in srgb, var(--ant-color-text, #000) 5%, transparent);
+  font-weight: 600;
+}
+
+/* 暗色模式表格 — 见 themes.css */
+
+/* 表格选中单元格高亮 */
+.tiptap table td.selectedCell,
+.tiptap table th.selectedCell {
+  background: var(--ant-color-primary-bg, #e6f4ff);
+}
+
+/* 暗色模式选中 — 见 themes.css */
+
+/* 表格列拖拽调整宽度手柄 */
+.tiptap .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: -2px;
+  width: 4px;
+  background-color: var(--ant-color-primary, #1677ff);
+  pointer-events: none;
+}
+
+.tiptap.resize-cursor {
+  cursor: col-resize;
+}
+
+/* 占位符 */
+.tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--ant-color-text-quaternary, #bbb);
+  pointer-events: none;
+  height: 0;
+}
+
+/* ─── AI 消息 Markdown 样式 ──────────────────────── */
+
+.ai-markdown h1 { font-size: 1.3em; font-weight: 700; margin: 0.5em 0 0.3em; }
+.ai-markdown h2 { font-size: 1.15em; font-weight: 600; margin: 0.4em 0 0.2em; }
+.ai-markdown h3 { font-size: 1.05em; font-weight: 600; margin: 0.3em 0 0.15em; }
+.ai-markdown h4 { font-size: 1em; font-weight: 600; margin: 0.2em 0 0.1em; }
+.ai-markdown p { margin: 0.3em 0; }
+.ai-markdown ul { list-style: disc; padding-left: 1.5em; margin: 0.3em 0; }
+.ai-markdown ol { list-style: decimal; padding-left: 1.5em; margin: 0.3em 0; }
+.ai-markdown li { margin: 0.1em 0; }
+.ai-markdown li > p { margin: 0; }
+.ai-markdown blockquote {
+  border-left: 3px solid var(--ant-color-primary, #1677ff);
+  padding-left: 0.8em;
+  margin: 0.4em 0;
+  color: var(--ant-color-text-secondary, #666);
+}
+.ai-markdown pre {
+  background: color-mix(in srgb, var(--ant-color-text, #000) 3.5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ant-color-text, #000) 8%, transparent);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 0.4em 0;
+  overflow-x: auto;
+  font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+  font-size: 0.85em;
+  line-height: 1.55;
+}
+.ai-markdown pre code {
+  background: transparent;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  font-size: inherit;
+}
+.ai-markdown code {
+  background: color-mix(in srgb, var(--ant-color-text, #000) 6%, transparent);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+}
+.ai-markdown hr {
+  border: none;
+  border-top: 1px solid var(--ant-color-border, #d9d9d9);
+  margin: 0.5em 0;
+}
+.ai-markdown strong { font-weight: 600; }
+.ai-markdown a { color: var(--ant-color-primary, #1677ff); }
+.ai-markdown > *:first-child { margin-top: 0; }
+.ai-markdown > *:last-child { margin-bottom: 0; }
+

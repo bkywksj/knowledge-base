@@ -1,0 +1,38 @@
+/* ─── 主题色（占位符由 /docs 初始化时替换）─── */
+:root {
+  --vp-c-brand-1: {{THEME_COLOR}};
+  --vp-c-brand-2: {{THEME_COLOR}};
+  --vp-c-brand-3: {{THEME_COLOR}};
+  --vp-c-brand-soft: {{THEME_COLOR}}22;
+}
+
+.dark {
+  --vp-c-brand-1: {{THEME_COLOR}};
+  --vp-c-brand-2: {{THEME_COLOR}};
+  --vp-c-brand-3: {{THEME_COLOR}};
+  --vp-c-brand-soft: {{THEME_COLOR}}33;
+}
+
+/* ─── Hero 按钮渐变 ─── */
+:root {
+  --vp-button-brand-bg: {{THEME_COLOR}};
+  --vp-button-brand-hover-bg: {{THEME_COLOR}};
+  --vp-button-brand-active-bg: {{THEME_COLOR}};
+}
+
+/* ─── 产品卡片（可选，供首页 custom grid 使用）─── */
+.product-preview-card {
+  display: block;
+  padding: 20px;
+  border: 1px solid var(--vp-c-border);
+  border-radius: 12px;
+  background: var(--vp-c-bg-soft);
+  text-decoration: none !important;
+  transition: all 0.2s ease;
+}
+
+.product-preview-card:hover {
+  border-color: {{THEME_COLOR}};
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+}

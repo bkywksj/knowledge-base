@@ -1,0 +1,60 @@
+{
+  "version": "1.0.0",
+  "docsProject": "knowledge-base-docs",
+  "docsLocation": "sibling",
+  "docsPath": "../knowledge-base-docs",
+  "themeColor": "#7c3aed",
+  "lastSyncCommit": "eb4d17a",
+  "lastSyncTime": "2026-04-22T08:20:00Z",
+  "coveredSections": ["guide", "features"],
+  "updateHistory": [
+    {
+      "commit": "ab3d107",
+      "time": "2026-04-22T06:05:24Z",
+      "type": "adopt",
+      "affectedDocs": [],
+      "sourceChanges": [],
+      "note": "接入已有文档站点 ../knowledge-base-docs；以 v1.0.0 发布 commit (ab3d107) 作为同步基线"
+    },
+    {
+      "commit": "ebb535d13dff0b84af2a787de1579a0c7ebb7462",
+      "time": "2026-04-22T06:05:24Z",
+      "type": "incremental",
+      "affectedDocs": ["features/ai-qa.md"],
+      "sourceChanges": [
+        "src-tauri/src/services/ai.rs",
+        "src-tauri/src/database/ai.rs"
+      ],
+      "note": "同步 RAG 上下文窗口改进（4000 字符命中居中窗口）"
+    },
+    {
+      "commit": "ebb535d13dff0b84af2a787de1579a0c7ebb7462",
+      "time": "2026-04-22T06:05:24Z",
+      "type": "audit",
+      "affectedDocs": [
+        "index.md",
+        "features/ai-qa.md",
+        "features/tags-folders.md",
+        "features/import-export.md",
+        "features/tasks.md",
+        "features/trash.md",
+        "features/daily-notes.md",
+        ".vitepress/config.ts"
+      ],
+      "sourceChanges": [],
+      "note": "文档/代码一致性审计：\n1. 修正 ai-qa.md + index.md 的「向量索引」误述 → 实为 FTS5+bigram 关键词 RAG，详述检索方式、排序策略、与向量 RAG 差异\n2. 新建 features/tasks.md、features/trash.md、features/daily-notes.md 补齐已有功能的文档\n3. features/import-export.md 追加「孤儿图片清理」小节\n4. features/tags-folders.md 追加「跨页面实时同步」小节\n5. .vitepress/config.ts 组织与效率侧边栏新增 3 个条目\n6. index.md 首页 features 新增「任务管理 + 到点提醒」卡片"
+    },
+    {
+      "commit": "eb4d17a",
+      "time": "2026-04-22T08:20:00Z",
+      "type": "incremental",
+      "affectedDocs": [
+        ".vitepress/config.ts",
+        "download.md",
+        "faq.md"
+      ],
+      "sourceChanges": [],
+      "note": "修正残留的 v0.2.0 版本号示例 → v1.1.0：\n1. .vitepress/config.ts 结构化数据 softwareVersion 兜底值\n2. download.md 镜像表 R2 链接示例\n3. faq.md 三镜像对比表 R2 链接示例\n（保留各处「v0.2.0+」历史起始版本标记不变）"
+    }
+  ]
+}

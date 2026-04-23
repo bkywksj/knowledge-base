@@ -1,0 +1,518 @@
+/* ═══════════════════════════════════════════════════════════
+   4 套主题 CSS 变量 + 强制 Ant Design 覆盖
+   ═══════════════════════════════════════════════════════════ */
+
+/* ─── 亮色 A：柔光毛玻璃 ────────────────────────────────── */
+[data-theme="light-glass"] {
+  --kb-bg-app: #f0eef6;
+  --kb-bg-card: rgba(255,255,255,0.7);
+  --kb-bg-card-solid: #ffffff;
+  --kb-bg-sidebar: rgba(255,255,255,0.55);
+  --kb-bg-header: rgba(255,255,255,0.72);
+  --kb-bg-content: transparent;
+  --kb-bg-hover: rgba(99,102,241,0.06);
+  --kb-bg-active: rgba(99,102,241,0.1);
+  --kb-text-primary: #1e1b4b;
+  --kb-text-secondary: #6b7280;
+  --kb-text-tertiary: #a8a29e;
+  --kb-border: rgba(99,102,241,0.1);
+  --kb-border-card: rgba(255,255,255,0.6);
+  --kb-border-sidebar: rgba(255,255,255,0.4);
+  --kb-primary: #6366f1;
+  --kb-primary-light: rgba(99,102,241,0.08);
+  --kb-accent: #ec4899;
+  --kb-glass-blur: 20px;
+  --kb-shadow-sm: 0 1px 3px rgba(99,102,241,0.04);
+  --kb-shadow-md: 0 4px 16px rgba(99,102,241,0.06);
+  --kb-scrollbar-thumb: rgba(99,102,241,0.15);
+  --kb-scrollbar-hover: rgba(99,102,241,0.25);
+  color-scheme: light;
+}
+
+/* body 渐变底 */
+[data-theme="light-glass"] body,
+[data-theme="light-glass"] #root {
+  background: linear-gradient(135deg, #ede9fe 0%, #e0e7ff 40%, #fce7f3 100%) !important;
+  background-attachment: fixed !important;
+}
+
+/* 背景装饰光斑 */
+[data-theme="light-glass"]::after {
+  content: '';
+  position: fixed; top: -15%; right: -5%;
+  width: 500px; height: 500px;
+  background: radial-gradient(circle, rgba(99,102,241,0.1), transparent 70%);
+  pointer-events: none; z-index: 0;
+}
+
+/* Layout 容器透明 */
+[data-theme="light-glass"] .ant-layout {
+  background: transparent !important;
+}
+
+/* 侧边栏毛玻璃 */
+[data-theme="light-glass"] .ant-layout-sider {
+  background: var(--kb-bg-sidebar) !important;
+  backdrop-filter: blur(var(--kb-glass-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--kb-glass-blur)) !important;
+  border-right-color: var(--kb-border-sidebar) !important;
+}
+
+/* Header 毛玻璃 */
+[data-theme="light-glass"] .ant-layout-header {
+  background: var(--kb-bg-header) !important;
+  backdrop-filter: blur(var(--kb-glass-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--kb-glass-blur)) !important;
+}
+
+/* Content 透明 */
+[data-theme="light-glass"] .ant-layout-content {
+  background: transparent !important;
+}
+
+/* 卡片毛玻璃 */
+[data-theme="light-glass"] .ant-card {
+  background: var(--kb-bg-card) !important;
+  backdrop-filter: blur(var(--kb-glass-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--kb-glass-blur)) !important;
+  border-color: var(--kb-border-card) !important;
+  box-shadow: var(--kb-shadow-sm) !important;
+  border-radius: 12px !important;
+}
+[data-theme="light-glass"] .ant-card:hover {
+  box-shadow: var(--kb-shadow-md) !important;
+  transform: translateY(-1px);
+}
+
+/* Menu 透明 + 选中渐变 */
+[data-theme="light-glass"] .ant-menu {
+  background: transparent !important;
+}
+[data-theme="light-glass"] .ant-menu-item-selected {
+  background: var(--kb-bg-active) !important;
+}
+[data-theme="light-glass"] .ant-menu-item:hover:not(.ant-menu-item-selected) {
+  background: var(--kb-bg-hover) !important;
+}
+
+/* Input 毛玻璃 */
+[data-theme="light-glass"] .ant-input,
+[data-theme="light-glass"] .ant-input-affix-wrapper {
+  background: rgba(255,255,255,0.5) !important;
+  border-color: var(--kb-border) !important;
+}
+[data-theme="light-glass"] .ant-input:focus,
+[data-theme="light-glass"] .ant-input-affix-wrapper:focus,
+[data-theme="light-glass"] .ant-input-affix-wrapper-focused {
+  border-color: var(--kb-primary) !important;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.08) !important;
+}
+
+/* ─── 亮色 B：暖木书房 ──────────────────────────────────── */
+[data-theme="light-warm"] {
+  --kb-bg-app: #faf8f5;
+  --kb-bg-card: #ffffff;
+  --kb-bg-sidebar: #f5f0ea;
+  --kb-bg-header: #faf8f5;
+  --kb-bg-content: #faf8f5;
+  --kb-bg-hover: #f0ebe3;
+  --kb-bg-active: #ebe4da;
+  --kb-text-primary: #3d3228;
+  --kb-text-secondary: #7c6f64;
+  --kb-text-tertiary: #b5a99a;
+  --kb-border: #e8e0d5;
+  --kb-border-card: #f0e9df;
+  --kb-border-sidebar: #e8e0d5;
+  --kb-primary: #c2713a;
+  --kb-primary-light: rgba(194,113,58,0.08);
+  --kb-accent: #6b8e5e;
+  --kb-glass-blur: 0px;
+  --kb-shadow-sm: 0 1px 2px rgba(61,50,40,0.04);
+  --kb-shadow-md: 0 4px 12px rgba(61,50,40,0.06);
+  --kb-scrollbar-thumb: rgba(61,50,40,0.12);
+  --kb-scrollbar-hover: rgba(61,50,40,0.22);
+  color-scheme: light;
+}
+
+[data-theme="light-warm"] body,
+[data-theme="light-warm"] #root {
+  background: #faf8f5 !important;
+}
+
+/* Layout */
+[data-theme="light-warm"] .ant-layout {
+  background: var(--kb-bg-app) !important;
+}
+[data-theme="light-warm"] .ant-layout-sider {
+  background: var(--kb-bg-sidebar) !important;
+  border-right-color: var(--kb-border-sidebar) !important;
+}
+[data-theme="light-warm"] .ant-layout-header {
+  background: var(--kb-bg-header) !important;
+  border-bottom-color: var(--kb-border) !important;
+}
+[data-theme="light-warm"] .ant-layout-content {
+  background: var(--kb-bg-content) !important;
+}
+
+/* Card */
+[data-theme="light-warm"] .ant-card {
+  border-color: var(--kb-border-card) !important;
+  border-radius: 8px !important;
+}
+
+/* Menu */
+[data-theme="light-warm"] .ant-menu {
+  background: transparent !important;
+}
+[data-theme="light-warm"] .ant-menu-item-selected {
+  background: var(--kb-bg-active) !important;
+}
+[data-theme="light-warm"] .ant-menu-item:hover:not(.ant-menu-item-selected) {
+  background: var(--kb-bg-hover) !important;
+}
+
+/* Input */
+[data-theme="light-warm"] .ant-input:focus,
+[data-theme="light-warm"] .ant-input-affix-wrapper-focused {
+  border-color: var(--kb-primary) !important;
+}
+
+/* 衬线标题 */
+[data-theme="light-warm"] h1,
+[data-theme="light-warm"] h2,
+[data-theme="light-warm"] .ant-statistic-content-value {
+  font-family: "Georgia", "Noto Serif SC", "Source Han Serif SC", "PingFang SC", serif !important;
+}
+
+/* 统计卡片顶部彩条 */
+[data-theme="light-warm"] .ant-card {
+  position: relative;
+  overflow: hidden;
+}
+[data-theme="light-warm"] .ant-card::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #c2713a, #e6a849);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+[data-theme="light-warm"] .ant-card:hover::before {
+  opacity: 1;
+}
+
+/* ─── 暗色 A：星空沉浸 ──────────────────────────────────── */
+[data-theme="dark-starry"] {
+  --kb-bg-app: #0a0a12;
+  --kb-bg-card: #12121e;
+  --kb-bg-sidebar: #0e0e18;
+  --kb-bg-header: #0e0e18;
+  --kb-bg-content: transparent;
+  --kb-bg-hover: rgba(167,139,250,0.08);
+  --kb-bg-active: rgba(167,139,250,0.14);
+  --kb-text-primary: #e8e6f0;
+  --kb-text-secondary: #a5a2c8;
+  --kb-text-tertiary: #6b6890;
+  --kb-border: rgba(139,92,246,0.12);
+  --kb-border-card: rgba(139,92,246,0.15);
+  --kb-border-sidebar: rgba(139,92,246,0.1);
+  --kb-primary: #a78bfa;
+  --kb-primary-light: rgba(167,139,250,0.1);
+  --kb-accent: #67e8f9;
+  --kb-glass-blur: 0px;
+  --kb-shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+  --kb-shadow-md: 0 4px 20px rgba(0,0,0,0.4);
+  --kb-shadow-glow: 0 0 24px rgba(167,139,250,0.08);
+  --kb-scrollbar-thumb: rgba(139,92,246,0.2);
+  --kb-scrollbar-hover: rgba(167,139,250,0.35);
+  color-scheme: dark;
+}
+
+[data-theme="dark-starry"] body,
+[data-theme="dark-starry"] #root {
+  background: #0a0a12 !important;
+}
+
+/* Layout */
+[data-theme="dark-starry"] .ant-layout {
+  background: transparent !important;
+}
+[data-theme="dark-starry"] .ant-layout-sider {
+  background: var(--kb-bg-sidebar) !important;
+  border-right: 1px solid var(--kb-border-sidebar) !important;
+  position: relative;
+}
+/* 侧边栏右侧发光线 */
+[data-theme="dark-starry"] .ant-layout-sider::after {
+  content: '';
+  position: absolute; top: 0; right: 0;
+  width: 1px; height: 100%;
+  background: linear-gradient(180deg, transparent, var(--kb-primary), transparent);
+  opacity: 0.25;
+  pointer-events: none;
+}
+[data-theme="dark-starry"] .ant-layout-header {
+  background: rgba(14,14,24,0.85) !important;
+  border-bottom-color: var(--kb-border) !important;
+}
+[data-theme="dark-starry"] .ant-layout-content {
+  background: transparent !important;
+}
+
+/* Card 发光边框 */
+[data-theme="dark-starry"] .ant-card {
+  background: var(--kb-bg-card) !important;
+  border-color: var(--kb-border-card) !important;
+  border-radius: 14px !important;
+  transition: all 0.25s;
+}
+[data-theme="dark-starry"] .ant-card:hover {
+  border-color: rgba(167,139,250,0.25) !important;
+  box-shadow: var(--kb-shadow-glow) !important;
+}
+
+/* Statistic */
+[data-theme="dark-starry"] .ant-statistic-title {
+  color: var(--kb-text-tertiary) !important;
+}
+[data-theme="dark-starry"] .ant-statistic-content-value {
+  color: var(--kb-text-primary) !important;
+}
+
+/* Menu */
+[data-theme="dark-starry"] .ant-menu {
+  background: transparent !important;
+}
+[data-theme="dark-starry"] .ant-menu-item-selected {
+  background: var(--kb-bg-active) !important;
+  box-shadow: var(--kb-shadow-glow) !important;
+}
+[data-theme="dark-starry"] .ant-menu-item:hover:not(.ant-menu-item-selected) {
+  background: var(--kb-bg-hover) !important;
+}
+
+/* Input 发光聚焦 */
+[data-theme="dark-starry"] .ant-input,
+[data-theme="dark-starry"] .ant-input-affix-wrapper {
+  background: rgba(255,255,255,0.03) !important;
+  border-color: var(--kb-border) !important;
+}
+[data-theme="dark-starry"] .ant-input:focus,
+[data-theme="dark-starry"] .ant-input-affix-wrapper-focused {
+  border-color: var(--kb-primary) !important;
+  box-shadow: 0 0 0 3px var(--kb-primary-light), 0 0 20px rgba(167,139,250,0.08) !important;
+}
+
+/* Table */
+[data-theme="dark-starry"] .ant-table {
+  background: transparent !important;
+}
+[data-theme="dark-starry"] .ant-table-thead > tr > th,
+[data-theme="dark-starry"] .ant-table-thead > tr > td {
+  background: var(--kb-bg-card) !important;
+  border-color: var(--kb-border) !important;
+}
+[data-theme="dark-starry"] .ant-table-tbody > tr > td {
+  border-color: var(--kb-border) !important;
+}
+[data-theme="dark-starry"] .ant-table-tbody > tr:hover > td {
+  background: var(--kb-bg-hover) !important;
+}
+
+/* Button */
+[data-theme="dark-starry"] .ant-btn-primary {
+  box-shadow: 0 2px 10px rgba(167,139,250,0.2) !important;
+}
+
+/* ─── 暗色 B：摩卡棕夜 ──────────────────────────────────── */
+[data-theme="dark-mocha"] {
+  --kb-bg-app: #1e1e2e;
+  --kb-bg-card: #24243a;
+  --kb-bg-sidebar: #1a1a2c;
+  --kb-bg-header: #1a1a2c;
+  --kb-bg-content: #1e1e2e;
+  --kb-bg-hover: rgba(245,189,105,0.06);
+  --kb-bg-active: rgba(245,189,105,0.12);
+  --kb-text-primary: #cdd6f4;
+  --kb-text-secondary: #a6adc8;
+  --kb-text-tertiary: #6c7086;
+  --kb-border: #313244;
+  --kb-border-card: #3b3b52;
+  --kb-border-sidebar: #313244;
+  --kb-primary: #f5bd69;
+  --kb-primary-light: rgba(245,189,105,0.1);
+  --kb-accent: #cba6f7;
+  --kb-glass-blur: 0px;
+  --kb-shadow-sm: 0 1px 3px rgba(0,0,0,0.25);
+  --kb-shadow-md: 0 4px 12px rgba(0,0,0,0.3);
+  --kb-scrollbar-thumb: rgba(245,189,105,0.15);
+  --kb-scrollbar-hover: rgba(245,189,105,0.3);
+  color-scheme: dark;
+}
+
+[data-theme="dark-mocha"] body,
+[data-theme="dark-mocha"] #root {
+  background: #1e1e2e !important;
+}
+
+/* Layout */
+[data-theme="dark-mocha"] .ant-layout {
+  background: var(--kb-bg-app) !important;
+}
+[data-theme="dark-mocha"] .ant-layout-sider {
+  background: var(--kb-bg-sidebar) !important;
+  border-right: 1px solid var(--kb-border-sidebar) !important;
+}
+[data-theme="dark-mocha"] .ant-layout-header {
+  background: var(--kb-bg-header) !important;
+  border-bottom-color: var(--kb-border) !important;
+}
+[data-theme="dark-mocha"] .ant-layout-content {
+  background: var(--kb-bg-content) !important;
+}
+
+/* Card 彩色顶线 */
+[data-theme="dark-mocha"] .ant-card {
+  background: var(--kb-bg-card) !important;
+  border-color: var(--kb-border-card) !important;
+  border-radius: 10px !important;
+  position: relative;
+  overflow: hidden;
+}
+[data-theme="dark-mocha"] .ant-card::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #f5bd69, #cba6f7);
+}
+[data-theme="dark-mocha"] .ant-card:hover {
+  border-color: rgba(245,189,105,0.2) !important;
+}
+
+/* Statistic */
+[data-theme="dark-mocha"] .ant-statistic-title {
+  color: var(--kb-text-tertiary) !important;
+}
+[data-theme="dark-mocha"] .ant-statistic-content-value {
+  color: var(--kb-text-primary) !important;
+}
+
+/* Menu */
+[data-theme="dark-mocha"] .ant-menu {
+  background: transparent !important;
+}
+[data-theme="dark-mocha"] .ant-menu-item-selected {
+  background: var(--kb-bg-active) !important;
+}
+[data-theme="dark-mocha"] .ant-menu-item:hover:not(.ant-menu-item-selected) {
+  background: var(--kb-bg-hover) !important;
+}
+
+/* Input */
+[data-theme="dark-mocha"] .ant-input,
+[data-theme="dark-mocha"] .ant-input-affix-wrapper {
+  background: rgba(255,255,255,0.03) !important;
+  border-color: var(--kb-border) !important;
+}
+[data-theme="dark-mocha"] .ant-input:focus,
+[data-theme="dark-mocha"] .ant-input-affix-wrapper-focused {
+  border-color: var(--kb-primary) !important;
+}
+
+/* Table */
+[data-theme="dark-mocha"] .ant-table {
+  background: transparent !important;
+}
+[data-theme="dark-mocha"] .ant-table-thead > tr > th,
+[data-theme="dark-mocha"] .ant-table-thead > tr > td {
+  background: var(--kb-bg-card) !important;
+  border-color: var(--kb-border) !important;
+}
+[data-theme="dark-mocha"] .ant-table-tbody > tr > td {
+  border-color: var(--kb-border) !important;
+}
+[data-theme="dark-mocha"] .ant-table-tbody > tr:hover > td {
+  background: var(--kb-bg-hover) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   通用覆盖 — 所有主题共享
+   ═══════════════════════════════════════════════════════════ */
+
+/* 滚动条 */
+[data-theme] ::-webkit-scrollbar-thumb {
+  background: var(--kb-scrollbar-thumb) !important;
+}
+[data-theme] ::-webkit-scrollbar-thumb:hover {
+  background: var(--kb-scrollbar-hover) !important;
+}
+
+/* 暗色主题通用 — 编辑器 */
+[data-theme-category="dark"] .toolbar-btn-active {
+  color: var(--kb-text-primary) !important;
+  background: var(--kb-bg-active) !important;
+}
+[data-theme-category="dark"] .tiptap mark {
+  background: rgba(255, 243, 191, 0.2);
+  color: #ffd666;
+}
+[data-theme-category="dark"] .tiptap table th {
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+[data-theme-category="dark"] .tiptap table td.selectedCell,
+[data-theme-category="dark"] .tiptap table th.selectedCell {
+  background: var(--kb-primary-light) !important;
+}
+[data-theme-category="dark"] .tiptap [style*="border: 1px dashed"] {
+  border-color: rgba(255, 255, 255, 0.35) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   毛玻璃额外 — 二级组件
+   ═══════════════════════════════════════════════════════════ */
+
+/* Dropdown / Modal 等弹层 */
+[data-theme="light-glass"] .ant-dropdown-menu {
+  background: rgba(255,255,255,0.85) !important;
+  backdrop-filter: blur(16px) !important;
+}
+
+/* 编辑器顶栏 + body */
+[data-theme="light-glass"] .editor-topbar {
+  background: rgba(255,255,255,0.6) !important;
+  backdrop-filter: blur(16px) !important;
+}
+[data-theme="light-glass"] .editor-body {
+  background: rgba(255,255,255,0.5) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   星空额外 — 发光 + 编辑器
+   ═══════════════════════════════════════════════════════════ */
+
+[data-theme="dark-starry"] .editor-topbar {
+  background: rgba(14,14,24,0.9) !important;
+}
+[data-theme="dark-starry"] .editor-body {
+  background: var(--kb-bg-card) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   摩卡额外 — 编辑器
+   ═══════════════════════════════════════════════════════════ */
+
+[data-theme="dark-mocha"] .editor-topbar {
+  background: var(--kb-bg-sidebar) !important;
+}
+[data-theme="dark-mocha"] .editor-body {
+  background: var(--kb-bg-card) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   暖木额外 — 编辑器
+   ═══════════════════════════════════════════════════════════ */
+
+[data-theme="light-warm"] .editor-topbar {
+  background: #f5f0ea !important;
+}
