@@ -240,6 +240,12 @@ impl AiService {
     /// AI 写作辅助：选中文本 + 操作指令 → 流式返回结果
     ///
     /// 事件前缀 `ai-write:token` / `ai-write:done` / `ai-write:error`
+    ///
+    /// `action` 支持两种格式：
+    /// - `prompt:{id}`：从 prompt_templates 表查模板，`{{selection}} {{context}} {{title}}` 占位符
+    ///   替换成实际值后作为 user message 发送（推荐路径，v19 起前端 AI 菜单都走这里）
+    /// - 裸词如 `continue` / `summarize`：先尝试按 `builtin_code` 查 DB，查不到再回退到内置硬编码
+    ///   提示（保留这条路径是为了兼容老版本或外部脚本直接调用）
     pub async fn write_assist(
         app: AppHandle,
         db: &Database,
@@ -250,41 +256,61 @@ impl AiService {
     ) -> Result<(), AppError> {
         let model = db.get_default_ai_model()?;
 
-        let system_prompt = match action {
-            "continue" => "你是一个写作助手。请根据上下文和已有内容，自然地续写下去。只输出续写内容，不要重复已有内容。使用中文。",
-            "summarize" => "你是一个写作助手。请对以下文本进行简洁的总结概括。使用中文。",
-            "rewrite" => "你是一个写作助手。请改写以下文本，使其表达更加流畅、专业。保持原意不变。只输出改写后的内容。使用中文。",
-            "translate_en" => "你是一个翻译助手。请将以下文本翻译为英文。只输出翻译结果。",
-            "translate_zh" => "你是一个翻译助手。请将以下文本翻译为中文。只输出翻译结果。",
-            "expand" => "你是一个写作助手。请对以下文本进行扩展，补充更多细节和论述。使用中文。",
-            "shorten" => "你是一个写作助手。请精简以下文本，保留核心信息，减少冗余。使用中文。",
-            _ => "你是一个写作助手。请按照用户的要求处理文本。使用中文。",
+        // 选中文本 / 上下文统一走 HTML 剥离，避免 <p>/<br> 污染 Prompt
+        let selection_plain = strip_html(selected_text);
+        let context_plain_full = strip_html(context);
+        // 上下文窗口限制：旧逻辑 500 字，保持不变；太长会侵蚀 selection 的 token 预算
+        let context_snippet: String = context_plain_full.chars().take(500).collect();
+
+        // 优先按 DB Prompt 走（prompt:id 或 builtin_code）
+        let rendered = if let Ok(tmpl) = crate::services::prompt::PromptService::resolve(db, action)
+        {
+            let vars = crate::services::prompt::PromptVars {
+                selection: &selection_plain,
+                context: &context_snippet,
+                title: "",
+                language: "zh-CN",
+            };
+            Some(crate::services::prompt::render(&tmpl.prompt, &vars))
+        } else {
+            None
         };
 
-        let mut messages = vec![json!({
-            "role": "system",
-            "content": system_prompt
-        })];
-
-        // 如果有上下文（选中文本前后的内容），提供给 AI 参考
-        if !context.is_empty() {
-            let ctx_plain = strip_html(context);
-            let snippet: String = ctx_plain.chars().take(500).collect();
-            messages.push(json!({
-                "role": "user",
-                "content": format!("以下是笔记的上下文内容（供参考）：\n{}", snippet)
-            }));
-            messages.push(json!({
-                "role": "assistant",
-                "content": "好的，我已了解上下文。请提供需要处理的文本。"
-            }));
-        }
-
-        let user_text = strip_html(selected_text);
-        messages.push(json!({
-            "role": "user",
-            "content": user_text
-        }));
+        let messages = if let Some(user_content) = rendered {
+            // DB Prompt 路径：单轮 user message（模板里已经把上下文/选区织进去了）
+            vec![
+                json!({
+                    "role": "system",
+                    "content": "你是一个写作助手。请按照用户的指令处理文本，只输出最终结果，不要额外解释。使用中文。"
+                }),
+                json!({ "role": "user", "content": user_content }),
+            ]
+        } else {
+            // 兜底硬编码路径：DB 里没有对应模板时保持旧行为，防止功能完全不可用
+            let system_prompt = match action {
+                "continue" => "你是一个写作助手。请根据上下文和已有内容，自然地续写下去。只输出续写内容，不要重复已有内容。使用中文。",
+                "summarize" => "你是一个写作助手。请对以下文本进行简洁的总结概括。使用中文。",
+                "rewrite" => "你是一个写作助手。请改写以下文本，使其表达更加流畅、专业。保持原意不变。只输出改写后的内容。使用中文。",
+                "translate_en" => "你是一个翻译助手。请将以下文本翻译为英文。只输出翻译结果。",
+                "translate_zh" => "你是一个翻译助手。请将以下文本翻译为中文。只输出翻译结果。",
+                "expand" => "你是一个写作助手。请对以下文本进行扩展，补充更多细节和论述。使用中文。",
+                "shorten" => "你是一个写作助手。请精简以下文本，保留核心信息，减少冗余。使用中文。",
+                _ => "你是一个写作助手。请按照用户的要求处理文本。使用中文。",
+            };
+            let mut messages = vec![json!({ "role": "system", "content": system_prompt })];
+            if !context_snippet.is_empty() {
+                messages.push(json!({
+                    "role": "user",
+                    "content": format!("以下是笔记的上下文内容（供参考）：\n{}", context_snippet)
+                }));
+                messages.push(json!({
+                    "role": "assistant",
+                    "content": "好的，我已了解上下文。请提供需要处理的文本。"
+                }));
+            }
+            messages.push(json!({ "role": "user", "content": selection_plain }));
+            messages
+        };
 
         // 创建一个包装 app handle 发送 ai-write: 前缀事件
         let write_app = WriteAssistEmitter { app: app.clone() };

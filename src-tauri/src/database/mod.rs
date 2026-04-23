@@ -2,6 +2,7 @@ pub mod ai;
 pub mod folders;
 pub mod links;
 pub mod notes;
+pub mod prompt;
 pub mod schema;
 pub mod search;
 pub mod sync;

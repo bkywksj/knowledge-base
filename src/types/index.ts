@@ -488,3 +488,38 @@ export interface TaskStats {
   overdue: number;
   dueToday: number;
 }
+
+// ─── AI 提示词库 ───────────────────────────────
+
+/**
+ * AI 写作结果插入模式
+ * - `replace`：用结果替换选中的文本（默认；改写/扩展/翻译等）
+ * - `append`：在选区末尾追加（续写场景）
+ * - `popup`：只展示给用户看，不自动插入（总结场景）
+ */
+export type PromptOutputMode = "replace" | "append" | "popup";
+
+export interface PromptTemplate {
+  id: number;
+  title: string;
+  description: string;
+  prompt: string;
+  outputMode: PromptOutputMode;
+  icon: string | null;
+  isBuiltin: boolean;
+  builtinCode: string | null;
+  sortOrder: number;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PromptTemplateInput {
+  title: string;
+  description?: string | null;
+  prompt: string;
+  outputMode?: PromptOutputMode;
+  icon?: string | null;
+  sortOrder?: number | null;
+  enabled?: boolean | null;
+}

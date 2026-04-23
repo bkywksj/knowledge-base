@@ -15,6 +15,7 @@ pub mod markdown;
 pub mod converter;
 pub mod image;
 pub mod pdf;
+pub mod prompt;
 pub mod source_file;
 pub mod sync;
 pub mod sync_scheduler;

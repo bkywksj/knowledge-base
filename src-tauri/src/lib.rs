@@ -250,6 +250,13 @@ pub fn run() {
             commands::ai::cancel_ai_generation,
             commands::ai::ai_write_assist,
             commands::ai::cancel_ai_write_assist,
+            // 提示词库模块
+            commands::prompt::list_prompts,
+            commands::prompt::get_prompt,
+            commands::prompt::create_prompt,
+            commands::prompt::update_prompt,
+            commands::prompt::delete_prompt,
+            commands::prompt::set_prompt_enabled,
             // 导入模块
             commands::import::scan_markdown_folder,
             commands::import::import_selected_files,

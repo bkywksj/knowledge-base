@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 18;
+pub const SCHEMA_VERSION: i32 = 19;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -48,6 +48,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             15 => migrate_v15_to_v16(conn)?,
             16 => migrate_v16_to_v17(conn)?,
             17 => migrate_v17_to_v18(conn)?,
+            18 => migrate_v18_to_v19(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -706,5 +707,88 @@ fn migrate_v17_to_v18(conn: &Connection) -> Result<(), AppError> {
     }
 
     set_version(conn, 18)?;
+    Ok(())
+}
+
+/// v18 -> v19: AI 提示词库（prompt_templates）+ 7 条内置模板
+///
+/// 背景：编辑器 AI 菜单原本硬编码了 7 个 action（续写/总结/改写/扩展/精简/译英/译中），
+/// 用户没法加自己的 Prompt，也没法改内置文案。本迁移把模板迁移到 DB：
+///   · is_builtin=1 + builtin_code=xxx 的行是内置，首次安装写入；
+///   · 用户自定义模板 is_builtin=0；
+///   · 菜单改为读 DB 列表，点击时走 `ai_write_assist` 的 `prompt:{id}` 分支。
+///
+/// 字段说明：
+///   · output_mode: 'replace'（替换选区，默认） / 'append'（追加到选区末尾，续写场景） / 'popup'（仅展示，如总结）
+///   · builtin_code: 和旧硬编码 action 保持一致，万一前端旧版本传入也能映射到 DB
+///   · sort_order: 越小越靠前，内置占 10/20/30… 让用户插队有空间
+fn migrate_v18_to_v19(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v18 -> v19 (prompt_templates + 内置模板)");
+
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS prompt_templates (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            title         TEXT NOT NULL,
+            description   TEXT NOT NULL DEFAULT '',
+            prompt        TEXT NOT NULL,
+            output_mode   TEXT NOT NULL DEFAULT 'replace',
+            icon          TEXT,
+            is_builtin    INTEGER NOT NULL DEFAULT 0,
+            builtin_code  TEXT UNIQUE,
+            sort_order    INTEGER NOT NULL DEFAULT 0,
+            enabled       INTEGER NOT NULL DEFAULT 1,
+            created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            updated_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_prompt_templates_sort
+            ON prompt_templates(sort_order, id);
+        ",
+    )?;
+
+    // 内置模板（首次插入，INSERT OR IGNORE 保证再跑不覆盖用户修改）
+    //
+    // 所有 prompt 用 {{selection}} / {{context}} / {{title}} 三个占位符，
+    // services/prompt.rs 的 render 函数会在调用 AI 前做字符串替换。
+    //
+    // 短模板为主，长指令保留给用户自行 fork，避免内置"太啰嗦"。
+    let builtins: &[(&str, &str, &str, &str, &str, i32)] = &[
+        ("续写", "根据上下文自然地续写", "你是一个写作助手。请根据下面的上下文和已有内容，自然地续写下去。只输出续写的新内容，不要重复已有内容。使用中文。\n\n【上下文】\n{{context}}\n\n【已有内容】\n{{selection}}",
+         "append", "ArrowRight", 10),
+        ("总结", "提炼关键信息", "你是一个写作助手。请对以下文本进行简洁的总结概括，突出关键信息和核心观点。使用中文。\n\n【原文】\n{{selection}}",
+         "popup", "FileText", 20),
+        ("改写", "优化表达让文本更流畅", "你是一个写作助手。请改写以下文本，使其表达更加流畅、专业。保持原意不变。只输出改写后的内容，不要解释。使用中文。\n\n【原文】\n{{selection}}",
+         "replace", "RefreshCw", 30),
+        ("扩展", "补充细节和论述", "你是一个写作助手。请对以下文本进行扩展，补充更多细节、论据或例子。保持原有观点不变。使用中文。\n\n【原文】\n{{selection}}",
+         "replace", "Expand", 40),
+        ("精简", "去掉冗余保留核心", "你是一个写作助手。请精简以下文本，保留核心信息，去除冗余表达。只输出精简后的内容。使用中文。\n\n【原文】\n{{selection}}",
+         "replace", "Shrink", 50),
+        ("译英", "翻译成地道英文", "你是一个翻译助手。请将以下文本翻译成地道的英文。只输出翻译结果，不要解释。\n\n【原文】\n{{selection}}",
+         "replace", "Languages", 60),
+        ("译中", "翻译成准确中文", "你是一个翻译助手。请将以下文本翻译成准确、通顺的中文。只输出翻译结果，不要解释。\n\n【原文】\n{{selection}}",
+         "replace", "Languages", 70),
+    ];
+
+    // builtin_code 对应旧硬编码 action
+    let codes = [
+        "continue",
+        "summarize",
+        "rewrite",
+        "expand",
+        "shorten",
+        "translate_en",
+        "translate_zh",
+    ];
+
+    for (i, (title, desc, prompt, mode, icon, sort)) in builtins.iter().enumerate() {
+        conn.execute(
+            "INSERT OR IGNORE INTO prompt_templates
+                (title, description, prompt, output_mode, icon, is_builtin, builtin_code, sort_order)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7)",
+            rusqlite::params![title, desc, prompt, mode, icon, codes[i], sort],
+        )?;
+    }
+
+    set_version(conn, 19)?;
     Ok(())
 }

@@ -47,6 +47,8 @@ import type {
   UpdateTaskInput,
   TaskQuery,
   TaskStats,
+  PromptTemplate,
+  PromptTemplateInput,
 } from "@/types";
 
 /** 系统相关 API */
@@ -317,6 +319,26 @@ export const aiWriteApi = {
     invoke<void>("ai_write_assist", { action, selectedText, context }),
   /** 取消写作辅助 */
   cancel: () => invoke<void>("cancel_ai_write_assist"),
+};
+
+/**
+ * AI 提示词库 API
+ *
+ * 内置模板在数据库迁移 v19 时写入（见 schema.rs），用户可修改文案/排序/启用状态，
+ * 但 `isBuiltin` / `builtinCode` 字段由后端保护不可修改。
+ */
+export const promptApi = {
+  /** 列出提示词；onlyEnabled=true 时过滤禁用项（编辑器菜单用） */
+  list: (onlyEnabled?: boolean) =>
+    invoke<PromptTemplate[]>("list_prompts", { onlyEnabled }),
+  get: (id: number) => invoke<PromptTemplate>("get_prompt", { id }),
+  create: (input: PromptTemplateInput) =>
+    invoke<PromptTemplate>("create_prompt", { input }),
+  update: (id: number, input: PromptTemplateInput) =>
+    invoke<PromptTemplate>("update_prompt", { id, input }),
+  delete: (id: number) => invoke<boolean>("delete_prompt", { id }),
+  setEnabled: (id: number, enabled: boolean) =>
+    invoke<void>("set_prompt_enabled", { id, enabled }),
 };
 
 /** 同步 API（V1 本地 ZIP + V2 WebDAV 全量快照） */

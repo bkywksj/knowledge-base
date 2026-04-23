@@ -31,6 +31,7 @@ import {
   CheckSquare,
   FolderOpen,
   FolderInput,
+  Sparkles,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderOutlined } from "@ant-design/icons";
@@ -51,6 +52,7 @@ const navItems = [
   { key: "/tasks", icon: <CheckSquare size={16} />, label: "待办" },
   { key: "/graph", icon: <GitBranch size={16} />, label: "知识图谱" },
   { key: "/ai", icon: <Bot size={16} />, label: "AI 问答" },
+  { key: "/prompts", icon: <Sparkles size={16} />, label: "提示词" },
   { key: "/about", icon: <Info size={16} />, label: "关于" },
 ];
 

@@ -13,29 +13,32 @@ import {
   Check,
   Loader2,
   StopCircle,
+  Wand2,
 } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { aiWriteApi } from "@/lib/api";
+import { aiWriteApi, promptApi } from "@/lib/api";
+import type { PromptOutputMode, PromptTemplate } from "@/types";
 
 interface AiWriteMenuProps {
   editor: Editor;
 }
 
-interface AiAction {
-  key: string;
-  icon: React.ReactNode;
-  label: string;
-}
+// Lucide 图标名 → React 元素工厂，保持和管理页"图标名"字段一致
+const ICON_MAP: Record<string, (size: number) => React.ReactNode> = {
+  ArrowRight: (s) => <ArrowRight size={s} />,
+  FileText: (s) => <FileText size={s} />,
+  RefreshCw: (s) => <RefreshCw size={s} />,
+  Languages: (s) => <Languages size={s} />,
+  Expand: (s) => <Expand size={s} />,
+  Shrink: (s) => <Shrink size={s} />,
+  Sparkles: (s) => <Sparkles size={s} />,
+  Wand2: (s) => <Wand2 size={s} />,
+};
 
-const AI_ACTIONS: AiAction[] = [
-  { key: "continue", icon: <ArrowRight size={13} />, label: "续写" },
-  { key: "summarize", icon: <FileText size={13} />, label: "总结" },
-  { key: "rewrite", icon: <RefreshCw size={13} />, label: "改写" },
-  { key: "expand", icon: <Expand size={13} />, label: "扩展" },
-  { key: "shorten", icon: <Shrink size={13} />, label: "精简" },
-  { key: "translate_en", icon: <Languages size={13} />, label: "译英" },
-  { key: "translate_zh", icon: <Languages size={13} />, label: "译中" },
-];
+function renderIcon(name: string | null, size: number): React.ReactNode {
+  if (name && ICON_MAP[name]) return ICON_MAP[name](size);
+  return <Wand2 size={size} />; // 用户自定义没填图标时的默认占位
+}
 
 export function AiWriteMenu({ editor }: AiWriteMenuProps) {
   const { token } = antdTheme.useToken();
@@ -44,8 +47,30 @@ export function AiWriteMenu({ editor }: AiWriteMenuProps) {
   const [streaming, setStreaming] = useState(false);
   const [result, setResult] = useState("");
   const [selectedText, setSelectedText] = useState("");
+  // 正在执行的 Prompt（用于决定结果插入模式 / 菜单标题）
+  const [activePrompt, setActivePrompt] = useState<PromptTemplate | null>(null);
+  // DB 里的提示词列表，AI 菜单从这里渲染；为空时显示"去添加提示词"占位
+  const [prompts, setPrompts] = useState<PromptTemplate[]>([]);
+  const [promptsLoaded, setPromptsLoaded] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const unlistenRefs = useRef<UnlistenFn[]>([]);
+
+  // 首次挂载时拉一次提示词；管理页增删后由用户重新选中触发刷新（下面 selectionUpdate 里刷）。
+  // 不做全局事件订阅：管理页和编辑器通常不同时打开，多拉一次成本可以忽略。
+  useEffect(() => {
+    void reloadPrompts();
+  }, []);
+
+  async function reloadPrompts() {
+    try {
+      const list = await promptApi.list(true);
+      setPrompts(list);
+    } catch (e) {
+      console.error("加载提示词失败:", e);
+    } finally {
+      setPromptsLoaded(true);
+    }
+  }
 
   // 监听编辑器选区变化，显示/隐藏菜单
   useEffect(() => {
@@ -79,6 +104,7 @@ export function AiWriteMenu({ editor }: AiWriteMenuProps) {
 
       if (!streaming) {
         setResult("");
+        setActivePrompt(null);
         setVisible(true);
       }
     }
@@ -118,16 +144,21 @@ export function AiWriteMenu({ editor }: AiWriteMenuProps) {
     };
   }, [cleanup]);
 
-  async function handleAction(action: string) {
+  async function handlePrompt(prompt: PromptTemplate) {
     if (streaming) return;
 
     setStreaming(true);
     setResult("");
+    setActivePrompt(prompt);
     await cleanup();
 
-    // 获取选区周围的上下文
+    // 获取选区周围的上下文（与旧版本一致：各取 300 字符）
     const { from, to } = editor.state.selection;
-    const fullText = editor.state.doc.textBetween(0, editor.state.doc.content.size, " ");
+    const fullText = editor.state.doc.textBetween(
+      0,
+      editor.state.doc.content.size,
+      " ",
+    );
     const contextBefore = fullText.slice(Math.max(0, from - 300), from);
     const contextAfter = fullText.slice(to, Math.min(fullText.length, to + 300));
     const context = contextBefore + contextAfter;
@@ -148,7 +179,7 @@ export function AiWriteMenu({ editor }: AiWriteMenuProps) {
     unlistenRefs.current = [tokenUnlisten, doneUnlisten, errorUnlisten];
 
     try {
-      await aiWriteApi.assist(action, selectedText, context);
+      await aiWriteApi.assist(`prompt:${prompt.id}`, selectedText, context);
     } catch (e) {
       setStreaming(false);
       setResult(`错误: ${e}`);
@@ -166,23 +197,40 @@ export function AiWriteMenu({ editor }: AiWriteMenuProps) {
     await cleanup();
   }
 
-  function handleAccept() {
+  /**
+   * 应用结果：按 Prompt 的 output_mode 选择插入策略
+   * - append：在选区末尾追加（续写）
+   * - popup：只展示不插入；用户确实想插入会手动选"替换"/"追加"
+   * - replace（默认）：删选区再插入
+   */
+  function applyResult(mode: PromptOutputMode) {
     if (!result) return;
     const { from, to } = editor.state.selection;
-
-    // 根据不同操作，插入方式不同
-    // 续写：在选区末尾追加；其他：替换选中内容
-    editor.chain().focus().deleteRange({ from, to }).insertContentAt(from, result).run();
+    if (mode === "append") {
+      editor.chain().focus().insertContentAt(to, result).run();
+    } else {
+      // replace：popup 也会走到这里（用户手动点"替换"），一视同仁
+      editor
+        .chain()
+        .focus()
+        .deleteRange({ from, to })
+        .insertContentAt(from, result)
+        .run();
+    }
     setVisible(false);
     setResult("");
+    setActivePrompt(null);
   }
 
   function handleDiscard() {
     setResult("");
     setVisible(false);
+    setActivePrompt(null);
   }
 
   if (!visible) return null;
+
+  const defaultMode: PromptOutputMode = activePrompt?.outputMode ?? "replace";
 
   return (
     <div
@@ -200,21 +248,38 @@ export function AiWriteMenu({ editor }: AiWriteMenuProps) {
           style={{
             background: token.colorBgElevated,
             border: `1px solid ${token.colorBorderSecondary}`,
+            maxWidth: 560,
+            flexWrap: "wrap",
           }}
         >
           <Sparkles
             size={13}
             style={{ color: token.colorPrimary, marginRight: 4 }}
           />
-          {AI_ACTIONS.map((action) => (
-            <Tooltip key={action.key} title={action.label} mouseEnterDelay={0.3}>
+          {prompts.length === 0 && promptsLoaded && (
+            <span
+              style={{
+                color: token.colorTextTertiary,
+                fontSize: 12,
+                padding: "2px 6px",
+              }}
+            >
+              无可用提示词，去"提示词"页添加
+            </span>
+          )}
+          {prompts.map((p) => (
+            <Tooltip
+              key={p.id}
+              title={p.description || p.title}
+              mouseEnterDelay={0.3}
+            >
               <button
                 className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-black/5 transition-colors whitespace-nowrap"
                 style={{ color: token.colorText }}
-                onClick={() => handleAction(action.key)}
+                onClick={() => handlePrompt(p)}
               >
-                {action.icon}
-                {action.label}
+                {renderIcon(p.icon, 13)}
+                {p.title}
               </button>
             </Tooltip>
           ))}
@@ -242,7 +307,7 @@ export function AiWriteMenu({ editor }: AiWriteMenuProps) {
           >
             <span className="flex items-center gap-1.5">
               <Sparkles size={12} style={{ color: token.colorPrimary }} />
-              AI 写作辅助
+              {activePrompt ? activePrompt.title : "AI 写作辅助"}
               {streaming && (
                 <Loader2
                   size={12}
@@ -299,11 +364,19 @@ export function AiWriteMenu({ editor }: AiWriteMenuProps) {
               >
                 丢弃
               </Button>
+              {/* 追加按钮：续写场景（append）默认主按钮；其他场景降级为次按钮 */}
               <Button
-                type="primary"
+                type={defaultMode === "append" ? "primary" : "default"}
+                size="small"
+                onClick={() => applyResult("append")}
+              >
+                追加
+              </Button>
+              <Button
+                type={defaultMode === "append" ? "default" : "primary"}
                 size="small"
                 icon={<Check size={12} />}
-                onClick={handleAccept}
+                onClick={() => applyResult("replace")}
               >
                 替换
               </Button>

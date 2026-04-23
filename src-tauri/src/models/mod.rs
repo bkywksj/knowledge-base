@@ -583,4 +583,49 @@ pub struct TaskStats {
     pub due_today: usize,
 }
 
+// ─── AI 提示词库 ─────────────────────────────
+
+/// AI 提示词模板（返回给前端）
+///
+/// - 内置模板 `is_builtin=1`，`builtin_code` 是旧硬编码 action（continue/summarize…）的别名，便于兼容。
+/// - 用户自定义模板 `is_builtin=0`，`builtin_code=None`。
+/// - `output_mode` 决定前端 AI 菜单拿到结果后默认怎么插入：
+///     · `replace` 替换选区
+///     · `append`  追加到选区末尾（续写场景）
+///     · `popup`   只展示，不自动插入（总结场景）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptTemplate {
+    pub id: i64,
+    pub title: String,
+    pub description: String,
+    pub prompt: String,
+    /// 'replace' | 'append' | 'popup'
+    pub output_mode: String,
+    /// Lucide 图标名，如 "ArrowRight"
+    pub icon: Option<String>,
+    pub is_builtin: bool,
+    pub builtin_code: Option<String>,
+    pub sort_order: i32,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// 创建提示词模板的入参
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptTemplateInput {
+    pub title: String,
+    pub description: Option<String>,
+    pub prompt: String,
+    /// 'replace' | 'append' | 'popup'，省略则用 'replace'
+    pub output_mode: Option<String>,
+    pub icon: Option<String>,
+    /// 省略视为末尾（会取 max(sort_order)+10）
+    pub sort_order: Option<i32>,
+    /// 省略视为启用
+    pub enabled: Option<bool>,
+}
+
 
