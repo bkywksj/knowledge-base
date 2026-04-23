@@ -98,28 +98,67 @@ export function AppLayout() {
     localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
   }, [sidebarWidth]);
 
+  // Sider DOM 引用：拖动期绕过 React 直接改样式，否则每次 mousemove 都
+  // 触发整棵 AppLayout 子树（含 Sidebar Tree）重渲染，主线程扛不住
+  const siderRef = useRef<HTMLDivElement>(null);
+  const handleRef = useRef<HTMLDivElement>(null);
+
   const startSidebarResize = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
       const startX = e.clientX;
       const startW = sidebarWidth;
+      let pendingWidth = startW;
+      let rafId: number | null = null;
+
+      // 直接改 DOM：antd Sider 同时用 flex-basis / min-width / max-width / width
+      // 四个属性锁宽度，缺一不可
+      function applyWidth(w: number) {
+        const sider = siderRef.current;
+        if (sider) {
+          sider.style.flex = `0 0 ${w}px`;
+          sider.style.maxWidth = `${w}px`;
+          sider.style.minWidth = `${w}px`;
+          sider.style.width = `${w}px`;
+        }
+        if (handleRef.current) {
+          handleRef.current.style.left = `${w - 2}px`;
+        }
+      }
+
       function onMove(ev: MouseEvent) {
         const next = Math.max(
           SIDEBAR_MIN_WIDTH,
           Math.min(SIDEBAR_MAX_WIDTH, startW + (ev.clientX - startX)),
         );
-        setSidebarWidth(next);
+        pendingWidth = next;
+        // rAF 合并：每帧最多一次 DOM 写入
+        if (rafId == null) {
+          rafId = requestAnimationFrame(() => {
+            rafId = null;
+            applyWidth(pendingWidth);
+          });
+        }
       }
       function onUp() {
+        if (rafId != null) {
+          cancelAnimationFrame(rafId);
+          rafId = null;
+        }
         document.removeEventListener("mousemove", onMove);
         document.removeEventListener("mouseup", onUp);
         document.body.style.userSelect = "";
         document.body.style.cursor = "";
+        document.body.classList.remove("sidebar-resizing");
+        // 松手时才把最终宽度写入 React state（触发一次渲染 + localStorage）
+        setSidebarWidth(pendingWidth);
       }
       document.addEventListener("mousemove", onMove);
       document.addEventListener("mouseup", onUp);
       document.body.style.userSelect = "none";
       document.body.style.cursor = "col-resize";
+      // 拖动期 class：在 global.css 里绑定 contain/will-change，隔离 reflow
+      document.body.classList.add("sidebar-resizing");
     },
     [sidebarWidth],
   );
@@ -296,6 +335,7 @@ export function AppLayout() {
       {activeTheme === "dark-starry" && <StarryBackground />}
       {!focusMode && (
         <Sider
+          ref={siderRef}
           collapsed={sidebarCollapsed}
           collapsedWidth={60}
           width={sidebarWidth}
@@ -312,6 +352,7 @@ export function AppLayout() {
       {/* 可拖拽调节 Sider 宽度的手柄：绝对定位叠在 Sider 右边缘；折叠态下不显示 */}
       {!focusMode && !sidebarCollapsed && (
         <div
+          ref={handleRef}
           role="separator"
           aria-orientation="vertical"
           aria-label="拖动调整侧边栏宽度"

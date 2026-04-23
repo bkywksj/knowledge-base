@@ -81,6 +81,18 @@ body,
   width: 12px;
 }
 
+/* ─── Sider 拖拽调宽期间的性能优化 ─────────────
+ * 拖动时 Sider 宽度每帧变化，默认会触发 Sider 内 Sidebar 整棵子树 reflow。
+ * 用 CSS contain 把 layout/paint 隔离在 Sider 内，will-change: width 告诉
+ * 浏览器提前为宽度变化准备合成层，避免每帧重新布局外层 Layout。
+ * cursor / user-select 由 JS 在 document.body 上加 col-resize；这里也兜底
+ * 禁掉 transition 免得将来谁给 Sider 加 transition 回归性能。 */
+.sidebar-resizing .ant-layout-sider {
+  contain: layout paint;
+  will-change: width;
+  transition: none !important;
+}
+
 /* ─── 笔记编辑器页面布局（Typora 风格） ────────── */
 
 .editor-page {
