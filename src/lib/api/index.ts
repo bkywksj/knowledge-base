@@ -196,6 +196,9 @@ export const tagApi = {
   list: () => invoke<Tag[]>("list_tags"),
   rename: (id: number, name: string) =>
     invoke<void>("rename_tag", { id, name }),
+  /** 修改标签颜色；传 null 清除自定义颜色走默认样式 */
+  setColor: (id: number, color: string | null) =>
+    invoke<void>("set_tag_color", { id, color }),
   delete: (id: number) => invoke<void>("delete_tag", { id }),
   addToNote: (noteId: number, tagId: number) =>
     invoke<void>("add_tag_to_note", { noteId, tagId }),

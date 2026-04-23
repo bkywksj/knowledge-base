@@ -11,13 +11,13 @@ import {
   Input,
   Popconfirm,
   message,
-  theme as antdTheme,
 } from "antd";
-import { Plus, Tags, FileText, Edit3, Trash2, Check } from "lucide-react";
+import { Plus, Tags, FileText, Edit3, Trash2 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { tagApi } from "@/lib/api";
 import { stripHtml, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { TagColorPicker } from "@/components/TagColorPicker";
 import { useAppStore } from "@/store";
 import type { Tag, Note, PageResult } from "@/types";
 
@@ -25,37 +25,6 @@ import type { Tag, Note, PageResult } from "@/types";
 const NOTE_ROW_HEIGHT = 62;
 
 const { Title, Text, Paragraph } = Typography;
-
-const TAG_COLORS = [
-  "#1677ff", "#722ed1", "#eb2f96", "#f5222d", "#fa541c",
-  "#fa8c16", "#faad14", "#a0d911", "#52c41a", "#13c2c2",
-  "#2f54eb", "#531dab", "#c41d7f", "#cf1322", "#d4380d",
-  "#d46b08", "#d48806", "#7cb305", "#389e0d", "#08979c",
-];
-
-function PresetColors({ value, onChange }: { value?: string; onChange?: (v: string) => void }) {
-  const { token } = antdTheme.useToken();
-  return (
-    <div className="flex flex-wrap gap-2">
-      {TAG_COLORS.map((c) => (
-        <div
-          key={c}
-          className="flex items-center justify-center cursor-pointer rounded-md transition-all"
-          style={{
-            width: 28,
-            height: 28,
-            backgroundColor: c,
-            border: value === c ? `2px solid ${token.colorText}` : "2px solid transparent",
-            transform: value === c ? "scale(1.15)" : undefined,
-          }}
-          onClick={() => onChange?.(c)}
-        >
-          {value === c && <Check size={14} color="#fff" strokeWidth={3} />}
-        </div>
-      ))}
-    </div>
-  );
-}
 
 export default function TagsPage() {
   const navigate = useNavigate();
@@ -128,8 +97,14 @@ export default function TagsPage() {
   async function handleSubmit(values: { name: string; color: string }) {
     try {
       if (editingTag) {
-        await tagApi.rename(editingTag.id, values.name);
-        message.success("重命名成功");
+        // 名称变更才调 rename；颜色变更才调 setColor —— 避免空请求
+        if (values.name !== editingTag.name) {
+          await tagApi.rename(editingTag.id, values.name);
+        }
+        if ((values.color || null) !== (editingTag.color || null)) {
+          await tagApi.setColor(editingTag.id, values.color || null);
+        }
+        message.success("已更新");
       } else {
         await tagApi.create(values.name, values.color);
         message.success("创建成功");
@@ -325,11 +300,9 @@ export default function TagsPage() {
           >
             <Input placeholder="输入标签名称" />
           </Form.Item>
-          {!editingTag && (
-            <Form.Item name="color" label="颜色" initialValue="#1677ff">
-              <PresetColors />
-            </Form.Item>
-          )}
+          <Form.Item name="color" label="颜色" initialValue="#1677ff">
+            <TagColorPicker />
+          </Form.Item>
         </Form>
       </Modal>
     </div>

@@ -27,6 +27,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { relativeTime, stripHtml } from "@/lib/utils";
 import { TiptapEditor } from "@/components/editor";
+import { TagColorPicker } from "@/components/TagColorPicker";
 import type { Note, Tag, Folder, NoteLink } from "@/types";
 
 const { Text } = Typography;
@@ -285,6 +286,7 @@ function MetaBar({
   onTagsChange,
   onFolderChange,
   onCreateTag,
+  onChangeTagColor,
 }: {
   noteTags: Tag[];
   allTags: Tag[];
@@ -293,6 +295,7 @@ function MetaBar({
   onTagsChange: (tagIds: number[]) => void;
   onFolderChange: (folderId: number | null) => void;
   onCreateTag: (name: string) => Promise<void>;
+  onChangeTagColor: (tagId: number, color: string | null) => Promise<void>;
 }) {
   const [tagSearch, setTagSearch] = useState("");
   const tagOptions = allTags.map((t) => ({
@@ -321,16 +324,32 @@ function MetaBar({
         <Tags size={14} className="text-gray-400 shrink-0" />
         <div className="flex items-center gap-1 flex-wrap flex-1">
           {noteTags.map((tag) => (
-            <AntTag
+            <Popover
               key={tag.id}
-              closable
-              color={tag.color ?? undefined}
-              onClose={() => {
-                onTagsChange(selectedTagIds.filter((id) => id !== tag.id));
-              }}
+              trigger="click"
+              placement="bottom"
+              title="调整颜色"
+              content={
+                <TagColorPicker
+                  value={tag.color}
+                  allowClear
+                  onChange={(c) => onChangeTagColor(tag.id, c)}
+                />
+              }
             >
-              {tag.name}
-            </AntTag>
+              <AntTag
+                closable
+                color={tag.color ?? undefined}
+                style={{ cursor: "pointer" }}
+                onClose={(e) => {
+                  // 阻止 Popover 触发 + close 走 onTagsChange
+                  e.stopPropagation();
+                  onTagsChange(selectedTagIds.filter((id) => id !== tag.id));
+                }}
+              >
+                {tag.name}
+              </AntTag>
+            </Popover>
           ))}
           <Select
             mode="multiple"
@@ -771,6 +790,24 @@ export default function NoteEditorPage() {
     }
   }
 
+  /** 调整单个标签的颜色（点击 tag chip 弹 Popover 触发） */
+  async function handleChangeTagColor(tagId: number, color: string | null) {
+    try {
+      await tagApi.setColor(tagId, color);
+      // 本地立即更新当前笔记的标签显示，避免等 refresh
+      setNoteTags((prev) =>
+        prev.map((t) => (t.id === tagId ? { ...t, color } : t)),
+      );
+      setAllTags((prev) =>
+        prev.map((t) => (t.id === tagId ? { ...t, color } : t)),
+      );
+      // 通知标签页等其他消费者刷新
+      useAppStore.getState().bumpTagsRefresh();
+    } catch (e) {
+      message.error(String(e));
+    }
+  }
+
   /** 在编辑器里直接创建新标签并挂到当前笔记 */
   async function handleCreateTag(name: string) {
     const trimmed = name.trim();
@@ -929,6 +966,7 @@ export default function NoteEditorPage() {
               onTagsChange={handleTagsChange}
               onFolderChange={handleFolderChange}
               onCreateTag={handleCreateTag}
+              onChangeTagColor={handleChangeTagColor}
             />
           </div>
 

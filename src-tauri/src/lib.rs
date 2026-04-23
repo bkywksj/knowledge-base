@@ -222,6 +222,7 @@ pub fn run() {
             commands::tags::create_tag,
             commands::tags::list_tags,
             commands::tags::rename_tag,
+            commands::tags::set_tag_color,
             commands::tags::delete_tag,
             commands::tags::add_tag_to_note,
             commands::tags::remove_tag_from_note,

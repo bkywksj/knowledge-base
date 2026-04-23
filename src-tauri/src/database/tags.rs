@@ -54,6 +54,22 @@ impl Database {
         Ok(tags)
     }
 
+    /// 修改标签颜色（传 None 清空颜色走默认样式）
+    pub fn set_tag_color(&self, id: i64, color: Option<&str>) -> Result<(), AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+
+        let affected = conn.execute(
+            "UPDATE tags SET color = ?1 WHERE id = ?2",
+            params![color, id],
+        )?;
+
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("标签 {} 不存在", id)));
+        }
+
+        Ok(())
+    }
+
     /// 重命名标签
     pub fn rename_tag(&self, id: i64, name: &str) -> Result<(), AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;

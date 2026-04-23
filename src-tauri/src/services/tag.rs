@@ -29,6 +29,12 @@ impl TagService {
         db.rename_tag(id, name)
     }
 
+    /// 修改标签颜色（传 None 清除）
+    pub fn set_color(db: &Database, id: i64, color: Option<&str>) -> Result<(), AppError> {
+        let normalized = color.map(|s| s.trim()).filter(|s| !s.is_empty());
+        db.set_tag_color(id, normalized)
+    }
+
     /// 删除标签
     pub fn delete(db: &Database, id: i64) -> Result<(), AppError> {
         let deleted = db.delete_tag(id)?;
