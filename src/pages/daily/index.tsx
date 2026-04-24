@@ -18,7 +18,8 @@ import {
 } from "lucide-react";
 import { dailyApi, noteApi } from "@/lib/api";
 import { TiptapEditor } from "@/components/editor";
-import type { Note, NoteInput } from "@/types";
+import { useAutoSave } from "@/hooks/useAutoSave";
+import type { Note } from "@/types";
 
 const { Title, Text } = Typography;
 
@@ -40,21 +41,39 @@ function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/** HH:mm 格式化保存时间 */
+function formatSavedAt(d: Date): string {
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 export default function DailyPage() {
   const [date, setDate] = useState(todayStr);
   const [note, setNote] = useState<Note | null>(null);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
-  const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [recentDates, setRecentDates] = useState<string[]>([]);
 
   const isToday = date === todayStr();
 
+  // 让自动保存的 save 闭包能拿到最新 note / date
+  const noteRef = useRef<Note | null>(note);
+  noteRef.current = note;
+  const dateRef = useRef(date);
+  dateRef.current = date;
+
+  const loadRecentDates = useCallback(async () => {
+    try {
+      const now = new Date();
+      const dates = await dailyApi.listDates(now.getFullYear(), now.getMonth() + 1);
+      setRecentDates(dates);
+    } catch (e) {
+      console.error("加载日记日期失败:", e);
+    }
+  }, []);
+
   const loadDaily = useCallback(async (d: string) => {
     setLoading(true);
-    setDirty(false);
     try {
       const n = await dailyApi.get(d);
       if (n) {
@@ -74,70 +93,90 @@ export default function DailyPage() {
     }
   }, []);
 
-  const loadRecentDates = useCallback(async () => {
-    try {
-      const now = new Date();
-      const dates = await dailyApi.listDates(now.getFullYear(), now.getMonth() + 1);
-      setRecentDates(dates);
-    } catch (e) {
-      console.error("加载日记日期失败:", e);
-    }
-  }, []);
-
   useEffect(() => {
     loadDaily(date);
     loadRecentDates();
   }, [date, loadDaily, loadRecentDates]);
 
-  function handleTitleChange(value: string) {
-    setTitle(value);
-    setDirty(true);
-  }
-
-  function handleContentChange(value: string) {
-    setContent(value);
-    setDirty(true);
-  }
-
-  async function handleSave() {
-    setSaving(true);
-    try {
-      let currentNote = note;
-      // 如果还没有数据库记录，先创建
-      if (!currentNote) {
-        currentNote = await dailyApi.getOrCreate(date);
-        setNote(currentNote);
+  /**
+   * 自动保存：内容变化后 1.2s 防抖入库。
+   *
+   * 创建策略：
+   *  - 还没 DB 记录 & 内容为空 → 什么都不做（避免空草稿污染数据库）
+   *  - 还没 DB 记录 & 内容非空 → getOrCreate 建记录再 update
+   *  - 已有记录 → 直接 update（包括删到空，允许保存）
+   */
+  const autoSave = useAutoSave({
+    value: { title, content },
+    enabled: !loading,
+    save: async ({ title: t, content: c }) => {
+      const d = dateRef.current;
+      let current = noteRef.current;
+      if (!current) {
+        if (c.trim().length === 0) return;
+        current = await dailyApi.getOrCreate(d);
+        setNote(current);
+        noteRef.current = current;
+        void loadRecentDates();
       }
-      const input: NoteInput = { title, content };
-      await noteApi.update(currentNote.id, input);
-      setDirty(false);
-      message.success("保存成功");
-    } catch (e) {
-      message.error(String(e));
-    } finally {
-      setSaving(false);
-    }
-  }
+      await noteApi.update(current.id, { title: t, content: c });
+    },
+  });
 
-  // Ctrl+S / Cmd+S 保存：用 ref 引用最新 handleSave，避免 useEffect 重复订阅
-  const saveRef = useRef<() => void>(() => {});
-  saveRef.current = handleSave;
+  // Ctrl/Cmd + S → 立即保存（跳过防抖）
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "s"
+      ) {
         e.preventDefault();
-        saveRef.current();
+        void autoSave.flush();
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [autoSave]);
 
-  function goToDate(d: string) {
-    if (dirty) {
-      message.warning("当前内容未保存");
-    }
+  // 切日期前先把当前日期未保存的内容落库，避免跨日期丢失
+  async function goToDate(d: string) {
+    await autoSave.flush();
     setDate(d);
+  }
+
+  function renderStatus() {
+    switch (autoSave.status) {
+      case "saving":
+        return <Badge status="processing" text="保存中..." />;
+      case "dirty":
+        return <Badge status="warning" text="编辑中" />;
+      case "saved":
+        return (
+          <Badge
+            status="success"
+            text={
+              autoSave.lastSavedAt
+                ? `已保存 ${formatSavedAt(autoSave.lastSavedAt)}`
+                : "已保存"
+            }
+          />
+        );
+      case "error":
+        return (
+          <span
+            className="cursor-pointer"
+            style={{ color: "#ff4d4f", fontSize: 13 }}
+            onClick={() => void autoSave.flush()}
+            title={autoSave.error ?? ""}
+          >
+            ⚠ 保存失败，点击重试
+          </span>
+        );
+      default:
+        return null;
+    }
   }
 
   return (
@@ -160,23 +199,21 @@ export default function DailyPage() {
             disabled={isToday}
           />
           {!isToday && (
-            <Button size="small" onClick={() => setDate(todayStr())}>
+            <Button size="small" onClick={() => goToDate(todayStr())}>
               今天
             </Button>
           )}
-          {dirty ? (
-            <Badge status="warning" text="未保存" />
-          ) : (
-            <Badge status="success" text="已保存" />
-          )}
+          {renderStatus()}
         </Space>
         <Space align="center">
           <Button
             type="primary"
             icon={<Save size={16} />}
-            onClick={handleSave}
-            loading={saving}
-            disabled={!dirty && note !== null}
+            onClick={() => void autoSave.flush()}
+            loading={autoSave.status === "saving"}
+            disabled={
+              autoSave.status === "saved" || autoSave.status === "idle"
+            }
           >
             保存
           </Button>
@@ -195,7 +232,7 @@ export default function DailyPage() {
               {/* 标题 */}
               <Input
                 value={title}
-                onChange={(e) => handleTitleChange(e.target.value)}
+                onChange={(e) => setTitle(e.target.value)}
                 placeholder="日记标题"
                 variant="borderless"
                 className="editor-title"
@@ -204,13 +241,19 @@ export default function DailyPage() {
               {/* 内容编辑区 */}
               <TiptapEditor
                 content={content}
-                onChange={handleContentChange}
+                onChange={setContent}
                 placeholder="写点什么..."
               />
 
               {/* 最近日记 */}
               {recentDates.length > 0 && (
-                <div className="mt-8 pt-4" style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)" }}>
+                <div
+                  className="mt-8 pt-4"
+                  style={{
+                    borderTop:
+                      "1px solid var(--ant-color-border-secondary, #f0f0f0)",
+                  }}
+                >
                   <Title level={5} style={{ margin: "0 0 8px" }}>
                     <span className="flex items-center gap-2">
                       <FileText size={16} />
@@ -218,7 +261,9 @@ export default function DailyPage() {
                     </span>
                   </Title>
                   <List
-                    dataSource={recentDates.filter((d) => d !== date).slice(0, 10)}
+                    dataSource={recentDates
+                      .filter((d) => d !== date)
+                      .slice(0, 10)}
                     renderItem={(d) => (
                       <List.Item
                         className="cursor-pointer"

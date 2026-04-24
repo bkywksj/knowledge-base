@@ -651,6 +651,42 @@ export default function NoteEditorPage() {
     };
   }, [noteId, setDraft]);
 
+  // unmount 时同步把最新内容 fire-and-forget 入库（兜底：点侧边栏换路由 / 关 Tab 等
+  // 场景 ensureSavedBeforeNavigate 没覆盖的路径，避免用户切其他功能后内容只活在 store
+  // 草稿里、关 app 就丢。组件已卸载无法 await，但 Tauri 进程还在跑，IPC 能完成落库。
+  const dbSaveOnUnmountRef = useRef<{
+    dirty: boolean;
+    title: string;
+    content: string;
+    folderId: number | null | undefined;
+  }>({ dirty: false, title: "", content: "", folderId: null });
+  dbSaveOnUnmountRef.current = {
+    dirty,
+    title,
+    content,
+    folderId: note?.folder_id,
+  };
+  useEffect(() => {
+    return () => {
+      const s = dbSaveOnUnmountRef.current;
+      if (!s.dirty || !s.title.trim()) return;
+      noteApi
+        .update(noteId, {
+          title: s.title.trim(),
+          content: s.content,
+          folder_id: s.folderId,
+        })
+        .then(() => {
+          // 入库成功 → 清掉 store 草稿 & dirty 标记
+          useTabsStore.getState().clearDraft(noteId);
+          useTabsStore.getState().setTabDirty(noteId, false);
+        })
+        .catch(() => {
+          // 入库失败时 store 里的 draft 保留，下次打开能恢复
+        });
+    };
+  }, [noteId]);
+
   // Ctrl+S / Cmd+S 保存：用 ref 避免 useEffect 每次渲染都 re-subscribe
   const saveRef = useRef<() => void>(() => {});
   saveRef.current = handleSave;
