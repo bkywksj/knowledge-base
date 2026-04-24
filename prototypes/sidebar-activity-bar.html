@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>方案 C · Activity Bar 侧边栏原型</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#4F46E5',
+            'primary-light': '#818CF8',
+            accent: '#8B5CF6',
+            ink: '#1F2937',
+            sub: '#6B7280',
+            soft: '#F8F9FC',
+            divider: '#EEF0F4'
+          },
+          fontFamily: {
+            sans: ['Inter', 'Noto Sans SC', 'system-ui', 'sans-serif'],
+          },
+          boxShadow: {
+            'app': '0 10px 40px -10px rgba(79, 70, 229, 0.25), 0 4px 16px -4px rgba(0, 0, 0, 0.08)',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { background: linear-gradient(135deg, #F3F4FA 0%, #EEF2FF 100%); }
+    .activity-item {
+      position: relative;
+      transition: all .15s ease;
+    }
+    .activity-item.active::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 8px;
+      bottom: 8px;
+      width: 2px;
+      background: #4F46E5;
+      border-radius: 0 2px 2px 0;
+    }
+    .activity-item:hover:not(.active) { background: #F3F4F6; }
+    .folder-row:hover { background: #F3F4F6; }
+    .folder-row.selected { background: #EEF2FF; color: #4F46E5; }
+    .tab-active {
+      border-bottom: 2px solid #4F46E5;
+      color: #4F46E5;
+      font-weight: 500;
+    }
+    .variant-card {
+      transition: all .2s ease;
+    }
+    .variant-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 30px -10px rgba(79, 70, 229, 0.2);
+    }
+  </style>
+</head>
+<body class="font-sans text-ink">
+
+  <!-- 页面外层 -->
+  <div class="max-w-[1320px] mx-auto px-8 py-10">
+
+    <!-- 标题区 -->
+    <div class="mb-8 flex items-end justify-between">
+      <div>
+        <div class="flex items-center gap-2 mb-2">
+          <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
+            <i data-lucide="layout-panel-left" class="w-3 h-3"></i>
+            方案 C
+          </span>
+          <span class="text-sub text-xs">Activity Bar 模式</span>
+        </div>
+        <h1 class="text-2xl font-bold tracking-tight">窄图标栏切换视图 + 主侧边栏全给内容</h1>
+        <p class="text-sub text-sm mt-1.5">灵感：VS Code / Obsidian 的 Primary Sidebar。左侧 48px 图标栏切换视图,右侧 240px 主面板整个留给当前视图。</p>
+      </div>
+      <div class="flex items-center gap-1.5 text-xs text-sub">
+        <i data-lucide="monitor" class="w-4 h-4"></i>
+        1280 × 800 @ 1x
+      </div>
+    </div>
+
+    <!-- 主原型：整扇应用窗口 -->
+    <div class="bg-white rounded-2xl shadow-app overflow-hidden border border-divider">
+
+      <!-- 窗口标题栏（模拟 Tauri window） -->
+      <div class="h-10 bg-[#FBFBFD] border-b border-divider flex items-center px-4">
+        <div class="flex gap-1.5">
+          <span class="w-3 h-3 rounded-full bg-[#FF5F57]"></span>
+          <span class="w-3 h-3 rounded-full bg-[#FEBC2E]"></span>
+          <span class="w-3 h-3 rounded-full bg-[#28C840]"></span>
+        </div>
+        <div class="flex-1 text-center text-xs text-sub font-medium">知识库 [DEV]</div>
+        <div class="flex items-center gap-3 text-sub">
+          <i data-lucide="search" class="w-4 h-4 cursor-pointer hover:text-primary"></i>
+          <i data-lucide="palette" class="w-4 h-4 cursor-pointer hover:text-primary"></i>
+          <i data-lucide="settings" class="w-4 h-4 cursor-pointer hover:text-primary"></i>
+        </div>
+      </div>
+
+      <!-- 应用三栏主体 -->
+      <div class="flex h-[620px]">
+
+        <!-- ================= 第 1 栏：Activity Bar（48px） ================= -->
+        <nav class="w-12 bg-[#FAFBFF] border-r border-divider flex flex-col items-center py-2" aria-label="视图切换">
+
+          <!-- 顶部 Logo 小占位 -->
+          <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-accent text-white flex items-center justify-center text-xs font-bold mb-2">知</div>
+
+          <!-- 视图图标组 -->
+          <div class="flex flex-col gap-0.5 w-full items-center">
+            <!-- 首页 -->
+            <button class="activity-item w-10 h-10 rounded-md flex items-center justify-center text-sub cursor-pointer" title="首页">
+              <i data-lucide="home" class="w-[18px] h-[18px]"></i>
+            </button>
+            <!-- 笔记（当前视图） -->
+            <button class="activity-item active w-10 h-10 rounded-md flex items-center justify-center text-primary bg-primary/8 cursor-pointer" title="笔记（当前）">
+              <i data-lucide="file-text" class="w-[18px] h-[18px]"></i>
+            </button>
+            <!-- 搜索 -->
+            <button class="activity-item w-10 h-10 rounded-md flex items-center justify-center text-sub cursor-pointer" title="搜索">
+              <i data-lucide="search" class="w-[18px] h-[18px]"></i>
+            </button>
+            <!-- 每日笔记 -->
+            <button class="activity-item w-10 h-10 rounded-md flex items-center justify-center text-sub cursor-pointer" title="每日笔记">
+              <i data-lucide="calendar" class="w-[18px] h-[18px]"></i>
+            </button>
+            <!-- 标签 -->
+            <button class="activity-item w-10 h-10 rounded-md flex items-center justify-center text-sub cursor-pointer" title="标签">
+              <i data-lucide="tags" class="w-[18px] h-[18px]"></i>
+            </button>
+            <!-- 待办（带红点） -->
+            <button class="activity-item w-10 h-10 rounded-md flex items-center justify-center text-sub cursor-pointer relative" title="待办">
+              <i data-lucide="check-square" class="w-[18px] h-[18px]"></i>
+              <span class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-[#FAFBFF]"></span>
+            </button>
+            <!-- 图谱 -->
+            <button class="activity-item w-10 h-10 rounded-md flex items-center justify-center text-sub cursor-pointer" title="知识图谱">
+              <i data-lucide="git-branch" class="w-[18px] h-[18px]"></i>
+            </button>
+            <!-- AI -->
+            <button class="activity-item w-10 h-10 rounded-md flex items-center justify-center text-sub cursor-pointer" title="AI 问答">
+              <i data-lucide="bot" class="w-[18px] h-[18px]"></i>
+            </button>
+            <!-- 提示词 -->
+            <button class="activity-item w-10 h-10 rounded-md flex items-center justify-center text-sub cursor-pointer" title="提示词">
+              <i data-lucide="sparkles" class="w-[18px] h-[18px]"></i>
+            </button>
+          </div>
+
+          <!-- 底部区：回收站/关于/设置 -->
+          <div class="mt-auto flex flex-col gap-0.5 w-full items-center pb-1">
+            <button class="activity-item w-10 h-10 rounded-md flex items-center justify-center text-sub cursor-pointer" title="回收站">
+              <i data-lucide="trash-2" class="w-[18px] h-[18px]"></i>
+            </button>
+            <button class="activity-item w-10 h-10 rounded-md flex items-center justify-center text-sub cursor-pointer" title="关于">
+              <i data-lucide="info" class="w-[18px] h-[18px]"></i>
+            </button>
+          </div>
+        </nav>
+
+        <!-- ================= 第 2 栏：主侧边栏（240px）—— 当前视图 = 笔记 ================= -->
+        <aside class="w-60 bg-white border-r border-divider flex flex-col">
+
+          <!-- 视图标题 + 新建按钮 -->
+          <div class="px-3 py-3 border-b border-divider flex items-center gap-2">
+            <div class="flex-1 flex items-center gap-1.5">
+              <i data-lucide="file-text" class="w-4 h-4 text-primary"></i>
+              <span class="font-semibold text-sm">笔记</span>
+              <span class="text-[11px] text-sub ml-1">· 128</span>
+            </div>
+            <button class="w-6 h-6 rounded-md hover:bg-soft text-sub hover:text-primary cursor-pointer flex items-center justify-center" title="排序">
+              <i data-lucide="arrow-up-down" class="w-3.5 h-3.5"></i>
+            </button>
+            <button class="w-6 h-6 rounded-md hover:bg-soft text-sub hover:text-primary cursor-pointer flex items-center justify-center" title="折叠全部">
+              <i data-lucide="chevrons-down-up" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+
+          <!-- 新建笔记按钮 -->
+          <div class="px-3 pt-3 pb-2 flex gap-1.5">
+            <button class="flex-1 h-8 rounded-md bg-gradient-to-r from-primary to-accent text-white text-[13px] font-medium flex items-center justify-center gap-1.5 cursor-pointer hover:opacity-90 transition">
+              <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+              新建笔记
+            </button>
+            <button class="w-8 h-8 rounded-md border border-divider hover:border-primary hover:text-primary text-sub cursor-pointer flex items-center justify-center" title="打开本机 md">
+              <i data-lucide="folder-open" class="w-4 h-4"></i>
+            </button>
+          </div>
+
+          <!-- 搜索框（视图内） -->
+          <div class="px-3 pb-2">
+            <div class="relative">
+              <i data-lucide="search" class="absolute left-2.5 top-[7px] w-3.5 h-3.5 text-sub"></i>
+              <input type="text" placeholder="在笔记内搜索..." class="w-full h-7 text-xs pl-7 pr-2 rounded-md bg-soft border border-transparent focus:border-primary/40 focus:bg-white outline-none transition">
+            </div>
+          </div>
+
+          <!-- 文件夹小节标题 -->
+          <div class="px-3 pt-2 pb-1 flex items-center justify-between text-sub text-[11px] uppercase tracking-wider">
+            <span class="flex items-center gap-1">
+              <i data-lucide="chevron-down" class="w-3 h-3"></i>
+              文件夹
+            </span>
+            <div class="flex items-center gap-0.5">
+              <button class="w-5 h-5 rounded hover:bg-soft hover:text-primary cursor-pointer flex items-center justify-center"><i data-lucide="folder-plus" class="w-3 h-3"></i></button>
+            </div>
+          </div>
+
+          <!-- 文件夹树（空间管够） -->
+          <div class="flex-1 overflow-y-auto px-1.5 text-[13px]">
+            <!-- 根 1 -->
+            <div class="folder-row flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer">
+              <i data-lucide="chevron-down" class="w-3 h-3 text-sub"></i>
+              <i data-lucide="folder-open" class="w-3.5 h-3.5 text-primary/80"></i>
+              <span class="flex-1 truncate">工作</span>
+              <span class="text-[10px] text-sub">24</span>
+            </div>
+            <div class="ml-4">
+              <div class="folder-row flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer">
+                <i data-lucide="chevron-down" class="w-3 h-3 text-sub"></i>
+                <i data-lucide="folder" class="w-3.5 h-3.5 text-sub"></i>
+                <span class="flex-1 truncate">会议纪要</span>
+                <span class="text-[10px] text-sub">8</span>
+              </div>
+              <div class="ml-4">
+                <div class="folder-row selected flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer">
+                  <span class="w-3"></span>
+                  <i data-lucide="folder" class="w-3.5 h-3.5"></i>
+                  <span class="flex-1 truncate font-medium">2026-Q2</span>
+                  <span class="text-[10px] opacity-70">3</span>
+                </div>
+                <div class="folder-row flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer">
+                  <span class="w-3"></span>
+                  <i data-lucide="folder" class="w-3.5 h-3.5 text-sub"></i>
+                  <span class="flex-1 truncate">2026-Q1</span>
+                </div>
+              </div>
+              <div class="folder-row flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer">
+                <i data-lucide="chevron-right" class="w-3 h-3 text-sub"></i>
+                <i data-lucide="folder" class="w-3.5 h-3.5 text-sub"></i>
+                <span class="flex-1 truncate">周报</span>
+                <span class="text-[10px] text-sub">12</span>
+              </div>
+              <div class="folder-row flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer">
+                <i data-lucide="chevron-right" class="w-3 h-3 text-sub"></i>
+                <i data-lucide="folder" class="w-3.5 h-3.5 text-sub"></i>
+                <span class="flex-1 truncate">项目文档</span>
+                <span class="text-[10px] text-sub">4</span>
+              </div>
+            </div>
+
+            <!-- 根 2 -->
+            <div class="folder-row flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer mt-0.5">
+              <i data-lucide="chevron-down" class="w-3 h-3 text-sub"></i>
+              <i data-lucide="folder-open" class="w-3.5 h-3.5 text-primary/80"></i>
+              <span class="flex-1 truncate">学习笔记</span>
+              <span class="text-[10px] text-sub">41</span>
+            </div>
+            <div class="ml-4">
+              <div class="folder-row flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer">
+                <i data-lucide="chevron-right" class="w-3 h-3 text-sub"></i>
+                <i data-lucide="folder" class="w-3.5 h-3.5 text-sub"></i>
+                <span class="flex-1 truncate">Rust</span>
+                <span class="text-[10px] text-sub">15</span>
+              </div>
+              <div class="folder-row flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer">
+                <i data-lucide="chevron-right" class="w-3 h-3 text-sub"></i>
+                <i data-lucide="folder" class="w-3.5 h-3.5 text-sub"></i>
+                <span class="flex-1 truncate">Tauri</span>
+                <span class="text-[10px] text-sub">9</span>
+              </div>
+              <div class="folder-row flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer">
+                <i data-lucide="chevron-right" class="w-3 h-3 text-sub"></i>
+                <i data-lucide="folder" class="w-3.5 h-3.5 text-sub"></i>
+                <span class="flex-1 truncate">算法</span>
+                <span class="text-[10px] text-sub">17</span>
+              </div>
+            </div>
+
+            <!-- 根 3 -->
+            <div class="folder-row flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer mt-0.5">
+              <i data-lucide="chevron-right" class="w-3 h-3 text-sub"></i>
+              <i data-lucide="folder" class="w-3.5 h-3.5 text-sub"></i>
+              <span class="flex-1 truncate">读书笔记</span>
+              <span class="text-[10px] text-sub">18</span>
+            </div>
+
+            <!-- 根 4 -->
+            <div class="folder-row flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer">
+              <i data-lucide="chevron-right" class="w-3 h-3 text-sub"></i>
+              <i data-lucide="folder" class="w-3.5 h-3.5 text-sub"></i>
+              <span class="flex-1 truncate">灵感草稿</span>
+              <span class="text-[10px] text-sub">7</span>
+            </div>
+
+            <!-- 根 5 -->
+            <div class="folder-row flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer">
+              <i data-lucide="chevron-right" class="w-3 h-3 text-sub"></i>
+              <i data-lucide="folder" class="w-3.5 h-3.5 text-sub"></i>
+              <span class="flex-1 truncate">生活</span>
+              <span class="text-[10px] text-sub">12</span>
+            </div>
+
+            <!-- 根 6 -->
+            <div class="folder-row flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer">
+              <i data-lucide="chevron-right" class="w-3 h-3 text-sub"></i>
+              <i data-lucide="folder" class="w-3.5 h-3.5 text-sub"></i>
+              <span class="flex-1 truncate">收藏夹</span>
+              <span class="text-[10px] text-sub">26</span>
+            </div>
+          </div>
+
+          <!-- 底部工作区标签 -->
+          <div class="border-t border-divider px-3 py-2 flex items-center justify-between bg-soft text-[11px] text-sub">
+            <span class="flex items-center gap-1"><i data-lucide="database" class="w-3 h-3"></i>主工作区</span>
+            <i data-lucide="chevrons-up-down" class="w-3 h-3 cursor-pointer hover:text-primary"></i>
+          </div>
+        </aside>
+
+        <!-- ================= 第 3 栏：主编辑区 ================= -->
+        <main class="flex-1 flex flex-col bg-white">
+          <!-- Tab 栏 -->
+          <div class="h-10 border-b border-divider flex items-center px-2 gap-1 bg-[#FCFCFE]">
+            <button class="w-7 h-7 rounded hover:bg-soft text-sub cursor-pointer flex items-center justify-center"><i data-lucide="panel-left" class="w-4 h-4"></i></button>
+            <button class="w-7 h-7 rounded hover:bg-soft text-sub cursor-pointer flex items-center justify-center"><i data-lucide="arrow-left" class="w-4 h-4"></i></button>
+            <button class="w-7 h-7 rounded hover:bg-soft text-sub cursor-pointer flex items-center justify-center"><i data-lucide="arrow-right" class="w-4 h-4"></i></button>
+            <div class="h-5 w-px bg-divider mx-1"></div>
+            <div class="flex items-center gap-1.5 px-3 py-1 text-xs bg-white border border-divider rounded-t-md border-b-white -mb-px">
+              <i data-lucide="file-text" class="w-3.5 h-3.5 text-primary"></i>
+              <span>Knowledge Base 开发计划</span>
+              <i data-lucide="x" class="w-3 h-3 text-sub hover:text-ink cursor-pointer ml-2"></i>
+            </div>
+            <div class="flex items-center gap-1.5 px-3 py-1 text-xs text-sub hover:bg-soft rounded cursor-pointer">
+              <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
+              <span>2026-Q2 OKR</span>
+              <i data-lucide="x" class="w-3 h-3 hover:text-ink ml-2"></i>
+            </div>
+          </div>
+
+          <!-- 正文区示意 -->
+          <div class="flex-1 overflow-y-auto">
+            <div class="max-w-3xl mx-auto px-14 py-10">
+              <div class="flex items-center gap-2 text-xs text-sub mb-4">
+                <i data-lucide="folder" class="w-3 h-3"></i>
+                <span>工作</span>
+                <i data-lucide="chevron-right" class="w-3 h-3"></i>
+                <span>会议纪要</span>
+                <i data-lucide="chevron-right" class="w-3 h-3"></i>
+                <span class="text-ink">2026-Q2</span>
+              </div>
+              <h1 class="text-3xl font-bold mb-3 tracking-tight">Knowledge Base 开发计划</h1>
+              <div class="flex items-center gap-2 mb-6">
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-50 text-primary text-[11px]">
+                  <i data-lucide="tag" class="w-2.5 h-2.5"></i>产品规划
+                </span>
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-50 text-accent text-[11px]">
+                  <i data-lucide="tag" class="w-2.5 h-2.5"></i>Tauri
+                </span>
+                <span class="text-xs text-sub ml-2">更新于 12 分钟前</span>
+              </div>
+
+              <p class="text-[15px] leading-7 text-ink/90 mb-4">这份文档记录本季度知识库桌面端的关键迭代节奏,聚焦三个主题:<strong>侧边栏信息密度优化</strong>、<strong>编辑体验升级</strong>与<strong>AI 辅助写作</strong>。</p>
+              <h2 class="text-lg font-semibold mt-6 mb-2 flex items-center gap-2"><span class="w-1 h-4 bg-primary rounded"></span>一、核心痛点</h2>
+              <p class="text-[14px] leading-7 text-ink/85 mb-2">当前侧边栏一级菜单 10 项常驻,挤压下方文件夹树区域,用户在 1080p 屏幕上只能看到 3–4 个文件夹。</p>
+              <ul class="text-[14px] leading-7 text-ink/85 list-disc pl-5 space-y-1">
+                <li>菜单视觉噪音过大,文件夹成为二等公民</li>
+                <li>低频入口(图谱 / AI / 关于)与高频入口平权</li>
+                <li>文件夹树滚动频繁,多层嵌套定位困难</li>
+              </ul>
+              <h2 class="text-lg font-semibold mt-6 mb-2 flex items-center gap-2"><span class="w-1 h-4 bg-primary rounded"></span>二、方案选型</h2>
+              <div class="text-[14px] leading-7 text-ink/85">选定 <strong>Activity Bar 模式</strong>(本原型),把导航改成左侧 48px 图标栏,主侧边栏整块交还文件夹/标签/待办等视图内容。</div>
+            </div>
+          </div>
+
+          <!-- 底部状态栏 -->
+          <div class="h-6 border-t border-divider bg-[#FAFAFC] flex items-center px-3 text-[11px] text-sub gap-4">
+            <span class="flex items-center gap-1"><i data-lucide="circle" class="w-2 h-2 fill-green-500 text-green-500"></i>已保存</span>
+            <span>342 字</span>
+            <span>2 分钟阅读</span>
+            <span class="ml-auto">markdown</span>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- ================= 视图切换示意 ================= -->
+    <div class="mt-10">
+      <div class="flex items-center gap-2 mb-4">
+        <i data-lucide="mouse-pointer-click" class="w-4 h-4 text-primary"></i>
+        <h2 class="text-base font-semibold">切换视图,主侧边栏整块刷新</h2>
+        <span class="text-xs text-sub">点击左侧图标,中间 240px 面板加载对应视图</span>
+      </div>
+
+      <div class="grid grid-cols-3 gap-4">
+        <!-- 变体 1：标签视图 -->
+        <div class="variant-card bg-white rounded-xl border border-divider overflow-hidden shadow-sm">
+          <div class="px-3 py-2 border-b border-divider flex items-center gap-1.5 text-xs">
+            <i data-lucide="tags" class="w-3.5 h-3.5 text-primary"></i>
+            <span class="font-medium">标签视图</span>
+            <span class="text-sub ml-auto">· 36</span>
+          </div>
+          <div class="p-3 space-y-1.5 text-[12px] min-h-[220px]">
+            <div class="flex flex-wrap gap-1.5">
+              <span class="px-2 py-0.5 rounded-full bg-indigo-50 text-primary">#产品 18</span>
+              <span class="px-2 py-0.5 rounded-full bg-purple-50 text-accent">#Tauri 12</span>
+              <span class="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">#Rust 15</span>
+              <span class="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">#灵感 9</span>
+              <span class="px-2 py-0.5 rounded-full bg-rose-50 text-rose-700">#生活 22</span>
+              <span class="px-2 py-0.5 rounded-full bg-sky-50 text-sky-700">#读书 14</span>
+              <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">#会议 8</span>
+              <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">#周报 11</span>
+              <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">#算法 7</span>
+            </div>
+            <div class="pt-2 mt-2 border-t border-divider text-sub text-[11px]">共 36 个标签 · 按使用频率排序</div>
+          </div>
+        </div>
+
+        <!-- 变体 2：待办视图 -->
+        <div class="variant-card bg-white rounded-xl border border-divider overflow-hidden shadow-sm">
+          <div class="px-3 py-2 border-b border-divider flex items-center gap-1.5 text-xs">
+            <i data-lucide="check-square" class="w-3.5 h-3.5 text-primary"></i>
+            <span class="font-medium">待办视图</span>
+            <span class="ml-auto inline-flex items-center gap-1 text-red-500">
+              <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>3 紧急
+            </span>
+          </div>
+          <div class="p-3 space-y-1.5 text-[12px] min-h-[220px]">
+            <div class="flex items-center gap-2 p-1.5 rounded hover:bg-soft cursor-pointer">
+              <input type="checkbox" class="rounded cursor-pointer">
+              <span class="flex-1 truncate">修复侧边栏文件夹挤压问题</span>
+              <span class="text-[10px] text-red-500">今天</span>
+            </div>
+            <div class="flex items-center gap-2 p-1.5 rounded hover:bg-soft cursor-pointer">
+              <input type="checkbox" class="rounded cursor-pointer">
+              <span class="flex-1 truncate">导入 md 目录保留层级</span>
+              <span class="text-[10px] text-red-500">今天</span>
+            </div>
+            <div class="flex items-center gap-2 p-1.5 rounded hover:bg-soft cursor-pointer">
+              <input type="checkbox" class="rounded cursor-pointer" checked>
+              <span class="flex-1 truncate text-sub line-through">工具栏 sticky</span>
+              <span class="text-[10px] text-emerald-500">已完成</span>
+            </div>
+            <div class="flex items-center gap-2 p-1.5 rounded hover:bg-soft cursor-pointer">
+              <input type="checkbox" class="rounded cursor-pointer">
+              <span class="flex-1 truncate">AI 提示词变量占位符</span>
+              <span class="text-[10px] text-amber-500">本周</span>
+            </div>
+            <div class="flex items-center gap-2 p-1.5 rounded hover:bg-soft cursor-pointer">
+              <input type="checkbox" class="rounded cursor-pointer">
+              <span class="flex-1 truncate">知识图谱性能</span>
+              <span class="text-[10px] text-sub">下周</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 变体 3：搜索视图 -->
+        <div class="variant-card bg-white rounded-xl border border-divider overflow-hidden shadow-sm">
+          <div class="px-3 py-2 border-b border-divider flex items-center gap-1.5 text-xs">
+            <i data-lucide="search" class="w-3.5 h-3.5 text-primary"></i>
+            <span class="font-medium">搜索视图</span>
+            <span class="text-sub ml-auto">· 12 条</span>
+          </div>
+          <div class="p-3 space-y-2 text-[12px] min-h-[220px]">
+            <div class="relative">
+              <i data-lucide="search" class="absolute left-2 top-[6px] w-3 h-3 text-sub"></i>
+              <input value="sticky 工具栏" class="w-full h-6 text-[11px] pl-6 pr-2 rounded bg-soft border border-transparent">
+            </div>
+            <div class="p-1.5 rounded hover:bg-soft cursor-pointer">
+              <div class="truncate font-medium">Knowledge Base 开发计划</div>
+              <div class="truncate text-sub text-[11px]">…修复 <mark class="bg-yellow-200 text-ink">sticky 工具栏</mark> 在长文档下不生效…</div>
+            </div>
+            <div class="p-1.5 rounded hover:bg-soft cursor-pointer">
+              <div class="truncate font-medium">编辑器重构笔记</div>
+              <div class="truncate text-sub text-[11px]">…overflow hidden 打断 <mark class="bg-yellow-200 text-ink">sticky</mark>…</div>
+            </div>
+            <div class="p-1.5 rounded hover:bg-soft cursor-pointer">
+              <div class="truncate font-medium">CSS 疑难</div>
+              <div class="truncate text-sub text-[11px]">…position <mark class="bg-yellow-200 text-ink">sticky</mark> 最近滚动祖先…</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 收益说明 + 对比 ================= -->
+    <div class="mt-10 grid grid-cols-2 gap-5">
+      <div class="bg-white rounded-xl border border-divider p-5">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="w-6 h-6 rounded-md bg-emerald-50 text-emerald-600 flex items-center justify-center"><i data-lucide="trending-up" class="w-3.5 h-3.5"></i></span>
+          <h3 class="font-semibold">相比当前布局的收益</h3>
+        </div>
+        <ul class="space-y-2.5 text-[13px] text-ink/85">
+          <li class="flex gap-2"><i data-lucide="check" class="w-4 h-4 text-emerald-500 shrink-0 mt-0.5"></i>文件夹垂直空间:约 <strong>160px → 440px</strong>,可见文件夹从 3–4 条升到 12+ 条</li>
+          <li class="flex gap-2"><i data-lucide="check" class="w-4 h-4 text-emerald-500 shrink-0 mt-0.5"></i>菜单可无限扩展,再加功能不挤压文件夹(图标条最多 15 个仍不满)</li>
+          <li class="flex gap-2"><i data-lucide="check" class="w-4 h-4 text-emerald-500 shrink-0 mt-0.5"></i>每个视图拥有独立面板,可放搜索框/排序/筛选(标签视图显示词云,待办视图显示清单)</li>
+          <li class="flex gap-2"><i data-lucide="check" class="w-4 h-4 text-emerald-500 shrink-0 mt-0.5"></i>折叠态更省空间:整个主侧边栏可隐藏,只留 48px 图标条</li>
+        </ul>
+      </div>
+      <div class="bg-white rounded-xl border border-divider p-5">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="w-6 h-6 rounded-md bg-amber-50 text-amber-600 flex items-center justify-center"><i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i></span>
+          <h3 class="font-semibold">代价与取舍</h3>
+        </div>
+        <ul class="space-y-2.5 text-[13px] text-ink/85">
+          <li class="flex gap-2"><i data-lucide="minus" class="w-4 h-4 text-amber-500 shrink-0 mt-0.5"></i>要重构 <code class="px-1 rounded bg-soft text-[12px]">AppLayout.tsx</code> 和 <code class="px-1 rounded bg-soft text-[12px]">Sidebar.tsx</code>,拆成 ActivityBar / Panel 两个组件</li>
+          <li class="flex gap-2"><i data-lucide="minus" class="w-4 h-4 text-amber-500 shrink-0 mt-0.5"></i>每个视图要维护独立面板组件(笔记/标签/待办/搜索各一份)</li>
+          <li class="flex gap-2"><i data-lucide="minus" class="w-4 h-4 text-amber-500 shrink-0 mt-0.5"></i>初次上手需学习图标含义(hover tooltip 可缓解)</li>
+          <li class="flex gap-2"><i data-lucide="minus" class="w-4 h-4 text-amber-500 shrink-0 mt-0.5"></i>路由语义需调整:从"菜单选中 = 页面"变成"图标选中 = 视图 + 主编辑区独立"</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- 组件映射 -->
+    <div class="mt-8 bg-white rounded-xl border border-divider p-5">
+      <div class="flex items-center gap-2 mb-3">
+        <i data-lucide="layers" class="w-4 h-4 text-primary"></i>
+        <h3 class="font-semibold text-sm">落地映射到当前技术栈</h3>
+      </div>
+      <div class="grid grid-cols-2 gap-x-8 gap-y-2 text-[13px]">
+        <div class="flex items-start gap-2"><span class="text-sub w-24 shrink-0">Activity Bar</span><span>自定义 <code class="px-1 rounded bg-soft">&lt;ActivityBar&gt;</code>(48px 宽 flex 列,AntD Tooltip 包装按钮)</span></div>
+        <div class="flex items-start gap-2"><span class="text-sub w-24 shrink-0">主面板</span><span>自定义 <code class="px-1 rounded bg-soft">&lt;SidePanel&gt;</code>(根据活动视图渲染 FolderTree / TagList / TodoList…)</span></div>
+        <div class="flex items-start gap-2"><span class="text-sub w-24 shrink-0">状态</span><span>Zustand 新增 <code class="px-1 rounded bg-soft">activeView</code> + 面板宽度(已可拖拽)</span></div>
+        <div class="flex items-start gap-2"><span class="text-sub w-24 shrink-0">路由</span><span>保留 React Router,活动视图与 URL 对齐(<code class="px-1 rounded bg-soft">/notes</code> → 笔记视图)</span></div>
+        <div class="flex items-start gap-2"><span class="text-sub w-24 shrink-0">图标</span><span>继续复用 <code class="px-1 rounded bg-soft">lucide-react</code> 现有图标</span></div>
+        <div class="flex items-start gap-2"><span class="text-sub w-24 shrink-0">Badge</span><span>AntD <code class="px-1 rounded bg-soft">Badge</code>,叠在待办图标上显示紧急数</span></div>
+      </div>
+    </div>
+
+    <!-- 页脚 -->
+    <div class="mt-8 text-center text-xs text-sub">
+      原型文件:<code class="px-1 rounded bg-white border border-divider">prototypes/sidebar-activity-bar.html</code> · 技术栈保持不变
+    </div>
+
+  </div>
+
+  <script>lucide.createIcons();</script>
+
+  <!--
+  ================================================================
+  组件映射表(开发者参考)
+  ================================================================
+  | 原型元素 | Ant Design | 本项目实现 |
+  |---------|------------|----------|
+  | Activity Bar | 无直接对应(自定义) | 新增 src/components/layout/ActivityBar.tsx |
+  | 主侧边栏面板 | Layout.Sider | 重构 src/components/layout/Sidebar.tsx 成 SidePanel |
+  | 面板内标题 | 自定义 div | 按视图注入不同 Header(笔记/标签/待办/搜索) |
+  | Tab 栏(编辑区) | 已存在 | 复用 useTabsStore |
+  | 状态指示点 | Badge | 保留 |
+  ================================================================
+  -->
+
+</body>
+</html>
