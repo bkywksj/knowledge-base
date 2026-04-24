@@ -21,10 +21,16 @@ import {
   MessageSquare,
   MoreHorizontal,
   Edit3,
+  Wrench,
+  ChevronDown,
+  ChevronRight,
+  CheckCircle2,
+  XCircle,
+  Loader2,
 } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { aiChatApi, aiModelApi } from "@/lib/api";
-import type { AiConversation, AiMessage, AiModel } from "@/types";
+import type { AiConversation, AiMessage, AiModel, SkillCall } from "@/types";
 import { relativeTime } from "@/lib/utils";
 
 const { TextArea } = Input;
@@ -69,8 +75,12 @@ export default function AiChatPage() {
   const [models, setModels] = useState<AiModel[]>([]);
   const [inputText, setInputText] = useState("");
   const [useRag, setUseRag] = useState(true);
+  // T-004: Skills 框架开关。启用时 RAG 自动关（AI 自己调 search_notes）
+  const [useSkills, setUseSkills] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
+  // 流式过程中 AI 调用的工具列表（带 running/ok/error 状态）；done 后并入 messages 清空
+  const [streamingSkillCalls, setStreamingSkillCalls] = useState<SkillCall[]>([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const unlistenRefs = useRef<UnlistenFn[]>([]);
@@ -167,6 +177,7 @@ export default function AiChatPage() {
     setInputText("");
     setStreaming(true);
     setStreamingText("");
+    setStreamingSkillCalls([]);
 
     // 乐观添加用户消息
     const userMsg: AiMessage = {
@@ -175,6 +186,7 @@ export default function AiChatPage() {
       role: "user",
       content: text,
       references: null,
+      skill_calls: null,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, userMsg]);
@@ -200,25 +212,46 @@ export default function AiChatPage() {
         await loadConversations();
       }
       setStreamingText("");
+      setStreamingSkillCalls([]);
     });
     const errorUnlisten = await listen<string>("ai:error", async (event) => {
       setStreaming(false);
       await cleanup();
       setStreamingText("");
+      setStreamingSkillCalls([]);
       message.error(`AI 错误: ${event.payload}`);
     });
+    // T-004: tool_call 事件可能多次触发（running → ok/error）
+    const toolCallUnlisten = await listen<SkillCall>("ai:tool_call", (event) => {
+      const incoming = event.payload;
+      setStreamingSkillCalls((prev) => {
+        const idx = prev.findIndex((c) => c.id === incoming.id);
+        if (idx >= 0) {
+          const next = prev.slice();
+          next[idx] = incoming;
+          return next;
+        }
+        return [...prev, incoming];
+      });
+    });
 
-    unlistenRefs.current = [tokenUnlisten, doneUnlisten, errorUnlisten];
+    unlistenRefs.current = [
+      tokenUnlisten,
+      doneUnlisten,
+      errorUnlisten,
+      toolCallUnlisten,
+    ];
 
     try {
-      await aiChatApi.sendMessage(activeConvId, text, useRag);
+      await aiChatApi.sendMessage(activeConvId, text, useRag, useSkills);
     } catch (e) {
       setStreaming(false);
       await cleanup();
       setStreamingText("");
+      setStreamingSkillCalls([]);
       showAiError(e);
     }
-  }, [inputText, activeConvId, streaming, useRag]);
+  }, [inputText, activeConvId, streaming, useRag, useSkills]);
 
   async function handleCancel() {
     if (activeConvId) {
@@ -370,14 +403,25 @@ export default function AiChatPage() {
                   />
                 </Tooltip>
               </div>
-              <div className="flex items-center gap-2">
-                <Tooltip title="启用 RAG：搜索相关笔记作为上下文">
-                  <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-3">
+                <Tooltip title={useSkills ? "启用 Skills 时，RAG 由 AI 自己调 search_notes 替代" : "启用 RAG：搜索相关笔记作为上下文"}>
+                  <div className="flex items-center gap-1.5" style={{ opacity: useSkills ? 0.4 : 1 }}>
                     <BookOpen size={14} style={{ color: token.colorTextSecondary }} />
                     <Switch
                       size="small"
-                      checked={useRag}
+                      checked={useRag && !useSkills}
+                      disabled={useSkills}
                       onChange={setUseRag}
+                    />
+                  </div>
+                </Tooltip>
+                <Tooltip title="启用 Skills：AI 可调用 搜笔记 / 读笔记 / 列标签 等工具（仅 OpenAI 兼容模型）">
+                  <div className="flex items-center gap-1.5">
+                    <Wrench size={14} style={{ color: token.colorTextSecondary }} />
+                    <Switch
+                      size="small"
+                      checked={useSkills}
+                      onChange={setUseSkills}
                     />
                   </div>
                 </Tooltip>
@@ -415,7 +459,7 @@ export default function AiChatPage() {
               ))}
 
               {/* 流式响应中 */}
-              {streaming && streamingText && (
+              {streaming && (streamingText || streamingSkillCalls.length > 0) && (
                 <div className="flex gap-3 mb-4">
                   <div
                     className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-bold"
@@ -426,15 +470,22 @@ export default function AiChatPage() {
                   >
                     AI
                   </div>
-                  <div
-                    className="max-w-[75%] px-3 py-2 rounded-lg text-sm ai-markdown"
-                    style={{
-                      background: token.colorBgContainer,
-                      color: token.colorText,
-                    }}
-                  >
-                    <Markdown>{streamingText}</Markdown>
-                    <span className="inline-block w-1.5 h-4 ml-0.5 animate-pulse" style={{ background: token.colorPrimary }} />
+                  <div className="max-w-[75%] flex flex-col gap-2">
+                    {streamingSkillCalls.length > 0 && (
+                      <SkillCallList calls={streamingSkillCalls} token={token} defaultOpen />
+                    )}
+                    {streamingText && (
+                      <div
+                        className="px-3 py-2 rounded-lg text-sm ai-markdown"
+                        style={{
+                          background: token.colorBgContainer,
+                          color: token.colorText,
+                        }}
+                      >
+                        <Markdown>{streamingText}</Markdown>
+                        <span className="inline-block w-1.5 h-4 ml-0.5 animate-pulse" style={{ background: token.colorPrimary }} />
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -499,6 +550,15 @@ function MessageBubble({
   const refs: number[] = msg.references
     ? JSON.parse(msg.references)
     : [];
+  // T-004: 历史消息里如果有 skill_calls_json 就反序列化出来展示
+  let skillCalls: SkillCall[] = [];
+  if (msg.skill_calls) {
+    try {
+      skillCalls = JSON.parse(msg.skill_calls);
+    } catch {
+      // 静默忽略：坏数据不阻断消息渲染
+    }
+  }
 
   return (
     <div
@@ -516,7 +576,12 @@ function MessageBubble({
       </div>
 
       {/* 内容 */}
-      <div className={`max-w-[75%] ${isUser ? "text-right" : ""}`}>
+      <div className={`max-w-[75%] flex flex-col gap-2 ${isUser ? "items-end" : "items-start"}`}>
+        {/* Skill 调用折叠卡片（在气泡上方） */}
+        {skillCalls.length > 0 && (
+          <SkillCallList calls={skillCalls} token={token} />
+        )}
+
         <div
           className={`px-3 py-2 rounded-lg text-sm ${isUser ? "whitespace-pre-wrap" : "ai-markdown"}`}
           style={{
@@ -530,7 +595,7 @@ function MessageBubble({
         {/* 引用笔记 */}
         {refs.length > 0 && (
           <div
-            className="mt-1 text-xs flex items-center gap-1"
+            className="text-xs flex items-center gap-1"
             style={{ color: token.colorTextQuaternary }}
           >
             <BookOpen size={10} />
@@ -540,4 +605,130 @@ function MessageBubble({
       </div>
     </div>
   );
+}
+
+/** Skill 调用列表（折叠卡片）
+ *
+ * 一组工具调用整体默认折叠：头部显示"🔧 调用了 N 个工具"，展开后逐条列出
+ * 参数和结果。流式进行中（`defaultOpen`）自动展开，让用户能看到 running 过程。
+ */
+function SkillCallList({
+  calls,
+  token,
+  defaultOpen = false,
+}: {
+  calls: SkillCall[];
+  token: any;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const hasRunning = calls.some((c) => c.status === "running");
+  const hasError = calls.some((c) => c.status === "error");
+
+  return (
+    <div
+      className="rounded-md text-xs"
+      style={{
+        background: token.colorFillQuaternary,
+        border: `1px solid ${token.colorBorderSecondary}`,
+        minWidth: 260,
+      }}
+    >
+      <button
+        className="w-full flex items-center gap-1.5 px-2 py-1.5 text-left"
+        style={{ color: token.colorTextSecondary }}
+        onClick={() => setOpen(!open)}
+      >
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        <Wrench size={12} style={{ color: token.colorPrimary }} />
+        <span>
+          AI 调用了 {calls.length} 个工具
+        </span>
+        {hasRunning && (
+          <Loader2 size={12} className="animate-spin" style={{ color: token.colorPrimary }} />
+        )}
+        {!hasRunning && hasError && (
+          <XCircle size={12} style={{ color: token.colorError }} />
+        )}
+        {!hasRunning && !hasError && (
+          <CheckCircle2 size={12} style={{ color: token.colorSuccess }} />
+        )}
+      </button>
+      {open && (
+        <div
+          style={{
+            borderTop: `1px solid ${token.colorBorderSecondary}`,
+            padding: 8,
+          }}
+        >
+          {calls.map((c) => (
+            <SkillCallItem key={c.id} call={c} token={token} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SkillCallItem({ call, token }: { call: SkillCall; token: any }) {
+  const statusIcon = (() => {
+    if (call.status === "running")
+      return <Loader2 size={11} className="animate-spin" style={{ color: token.colorPrimary }} />;
+    if (call.status === "error")
+      return <XCircle size={11} style={{ color: token.colorError }} />;
+    return <CheckCircle2 size={11} style={{ color: token.colorSuccess }} />;
+  })();
+
+  // 参数 JSON 尽量美化一下；解析失败就原样显示
+  let prettyArgs = call.argsJson;
+  try {
+    prettyArgs = JSON.stringify(JSON.parse(call.argsJson), null, 2);
+  } catch {
+    // keep original
+  }
+
+  return (
+    <div className="mb-1.5 last:mb-0">
+      <div className="flex items-center gap-1.5 mb-1" style={{ color: token.colorText }}>
+        {statusIcon}
+        <code
+          style={{
+            background: token.colorFillTertiary,
+            padding: "1px 4px",
+            borderRadius: 3,
+            fontFamily: "var(--font-mono, monospace)",
+          }}
+        >
+          {call.name}
+        </code>
+      </div>
+      <pre
+        className="whitespace-pre-wrap break-all"
+        style={{
+          margin: 0,
+          fontSize: 11,
+          color: token.colorTextSecondary,
+          fontFamily: "var(--font-mono, monospace)",
+          maxHeight: 160,
+          overflow: "auto",
+          padding: "4px 6px",
+          background: token.colorBgContainer,
+          borderRadius: 3,
+        }}
+      >
+        {prettyArgs}
+        {call.result && call.status !== "running" && (
+          <>
+            {"\n\n→ "}
+            {truncateForDisplay(call.result, 500)}
+          </>
+        )}
+      </pre>
+    </div>
+  );
+}
+
+function truncateForDisplay(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max) + `…（共 ${s.length} 字符）`;
 }

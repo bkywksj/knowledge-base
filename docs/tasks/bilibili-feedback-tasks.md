@@ -90,19 +90,27 @@
 
 #### T-004 · Skills 框架 v1（AI 操作软件）
 
-- **状态**：`pending`
+- **状态**：`in_progress`  · 开工：2026-04-24
 - **来源建议**：喝水小小能手（赞 23）"软件内置 skills，让 AI 能够操作软件"
 - **价值**：⭐⭐⭐⭐⭐  成本：中
-- **初步设想**：
-  - 定义一套"工具白名单"（tool-use / function-calling 规范），AI 调用后台 Command
-  - **v1 只上只读工具**：`search_notes` / `get_note` / `list_tags` / `find_related` / `get_daily_tasks`
-  - 写入工具（创建/移动/删除笔记）放 v2，且必须二次确认
-  - 复用现有 AI 对话通道，在 system prompt 里注册 tools
-- **可能涉及的层**：
-  - 后端：`services/skills`（把现有 Command 包装成 tool schema）；`commands/skills::invoke_skill`
-  - 前端：AI 对话界面增加 tool-use 可视化（显示 AI 正在调用哪个 skill、参数、结果）
-  - 安全：确认 Capabilities 不放权限给 webview 层面的任意 invoke
-- **开工前需确认**：项目现有 AI 通道是哪个（OpenAI 兼容 / Claude / 本地 LLM）？是否已经支持 function calling 协议？
+- **已确认决策**：
+  - ✅ 仅 OpenAI 兼容协议族（OpenAI/DeepSeek/智谱/Claude 代理）；Ollama 放 v2
+  - ✅ v1 只做 5 个只读 skill：search_notes / get_note / list_tags / find_related / get_today_tasks
+  - ✅ tool-use 最大轮数 3 轮
+  - ✅ UI 内联展示 SkillCall（折叠卡片）
+  - ✅ 启用 skills 时默认关 RAG（AI 自己调 search_notes）
+  - ✅ SkillCall 持久化到 ai_messages.skill_calls_json（schema v19→v20）
+- **子任务进度**：
+  - [x] schema v20 迁移 + AiMessage.skill_calls 字段
+  - [x] models：SkillCall 定义
+  - [x] database/ai.rs：add_ai_message_full + list 携带 skill_calls_json
+  - [x] services/skills.rs：5 个只读 skill + tool_schemas + dispatch（4 单元测试通过）
+  - [x] services/ai.rs：chat_stream_with_skills + tool_calls delta 累加解析 + 最多 3 轮
+  - [x] commands/ai.rs：send_ai_message 加 use_skills 参数
+  - [x] 前端：types + api + AI 对话页 Skills 开关 + SkillCallList 折叠卡片 + ai:tool_call 监听
+  - [x] `cargo check` 通过 + `npx tsc --noEmit` 通过 + `cargo test services::skills` 4/4 通过
+  - [ ] **待用户手动验证**：在 /ai 开启 Skills 开关，问"我最近有什么笔记在讲 Tauri？"测 search_notes；
+        再问"今天有什么待办"测 get_today_tasks；验证"工具调用卡片"能展开看 args + result
 
 ---
 

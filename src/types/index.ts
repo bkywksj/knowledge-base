@@ -197,7 +197,21 @@ export interface AiMessage {
   content: string;
   /** 引用的笔记 ID 列表 (JSON 字符串) */
   references: string | null;
+  /** T-004: Skills 框架下 AI 调用的工具记录（JSON 字符串，反序列化后是 SkillCall[]）*/
+  skill_calls: string | null;
   created_at: string;
+}
+
+/** AI Skill 调用记录（T-004）*/
+export interface SkillCall {
+  id: string;
+  name: string;
+  /** 参数 JSON 字符串（展示给用户看） */
+  argsJson: string;
+  /** Skill 执行结果文本（可能是 JSON 或截断的文本） */
+  result: string;
+  /** 'running' | 'ok' | 'error' */
+  status: "running" | "ok" | "error";
 }
 
 // ─── 导入 ─────────────────────────────────────

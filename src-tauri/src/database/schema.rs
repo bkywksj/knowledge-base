@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 19;
+pub const SCHEMA_VERSION: i32 = 20;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -49,6 +49,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             16 => migrate_v16_to_v17(conn)?,
             17 => migrate_v17_to_v18(conn)?,
             18 => migrate_v18_to_v19(conn)?,
+            19 => migrate_v19_to_v20(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -790,5 +791,28 @@ fn migrate_v18_to_v19(conn: &Connection) -> Result<(), AppError> {
     }
 
     set_version(conn, 19)?;
+    Ok(())
+}
+
+/// v19 -> v20: ai_messages 加 skill_calls_json 字段
+///
+/// 用途：T-004 Skills 框架下，assistant 消息里可能发生一次或多次 tool_call
+/// （`search_notes` / `get_note` 等）。把每次调用（name + args + result + status）
+/// 序列化成 JSON 数组存到这一列，便于：
+///   1. 重开对话时重绘 SkillCall 折叠卡片
+///   2. 诊断问题（AI 为啥调了这个工具、返回啥）
+///
+/// 为什么新增独立列而不是塞进 references_json：
+///   - references_json 是纯 note id 数组（给 UI 标"引用的笔记"用）
+///   - skill_calls_json 结构复杂（包含 args/result/status），语义完全不同
+fn migrate_v19_to_v20(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v19 -> v20 (ai_messages.skill_calls_json)");
+
+    let cols = list_columns(conn, "ai_messages")?;
+    if !cols.iter().any(|c| c == "skill_calls_json") {
+        conn.execute_batch("ALTER TABLE ai_messages ADD COLUMN skill_calls_json TEXT;")?;
+    }
+
+    set_version(conn, 20)?;
     Ok(())
 }

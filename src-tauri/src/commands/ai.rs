@@ -138,6 +138,13 @@ pub fn list_ai_messages(
 }
 
 /// 发送消息并流式获取 AI 回复
+///
+/// `use_skills=Some(true)` 时走 Skills 框架（T-004）：
+/// - AI 可调 search_notes / get_note / list_tags / find_related / get_today_tasks
+/// - 自动关闭 RAG（AI 自己调 search_notes 替代预拼 context）
+/// - 仅 OpenAI 兼容协议族支持；Ollama 会返回错误
+///
+/// `use_skills` 省略或 false 时：走原 `chat_stream` 路径，`use_rag` 默认 true。
 #[tauri::command]
 pub async fn send_ai_message(
     app: tauri::AppHandle,
@@ -145,7 +152,9 @@ pub async fn send_ai_message(
     conversation_id: i64,
     message: String,
     use_rag: Option<bool>,
+    use_skills: Option<bool>,
 ) -> Result<(), String> {
+    let use_skills = use_skills.unwrap_or(false);
     let use_rag = use_rag.unwrap_or(true);
 
     // 创建取消信号
@@ -159,15 +168,11 @@ pub async fn send_ai_message(
     }
 
     let db = &state.db;
-    let result = AiService::chat_stream(
-        app,
-        db,
-        conversation_id,
-        &message,
-        use_rag,
-        cancel_rx,
-    )
-    .await;
+    let result = if use_skills {
+        AiService::chat_stream_with_skills(app, db, conversation_id, &message, cancel_rx).await
+    } else {
+        AiService::chat_stream(app, db, conversation_id, &message, use_rag, cancel_rx).await
+    };
 
     // 清理取消信号
     {

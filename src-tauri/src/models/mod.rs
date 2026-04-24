@@ -198,6 +198,11 @@ pub struct AiMessage {
     pub content: String,
     /// 引用的笔记 ID 列表 (JSON 数组)
     pub references: Option<String>,
+    /// 本条 assistant 消息里 AI 调用了哪些 skill（JSON 序列化的 SkillCall 数组）
+    ///
+    /// 前端拿到后反序列化成 SkillCall[] 渲染折叠卡片；为 None 表示没调用过工具。
+    /// 只在 role="assistant" 且启用 skills 的对话里会写入。
+    pub skill_calls: Option<String>,
     pub created_at: String,
 }
 
@@ -610,6 +615,28 @@ pub struct PromptTemplate {
     pub enabled: bool,
     pub created_at: String,
     pub updated_at: String,
+}
+
+// ─── AI Skills（T-004） ────────────────────
+
+/// AI 调用的一次 Skill（工具）记录
+///
+/// 从模型流里解析出 tool_calls 后 dispatch 执行，得到结果一起打包给前端展示/持久化。
+/// 字段设计模仿 OpenAI tool_calls 的结构但做了扁平化：
+///   · `args_json` / `result` 都是字符串，便于直接渲染
+///   · `status` 统一用 "ok" / "error" / "running"，前端状态机好画
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillCall {
+    /// OpenAI 返回的 tool_call_id（同一次请求里唯一）
+    pub id: String,
+    pub name: String,
+    /// 反序列化后的参数（JSON 字符串，供前端 pretty-print 展示）
+    pub args_json: String,
+    /// Skill 执行结果，一般是 JSON 或截断后的文本
+    pub result: String,
+    /// "ok" / "error" / "running"（服务器侧持久化时只会写 ok/error）
+    pub status: String,
 }
 
 /// 创建提示词模板的入参

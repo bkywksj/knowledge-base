@@ -237,8 +237,24 @@ export const aiChatApi = {
     invoke<void>("update_ai_conversation_model", { id, modelId }),
   listMessages: (conversationId: number) =>
     invoke<AiMessage[]>("list_ai_messages", { conversationId }),
-  sendMessage: (conversationId: number, message: string, useRag?: boolean) =>
-    invoke<void>("send_ai_message", { conversationId, message, useRag }),
+  /**
+   * 发送消息并流式接收回复。
+   * - `useRag`: 是否启用 RAG（默认 true）。`useSkills=true` 时自动失效（AI 自行调 search_notes）
+   * - `useSkills`: T-004 Skills 框架。AI 可调 search_notes / get_note / list_tags 等工具
+   *    监听 `ai:tool_call` 事件可实时拿到每次工具调用（含 running/ok/error 状态）
+   */
+  sendMessage: (
+    conversationId: number,
+    message: string,
+    useRag?: boolean,
+    useSkills?: boolean,
+  ) =>
+    invoke<void>("send_ai_message", {
+      conversationId,
+      message,
+      useRag,
+      useSkills,
+    }),
   cancelGeneration: (conversationId: number) =>
     invoke<void>("cancel_ai_generation", { conversationId }),
 };

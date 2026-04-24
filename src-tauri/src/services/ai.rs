@@ -6,7 +6,8 @@ use tokio::sync::watch;
 
 use crate::database::Database;
 use crate::error::AppError;
-use crate::models::{AiMessage, AiModel};
+use crate::models::{AiMessage, AiModel, SkillCall};
+use crate::services::skills;
 
 /// 事件发射器 trait，用于抽象不同事件前缀
 trait AiEventEmitter: Send + Sync {
@@ -818,4 +819,341 @@ impl AiService {
 
         Ok(full_response)
     }
+
+    // ══════════════════════════════════════════════════════════════════
+    // T-004 Skills 框架：带工具调用的流式聊天
+    // ══════════════════════════════════════════════════════════════════
+
+    /// 带 Skills（OpenAI function-calling）的流式聊天
+    ///
+    /// 与 `chat_stream` 的差异：
+    /// - 请求里带 `tools` 字段，AI 可调 search_notes / get_note / list_tags 等
+    /// - 支持最多 `MAX_TOOL_ROUNDS` 轮 tool_call → tool_result → 再生成 的循环
+    /// - 每次 tool_call 通过 `ai:tool_call` 事件推给前端（含 running / ok / error 状态）
+    /// - 最终 assistant 消息的 `skill_calls_json` 字段记录整次对话的所有工具调用
+    ///
+    /// 设计上刻意不复用 `chat_stream`，因为：
+    /// 1. 消息结构不同（需带 tool_calls/tool role 消息）
+    /// 2. 流式解析多维护一个 tool_calls 累加器
+    /// 3. RAG 被替换为工具（AI 自己调 search_notes）
+    ///
+    /// 仅支持 OpenAI 兼容协议族（openai / claude / deepseek / zhipu）。
+    /// Ollama 先不支持——各模型对 function calling streaming 支持差异大，放 v2 再补。
+    pub async fn chat_stream_with_skills(
+        app: AppHandle,
+        db: &Database,
+        conversation_id: i64,
+        user_message: &str,
+        cancel_rx: watch::Receiver<bool>,
+    ) -> Result<(), AppError> {
+        const MAX_TOOL_ROUNDS: usize = 3;
+
+        // 1. 取会话使用的模型
+        let conv_model_id = {
+            let conn_guard = db.conn_lock()?;
+            let model_id: i64 = conn_guard.query_row(
+                "SELECT model_id FROM ai_conversations WHERE id = ?1",
+                [conversation_id],
+                |row| row.get(0),
+            )?;
+            model_id
+        };
+        let model = db.get_ai_model(conv_model_id)?;
+
+        if !matches!(model.provider.as_str(), "openai" | "claude" | "deepseek" | "zhipu") {
+            return Err(AppError::Custom(format!(
+                "Skills 功能暂不支持 {} 协议，请切换到 OpenAI / DeepSeek / 智谱 / Claude 兼容模型。",
+                model.provider
+            )));
+        }
+
+        // 2. 保存用户消息
+        let user_msg = db.add_ai_message(conversation_id, "user", user_message, None)?;
+        db.touch_ai_conversation(conversation_id)?;
+
+        // 3. 构建消息数组（带 skills 指引的 system prompt + 历史）
+        let history = db.list_ai_messages(conversation_id)?;
+        let system_prompt = "你是一个知识库助手。你可以调用以下工具辅助回答：\n\
+            - search_notes(query, limit?)：搜笔记\n\
+            - get_note(id)：读单篇笔记全文\n\
+            - list_tags()：列所有标签\n\
+            - find_related(note_id)：找相关笔记（反向链接）\n\
+            - get_today_tasks()：今日待办\n\
+            \n原则：\n\
+            1. 回答涉及用户笔记内容时，先用 search_notes 搜索，再按需 get_note 读全文；不要凭空编造。\n\
+            2. 工具返回的内容可能有省略（标记 `…（已截断）`），必要时再次调用获取更多。\n\
+            3. 最终给用户的回答用中文，简洁准确。";
+
+        let mut messages: Vec<Value> = vec![json!({
+            "role": "system",
+            "content": system_prompt,
+        })];
+        // 注意：历史里已经包含了刚保存的 user_msg
+        for msg in &history {
+            messages.push(json!({
+                "role": msg.role,
+                "content": msg.content,
+            }));
+        }
+        // 兜底：如果 list 因某种原因没拿到新写入的 user_msg，补上
+        if !messages.iter().rev().any(|m| {
+            m["role"].as_str() == Some("user") && m["content"].as_str() == Some(user_message)
+        }) {
+            messages.push(json!({ "role": "user", "content": user_message }));
+        }
+
+        // 4. tool-use 循环
+        let mut all_skill_calls: Vec<SkillCall> = Vec::new();
+        let mut final_content = String::new();
+        let tool_schemas = skills::tool_schemas();
+
+        for round in 0..=MAX_TOOL_ROUNDS {
+            // 最后一轮不给 tools，强制 AI 给出最终答复（防死循环）
+            let allow_tools = round < MAX_TOOL_ROUNDS;
+
+            let (content, tool_calls) = Self::stream_openai_with_tools(
+                &app,
+                &model,
+                &messages,
+                if allow_tools { &tool_schemas } else { &[] },
+                cancel_rx.clone(),
+            )
+            .await;
+
+            let (content, tool_calls) = match content {
+                Ok(c) => (c, tool_calls.unwrap_or_default()),
+                Err(e) => {
+                    let _ = db.delete_ai_message(user_msg.id);
+                    return Err(e);
+                }
+            };
+
+            // 取消信号：上面 stream 函数已经 emit ai:done "cancelled"，直接返回
+            if *cancel_rx.borrow() {
+                // 不删用户消息（用户想保留这条），直接结束
+                return Ok(());
+            }
+
+            if tool_calls.is_empty() {
+                // 模型给出最终答复
+                final_content = content;
+                break;
+            }
+
+            // 有工具调用：追加 assistant tool_calls 消息 + 各 tool 结果
+            messages.push(json!({
+                "role": "assistant",
+                "content": if content.is_empty() { Value::Null } else { Value::String(content) },
+                "tool_calls": tool_calls.iter().map(|tc| json!({
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.name,
+                        "arguments": tc.args_json,
+                    }
+                })).collect::<Vec<_>>(),
+            }));
+
+            for tc in &tool_calls {
+                // 通知前端"正在调用"
+                let _ = app.emit(
+                    "ai:tool_call",
+                    json!({
+                        "id": tc.id,
+                        "name": tc.name,
+                        "argsJson": tc.args_json,
+                        "result": "",
+                        "status": "running",
+                    }),
+                );
+
+                // 执行
+                let (result_text, status) = match skills::dispatch(db, &tc.name, &tc.args_json) {
+                    Ok(r) => (r, "ok"),
+                    Err(e) => (format!("ERROR: {}", e), "error"),
+                };
+
+                let sc = SkillCall {
+                    id: tc.id.clone(),
+                    name: tc.name.clone(),
+                    args_json: tc.args_json.clone(),
+                    result: result_text.clone(),
+                    status: status.to_string(),
+                };
+                let _ = app.emit("ai:tool_call", &sc);
+                all_skill_calls.push(sc);
+
+                // 回注给模型
+                messages.push(json!({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result_text,
+                }));
+            }
+            // 继续下一轮请求
+        }
+
+        // 5. 保存 assistant 最终消息
+        let skill_calls_json = if all_skill_calls.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&all_skill_calls).unwrap_or_default())
+        };
+        db.add_ai_message_full(
+            conversation_id,
+            "assistant",
+            &final_content,
+            None,
+            skill_calls_json.as_deref(),
+        )?;
+        db.touch_ai_conversation(conversation_id)?;
+
+        // 6. 自动生成会话标题（沿用 chat_stream 的策略）
+        let auto_title = derive_conversation_title(user_message);
+        if !auto_title.is_empty() {
+            let _ = db.rename_ai_conversation_if_default(conversation_id, &auto_title);
+        }
+
+        let _ = app.emit("ai:done", conversation_id);
+        Ok(())
+    }
+
+    /// OpenAI 兼容流式请求（支持 tool_calls delta 累加）
+    ///
+    /// 返回 `(content, tool_calls)`：
+    /// - `content` 累加所有 delta.content
+    /// - `tool_calls` 按 `index` 聚合每个工具调用（OpenAI 流式 tool_calls 按分片返回
+    ///   name/arguments，必须按 index 累加到完整 JSON 才能 dispatch）
+    ///
+    /// 被取消时：发 `ai:done` 带 "cancelled" 并返回当前累积内容（tool_calls 清空）。
+    async fn stream_openai_with_tools(
+        app: &AppHandle,
+        model: &AiModel,
+        messages: &[Value],
+        tools: &[Value],
+        mut cancel_rx: watch::Receiver<bool>,
+    ) -> (Result<String, AppError>, Option<Vec<ToolCallAccum>>) {
+        let client = crate::services::http_client::shared();
+        let url = build_openai_chat_url(&model.api_url);
+
+        let mut request_body = json!({
+            "model": model.model_id,
+            "messages": messages,
+            "stream": true,
+        });
+        if !tools.is_empty() {
+            request_body["tools"] = json!(tools);
+            request_body["tool_choice"] = json!("auto");
+        }
+
+        let mut request = client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&request_body);
+        if let Some(key) = &model.api_key {
+            if !key.is_empty() {
+                request = request.header("Authorization", format!("Bearer {}", key));
+            }
+        }
+
+        let response = match request.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                return (
+                    Err(AppError::Custom(format!("API 请求失败: {}", e))),
+                    None,
+                );
+            }
+        };
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return (
+                Err(AppError::Custom(format_openai_api_error(status, &body))),
+                None,
+            );
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut content = String::new();
+        // BTreeMap 按 index 有序，保证 dispatch 时工具顺序稳定
+        let mut tool_accum: std::collections::BTreeMap<u64, ToolCallAccum> =
+            std::collections::BTreeMap::new();
+        let mut buffer = String::new();
+
+        loop {
+            tokio::select! {
+                chunk = stream.next() => {
+                    match chunk {
+                        Some(Ok(bytes)) => {
+                            buffer.push_str(&String::from_utf8_lossy(&bytes));
+                            while let Some(pos) = buffer.find('\n') {
+                                let line = buffer[..pos].trim().to_string();
+                                buffer = buffer[pos + 1..].to_string();
+
+                                if line.is_empty() || line == "data: [DONE]" { continue; }
+                                if let Some(json_str) = line.strip_prefix("data: ") {
+                                    let data: Value = match serde_json::from_str(json_str) {
+                                        Ok(v) => v,
+                                        Err(_) => continue,
+                                    };
+                                    let delta = &data["choices"][0]["delta"];
+                                    // 文本 token
+                                    if let Some(c) = delta["content"].as_str() {
+                                        content.push_str(c);
+                                        let _ = app.emit("ai:token", c);
+                                    }
+                                    // tool_calls 分片
+                                    if let Some(tcs) = delta["tool_calls"].as_array() {
+                                        for tc in tcs {
+                                            let idx = tc["index"].as_u64().unwrap_or(0);
+                                            let entry = tool_accum.entry(idx)
+                                                .or_insert_with(ToolCallAccum::default);
+                                            if let Some(id) = tc["id"].as_str() {
+                                                if !id.is_empty() { entry.id = id.to_string(); }
+                                            }
+                                            if let Some(name) = tc["function"]["name"].as_str() {
+                                                entry.name.push_str(name);
+                                            }
+                                            if let Some(args) = tc["function"]["arguments"].as_str() {
+                                                entry.args_json.push_str(args);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Some(Err(e)) => {
+                            let _ = app.emit("ai:error", e.to_string());
+                            return (Err(AppError::Custom(format!("流读取错误: {}", e))), None);
+                        }
+                        None => break,
+                    }
+                }
+                _ = cancel_rx.changed() => {
+                    if *cancel_rx.borrow() {
+                        let _ = app.emit("ai:done", "cancelled");
+                        return (Ok(content), Some(Vec::new()));
+                    }
+                }
+            }
+        }
+
+        // 收尾：过滤掉 id / name 为空的条目（极端情况下 API 返回不完整）
+        let tool_calls: Vec<ToolCallAccum> = tool_accum
+            .into_values()
+            .filter(|t| !t.id.is_empty() && !t.name.is_empty())
+            .collect();
+
+        (Ok(content), Some(tool_calls))
+    }
+}
+
+/// 流式解析过程中累加的一次工具调用（OpenAI 分片返回格式）
+#[derive(Default, Debug, Clone)]
+struct ToolCallAccum {
+    id: String,
+    name: String,
+    /// 累加后的 arguments JSON 字符串（尚未解析）
+    args_json: String,
 }

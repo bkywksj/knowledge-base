@@ -233,7 +233,7 @@ impl Database {
     pub fn list_ai_messages(&self, conversation_id: i64) -> Result<Vec<AiMessage>, AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
         let mut stmt = conn.prepare(
-            "SELECT id, conversation_id, role, content, references_json, created_at
+            "SELECT id, conversation_id, role, content, references_json, skill_calls_json, created_at
              FROM ai_messages WHERE conversation_id = ?1 ORDER BY created_at",
         )?;
         let messages = stmt
@@ -244,14 +244,15 @@ impl Database {
                     role: row.get(2)?,
                     content: row.get(3)?,
                     references: row.get(4)?,
-                    created_at: row.get(5)?,
+                    skill_calls: row.get(5)?,
+                    created_at: row.get(6)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(messages)
     }
 
-    /// 添加消息
+    /// 添加消息（不带 skill_calls；普通对话走这条路径）
     pub fn add_ai_message(
         &self,
         conversation_id: i64,
@@ -259,15 +260,30 @@ impl Database {
         content: &str,
         references: Option<&str>,
     ) -> Result<AiMessage, AppError> {
+        self.add_ai_message_full(conversation_id, role, content, references, None)
+    }
+
+    /// 添加消息（含 skill_calls_json）
+    ///
+    /// 启用 Skills 的 assistant 消息会把 SkillCall 数组 JSON 后经此持久化，
+    /// 前端重绘对话历史时据此还原 "🔧 调用了 xxx" 折叠卡片。
+    pub fn add_ai_message_full(
+        &self,
+        conversation_id: i64,
+        role: &str,
+        content: &str,
+        references: Option<&str>,
+        skill_calls: Option<&str>,
+    ) -> Result<AiMessage, AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
         conn.execute(
-            "INSERT INTO ai_messages (conversation_id, role, content, references_json)
-             VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![conversation_id, role, content, references],
+            "INSERT INTO ai_messages (conversation_id, role, content, references_json, skill_calls_json)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![conversation_id, role, content, references, skill_calls],
         )?;
         let id = conn.last_insert_rowid();
         let msg = conn.query_row(
-            "SELECT id, conversation_id, role, content, references_json, created_at
+            "SELECT id, conversation_id, role, content, references_json, skill_calls_json, created_at
              FROM ai_messages WHERE id = ?1",
             [id],
             |row| {
@@ -277,7 +293,8 @@ impl Database {
                     role: row.get(2)?,
                     content: row.get(3)?,
                     references: row.get(4)?,
-                    created_at: row.get(5)?,
+                    skill_calls: row.get(5)?,
+                    created_at: row.get(6)?,
                 })
             },
         )?;
