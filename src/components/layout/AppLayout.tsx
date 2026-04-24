@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from "react";
-import { Outlet, useNavigate } from "react-router-dom";
+import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import { Layout, Button, theme as antdTheme, Tooltip, Dropdown, message } from "antd";
 import { MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined, PushpinOutlined, PushpinFilled } from "@ant-design/icons";
 import { Search, Palette, ArrowLeft, ArrowRight } from "lucide-react";
@@ -8,9 +8,15 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { importApi } from "@/lib/api";
 import { useAppStore } from "@/store";
+import {
+  SIDE_PANEL_MIN_WIDTH,
+  SIDE_PANEL_MAX_WIDTH,
+  SIDE_PANEL_DEFAULT_WIDTH,
+} from "@/store";
 import { getThemesByCategory } from "@/theme/tokens";
 import type { ThemeMode } from "@/theme/tokens";
-import { Sidebar } from "./Sidebar";
+import { ActivityBar, deriveActiveViewFromPath } from "./ActivityBar";
+import { SidePanel, viewHasPanel } from "./SidePanel";
 import { TabBar } from "./TabBar";
 import { WindowControls } from "./WindowControls";
 import { CommandPalette } from "@/components/ui/CommandPalette";
@@ -66,73 +72,59 @@ function DragRegion() {
   );
 }
 
-const SIDEBAR_WIDTH_KEY = "sidebar-width";
-const SIDEBAR_MIN_WIDTH = 180;
-const SIDEBAR_MAX_WIDTH = 480;
-const SIDEBAR_DEFAULT_WIDTH = 220;
+/** ActivityBar 固定宽度（与 ActivityBar.tsx 内硬编码保持一致） */
+const ACTIVITY_BAR_WIDTH = 48;
 
 export function AppLayout() {
   const {
-    sidebarCollapsed, toggleSidebar,
     themeCategory,
     lightTheme, darkTheme,
     setLightTheme, setDarkTheme,
     setThemeCategory,
     focusMode, setFocusMode,
     alwaysOnTop, setAlwaysOnTop,
+    activeView,
+    sidePanelWidth, setSidePanelWidth,
+    sidePanelVisible, toggleSidePanel,
   } = useAppStore();
   const activeTheme = themeCategory === "light" ? lightTheme : darkTheme;
   const { token } = antdTheme.useToken();
 
-  // ─── 可拖拽调节侧边栏宽度 ───────────────────
-  // 持久化在 localStorage，避免为一处控件引入持久化中间件
-  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
-    if (typeof localStorage === "undefined") return SIDEBAR_DEFAULT_WIDTH;
-    const raw = localStorage.getItem(SIDEBAR_WIDTH_KEY);
-    const n = Number(raw);
-    return Number.isFinite(n) && n >= SIDEBAR_MIN_WIDTH && n <= SIDEBAR_MAX_WIDTH
-      ? n
-      : SIDEBAR_DEFAULT_WIDTH;
-  });
-  useEffect(() => {
-    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
-  }, [sidebarWidth]);
+  // SidePanel 是否最终可见：视图自身有 panel + 用户未手动折叠
+  const panelShown = sidePanelVisible && viewHasPanel(activeView);
+  const siderWidth = ACTIVITY_BAR_WIDTH + (panelShown ? sidePanelWidth : 0);
 
-  // Sider DOM 引用：拖动期绕过 React 直接改样式，否则每次 mousemove 都
-  // 触发整棵 AppLayout 子树（含 Sidebar Tree）重渲染，主线程扛不住
-  const siderRef = useRef<HTMLDivElement>(null);
+  // SidePanel 容器 DOM 引用：拖拽时直接改样式，避免 React 每 mousemove 重渲染
+  const panelRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<HTMLDivElement>(null);
 
-  const startSidebarResize = useCallback(
+  const startPanelResize = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
       const startX = e.clientX;
-      const startW = sidebarWidth;
+      const startW = sidePanelWidth;
       let pendingWidth = startW;
       let rafId: number | null = null;
 
-      // 直接改 DOM：antd Sider 同时用 flex-basis / min-width / max-width / width
-      // 四个属性锁宽度，缺一不可
       function applyWidth(w: number) {
-        const sider = siderRef.current;
-        if (sider) {
-          sider.style.flex = `0 0 ${w}px`;
-          sider.style.maxWidth = `${w}px`;
-          sider.style.minWidth = `${w}px`;
-          sider.style.width = `${w}px`;
+        const panel = panelRef.current;
+        if (panel) {
+          panel.style.flex = `0 0 ${w}px`;
+          panel.style.maxWidth = `${w}px`;
+          panel.style.minWidth = `${w}px`;
+          panel.style.width = `${w}px`;
         }
         if (handleRef.current) {
-          handleRef.current.style.left = `${w - 2}px`;
+          handleRef.current.style.left = `${ACTIVITY_BAR_WIDTH + w - 2}px`;
         }
       }
 
       function onMove(ev: MouseEvent) {
         const next = Math.max(
-          SIDEBAR_MIN_WIDTH,
-          Math.min(SIDEBAR_MAX_WIDTH, startW + (ev.clientX - startX)),
+          SIDE_PANEL_MIN_WIDTH,
+          Math.min(SIDE_PANEL_MAX_WIDTH, startW + (ev.clientX - startX)),
         );
         pendingWidth = next;
-        // rAF 合并：每帧最多一次 DOM 写入
         if (rafId == null) {
           rafId = requestAnimationFrame(() => {
             rafId = null;
@@ -150,19 +142,28 @@ export function AppLayout() {
         document.body.style.userSelect = "";
         document.body.style.cursor = "";
         document.body.classList.remove("sidebar-resizing");
-        // 松手时才把最终宽度写入 React state（触发一次渲染 + localStorage）
-        setSidebarWidth(pendingWidth);
+        // 松手时把最终宽度写入 store（触发一次渲染 + 持久化）
+        setSidePanelWidth(pendingWidth);
       }
       document.addEventListener("mousemove", onMove);
       document.addEventListener("mouseup", onUp);
       document.body.style.userSelect = "none";
       document.body.style.cursor = "col-resize";
-      // 拖动期 class：在 global.css 里绑定 contain/will-change，隔离 reflow
       document.body.classList.add("sidebar-resizing");
     },
-    [sidebarWidth],
+    [sidePanelWidth, setSidePanelWidth],
   );
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // URL → activeView 单向同步：任意来源的 navigate（ActivityBar / 命令面板 /
+  // 快捷键 / 笔记列表跳转等）都会更新 store.activeView，保证 SidePanel 正确分发
+  useEffect(() => {
+    const derived = deriveActiveViewFromPath(location.pathname);
+    if (derived && derived !== useAppStore.getState().activeView) {
+      useAppStore.getState().setActiveView(derived);
+    }
+  }, [location.pathname]);
 
   // 双击 md 打开本应用 / 应用内"打开 md"按钮后的系统级落点：
   // 1) 首次启动：后端把 argv 里的 md 路径存到 AppState，这里拉一次
@@ -335,10 +336,7 @@ export function AppLayout() {
       {activeTheme === "dark-starry" && <StarryBackground />}
       {!focusMode && (
         <Sider
-          ref={siderRef}
-          collapsed={sidebarCollapsed}
-          collapsedWidth={60}
-          width={sidebarWidth}
+          width={siderWidth}
           style={{
             borderRight: `1px solid ${token.colorBorderSecondary}`,
             // Mac 上 titleBarStyle: "Overlay" 使系统红黄绿按钮悬浮在窗口左上角，
@@ -346,23 +344,51 @@ export function AppLayout() {
             paddingTop: IS_MAC ? 28 : 0,
           }}
         >
-          <Sidebar />
+          {/*
+            AntD Sider 的 children 被包在 .ant-layout-sider-children 这层 block 容器里，
+            所以 flex 必须加在内部 div 才生效，否则 ActivityBar 与 SidePanel 会纵向堆叠
+          */}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "row",
+              height: "100%",
+            }}
+          >
+            <ActivityBar />
+            {panelShown && (
+              <div
+                ref={panelRef}
+                style={{
+                  flex: `0 0 ${sidePanelWidth}px`,
+                  width: sidePanelWidth,
+                  minWidth: sidePanelWidth,
+                  maxWidth: sidePanelWidth,
+                  height: "100%",
+                  borderLeft: `1px solid ${token.colorBorderSecondary}`,
+                  overflow: "hidden",
+                }}
+              >
+                <SidePanel />
+              </div>
+            )}
+          </div>
         </Sider>
       )}
-      {/* 可拖拽调节 Sider 宽度的手柄：绝对定位叠在 Sider 右边缘；折叠态下不显示 */}
-      {!focusMode && !sidebarCollapsed && (
+      {/* 可拖拽调节 SidePanel 宽度的手柄：绝对定位叠在 SidePanel 右边缘 */}
+      {!focusMode && panelShown && (
         <div
           ref={handleRef}
           role="separator"
           aria-orientation="vertical"
-          aria-label="拖动调整侧边栏宽度"
-          onMouseDown={startSidebarResize}
-          onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT_WIDTH)}
+          aria-label="拖动调整面板宽度"
+          onMouseDown={startPanelResize}
+          onDoubleClick={() => setSidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH)}
           title="拖动调整宽度（双击恢复默认）"
           style={{
             position: "absolute",
             top: 0,
-            left: sidebarWidth - 2,
+            left: ACTIVITY_BAR_WIDTH + sidePanelWidth - 2,
             width: 5,
             height: "100%",
             cursor: "col-resize",
@@ -385,13 +411,15 @@ export function AppLayout() {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 4, paddingLeft: HEADER_LEFT_PADDING }}>
-            <Button
-              type="text"
-              icon={
-                sidebarCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />
-              }
-              onClick={toggleSidebar}
-            />
+            <Tooltip title={sidePanelVisible ? "折叠面板" : "展开面板"}>
+              <Button
+                type="text"
+                icon={
+                  sidePanelVisible ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />
+                }
+                onClick={toggleSidePanel}
+              />
+            </Tooltip>
             <Tooltip title="后退 (Alt+←)">
               <Button
                 type="text"

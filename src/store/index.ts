@@ -5,6 +5,29 @@ import { emit } from "@tauri-apps/api/event";
 import { taskApi } from "@/lib/api";
 import type { ThemeMode, ThemeCategory } from "@/theme/tokens";
 
+/**
+ * 侧边栏当前活动视图（Activity Bar 模式）。
+ * - 有主面板：notes / search / daily / tags / tasks —— 中间 SidePanel 展示对应内容
+ * - 无主面板：home / graph / ai / prompts / about / trash —— 点图标直接切主区
+ */
+export type ActiveView =
+  | "home"
+  | "notes"
+  | "search"
+  | "daily"
+  | "tags"
+  | "tasks"
+  | "graph"
+  | "ai"
+  | "prompts"
+  | "about"
+  | "trash";
+
+/** SidePanel 宽度范围（px），避免用户拖到极端值 */
+export const SIDE_PANEL_MIN_WIDTH = 200;
+export const SIDE_PANEL_MAX_WIDTH = 480;
+export const SIDE_PANEL_DEFAULT_WIDTH = 240;
+
 // 开发/生产数据隔离：dev 用 dev-settings.json，prod 用 settings.json
 // 与后端 cfg!(debug_assertions) 加 dev- 前缀对齐；旧文件由后端 migrate_to_dev_prefix 自动迁移
 const STORE_FILE = import.meta.env.DEV ? "dev-settings.json" : "settings.json";
@@ -30,6 +53,16 @@ interface AppStore {
   urgentTodoCount: number;
   /** 窗口置顶状态（UI 真相源；托盘 CheckMenuItem 通过事件同步） */
   alwaysOnTop: boolean;
+  /** 当前活动视图（Activity Bar 模式）；与 URL 双向同步 */
+  activeView: ActiveView;
+  /** SidePanel（Activity Bar 右侧主面板）宽度 */
+  sidePanelWidth: number;
+  /**
+   * SidePanel 是否展开。
+   * 折叠时只保留 48px ActivityBar，主区撑满。
+   * VS Code 行为：点击当前高亮图标 = 折叠/展开 SidePanel。
+   */
+  sidePanelVisible: boolean;
   /** 获取当前生效的主题 */
   activeTheme: () => ThemeMode;
   /** 切换亮/暗分类 */
@@ -58,6 +91,18 @@ interface AppStore {
    * - 默认会 emit `ui:always-on-top-changed` 让托盘 CheckMenuItem 跟随
    */
   setAlwaysOnTop: (enabled: boolean, opts?: { skipEmit?: boolean }) => Promise<void>;
+  /**
+   * 设置活动视图（纯 setter，无副作用）。
+   * "点同视图 = 折叠面板" 的 VS Code 行为由 ActivityBar 自己判断，
+   * store 只负责保存状态，避免 navigate / URL 同步时误触发折叠。
+   */
+  setActiveView: (view: ActiveView) => void;
+  /** 设置 SidePanel 宽度（自动 clamp 到 [MIN, MAX]） */
+  setSidePanelWidth: (width: number) => void;
+  /** 设置 SidePanel 可见性 */
+  setSidePanelVisible: (visible: boolean) => void;
+  /** 切换 SidePanel 可见性（等价于 setSidePanelVisible(!visible)） */
+  toggleSidePanel: () => void;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -71,6 +116,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   tagsRefreshTick: 0,
   urgentTodoCount: 0,
   alwaysOnTop: false,
+  activeView: "notes",
+  sidePanelWidth: SIDE_PANEL_DEFAULT_WIDTH,
+  sidePanelVisible: true,
   activeTheme: () => {
     const s = get();
     return s.themeCategory === "light" ? s.lightTheme : s.darkTheme;
@@ -95,6 +143,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
       // 静默失败：侧边栏 Badge 不是关键路径
     }
   },
+  setActiveView: (view) => set({ activeView: view }),
+  setSidePanelWidth: (width) =>
+    set({
+      sidePanelWidth: Math.max(
+        SIDE_PANEL_MIN_WIDTH,
+        Math.min(SIDE_PANEL_MAX_WIDTH, Math.round(width)),
+      ),
+    }),
+  setSidePanelVisible: (visible) => set({ sidePanelVisible: visible }),
+  toggleSidePanel: () => set((s) => ({ sidePanelVisible: !s.sidePanelVisible })),
   setAlwaysOnTop: async (enabled, opts) => {
     try {
       await getCurrentWindow().setAlwaysOnTop(enabled);
@@ -130,30 +188,49 @@ export async function loadThemeFromStore() {
       // 只在持久化值为 true 时调用，避免无意义的 emit
       await useAppStore.getState().setAlwaysOnTop(true);
     }
+
+    // 恢复 SidePanel 宽度与可见性（Activity Bar 模式偏好）
+    const spw = await store.get<number>("sidePanelWidth");
+    if (typeof spw === "number" && Number.isFinite(spw)) {
+      useAppStore.getState().setSidePanelWidth(spw);
+    }
+    const spv = await store.get<boolean>("sidePanelVisible");
+    if (typeof spv === "boolean") {
+      useAppStore.getState().setSidePanelVisible(spv);
+    }
   } catch {
     // 首次启动时 store 可能不存在
   }
 }
 
-/** 保存主题 + 窗口置顶到 tauri-plugin-store */
+/** 保存主题 + 窗口置顶 + SidePanel 偏好到 tauri-plugin-store */
 export async function saveThemeToStore() {
   try {
-    const { lightTheme, darkTheme, themeCategory, alwaysOnTop } = useAppStore.getState();
+    const {
+      lightTheme,
+      darkTheme,
+      themeCategory,
+      alwaysOnTop,
+      sidePanelWidth,
+      sidePanelVisible,
+    } = useAppStore.getState();
     const store = await Store.load(STORE_FILE);
     await store.set("lightTheme", lightTheme);
     await store.set("darkTheme", darkTheme);
     await store.set("themeCategory", themeCategory);
     await store.set("alwaysOnTop", alwaysOnTop);
+    await store.set("sidePanelWidth", sidePanelWidth);
+    await store.set("sidePanelVisible", sidePanelVisible);
     await store.save();
   } catch {
     // 静默失败
   }
 }
 
-// 监听主题 + 置顶变化自动保存
+// 监听主题 + 置顶 + SidePanel 偏好变化自动保存
 let _prevPersistKey = "";
 useAppStore.subscribe((state) => {
-  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}`;
+  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}`;
   if (key !== _prevPersistKey) {
     _prevPersistKey = key;
     saveThemeToStore();
