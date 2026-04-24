@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Button,
   Input,
   Typography,
   Space,
-  List,
+  Divider,
   Badge,
   message,
   Spin,
@@ -14,14 +15,14 @@ import {
   ChevronLeft,
   ChevronRight,
   Save,
-  FileText,
 } from "lucide-react";
 import { dailyApi, noteApi } from "@/lib/api";
 import { TiptapEditor } from "@/components/editor";
 import { useAutoSave } from "@/hooks/useAutoSave";
+import { useAppStore } from "@/store";
 import type { Note } from "@/types";
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 /** 格式化日期为中文显示 */
 function formatDateCN(dateStr: string): string {
@@ -47,12 +48,23 @@ function formatSavedAt(d: Date): string {
 }
 
 export default function DailyPage() {
-  const [date, setDate] = useState(todayStr);
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // URL 是 date 的真相源；缺省时用今天，同时补写进 URL 让 SidePanel 高亮今天
+  const urlDate = searchParams.get("date");
+  const date = urlDate ?? todayStr();
+
+  useEffect(() => {
+    if (!urlDate) {
+      navigate(`/daily?date=${todayStr()}`, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlDate]);
+
   const [note, setNote] = useState<Note | null>(null);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(true);
-  const [recentDates, setRecentDates] = useState<string[]>([]);
 
   const isToday = date === todayStr();
 
@@ -61,16 +73,6 @@ export default function DailyPage() {
   noteRef.current = note;
   const dateRef = useRef(date);
   dateRef.current = date;
-
-  const loadRecentDates = useCallback(async () => {
-    try {
-      const now = new Date();
-      const dates = await dailyApi.listDates(now.getFullYear(), now.getMonth() + 1);
-      setRecentDates(dates);
-    } catch (e) {
-      console.error("加载日记日期失败:", e);
-    }
-  }, []);
 
   const loadDaily = useCallback(async (d: string) => {
     setLoading(true);
@@ -95,8 +97,7 @@ export default function DailyPage() {
 
   useEffect(() => {
     loadDaily(date);
-    loadRecentDates();
-  }, [date, loadDaily, loadRecentDates]);
+  }, [date, loadDaily]);
 
   /**
    * 自动保存：内容变化后 1.2s 防抖入库。
@@ -117,7 +118,8 @@ export default function DailyPage() {
         current = await dailyApi.getOrCreate(d);
         setNote(current);
         noteRef.current = current;
-        void loadRecentDates();
+        // 新建了一条日记 → 通知 SidePanel 重拉本月日期列表
+        useAppStore.getState().bumpNotesRefresh();
       }
       await noteApi.update(current.id, { title: t, content: c });
     },
@@ -143,7 +145,7 @@ export default function DailyPage() {
   // 切日期前先把当前日期未保存的内容落库，避免跨日期丢失
   async function goToDate(d: string) {
     await autoSave.flush();
-    setDate(d);
+    navigate(`/daily?date=${d}`);
   }
 
   function renderStatus() {
@@ -186,6 +188,10 @@ export default function DailyPage() {
         <Space align="center">
           <Calendar size={18} />
           <span style={{ fontWeight: 600, fontSize: 15 }}>每日笔记</span>
+          <Divider
+            type="vertical"
+            style={{ height: 18, margin: "0 8px" }}
+          />
           <Button
             size="small"
             icon={<ChevronLeft size={14} />}
@@ -236,6 +242,8 @@ export default function DailyPage() {
                 placeholder="日记标题"
                 variant="borderless"
                 className="editor-title"
+                // 和下面的 Tiptap 工具栏拉开距离，避免标题与 H1/H2/B 图标紧贴
+                style={{ marginBottom: 12 }}
               />
 
               {/* 内容编辑区 */}
@@ -243,40 +251,17 @@ export default function DailyPage() {
                 content={content}
                 onChange={setContent}
                 placeholder="写点什么..."
+                noteId={note?.id}
+                // 拖/粘贴图片时若日记还没创建，按需建档再插入（无需用户手动"保存"）
+                ensureNoteId={async () => {
+                  if (noteRef.current) return noteRef.current.id;
+                  const created = await dailyApi.getOrCreate(dateRef.current);
+                  setNote(created);
+                  noteRef.current = created;
+                  useAppStore.getState().bumpNotesRefresh();
+                  return created.id;
+                }}
               />
-
-              {/* 最近日记 */}
-              {recentDates.length > 0 && (
-                <div
-                  className="mt-8 pt-4"
-                  style={{
-                    borderTop:
-                      "1px solid var(--ant-color-border-secondary, #f0f0f0)",
-                  }}
-                >
-                  <Title level={5} style={{ margin: "0 0 8px" }}>
-                    <span className="flex items-center gap-2">
-                      <FileText size={16} />
-                      最近日记
-                    </span>
-                  </Title>
-                  <List
-                    dataSource={recentDates
-                      .filter((d) => d !== date)
-                      .slice(0, 10)}
-                    renderItem={(d) => (
-                      <List.Item
-                        className="cursor-pointer"
-                        style={{ padding: "6px 0" }}
-                        onClick={() => goToDate(d)}
-                      >
-                        <Text>{formatDateCN(d)}</Text>
-                      </List.Item>
-                    )}
-                    locale={{ emptyText: "暂无其他日记" }}
-                  />
-                </div>
-              )}
             </>
           )}
         </div>

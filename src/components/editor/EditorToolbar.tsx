@@ -38,6 +38,8 @@ import { imageApi } from "@/lib/api";
 interface ToolbarProps {
   editor: Editor;
   noteId?: number;
+  /** 与 TiptapEditor 的同名 prop 含义一致：noteId 缺失时用它按需建档 */
+  ensureNoteId?: () => Promise<number>;
 }
 
 interface ToolItem {
@@ -47,11 +49,22 @@ interface ToolItem {
   isActive?: () => boolean;
 }
 
-export function EditorToolbar({ editor, noteId }: ToolbarProps) {
+export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
   const [linkModalOpen, setLinkModalOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
   async function insertImage() {
-    if (!noteId) {
+    // 与 TiptapEditor.handleImageFiles 行为对齐：优先显式 noteId，
+    // 缺失时尝试 ensureNoteId（日记按需建档），仍拿不到才 warning
+    let effectiveNoteId = noteId;
+    if (!effectiveNoteId && ensureNoteId) {
+      try {
+        effectiveNoteId = await ensureNoteId();
+      } catch (e) {
+        message.error(`图片插入失败: ${e}`);
+        return;
+      }
+    }
+    if (!effectiveNoteId) {
       message.warning("请先保存笔记后再插入图片");
       return;
     }
@@ -68,7 +81,7 @@ export function EditorToolbar({ editor, noteId }: ToolbarProps) {
     const paths = Array.isArray(selected) ? selected : [selected];
     for (const filePath of paths) {
       try {
-        const savedPath = await imageApi.saveFromPath(noteId, filePath);
+        const savedPath = await imageApi.saveFromPath(effectiveNoteId, filePath);
         const assetUrl = convertFileSrc(savedPath);
         editor.chain().focus().insertContent({
           type: "imageResize",

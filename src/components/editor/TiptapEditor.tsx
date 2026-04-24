@@ -37,6 +37,33 @@ import "tippy.js/dist/tippy.css";
 
 const lowlight = createLowlight(common);
 
+/**
+ * 从 Clipboard/DataTransfer 收集所有图片文件。
+ * Why: 部分来源（浏览器、某些 IM 工具）`files` 只给第一个，但 `items[]` 里齐全；
+ *      用 Map<File> 去重避免两边都给时重复插入。
+ */
+function collectImageFiles(dt: DataTransfer | null | undefined): File[] {
+  if (!dt) return [];
+  const seen = new Set<File>();
+  const out: File[] = [];
+  const push = (f: File | null) => {
+    if (f && f.type.startsWith("image/") && !seen.has(f)) {
+      seen.add(f);
+      out.push(f);
+    }
+  };
+  if (dt.items) {
+    for (let i = 0; i < dt.items.length; i++) {
+      const item = dt.items[i];
+      if (item.kind === "file") push(item.getAsFile());
+    }
+  }
+  if (dt.files) {
+    for (let i = 0; i < dt.files.length; i++) push(dt.files[i]);
+  }
+  return out;
+}
+
 /** 将 File 对象转为 base64（不含 data URL 前缀） */
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -60,6 +87,12 @@ interface TiptapEditorProps {
   placeholder?: string;
   /** 当前笔记 ID，用于图片保存 */
   noteId?: number;
+  /**
+   * 当 noteId 缺失时，图片插入前调用此回调拉出一个 noteId（例如每日笔记
+   * 首次写内容前还未 getOrCreate）。返回 Promise<number>；调用方负责
+   * 同步自己的 noteId 状态。
+   */
+  ensureNoteId?: () => Promise<number>;
   /** Ctrl/Cmd + 点击 [[标题]] 时触发（编辑器内 wiki 链接跳转） */
   onWikiLinkClick?: (title: string) => void;
 }
@@ -69,12 +102,16 @@ export function TiptapEditor({
   onChange,
   placeholder = "开始写点什么...",
   noteId,
+  ensureNoteId,
   onWikiLinkClick,
 }: TiptapEditorProps) {
   const isExternalUpdate = useRef(false);
 
   // 用 ref 保持 onWikiLinkClick 最新引用，避免 Tiptap 扩展闭包过期
   const wikiClickRef = useRef(onWikiLinkClick);
+  // ensureNoteId 同样用 ref：它常是组件每次渲染新建的闭包，不能进依赖数组
+  const ensureNoteIdRef = useRef(ensureNoteId);
+  ensureNoteIdRef.current = ensureNoteId;
   useEffect(() => {
     wikiClickRef.current = onWikiLinkClick;
   }, [onWikiLinkClick]);
@@ -100,28 +137,67 @@ export function TiptapEditor({
     }
   }, []);
 
-  /** 处理图片文件：保存到本地并插入编辑器 */
+  /** 处理图片文件：并发保存后一次性批量插入编辑器 */
   const handleImageFiles = useCallback(
     async (files: File[], editor: ReturnType<typeof useEditor>) => {
-      if (!editor || !noteId) {
+      if (!editor) return;
+
+      // 优先用显式 noteId；不存在时尝试 ensureNoteId（例如每日笔记自动建档）
+      let effectiveNoteId = noteId;
+      if (!effectiveNoteId && ensureNoteIdRef.current) {
+        try {
+          effectiveNoteId = await ensureNoteIdRef.current();
+        } catch (e) {
+          message.error(`图片插入失败: ${e}`);
+          return;
+        }
+      }
+      if (!effectiveNoteId) {
         message.warning("请先保存笔记后再插入图片");
         return;
       }
 
-      for (const file of files) {
-        if (!file.type.startsWith("image/")) continue;
-        try {
-          const base64 = await fileToBase64(file);
-          const filePath = await imageApi.save(noteId, file.name, base64);
-          const assetUrl = convertFileSrc(filePath);
-          editor.chain().focus().insertContent({
+      const images = files.filter((f) => f.type.startsWith("image/"));
+      console.log("[image-drop] received files:", images.length, images.map((f) => f.name));
+
+      // Why: 原版在 for-await 里每次 insertContent，会让 onUpdate 连环触发、debounce 反复刷新；
+      //      且 Tiptap 在同一批次中对同一 src 的 node 行为不稳定。改成全部保存完后一次性插入。
+      const results = await Promise.all(
+        images.map(async (file) => {
+          try {
+            const base64 = await fileToBase64(file);
+            const filePath = await imageApi.save(effectiveNoteId!, file.name, base64);
+            return { ok: true as const, filePath, name: file.name };
+          } catch (e) {
+            return { ok: false as const, err: String(e), name: file.name };
+          }
+        }),
+      );
+
+      const nodes: { type: string; attrs: { src: string } }[] = [];
+      for (const r of results) {
+        if (r.ok) {
+          console.log("[image-drop] saved:", r.name, "=>", r.filePath);
+          nodes.push({
             type: "imageResize",
-            attrs: { src: assetUrl },
-          }).run();
-        } catch (e) {
-          message.error(`图片插入失败: ${e}`);
+            attrs: { src: convertFileSrc(r.filePath) },
+          });
+        } else {
+          message.error(`图片插入失败(${r.name}): ${r.err}`);
         }
       }
+      if (nodes.length === 0) return;
+
+      // 去重：若 Rust 侧仍返回了相同 filePath（比如旧二进制没重编），至少提示用户
+      const uniqueSrc = new Set(nodes.map((n) => n.attrs.src));
+      if (uniqueSrc.size !== nodes.length) {
+        console.warn(
+          "[image-drop] 后端返回了重复路径（旧二进制？）",
+          nodes.map((n) => n.attrs.src),
+        );
+      }
+
+      editor.chain().focus().insertContent(nodes).run();
     },
     [noteId],
   );
@@ -196,8 +272,7 @@ export function TiptapEditor({
     },
     editorProps: {
       handlePaste: (_view, event) => {
-        const files = Array.from(event.clipboardData?.files || []);
-        const images = files.filter((f) => f.type.startsWith("image/"));
+        const images = collectImageFiles(event.clipboardData);
         if (images.length > 0) {
           handleImageFiles(images, editor);
           return true;
@@ -205,8 +280,7 @@ export function TiptapEditor({
         return false;
       },
       handleDrop: (_view, event) => {
-        const files = Array.from(event.dataTransfer?.files || []);
-        const images = files.filter((f) => f.type.startsWith("image/"));
+        const images = collectImageFiles(event.dataTransfer);
         if (images.length > 0) {
           event.preventDefault();
           handleImageFiles(images, editor);
@@ -271,7 +345,7 @@ export function TiptapEditor({
 
   return (
     <div className="tiptap-wrapper" style={{ position: "relative" }}>
-      <EditorToolbar editor={editor} noteId={noteId} />
+      <EditorToolbar editor={editor} noteId={noteId} ensureNoteId={ensureNoteId} />
       <EditorContent editor={editor} className="tiptap-content" />
       <AiWriteMenu editor={editor} />
       <div
