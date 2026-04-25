@@ -3,6 +3,103 @@ use crate::models::{AiConversation, AiMessage, AiModel, AiModelInput};
 
 use super::Database;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 在临时文件里初始化一个空库，用来跑 DAO 单测
+    ///
+    /// 1. 用全局原子计数器保证不同测试拿不同 db 路径（nano 时戳并发会撞，导致 SQLite locked）
+    /// 2. schema v4 会预置一条 "Ollama Llama3" 默认模型（生产场景给新用户兜底用），
+    ///    测试里为了精确控制状态，先清空 ai_models 表再返回
+    fn temp_db() -> Database {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!(
+            "kb_test_{}_{}",
+            std::process::id(),
+            n
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.db");
+        let db = Database::init(path.to_str().unwrap()).expect("init test db");
+        // 清掉 schema seed 出来的默认 Ollama 行，给测试一个干净的起点
+        {
+            let conn = db.conn.lock().expect("lock test db");
+            conn.execute("DELETE FROM ai_models", [])
+                .expect("clear ai_models");
+        }
+        db
+    }
+
+    fn input(name: &str) -> AiModelInput {
+        AiModelInput {
+            name: name.into(),
+            provider: "custom".into(),
+            api_url: "http://localhost".into(),
+            api_key: None,
+            model_id: "test-model".into(),
+        }
+    }
+
+    #[test]
+    fn delete_default_picks_next_as_default() {
+        let db = temp_db();
+        let m1 = db.create_ai_model(&input("first")).unwrap();
+        let m2 = db.create_ai_model(&input("second")).unwrap();
+        // 把 m1 设为默认
+        db.set_default_ai_model(m1.id).unwrap();
+
+        // 删默认 → m2 应自动成为新默认
+        db.delete_ai_model(m1.id).unwrap();
+        let after = db.list_ai_models().unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].id, m2.id);
+        assert!(
+            after[0].is_default,
+            "删除默认后剩下的那条应自动被标为 default"
+        );
+        // get_default 不应再返回 NotFound
+        let d = db.get_default_ai_model().expect("应能拿到新默认");
+        assert_eq!(d.id, m2.id);
+    }
+
+    #[test]
+    fn delete_non_default_leaves_default_intact() {
+        let db = temp_db();
+        let m1 = db.create_ai_model(&input("first")).unwrap();
+        let m2 = db.create_ai_model(&input("second")).unwrap();
+        db.set_default_ai_model(m1.id).unwrap();
+
+        // 删非默认（m2）→ m1 仍是默认
+        db.delete_ai_model(m2.id).unwrap();
+        let d = db.get_default_ai_model().unwrap();
+        assert_eq!(d.id, m1.id);
+    }
+
+    #[test]
+    fn delete_only_model_does_not_panic() {
+        let db = temp_db();
+        let m1 = db.create_ai_model(&input("only")).unwrap();
+        db.set_default_ai_model(m1.id).unwrap();
+
+        // 删完一条不剩；不应 panic / 不应留 is_default=0 的孤儿
+        db.delete_ai_model(m1.id).unwrap();
+        let after = db.list_ai_models().unwrap();
+        assert_eq!(after.len(), 0);
+        // get_default 这时应该是 NotFound（前端会显示"请先添加 AI 模型"）
+        assert!(db.get_default_ai_model().is_err());
+    }
+
+    #[test]
+    fn delete_nonexistent_id_is_idempotent() {
+        let db = temp_db();
+        // 库里没东西；删一个不存在的 id 不应报错
+        db.delete_ai_model(999).unwrap();
+    }
+}
+
 impl Database {
     // ─── AI 模型 DAO ─────────────────────────────
 
@@ -108,9 +205,57 @@ impl Database {
     }
 
     /// 删除 AI 模型
+    ///
+    /// T-B02 修复：删除的是默认配置时，自动把剩下的第一条标为默认；
+    /// 否则用户在 /ai 页问问题会因 `get_default_ai_model` 返回 NotFound 而整个 AI 模块崩溃。
+    /// 如果删完一条不剩，就什么都不做（前端会显示"请先添加 AI 模型"）。
+    ///
+    /// 全程在一个事务里跑：删 + 选下一个 + UPDATE 是原子的，
+    /// 中途失败不会留下"全部 is_default=0"的状态。
     pub fn delete_ai_model(&self, id: i64) -> Result<(), AppError> {
-        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
-        conn.execute("DELETE FROM ai_models WHERE id = ?1", [id])?;
+        let mut conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let tx = conn.transaction()?;
+
+        // 先看待删的是不是当前默认
+        let was_default: bool = tx
+            .query_row(
+                "SELECT is_default FROM ai_models WHERE id = ?1",
+                [id],
+                |row| row.get::<_, i32>(0).map(|v| v != 0),
+            )
+            .unwrap_or(false);
+
+        let affected = tx.execute("DELETE FROM ai_models WHERE id = ?1", [id])?;
+        if affected == 0 {
+            // 本来就不存在；幂等返回
+            tx.commit()?;
+            return Ok(());
+        }
+
+        if was_default {
+            // 选剩下最早创建的一条作为新默认
+            let next_id: Option<i64> = tx
+                .query_row(
+                    "SELECT id FROM ai_models ORDER BY created_at ASC, id ASC LIMIT 1",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .ok();
+            if let Some(next) = next_id {
+                tx.execute(
+                    "UPDATE ai_models SET is_default = 1 WHERE id = ?1",
+                    [next],
+                )?;
+                log::info!(
+                    "[ai] 删除默认模型 #{} 后，自动把 #{} 设为新默认",
+                    id, next
+                );
+            } else {
+                log::info!("[ai] 删除最后一条 AI 模型 #{}，已无可用模型", id);
+            }
+        }
+
+        tx.commit()?;
         Ok(())
     }
 

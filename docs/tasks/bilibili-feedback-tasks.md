@@ -350,12 +350,20 @@
 
 #### T-012 · 自定义 API 提供商 + lm studio 本地兼容
 
-- **状态**：`pending`
-- **来源建议**：阿泽牙不齐#96 "API 提供商只能用默认那几个吗，可不可以自定义" / 凰药仙#65,#89 "本地 ai 能不能用 lm studio" / 只会睡觉的折戟#85 同
-- **价值**：⭐⭐⭐⭐  成本：低
-- **核心**：lm studio 暴露的就是 OpenAI 兼容协议（`http://localhost:1234/v1`），项目本来就是 OpenAI 兼容族；只需放开**用户自填 baseUrl + 模型名**，且去掉对默认 vendor 列表的强校验
-- **建议方案**：设置页 → AI 模型配置 → 加"自定义"类型，填 baseUrl / apiKey / modelName 三字段直接走 OpenAI 协议
-- **顺带**：检查现有"删除唯一 AI 配置后报数据库错误"（T-B02）
+- **状态**：`completed`（待用户手动验证）  · 完成日期：2026-04-25
+- **来源建议**：阿泽牙不齐#96 "API 提供商只能用默认那几个吗，可不可以自定义" / 凰药仙#65,#89 "本地 ai 能不能用 lm studio" / 只会睡觉的折戟#85 同 / 书城林城#68 "配置自定义 AI 模型，无法使用"
+- **价值**：⭐⭐⭐⭐  成本：低（实际半小时内）
+- **改动**：
+  - 后端 `services/ai.rs`：5 处硬编码 `match provider == "openai"|"claude"|"deepseek"|"zhipu"` 改为**默认 fallback 走 OpenAI 兼容协议**，仅显式拒绝 `"ollama"` 不支持 JSON / Skills 的场景
+  - 前端 `pages/settings/index.tsx`：`PROVIDERS` 列表新增 `lmstudio` / `minimax` / `siliconflow` / `custom` 四个预设；`DEFAULT_URLS` / `MODEL_ID_PLACEHOLDERS` / `MODEL_PRESETS` 同步补全
+  - 表单 `extra` 文案改成"除 Ollama 外都按 OpenAI 兼容协议；选『自定义』可填任意 baseUrl"
+- **不需要 schema 改动**：`ai_models` 表的 `provider` / `api_url` / `api_key` / `model_id` 字段已够用
+- **同时修复**：T-B05 (书城林城 "自定义 AI 模型无法使用") — 同根问题
+- **验证**：`cargo check` + `npx tsc --noEmit` 干净
+- [ ] **待用户手动验证**：
+      1. 设置页 → 添加新 AI 模型 → provider 选"LM Studio (本地 OpenAI 兼容)" → 默认 url 填 `http://localhost:1234/v1` → 启动 LM Studio 加载一个模型 → 在 /ai 对话能流式输出
+      2. provider 选"自定义" → 自填 minimax / 任意 OpenRouter / 自建网关的 baseUrl + apiKey → 对话能流出
+      3. 老的 deepseek / openai / claude / zhipu 配置不受影响（match 默认 fallback 兼容旧数据）
 
 ---
 
@@ -450,10 +458,16 @@
 
 #### T-B02 · 删除唯一 AI 配置后报数据库错误
 
-- **状态**：`pending`
+- **状态**：`completed` ✅  · 完成日期：2026-04-25
 - **来源建议**：ちょっとおかしい#54 "我没有将唯一的一个 AI 设成默认配置...才可以正常使用"
-- **影响**：用户删默认配置后整个 AI 模块崩
-- **修复**：`services/ai_provider.rs::delete` 加业务规则——删的是默认配置时，自动把剩下的第一个标为默认；零个时清空"current_provider_id"
+- **影响**：用户删默认配置后整个 AI 模块崩（`get_default_ai_model` 返回 NotFound）
+- **修复**：`database/ai.rs::delete_ai_model` 改成事务——删除前查 was_default → DELETE → 如果删的是默认，按 created_at ASC 选下一条标为默认；零条时不动（前端会显示"请先添加 AI 模型"）；不存在的 id 幂等返回
+- **测试**：4 个新增单测全过：
+  - `delete_default_picks_next_as_default`
+  - `delete_non_default_leaves_default_intact`
+  - `delete_only_model_does_not_panic`
+  - `delete_nonexistent_id_is_idempotent`
+- **验证**：`cargo check` + `cargo test database::ai` 全绿
 
 ---
 
@@ -480,10 +494,10 @@
 
 #### T-B05 · 自定义 AI 模型无法使用
 
-- **状态**：`pending`
+- **状态**：`completed`（已随 T-012 一起修复，待用户手动验证）
 - **来源建议**：书城林城#68（赞 0）"配置自定义 AI 模型，无法使用"
-- **影响**：自定义模型直接不工作
-- **关联**：与 T-012（放开 baseUrl 自定义）合并修复
+- **修复要点**：T-012 把后端 `match provider` 的硬编码列表改为 fallback 默认走 OpenAI 兼容；前端 PROVIDERS 加 "自定义" 选项让用户自填 baseUrl
+- **验证**：见 T-012 验证步骤
 
 ---
 
