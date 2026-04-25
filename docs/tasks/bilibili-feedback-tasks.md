@@ -464,10 +464,25 @@
 
 #### T-017 · 表格增强（合并单元格 / 颜色 / 字体）
 
-- **状态**：`pending`
+- **状态**：`completed`（v1 命令版，待用户手动验证）  · 完成日期：2026-04-25
 - **来源建议**：wwzp丿#125 "表格能加合并单元格、填充颜色、更改字体和背景颜色"
-- **价值**：⭐⭐⭐  成本：中
-- **建议方案**：Tiptap 自带 `@tiptap/extension-table` 已支持基础表格；合并单元格用 `mergeCells`；样式需扩展 cell attributes 写入 markdown 时降级（普通 markdown 不支持单元格颜色，导出兜底为 HTML 表格）
+- **价值**：⭐⭐⭐  成本：低（实际半小时）
+- **决策**：v1 **只加命令不加颜色** — 颜色 attr 在 tiptap-markdown 序列化时会丢，造成"保存后效果消失"的体感倒退；颜色作为 v2 独立立项时同步设计 HTML 兜底
+- **改动**（`src/components/editor/EditorToolbar.tsx`）：
+  - `ToolItem` 类型加 `dropdownItems?: MenuProps["items"]` 字段
+  - render 分支：`dropdownItems` 存在时把 Button 包在 antd `Dropdown` 里；否则保持原按钮行为
+  - 表格组从 4 个并列按钮改为 1 个 Dropdown 按钮（图标 + ChevronDown），菜单含 11 项命令：
+    - 插入 3×3 表格
+    - 在右侧加列 / 在下方加行
+    - **合并单元格** / **拆分单元格**（新）
+    - **删除当前行** / **删除当前列**（新）
+    - **切换首行表头** / **切换首列表头**（新）
+    - 删除整个表格（danger 红字）
+  - 每个菜单项用 `editor.can().*()` 做 disabled 状态判断（不可用时灰显）
+- **未做（v2）**：单元格背景色 / 字体色（需 cell attrs 扩展 + HTML 兜底序列化器）
+- **持久化兼容**：colspan / rowspan 在 markdown 标准里不支持，tiptap-markdown 序列化会简化为标准表格；用户编辑态体验完整，导出 / 重导入会丢合并信息（与 OB 相同行为）
+- **验证**：`npx tsc --noEmit` 干净
+- [ ] **待用户手动验证**：(1) 编辑器顶部表格按钮点击应弹下拉菜单；(2) 选中两个相邻单元格 → 合并 → 拆分 → 都生效；(3) 在表格外部"合并/拆分/删行/删列"等菜单项应灰显
 
 ---
 

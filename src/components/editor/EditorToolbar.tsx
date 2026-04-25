@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import type { Editor } from "@tiptap/react";
-import { Button, Divider, Tooltip, Modal, Input, message } from "antd";
+import { Button, Divider, Tooltip, Modal, Input, message, Dropdown } from "antd";
+import type { MenuProps } from "antd";
 import {
   Bold,
   Italic,
@@ -30,6 +31,7 @@ import {
   Rows3,
   Columns3,
   Trash2,
+  ChevronDown,
 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -45,8 +47,11 @@ interface ToolbarProps {
 interface ToolItem {
   icon: React.ReactNode;
   title: string;
-  action: () => void;
+  /** 普通按钮的点击；带 dropdownItems 时由下拉菜单各 item 自己 onClick，可省略 */
+  action?: () => void;
   isActive?: () => boolean;
+  /** T-017: 提供后按钮渲染为 Dropdown trigger，菜单展示 dropdownItems */
+  dropdownItems?: MenuProps["items"];
 }
 
 export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
@@ -244,32 +249,93 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
         isActive: () => editor.isActive({ textAlign: "justify" }),
       },
     ],
-    // 表格
+    // 表格 — T-017 全部命令折叠到 Dropdown 菜单，避免工具栏过挤
     [
       {
-        icon: <TableIcon size={15} />,
-        title: "插入表格",
-        action: () =>
-          editor
-            .chain()
-            .focus()
-            .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
-            .run(),
-      },
-      {
-        icon: <Columns3 size={15} />,
-        title: "添加列",
-        action: () => editor.chain().focus().addColumnAfter().run(),
-      },
-      {
-        icon: <Rows3 size={15} />,
-        title: "添加行",
-        action: () => editor.chain().focus().addRowAfter().run(),
-      },
-      {
-        icon: <Trash2 size={15} />,
-        title: "删除表格",
-        action: () => editor.chain().focus().deleteTable().run(),
+        icon: (
+          <span className="inline-flex items-center gap-0.5">
+            <TableIcon size={15} />
+            <ChevronDown size={11} style={{ opacity: 0.6 }} />
+          </span>
+        ),
+        title: "表格",
+        isActive: () => editor.isActive("table"),
+        dropdownItems: [
+          {
+            key: "insert",
+            icon: <TableIcon size={14} />,
+            label: "插入 3×3 表格",
+            onClick: () =>
+              editor
+                .chain()
+                .focus()
+                .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+                .run(),
+          },
+          { type: "divider" },
+          {
+            key: "add-col",
+            icon: <Columns3 size={14} />,
+            label: "在右侧加列",
+            disabled: !editor.can().addColumnAfter(),
+            onClick: () => editor.chain().focus().addColumnAfter().run(),
+          },
+          {
+            key: "add-row",
+            icon: <Rows3 size={14} />,
+            label: "在下方加行",
+            disabled: !editor.can().addRowAfter(),
+            onClick: () => editor.chain().focus().addRowAfter().run(),
+          },
+          { type: "divider" },
+          {
+            key: "merge-cells",
+            label: "合并单元格",
+            disabled: !editor.can().mergeCells(),
+            onClick: () => editor.chain().focus().mergeCells().run(),
+          },
+          {
+            key: "split-cell",
+            label: "拆分单元格",
+            disabled: !editor.can().splitCell(),
+            onClick: () => editor.chain().focus().splitCell().run(),
+          },
+          { type: "divider" },
+          {
+            key: "delete-row",
+            label: "删除当前行",
+            disabled: !editor.can().deleteRow(),
+            onClick: () => editor.chain().focus().deleteRow().run(),
+          },
+          {
+            key: "delete-col",
+            label: "删除当前列",
+            disabled: !editor.can().deleteColumn(),
+            onClick: () => editor.chain().focus().deleteColumn().run(),
+          },
+          { type: "divider" },
+          {
+            key: "toggle-header-row",
+            label: "切换首行表头",
+            disabled: !editor.can().toggleHeaderRow(),
+            onClick: () => editor.chain().focus().toggleHeaderRow().run(),
+          },
+          {
+            key: "toggle-header-col",
+            label: "切换首列表头",
+            disabled: !editor.can().toggleHeaderColumn(),
+            onClick: () => editor.chain().focus().toggleHeaderColumn().run(),
+          },
+          { type: "divider" },
+          {
+            key: "delete-table",
+            icon: <Trash2 size={14} />,
+            label: "删除整个表格",
+            danger: true,
+            disabled: !editor.can().deleteTable(),
+            onClick: () => editor.chain().focus().deleteTable().run(),
+          },
+        ],
       },
     ],
     // 链接 & 媒体
@@ -306,18 +372,44 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
             {gi > 0 && (
               <Divider type="vertical" style={{ height: 20, margin: "0 2px" }} />
             )}
-            {group.map((item, ii) => (
-              <Tooltip key={ii} title={item.title} mouseEnterDelay={0.5}>
+            {group.map((item, ii) => {
+              const btn = (
                 <Button
                   type="text"
                   size="small"
                   icon={item.icon}
-                  onClick={item.action}
+                  onClick={item.dropdownItems ? undefined : item.action}
                   className={item.isActive?.() ? "toolbar-btn-active" : ""}
-                  style={{ width: 28, height: 28, padding: 0 }}
+                  style={{
+                    minWidth: 28,
+                    height: 28,
+                    padding: item.dropdownItems ? "0 4px" : 0,
+                  }}
                 />
-              </Tooltip>
-            ))}
+              );
+              if (item.dropdownItems) {
+                return (
+                  <Tooltip
+                    key={ii}
+                    title={item.title}
+                    mouseEnterDelay={0.5}
+                  >
+                    <Dropdown
+                      menu={{ items: item.dropdownItems }}
+                      trigger={["click"]}
+                      placement="bottomLeft"
+                    >
+                      {btn}
+                    </Dropdown>
+                  </Tooltip>
+                );
+              }
+              return (
+                <Tooltip key={ii} title={item.title} mouseEnterDelay={0.5}>
+                  {btn}
+                </Tooltip>
+              );
+            })}
           </span>
         ))}
       </div>
