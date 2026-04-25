@@ -5,6 +5,7 @@ use crate::error::AppError;
 use crate::models::{Note, PageResult};
 use crate::services::attachment::AttachmentService;
 use crate::services::image::ImageService;
+use crate::services::pdf::PdfService;
 
 /// 回收站服务
 pub struct TrashService;
@@ -24,6 +25,8 @@ impl TrashService {
         }
 
         // 3. 删源文件（可能是 sources/<id>.docx、pdfs/<id>.pdf 等）
+        //    旧格式 pdfs/<id>.pdf 走这里；新格式 pdfs/<id>/<原名>.pdf 也能被
+        //    单文件 remove_file 删掉，但会留下空 pdfs/<id>/ 目录，由下面第 4 步兜底
         if let Some(rel) = source_file_path {
             let abs = data_dir.join(rel);
             if abs.exists() {
@@ -33,6 +36,12 @@ impl TrashService {
                     log::info!("已删除笔记 {} 源文件: {}", note_id, rel);
                 }
             }
+        }
+
+        // 4. 删 PDF 子目录 pdfs/<id>/（新方案 C 格式：每个笔记独占目录）
+        //    旧格式 pdfs/<id>.pdf 是单文件，这里 is_dir 检查会跳过，互不冲突
+        if let Err(e) = PdfService::delete_note_pdfs(data_dir, note_id) {
+            log::warn!("删除笔记 {} PDF 子目录失败: {}", note_id, e);
         }
     }
     /// 软删除笔记（移入回收站）

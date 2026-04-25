@@ -88,7 +88,7 @@ impl PdfService {
         // 阈值 50 是经验值（空白/几页页码合计也常超 50；扫描件极少超过 50）
         if is_likely_scanned_pdf(&text) {
             return Err(AppError::Custom(format!(
-                "PDF 抽出文字过少（仅 {} 字），多半是扫描件 / 图片型 PDF（无文字层）。当前版本不内置 OCR；建议先用 Adobe Acrobat、ABBYY、mineru 等工具把 PDF 转成可搜索文本后再导入。",
+                "PDF 抽出文字过少（仅 {} 字），多半是扫描件 / 图片型 PDF（无文字层）。当前版本不内置 OCR;建议先用 Adobe Acrobat、ABBYY、mineru 等工具把 PDF 转成可搜索文本后再导入。",
                 text.chars().count()
             )));
         }
@@ -107,10 +107,17 @@ impl PdfService {
             folder_id,
         })?;
 
-        // 4. 拷贝原 PDF 到 pdfs/<id>.pdf
-        Self::ensure_dir(app_data_dir)?;
-        let rel_path = format!("{}/{}.pdf", pdfs_dir_name(), note.id);
+        // 4. 拷贝原 PDF 到 pdfs/<id>/<原文件名>.pdf
+        //    用 note.id 作为子目录隔离避免重名；保留原文件名让用户在文件系统里也能识别
+        let safe_name = sanitize_pdf_filename(source);
+        let rel_path = format!("{}/{}/{}", pdfs_dir_name(), note.id, safe_name);
         let dst = app_data_dir.join(&rel_path);
+        if let Some(parent) = dst.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                log::warn!("PDF 子目录创建失败（笔记已建）: {}", e);
+                return Ok(note);
+            }
+        }
         if let Err(e) = std::fs::copy(source, &dst) {
             // 拷贝失败：笔记已经建好了也算导入成功，只是不关联 PDF
             log::warn!("PDF 原文件拷贝失败（笔记已建）: {}", e);
@@ -160,6 +167,54 @@ impl PdfService {
     ) -> Option<PathBuf> {
         let abs = app_data_dir.join(pdf_path);
         if abs.exists() { Some(abs) } else { None }
+    }
+
+    /// 删除笔记关联的所有 PDF 文件（永久删除笔记时调用）。
+    ///
+    /// 新格式（方案 C）：删整个 `pdfs/<note_id>/` 子目录；
+    /// 旧格式（`pdfs/<note_id>.pdf`）由 trash 服务的 source_file_path 单文件删除负责，
+    /// 这里只关注新格式目录，互不冲突。
+    pub fn delete_note_pdfs(app_data_dir: &Path, note_id: i64) -> Result<(), AppError> {
+        let dir = Self::pdfs_dir(app_data_dir).join(note_id.to_string());
+        if dir.is_dir() {
+            std::fs::remove_dir_all(&dir)?;
+            log::info!("已删除笔记 {} 的 PDF 子目录: {:?}", note_id, dir);
+        }
+        Ok(())
+    }
+}
+
+/// PDF 原文件名清洗：保留中文 / 字母 / 数字 / 常见标点，过滤跨平台不安全字符。
+///
+/// 处理：
+///  - 跨平台文件系统不允许的字符 `/ \ : * ? " < > |` 替换为 `_`
+///  - 控制字符（0x00-0x1F、0x7F）一律删除
+///  - 前后空白 / 点号 trim（Windows 不允许文件名以点结尾）
+///  - 去后缀后限长 200 字符（仍预留给重名后缀），保留 `.pdf` 扩展
+///  - 兜底：清洗后为空时返回 `untitled.pdf`
+fn sanitize_pdf_filename(source: &Path) -> String {
+    let raw_stem = source
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let cleaned: String = raw_stem
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            // 控制字符直接删
+            c if (c as u32) < 0x20 || c == '\u{007F}' => '\0',
+            other => other,
+        })
+        .filter(|c| *c != '\0')
+        .collect();
+    let trimmed = cleaned.trim().trim_end_matches('.').trim();
+    let limited: String = trimmed.chars().take(200).collect();
+    // 全部都是下划线（说明原名几乎全是非法字符）也视作无效，避免出现 "____.pdf"
+    let all_underscore = !limited.is_empty() && limited.chars().all(|c| c == '_');
+    if limited.is_empty() || all_underscore {
+        "untitled.pdf".to_string()
+    } else {
+        format!("{}.pdf", limited)
     }
 }
 
@@ -687,6 +742,55 @@ mod tests {
         let english =
             "This is a normal PDF document with enough text content to pass the scanned-PDF detection threshold.";
         assert!(!is_likely_scanned_pdf(english));
+    }
+
+    // ─── sanitize_pdf_filename 测试（方案 C 路径生成依赖） ─────────────
+
+    #[test]
+    fn sanitize_keeps_chinese_and_normal_chars() {
+        let p = Path::new("D:/dl/管理视角读故事-绩效考核.pdf");
+        assert_eq!(sanitize_pdf_filename(p), "管理视角读故事-绩效考核.pdf");
+    }
+
+    #[test]
+    fn sanitize_replaces_unsafe_chars() {
+        // 不含路径分隔符的单段名，Windows 不允许的字符全部转 _
+        // (`/` `\` 是 Path 分隔符不能放在文件名里测，已被 file_stem 切掉)
+        let p = Path::new(r#"D:/dl/a:b*c?d"e<f>g|h.pdf"#);
+        assert_eq!(sanitize_pdf_filename(p), "a_b_c_d_e_f_g_h.pdf");
+    }
+
+    #[test]
+    fn sanitize_strips_control_chars() {
+        // 模拟带换行 / 制表符的文件名（极罕见但理论可能）
+        let p = Path::new("D:/dl/abc\u{0007}\tdef.pdf");
+        assert_eq!(sanitize_pdf_filename(p), "abcdef.pdf");
+    }
+
+    #[test]
+    fn sanitize_trims_trailing_dot_and_space() {
+        let p = Path::new("D:/dl/  hello..  .pdf");
+        // file_stem 切掉 .pdf 后是 "  hello..  "，trim 空白 + 去末尾点 → "hello"
+        assert_eq!(sanitize_pdf_filename(p), "hello.pdf");
+    }
+
+    #[test]
+    fn sanitize_falls_back_to_untitled_when_empty() {
+        // 全是非法字符 → 清洗后空串 → 兜底
+        let p = Path::new(r#"D:/dl/?/<>|".pdf"#);
+        assert_eq!(sanitize_pdf_filename(p), "untitled.pdf");
+    }
+
+    #[test]
+    fn sanitize_truncates_excessively_long_names() {
+        // 200 个汉字 + .pdf 是合理上限
+        let stem: String = "字".repeat(300);
+        let raw = format!("D:/dl/{}.pdf", stem);
+        let p = Path::new(&raw);
+        let out = sanitize_pdf_filename(p);
+        // 200 个汉字 + ".pdf"
+        assert_eq!(out.chars().count(), 204);
+        assert!(out.ends_with(".pdf"));
     }
 
     #[test]
