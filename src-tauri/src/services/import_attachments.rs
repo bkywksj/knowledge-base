@@ -364,6 +364,228 @@ fn resolve_local_image(
     None
 }
 
+// ─── 外链图片下载（导入时把 https://... 图片落盘） ───────────────────────
+//
+// 场景：从微信公众号 / 简书 / 网页剪藏导出的 markdown 里图片是 https:// 外链，
+// 直接渲染会被对方 CDN 防盗链拦下（典型如微信 mmbiz.qpic.cn 校验 Referer）。
+// 导入时把图片下载到本地 kb_assets/images/<note_id>/ 后改写为 asset URL，
+// 离线可见 + 永久持有。
+//
+// 单独提供一个 async 函数，与同步的 `rewrite_image_paths`（处理本地相对路径）
+// 串联使用：先跑同步版处理本地文件，再跑这个 async 版处理外链。
+
+/// 单独处理 body 中所有 http(s):// 图片引用（标准 markdown `![alt](url)`）。
+///
+/// 为已经是 asset URL 的引用做幂等保护；下载失败的引用保留原样并记入 missing。
+/// 执行顺序：从后往前替换字符串，避免位置漂移。
+pub async fn rewrite_external_images(
+    body: &str,
+    note_id: i64,
+    app_data_dir: &Path,
+) -> Result<RewriteResult, AppError> {
+    if body.is_empty() {
+        return Ok(RewriteResult::unchanged(String::new()));
+    }
+
+    let md_re = md_image_regex();
+    // (start, end, alt, url) — 仅收集真正的 http(s):// 外链
+    let mut matches: Vec<(usize, usize, String, String)> = Vec::new();
+    for caps in md_re.captures_iter(body) {
+        let m = caps.get(0).unwrap();
+        let alt = caps.get(1).map(|x| x.as_str()).unwrap_or("").to_string();
+        let raw_url = caps
+            .get(2)
+            .map(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let lower = raw_url.to_ascii_lowercase();
+        // asset.localhost 已经是本地化结果，跳过；其余 https:// / http:// 统一处理
+        if lower.starts_with("http://asset.localhost/") || lower.starts_with("asset://") {
+            continue;
+        }
+        if lower.starts_with("http://") || lower.starts_with("https://") {
+            matches.push((m.start(), m.end(), alt, raw_url));
+        }
+    }
+
+    if matches.is_empty() {
+        return Ok(RewriteResult::unchanged(body.to_string()));
+    }
+
+    // 30s 超时，避免单张大图卡死整个导入流程
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| AppError::Custom(format!("HTTP client 初始化失败: {}", e)))?;
+
+    let mut copied = 0usize;
+    let mut missing: Vec<String> = Vec::new();
+    // 顺序下载（微信 CDN 并发请求容易触发限流；导入是后台流程，串行就够用）
+    let mut replacements: Vec<Option<String>> = Vec::with_capacity(matches.len());
+    for (_, _, _, url) in &matches {
+        match download_external_image(&client, url).await {
+            Ok((bytes, file_name)) => {
+                match crate::services::image::ImageService::save_bytes(
+                    app_data_dir,
+                    note_id,
+                    &file_name,
+                    &bytes,
+                ) {
+                    Ok(abs) => {
+                        let new_url = path_to_asset_url(Path::new(&abs));
+                        replacements.push(Some(new_url));
+                        copied += 1;
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[import-external] 笔记 {} 图片落盘失败 ({}): {}",
+                            note_id, url, e
+                        );
+                        replacements.push(None);
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!(
+                    "[import-external] 笔记 {} 外链下载失败 ({}): {}",
+                    note_id, url, e
+                );
+                replacements.push(None);
+            }
+        }
+    }
+
+    // 倒序应用替换，避免前面的替换让后面的 start/end 错位
+    let mut new_body = body.to_string();
+    for (i, repl) in replacements.iter().enumerate().rev() {
+        let (start, end, alt, raw_url) = &matches[i];
+        match repl {
+            Some(new_url) => {
+                let replacement = format!("![{}]({})", alt, new_url);
+                new_body.replace_range(*start..*end, &replacement);
+            }
+            None => {
+                missing.push(raw_url.clone());
+            }
+        }
+    }
+
+    // missing 去重保持顺序
+    let mut seen: HashMap<String, ()> = HashMap::new();
+    let dedup_missing: Vec<String> = missing
+        .into_iter()
+        .filter(|m| seen.insert(m.clone(), ()).is_none())
+        .collect();
+
+    Ok(RewriteResult {
+        new_body,
+        copied,
+        missing: dedup_missing,
+    })
+}
+
+/// 下载单张外链图片，按 host 决定合适的 Referer 绕开常见防盗链。
+///
+/// 返回 `(字节, 文件名)`；文件名只承载扩展名，最终落盘名由 `ImageService::save_bytes`
+/// 用时间戳+序号生成，不会重名。
+async fn download_external_image(
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<(Vec<u8>, String), AppError> {
+    // 按 host 选 Referer：微信公众号用官方域名，知乎/简书等其他平台用站点首页
+    let lower = url.to_ascii_lowercase();
+    let referer: Option<&str> = if lower.contains("mmbiz.qpic.cn") || lower.contains("weixin.qq.com") {
+        Some("https://mp.weixin.qq.com/")
+    } else if lower.contains("zhimg.com") || lower.contains("zhihu.com") {
+        Some("https://www.zhihu.com/")
+    } else if lower.contains("upload-images.jianshu.io") || lower.contains("jianshu.com") {
+        Some("https://www.jianshu.com/")
+    } else if lower.contains("csdnimg.cn") || lower.contains("csdn.net") {
+        Some("https://blog.csdn.net/")
+    } else {
+        None
+    };
+
+    let mut req = client.get(url).header(
+        "User-Agent",
+        // 微信 CDN 对纯 reqwest UA 也比较敏感，伪装成桌面浏览器最稳
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+    );
+    if let Some(r) = referer {
+        req = req.header("Referer", r);
+    }
+
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| AppError::Custom(format!("请求失败: {}", e)))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(AppError::Custom(format!("HTTP {}", status.as_u16())));
+    }
+
+    // 文件名：按 Content-Type 选扩展名，找不到则按 URL path 兜底
+    let ext = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_ascii_lowercase())
+        .and_then(|ct| {
+            if ct.contains("jpeg") || ct.contains("jpg") {
+                Some("jpg")
+            } else if ct.contains("png") {
+                Some("png")
+            } else if ct.contains("gif") {
+                Some("gif")
+            } else if ct.contains("webp") {
+                Some("webp")
+            } else if ct.contains("svg") {
+                Some("svg")
+            } else if ct.contains("bmp") {
+                Some("bmp")
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            // 退路：从 URL path 提取扩展名
+            url.split('?')
+                .next()
+                .and_then(|p| Path::new(p).extension())
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase())
+                .and_then(|e| {
+                    if IMAGE_EXTS.contains(&e.as_str()) {
+                        // 这里需要 'static str，做映射
+                        match e.as_str() {
+                            "jpg" => Some("jpg"),
+                            "jpeg" => Some("jpg"),
+                            "png" => Some("png"),
+                            "gif" => Some("gif"),
+                            "webp" => Some("webp"),
+                            "svg" => Some("svg"),
+                            "bmp" => Some("bmp"),
+                            "avif" => Some("avif"),
+                            "ico" => Some("ico"),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                })
+        })
+        .unwrap_or("png");
+
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| AppError::Custom(format!("读取响应失败: {}", e)))?;
+
+    Ok((bytes.to_vec(), format!("external.{}", ext)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

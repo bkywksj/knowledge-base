@@ -115,7 +115,7 @@ impl ImportService {
     ///
     /// 同名文件夹按 (parent_id, name) 复用已有记录，避免重复创建。
     /// 每条成功导入的笔记都会写入 canonical `source_file_path`，方便下次导入时去重。
-    pub fn import_selected_files<R: Runtime, E: Emitter<R>>(
+    pub async fn import_selected_files<R: Runtime, E: Emitter<R>>(
         db: &Database,
         file_paths: &[String],
         base_folder_id: Option<i64>,
@@ -302,44 +302,75 @@ impl ImportService {
                     }
 
                     // ─── T-009 Commit 2: 复制图片附件 + body 路径重写 ───
-                    if let Some(root_c) = root_canonical.as_ref() {
-                        let note_dir = file_path.parent().unwrap_or(root_c);
-                        match crate::services::import_attachments::rewrite_image_paths(
-                            &input.content,
-                            note.id,
-                            note_dir,
-                            root_c,
-                            &attachment_index,
-                            app_data_dir,
-                        ) {
-                            Ok(rewrite) => {
-                                if rewrite.copied > 0 {
-                                    attachments_copied += rewrite.copied;
-                                    // 仅在内容真的变了时才回写，省一次 DB 写
-                                    if rewrite.new_body != input.content {
-                                        if let Err(e) = db.update_note_content(
-                                            note.id,
-                                            &rewrite.new_body,
-                                        ) {
-                                            log::warn!(
-                                                "[import] 笔记 {} 图片重写后回写失败: {}",
-                                                note.id, e
-                                            );
-                                        }
-                                    }
-                                }
-                                for m in rewrite.missing {
-                                    // 在汇总里前缀笔记标题，方便用户排查
-                                    attachments_missing
-                                        .push(format!("{}: {}", final_title, m));
-                                }
+                    // 先跑同步本地路径重写（按当前 .md 目录 / vault 根 / OB 索引）
+                    let note_dir_for_local = file_path
+                        .parent()
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or_else(|| file_path.to_path_buf());
+                    let local_root = root_canonical
+                        .as_ref()
+                        .map(|p| p.as_path())
+                        .unwrap_or_else(|| note_dir_for_local.as_path());
+                    let mut current_body = input.content.clone();
+                    match crate::services::import_attachments::rewrite_image_paths(
+                        &current_body,
+                        note.id,
+                        &note_dir_for_local,
+                        local_root,
+                        &attachment_index,
+                        app_data_dir,
+                    ) {
+                        Ok(rewrite) => {
+                            if rewrite.copied > 0 {
+                                attachments_copied += rewrite.copied;
                             }
-                            Err(e) => {
-                                log::warn!(
-                                    "[import] 笔记 {} 图片重写失败: {}",
-                                    note.id, e
-                                );
+                            for m in rewrite.missing {
+                                attachments_missing
+                                    .push(format!("{}: {}", final_title, m));
                             }
+                            current_body = rewrite.new_body;
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "[import] 笔记 {} 本地图片重写失败: {}",
+                                note.id, e
+                            );
+                        }
+                    }
+
+                    // 再跑外链下载（微信公众号/知乎等防盗链站点：下载到本地落盘）
+                    match crate::services::import_attachments::rewrite_external_images(
+                        &current_body,
+                        note.id,
+                        app_data_dir,
+                    )
+                    .await
+                    {
+                        Ok(rewrite) => {
+                            if rewrite.copied > 0 {
+                                attachments_copied += rewrite.copied;
+                            }
+                            for m in rewrite.missing {
+                                attachments_missing
+                                    .push(format!("{}: {}", final_title, m));
+                            }
+                            current_body = rewrite.new_body;
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "[import] 笔记 {} 外链图片下载失败: {}",
+                                note.id, e
+                            );
+                        }
+                    }
+
+                    // 内容真的变了才回写，省一次 DB 写
+                    if current_body != input.content {
+                        if let Err(e) = db.update_note_content(note.id, &current_body) {
+                            log::warn!(
+                                "[import] 笔记 {} 图片重写后回写失败: {}",
+                                note.id, e
+                            );
                         }
                     }
 
@@ -376,9 +407,10 @@ impl ImportService {
     ///
     /// 返回 (note_id, was_synced)：was_synced=true 表示发生了内容同步，
     /// 前端可据此显示轻量 toast。
-    pub fn import_single_markdown(
+    pub async fn import_single_markdown(
         db: &Database,
         file_path: &str,
+        app_data_dir: &Path,
     ) -> Result<OpenMarkdownResult, AppError> {
         let path = Path::new(file_path);
 
@@ -393,11 +425,11 @@ impl ImportService {
             .unwrap_or("未命名")
             .to_string();
 
-        let content = std::fs::read_to_string(path).map_err(|e| {
+        let raw_content = std::fs::read_to_string(path).map_err(|e| {
             AppError::Custom(format!("读取文件失败: {} ({})", file_path, e))
         })?;
 
-        if content.trim().is_empty() {
+        if raw_content.trim().is_empty() {
             return Err(AppError::InvalidInput(format!("文件内容为空: {}", file_path)));
         }
 
@@ -405,10 +437,17 @@ impl ImportService {
         if let Some((existing_id, existing_content)) =
             db.find_active_note_by_source_path(&canonical)?
         {
-            // 外部修改过文件 → 同步最新内容到笔记
-            let was_synced = existing_content != content;
+            // 外部修改过文件 → 同步最新内容到笔记（含图片处理）
+            let was_synced = existing_content != raw_content;
             if was_synced {
-                db.update_note_content(existing_id, &content)?;
+                let processed = process_single_md_images(
+                    &raw_content,
+                    existing_id,
+                    path,
+                    app_data_dir,
+                )
+                .await;
+                db.update_note_content(existing_id, &processed)?;
                 log::info!(
                     "[open-md] 检测到 {} 内容变化，已同步到笔记 #{}",
                     canonical, existing_id
@@ -421,19 +460,70 @@ impl ImportService {
         }
 
         // 首次打开：创建笔记并记录来源
-        let title = extract_title(&content).unwrap_or(file_name);
+        let title = extract_title(&raw_content).unwrap_or(file_name);
         let input = NoteInput {
             title,
-            content,
+            content: raw_content.clone(),
             folder_id: None,
         };
         let note = db.create_note(&input)?;
         let _ = db.set_note_source_file(note.id, Some(&canonical), Some("md"));
+
+        // 处理图片：本地相对路径（同级目录） + 外链下载（绕开微信防盗链等）
+        let processed = process_single_md_images(&raw_content, note.id, path, app_data_dir).await;
+        if processed != raw_content {
+            if let Err(e) = db.update_note_content(note.id, &processed) {
+                log::warn!("[open-md] 笔记 {} 图片重写后回写失败: {}", note.id, e);
+            }
+        }
+
         Ok(OpenMarkdownResult {
             note_id: note.id,
             was_synced: false,
         })
     }
+}
+
+/// 单文件打开场景的图片处理：
+///  - 本地相对路径（如 `./images/foo.png`）：以 .md 同级目录为锚点解析并复制到 kb_assets
+///  - http(s):// 外链：下载到本地（含微信公众号防盗链处理）
+///
+/// 处理失败的引用保留原样，不会让笔记打开流程中断。
+async fn process_single_md_images(
+    body: &str,
+    note_id: i64,
+    md_path: &Path,
+    app_data_dir: &Path,
+) -> String {
+    let note_dir = md_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| md_path.to_path_buf());
+
+    // 单文件场景没有 vault 根；用 .md 同级目录兼当 vault 根，
+    // OB 附件索引为空（`AttachmentIndex::empty()`），仅靠相对路径解析
+    let empty_index = crate::services::import_attachments::AttachmentIndex::empty();
+    let mut current = body.to_string();
+    if let Ok(rewrite) = crate::services::import_attachments::rewrite_image_paths(
+        &current,
+        note_id,
+        &note_dir,
+        &note_dir,
+        &empty_index,
+        app_data_dir,
+    ) {
+        current = rewrite.new_body;
+    }
+    if let Ok(rewrite) = crate::services::import_attachments::rewrite_external_images(
+        &current,
+        note_id,
+        app_data_dir,
+    )
+    .await
+    {
+        current = rewrite.new_body;
+    }
+    current
 }
 
 /// 计算某文件相对扫描根的父目录（斜杠统一为 '/'，根层为空串）

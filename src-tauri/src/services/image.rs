@@ -74,8 +74,8 @@ impl ImageService {
         Self::save_bytes(app_data_dir, note_id, file_name, &data)
     }
 
-    /// 保存字节数据到文件
-    fn save_bytes(
+    /// 保存字节数据到文件（用于 base64 解码后 / 外链下载后的最终落盘）
+    pub fn save_bytes(
         app_data_dir: &Path,
         note_id: i64,
         file_name: &str,

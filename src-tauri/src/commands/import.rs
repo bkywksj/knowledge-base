@@ -24,7 +24,7 @@ pub fn scan_markdown_folder(
 /// - `preserve_root`: 是否在目标下多套一层"源根目录名"
 /// - `policy`: 遇到已存在文件的处理策略（Skip / Duplicate），省略按 Skip
 #[tauri::command]
-pub fn import_selected_files(
+pub async fn import_selected_files(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
     file_paths: Vec<String>,
@@ -44,6 +44,7 @@ pub fn import_selected_files(
         &app_data_dir,
         &app,
     )
+    .await
     .map_err(|e| e.to_string())
 }
 
@@ -51,11 +52,14 @@ pub fn import_selected_files(
 ///
 /// 用于"打开 md 文件"按钮和文件关联双击，前端拿到 id 后跳转到 /notes/:id
 #[tauri::command]
-pub fn open_markdown_file(
+pub async fn open_markdown_file(
     state: tauri::State<'_, AppState>,
+    app: AppHandle,
     file_path: String,
 ) -> Result<OpenMarkdownResult, String> {
-    services::import::ImportService::import_single_markdown(&state.db, &file_path)
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    services::import::ImportService::import_single_markdown(&state.db, &file_path, &app_data_dir)
+        .await
         .map_err(|e| e.to_string())
 }
 
