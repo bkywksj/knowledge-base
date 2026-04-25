@@ -516,3 +516,50 @@
 [data-theme="light-warm"] .editor-topbar {
   background: #f5f0ea !important;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   T-B01: 暗色主题统一文字色对比度兜底
+   覆盖 dark-starry / dark-mocha 两套主题。
+   修复用户反馈："黑夜星空主题下模型 ID 文字纯白看不见"——根因是某些
+   themes.css 里只 override 了 background 没 override color，导致 antd 默认
+   字色（理应跟 darkAlgorithm 派生）和实际容器 bg 不匹配。这里显式把所有
+   表单 / 下拉菜单的 color 绑回主题 text token。
+   ═══════════════════════════════════════════════════════════ */
+
+[data-theme-category="dark"] .ant-input,
+[data-theme-category="dark"] .ant-input-affix-wrapper,
+[data-theme-category="dark"] .ant-input-affix-wrapper input,
+[data-theme-category="dark"] .ant-input-number,
+[data-theme-category="dark"] .ant-input-number input,
+[data-theme-category="dark"] .ant-input-textarea-show-count,
+[data-theme-category="dark"] textarea.ant-input,
+[data-theme-category="dark"] .ant-select-selection-item,
+[data-theme-category="dark"] .ant-select-selection-placeholder,
+[data-theme-category="dark"] .ant-select-selection-search-input {
+  color: var(--ant-color-text, rgba(255, 255, 255, 0.92)) !important;
+}
+
+/* 暗色下拉容器：面板 bg 用 elevated（避免下拉时露出白底）
+   menu / option 字色绑主题文字色 */
+[data-theme-category="dark"] .ant-select-dropdown,
+[data-theme-category="dark"] .ant-picker-dropdown,
+[data-theme-category="dark"] .ant-dropdown-menu,
+[data-theme-category="dark"] .ant-cascader-dropdown {
+  background: var(--ant-color-bg-elevated, #1f1f2e) !important;
+}
+[data-theme-category="dark"] .ant-select-item,
+[data-theme-category="dark"] .ant-dropdown-menu-item,
+[data-theme-category="dark"] .ant-cascader-menu-item {
+  color: var(--ant-color-text, rgba(255, 255, 255, 0.92)) !important;
+}
+[data-theme-category="dark"] .ant-select-item-option-active:not(
+    .ant-select-item-option-disabled
+  ),
+[data-theme-category="dark"] .ant-dropdown-menu-item:hover:not(
+    .ant-dropdown-menu-item-disabled
+  ) {
+  background: var(--ant-color-fill-secondary, rgba(255, 255, 255, 0.08)) !important;
+}
+[data-theme-category="dark"] .ant-select-item-option-selected {
+  background: var(--ant-color-primary-bg, rgba(167, 139, 250, 0.16)) !important;
+}

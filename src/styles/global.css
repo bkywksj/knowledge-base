@@ -237,8 +237,10 @@ body,
   outline: none;
   padding: 20px 0;
   min-height: 400px;
-  font-size: 15px;
-  line-height: 1.8;
+  /* 字体/字号/行距由 store 驱动写入 :root CSS 变量；未设置时用默认 */
+  font-family: var(--editor-font-family, inherit);
+  font-size: var(--editor-font-size, 15px);
+  line-height: var(--editor-line-height, 1.8);
 }
 
 /* 非编辑器页面的 tiptap 保持内边距 */
@@ -561,9 +563,14 @@ body,
 }
 
 .tiptap table th {
-  /* 用 5% 文本色叠加替代主题 bg-layout，避免某些"玻璃感"主题下表头偏深偏紫 */
-  background: color-mix(in srgb, var(--ant-color-text, #000) 5%, transparent);
+  /* T-B09: 用 8% 文本色叠加（之前 5% 在亮色主题下与字色混色不可读）+ 显式绑定字色到主题
+     文本色，避免某些 antd 内部 default 用 colorBgLayout 推导导致 th 底色偏白 */
+  background: color-mix(in srgb, var(--ant-color-text, #000) 8%, transparent);
+  color: var(--ant-color-text, #000);
   font-weight: 600;
+}
+.tiptap table td {
+  color: var(--ant-color-text, #000);
 }
 
 /* 暗色模式表格 — 见 themes.css */

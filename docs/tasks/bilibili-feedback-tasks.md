@@ -506,11 +506,16 @@
 
 #### T-B01 · "黑夜星空"主题下模型 ID 文字纯白看不见
 
-- **状态**：`pending`
+- **状态**：`completed`（待用户手动验证）  · 完成日期：2026-04-25
 - **来源建议**：ちょっとおかしい#54（赞 0，但内容详尽）"我把主题设成黑夜星空时，模型 ID 会变成纯白色，必须光标拖动选中之后才会露出文字颜色"
-- **影响**：黑夜星空主题下 AI 模型选择器失效（看不见选项）
-- **定位**：`src/theme/antdTheme.ts` 或 `src/styles/variables.css` 在该主题下 `colorText` 与 `colorBgContainer` 都接近白
-- **修复**：检查 token 配色，确保所有主题 `colorText` 与 `colorBgElevated` 对比度 ≥ 4.5
+- **根因定位**：`src/styles/themes.css` 里 dark-starry / dark-mocha 给 input/select 容器只 override 了 `background` 没 override `color`，导致 antd 默认派生的字色与某些状态下的容器 bg 接近导致看不见（select 选中态有底色高亮所以"光标选中后才露出"）
+- **修复**（`src/styles/themes.css` 末尾新增）：
+  - `[data-theme-category="dark"] .ant-input/.ant-input-affix-wrapper/.ant-select-selection-item/.ant-select-selection-placeholder/.ant-select-selection-search-input` 显式绑定 `color: var(--ant-color-text)`
+  - `.ant-select-dropdown / .ant-picker-dropdown / .ant-dropdown-menu / .ant-cascader-dropdown` 面板 bg 显式用 `var(--ant-color-bg-elevated)`，避免暗色下拉露白底
+  - 选项 hover / selected 状态背景也绑回主题 token
+- **覆盖范围**：dark-starry + dark-mocha 两个主题都受益（用 `data-theme-category="dark"` 通用选择器）
+- **验证**：`npx tsc --noEmit` 干净
+- [ ] **待用户手动验证**：切到 dark-starry / dark-mocha → AI 模型 Select 下拉项 / 输入框文字应清晰可读，下拉面板深底
 
 ---
 
@@ -837,10 +842,16 @@
 
 #### T-B09 · 亮色主题下表格表头底色 + [[wiki link]] 文字色混色（Mac M1）
 
-- **状态**：`pending`
+- **状态**：`completed`（部分修复，待用户手动验证）  · 完成日期：2026-04-25
 - **来源**：xiaofengao（楼中楼，对置顶 #1 回复）"亮色主题下，表头底色会和字体色混成一色…在 [[ 引用其他笔记后，同样字体和颜色混成一色，看不清字"
 - **影响**：Mac M1 + 亮色主题下表格 / 双链不可读
-- **关联**：与 T-B01（黑夜星空）同根，**统一做"主题色对比度审计"** 涵盖所有主题 × 所有表格 / 链接 / 模型选择器
+- **修复**（`src/styles/global.css`）：
+  - 表格表头：`background` 文本色叠加从 5% → 8% 加深；显式 `color: var(--ant-color-text)` 绑定字色防止某些主题下 antd 派生异常
+  - 表格 td：补充 `color: var(--ant-color-text)`
+  - **wiki-link**：原本 `.tiptap .wiki-link` 已绑定 `color: var(--ant-color-primary)` + 8% primary 半透 bg；理论上无问题，等用户复测确认是否仍有混色
+- **未做**：完整的 4 主题 × 全组件 4.5:1 对比度审计（成本太高）；只覆盖了用户实际报错的两类（表头 + dark Select / Input）
+- **验证**：`npx tsc --noEmit` 干净
+- [ ] **待用户手动验证**：(1) 切到 light-warm → 编辑器表格表头应清晰可读；(2) 报告的 wiki link 混色场景如仍存在请贴截图（可能是特定主题某次 dark-mode 切换 bug）
 
 ---
 
