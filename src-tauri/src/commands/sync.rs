@@ -45,10 +45,15 @@ pub fn sync_import_from_file(
     mode: SyncImportMode,
 ) -> Result<SyncManifest, String> {
     let db_path = resolve_db_path(&state.data_dir);
+    let db_path_str = db_path.to_string_lossy().into_owned();
     let history_id = state
         .db
         .sync_history_begin("import")
         .map_err(|e| e.to_string())?;
+
+    // 必须先释放 db 文件占用，否则 Windows 上 SQLite 的 mmap 会让
+    // apply 阶段 fs::File::create(app.db) 报 ERROR_USER_MAPPED_FILE (1224)
+    let _ = state.db.release();
 
     let result = SyncService::import_from_file(
         &state.data_dir,
@@ -57,18 +62,20 @@ pub fn sync_import_from_file(
         mode,
     );
 
-    // 导入成功 → 热重载 db 连接 + emit 事件让前端刷新视图。
-    // 失败时不重载（旧连接仍指向未被覆盖的库，正常）
-    if result.is_ok() {
-        let db_path_str = db_path.to_string_lossy().into_owned();
-        if let Err(e) = state.db.reopen(&db_path_str) {
-            log::error!("[sync] 导入后重载 db 失败：{}", e);
-            // 重载失败不阻塞返回（用户能看到导入成功），但日志告警；
-            // 此时旧连接仍持有 → 用户重启就能看到新数据
-        } else {
-            // 重载成功 → 通知前端"DB 已重新打开，刷新所有视图"
-            use tauri::Emitter;
-            let _ = app.emit("db:reloaded", ());
+    // 无论 apply 成败，都必须 reopen 回真实 db；否则连接会停在 :memory: 空库，
+    // 后续所有查询都打不到用户数据
+    match state.db.reopen(&db_path_str) {
+        Ok(_) => {
+            if result.is_ok() {
+                use tauri::Emitter;
+                let _ = app.emit("db:reloaded", ());
+            }
+        }
+        Err(e) => {
+            log::error!(
+                "[sync] reopen db 失败：{}（连接已停在 :memory:，建议立即重启应用）",
+                e
+            );
         }
     }
 
@@ -121,17 +128,23 @@ pub async fn sync_webdav_push(
 #[tauri::command]
 pub async fn sync_webdav_pull(
     state: State<'_, AppState>,
+    app: tauri::AppHandle,
     mode: SyncImportMode,
     config: WebDavConfig,
     filename: Option<String>,
 ) -> Result<SyncManifest, String> {
     let password = resolve_password(&state.db, &config)?;
     let db_path = resolve_db_path(&state.data_dir);
+    let db_path_str = db_path.to_string_lossy().into_owned();
 
     let history_id = state
         .db
         .sync_history_begin("pull")
         .map_err(|e| e.to_string())?;
+
+    // 同 sync_import_from_file：必须先释放 db 文件占用，否则 Windows mmap 会让
+    // apply 阶段 fs::File::create(app.db) 报 ERROR_USER_MAPPED_FILE (1224)
+    let _ = state.db.release();
 
     let result = SyncService::webdav_pull(
         &state.data_dir,
@@ -143,6 +156,22 @@ pub async fn sync_webdav_pull(
         filename.as_deref(),
     )
     .await;
+
+    // 不论成败都必须 reopen 回真实 db
+    match state.db.reopen(&db_path_str) {
+        Ok(_) => {
+            if result.is_ok() {
+                use tauri::Emitter;
+                let _ = app.emit("db:reloaded", ());
+            }
+        }
+        Err(e) => {
+            log::error!(
+                "[sync] reopen db 失败：{}（连接已停在 :memory:，建议立即重启应用）",
+                e
+            );
+        }
+    }
 
     record_manifest_history(&state, history_id, &result);
     result.map_err(|e| e.to_string())

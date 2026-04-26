@@ -63,6 +63,26 @@ impl Database {
             .map_err(|e| AppError::Custom(e.to_string()))
     }
 
+    /// 临时释放对 db 文件的所有占用：把 Connection 切到 `:memory:`，
+    /// 让旧 connection（含 mmap + 文件句柄）被 drop。
+    ///
+    /// **使用场景**：Windows 上 SQLite 默认 mmap 持有 app.db 文件，
+    /// 想用 `fs::File::create` 覆盖该文件会撞 `ERROR_USER_MAPPED_FILE` (1224)。
+    /// 同步从 zip / WebDAV 拉取时必须先调本方法释放，覆盖完再 reopen 回真实路径。
+    ///
+    /// **重要**：调用方必须保证之后会调 `reopen()` 恢复真实 db；
+    /// 否则后续所有 db 查询都会落到 `:memory:` 这个空库上。
+    pub fn release(&self) -> Result<(), AppError> {
+        let mut guard = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        // 切到 :memory: → 旧 connection 被 drop → 旧文件 mmap + handle 释放
+        *guard = Connection::open_in_memory()?;
+        log::info!("[db] 临时释放真实 db 连接（已切到 :memory:）");
+        Ok(())
+    }
+
     /// 热重载数据库连接：drop 旧 Connection → 重新打开新文件。
     ///
     /// **使用场景**：从云端 / 本地 zip 导入快照时，`app.db` 文件被外部覆盖，

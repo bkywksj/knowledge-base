@@ -38,6 +38,10 @@ function App() {
   // 自动重拉数据。无需重启应用。
   useEffect(() => {
     if (!IS_MAIN_WINDOW) return;
+    // listen() 返回 Promise，async cleanup 必须用"取消标志 + then 内判断"模式，
+    // 否则 React 严格模式 / 快速 remount 时第一次的 listener 永远不被 unlisten
+    // （cleanup 跑时 unlisten 还没 resolve），导致重复注册 → 事件触发两次。
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen("db:reloaded", () => {
       const s = useAppStore.getState();
@@ -48,9 +52,14 @@ function App() {
       s.refreshTaskStats();
       message.success("数据已重载");
     }).then((fn) => {
-      unlisten = fn;
+      if (cancelled) {
+        fn(); // 已 unmount，立即解绑避免泄漏
+      } else {
+        unlisten = fn;
+      }
     });
     return () => {
+      cancelled = true;
       unlisten?.();
     };
   }, []);
