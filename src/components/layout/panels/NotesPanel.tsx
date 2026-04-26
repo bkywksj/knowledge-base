@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import {
   Tree,
   Button,
+  Skeleton,
   theme as antdTheme,
   Input,
   message,
@@ -142,7 +143,15 @@ export function NotesPanel() {
   const foldersRefreshTick = useAppStore((s) => s.foldersRefreshTick);
   const { token } = antdTheme.useToken();
 
-  const [folders, setFolders] = useState<Folder[]>([]);
+  // 用 store 里的预热缓存做种子，避免首次打开 Panel 时空白闪烁；
+  // useEffect 仍会后台 loadFolders 拿最新数据替换。
+  const [folders, setFolders] = useState<Folder[]>(
+    () => useAppStore.getState().prefetchedFolders ?? [],
+  );
+  // 仅当无预热缓存且尚未首次 loadFolders 时为 true → 显示 Skeleton 而不是"暂无文件夹"
+  const [initialLoading, setInitialLoading] = useState(
+    () => useAppStore.getState().prefetchedFolders === null,
+  );
   const [folderExpanded, setFolderExpanded] = useState(true);
   const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([]);
 
@@ -224,6 +233,8 @@ export function NotesPanel() {
       setFolders(list);
     } catch (e) {
       console.error("加载文件夹失败:", e);
+    } finally {
+      setInitialLoading(false);
     }
   }
 
@@ -929,7 +940,15 @@ export function NotesPanel() {
                 style={{ marginBottom: 4 }}
               />
             )}
-            {treeData.length > 0 ? (
+            {initialLoading && treeData.length === 0 ? (
+              <div style={{ padding: "4px 8px" }}>
+                <Skeleton
+                  active
+                  paragraph={{ rows: 4, width: ["80%", "60%", "70%", "50%"] }}
+                  title={false}
+                />
+              </div>
+            ) : treeData.length > 0 ? (
               <Tree
                 className="sidebar-folder-tree"
                 treeData={treeData}

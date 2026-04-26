@@ -27,6 +27,7 @@ import { createBlankAndOpen } from "@/lib/noteCreator";
 import { UpdateBadge } from "@/components/ui/UpdateBadge";
 import { UpdateModal } from "@/components/ui/UpdateModal";
 import { ExitConfirmListener } from "@/components/ui/ExitConfirmListener";
+import { CloseRequestedListener } from "@/components/ui/CloseRequestedListener";
 import { useUpdateChecker } from "@/hooks/useUpdateChecker";
 
 const { Header, Sider, Content } = Layout;
@@ -103,7 +104,9 @@ export function AppLayout() {
   // SidePanel 是否最终可见：视图自身有 panel + 用户未手动折叠 + 不在 standalone 路由
   const panelShown =
     !isStandalonePage && sidePanelVisible && viewHasPanel(activeView);
-  const siderWidth = ACTIVITY_BAR_WIDTH + (panelShown ? sidePanelWidth : 0);
+  // Sider 永远只占 ActivityBar 宽度（48px），SidePanel 走绝对定位浮层覆盖在主区上方，
+  // 这样 panel 出现/消失不会让主内容横向 reflow，彻底消掉"home → notes"卡顿
+  const siderWidth = ACTIVITY_BAR_WIDTH;
 
   // SidePanel 容器 DOM 引用：拖拽时直接改样式，避免 React 每 mousemove 重渲染
   const panelRef = useRef<HTMLDivElement>(null);
@@ -120,9 +123,7 @@ export function AppLayout() {
       function applyWidth(w: number) {
         const panel = panelRef.current;
         if (panel) {
-          panel.style.flex = `0 0 ${w}px`;
-          panel.style.maxWidth = `${w}px`;
-          panel.style.minWidth = `${w}px`;
+          // 浮层模式下只需要改 width；不再依赖 flex（已脱离 Sider 内部 flex 容器）
           panel.style.width = `${w}px`;
         }
         if (handleRef.current) {
@@ -354,36 +355,36 @@ export function AppLayout() {
             paddingTop: IS_MAC ? 28 : 0,
           }}
         >
-          {/*
-            AntD Sider 的 children 被包在 .ant-layout-sider-children 这层 block 容器里，
-            所以 flex 必须加在内部 div 才生效，否则 ActivityBar 与 SidePanel 会纵向堆叠
-          */}
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "row",
-              height: "100%",
-            }}
-          >
-            <ActivityBar />
-            {panelShown && (
-              <div
-                ref={panelRef}
-                style={{
-                  flex: `0 0 ${sidePanelWidth}px`,
-                  width: sidePanelWidth,
-                  minWidth: sidePanelWidth,
-                  maxWidth: sidePanelWidth,
-                  height: "100%",
-                  borderLeft: `1px solid ${token.colorBorderSecondary}`,
-                  overflow: "hidden",
-                }}
-              >
-                <SidePanel />
-              </div>
-            )}
-          </div>
+          <ActivityBar />
         </Sider>
+      )}
+      {/*
+        SidePanel 浮层：用 absolute 覆盖在主区上方而不是占布局位置。
+        切到/离开有 panel 的 view 时，主区不会因 sider 宽度变化而回流，
+        消除 home→notes 的卡顿。
+      */}
+      {!focusMode && panelShown && (
+        <div
+          ref={panelRef}
+          className="side-panel-enter"
+          style={{
+            position: "absolute",
+            top: IS_MAC ? 28 : 0,
+            left: ACTIVITY_BAR_WIDTH,
+            width: sidePanelWidth,
+            bottom: 0,
+            // 高透明度让主区背景自然透出，视觉融入主体不显"浮层卡片"
+            // hex 后缀 80 ≈ 50% alpha；亮/暗色主题都能从 token.colorBgContainer 自动取
+            background: `${token.colorBgContainer}80`,
+            backdropFilter: "blur(10px) saturate(180%)",
+            WebkitBackdropFilter: "blur(10px) saturate(180%)",
+            borderRight: `1px solid ${token.colorBorderSecondary}`,
+            overflow: "hidden",
+            zIndex: 40,
+          }}
+        >
+          <SidePanel />
+        </div>
       )}
       {/* 可拖拽调节 SidePanel 宽度的手柄：绝对定位叠在 SidePanel 右边缘 */}
       {!focusMode && panelShown && (
@@ -408,7 +409,15 @@ export function AppLayout() {
           className="hover:bg-blue-500/20 active:bg-blue-500/40 transition-colors"
         />
       )}
-      <Layout>
+      <Layout
+        style={{
+          // 主区让出 SidePanel 的宽度，避免被浮层遮挡。
+          // 浮层只做出现/消失的动画，主区用 transition 平滑过渡 margin，
+          // 二者解耦：sider 宽度永远不变（无 reflow 卡顿），只有这个 margin 在变化。
+          marginLeft: panelShown ? sidePanelWidth : 0,
+          transition: "margin-left 180ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+        }}
+      >
         {!focusMode && (
         <Header
           style={{
@@ -499,6 +508,7 @@ export function AppLayout() {
       <ShortcutsPanel open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <UpdateModal open={modalOpen} onClose={closeModal} update={update} />
       <ExitConfirmListener />
+      <CloseRequestedListener />
     </Layout>
   );
 }

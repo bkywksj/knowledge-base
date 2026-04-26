@@ -2,8 +2,8 @@ import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
-import { taskApi, systemApi } from "@/lib/api";
-import type { SystemInfo } from "@/types";
+import { taskApi, systemApi, folderApi } from "@/lib/api";
+import type { Folder, SystemInfo } from "@/types";
 import type { ThemeMode, ThemeCategory } from "@/theme/tokens";
 
 /**
@@ -178,6 +178,14 @@ interface AppStore {
   /** 重置编辑器字体到默认值 */
   resetEditorTypography: () => void;
   /**
+   * 启动时预取的文件夹树缓存。
+   * 让 NotesPanel 第一次 mount 时立即拿到种子数据，避免"点笔记 → 等 invoke"的空白闪烁。
+   * Panel mount 后仍会后台 loadFolders 取最新数据替换。
+   */
+  prefetchedFolders: Folder[] | null;
+  /** 启动时空闲调用：拉一次文件夹树写入缓存（失败静默） */
+  prefetchFolders: () => Promise<void>;
+  /**
    * 隐藏笔记 PIN 解锁时间戳（毫秒）。
    * null = 未解锁；与 HIDDEN_UNLOCK_TTL_MS 比对判定是否仍有效。
    * 故意不持久化：每次启动应用都要重新验证。
@@ -298,6 +306,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
       editorFontSize: EDITOR_FONT_DEFAULTS.size,
       editorLineHeight: EDITOR_FONT_DEFAULTS.lineHeight,
     }),
+  prefetchedFolders: null,
+  prefetchFolders: async () => {
+    try {
+      const list = await folderApi.list();
+      set({ prefetchedFolders: list });
+    } catch {
+      // 失败静默：NotesPanel 自己会再拉一次，预热只是优化
+    }
+  },
   hiddenUnlockedAt: null,
   markHiddenUnlocked: () => set({ hiddenUnlockedAt: Date.now() }),
   clearHiddenUnlock: () => set({ hiddenUnlockedAt: null }),

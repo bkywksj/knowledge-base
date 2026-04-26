@@ -45,6 +45,25 @@ window.addEventListener(
 loadThemeFromStore().then(() => {
   // 启动后台拉一次实例信息（多开标识 / 数据目录），不阻塞首屏
   useAppStore.getState().loadInstanceInfo();
+
+  // 预热文件夹树：让 NotesPanel 第一次打开时直接命中缓存，避免"点笔记"时的等待
+  // 用 requestIdleCallback 在浏览器空闲时跑，不和首屏渲染抢线程
+  const winIdle = window as Window & {
+    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => void;
+  };
+  const triggerPrefetch = () => useAppStore.getState().prefetchFolders();
+  // 顺便 prefetch 最常用的 NotesPanel chunk —— SidePanel 已 React.lazy 化，
+  // 这里主动把 chunk 拉下来，首次点笔记图标时 Suspense fallback 几乎不会显示。
+  const prefetchNotesPanelChunk = () =>
+    import("@/components/layout/panels/NotesPanel").catch(() => {});
+  if (typeof winIdle.requestIdleCallback === "function") {
+    winIdle.requestIdleCallback(triggerPrefetch, { timeout: 1000 });
+    winIdle.requestIdleCallback(prefetchNotesPanelChunk, { timeout: 2000 });
+  } else {
+    setTimeout(triggerPrefetch, 100);
+    setTimeout(prefetchNotesPanelChunk, 300);
+  }
+
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
       <App />

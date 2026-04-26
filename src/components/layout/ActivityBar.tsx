@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { startTransition, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Tooltip, Badge, theme as antdTheme, message } from "antd";
 import { hiddenPinApi } from "@/lib/api";
@@ -130,11 +130,18 @@ export function ActivityBar() {
     [location.pathname, activeView],
   );
 
-  /** 实际跳转视图（被 handleClick 与 PIN 解锁回调共用） */
+  /** 实际跳转视图（被 handleClick 与 PIN 解锁回调共用）
+   *
+   * 用 startTransition 把"切视图 + 路由跳转 + 展开面板"标记为低优先级，
+   * 让点击事件本身能立即响应（按钮即时高亮），子树重渲染在下一帧再做。
+   * 对"点笔记 → 侧边栏弹出"这种带较重子树的场景体感优化最明显。
+   */
   function navigateToView(item: ActivityItem) {
-    setActiveView(item.view);
-    if (!sidePanelVisible) setSidePanelVisible(true);
-    navigate(item.route);
+    startTransition(() => {
+      setActiveView(item.view);
+      if (!sidePanelVisible) setSidePanelVisible(true);
+      navigate(item.route);
+    });
   }
 
   function handleClick(item: ActivityItem) {

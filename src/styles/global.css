@@ -17,6 +17,27 @@ body,
   overflow: hidden;
 }
 
+/**
+ * SidePanel 出现动画。
+ * 只动 opacity + transform，不触发 reflow，避免主区跟着重新布局造成的卡顿感。
+ * 用 cubic-bezier 收尾平缓，比线性更自然。
+ */
+@keyframes sidePanelEnter {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.side-panel-enter {
+  animation: sidePanelEnter 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* 提前告诉浏览器走 compositor，减少首帧抖动 */
+  will-change: opacity, transform;
+}
+
 /* 自定义滚动条 */
 ::-webkit-scrollbar {
   width: 6px;
