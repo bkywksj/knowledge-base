@@ -243,6 +243,9 @@ export function ActivityBar() {
       className="activity-bar"
       style={{
         width: 48,
+        // 必须撑满 Sider 高度，否则下方 flex:1 spacer 没有空间，
+        // 底部三项（隐藏笔记 / 回收站 / 关于）会贴在主组按钮后面而不是钉在左下角
+        height: "100%",
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",

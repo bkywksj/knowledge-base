@@ -1,8 +1,8 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import { Layout, Button, theme as antdTheme, Tooltip, Dropdown, message } from "antd";
-import { MenuFoldOutlined, MenuUnfoldOutlined, SettingOutlined, PushpinOutlined, PushpinFilled } from "@ant-design/icons";
-import { Search, Palette, ArrowLeft, ArrowRight } from "lucide-react";
+import { SettingOutlined, PushpinOutlined, PushpinFilled } from "@ant-design/icons";
+import { Search, Palette, ArrowLeft, ArrowRight, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -77,6 +77,29 @@ function DragRegion() {
 /** ActivityBar 固定宽度（与 ActivityBar.tsx 内硬编码保持一致） */
 const ACTIVITY_BAR_WIDTH = 48;
 
+/**
+ * 跟踪 React Router history 栈位置，给 Header 后退/前进按钮提供 disabled 信号。
+ * React Router v7 在 window.history.state 上挂了 `idx` 字段，配合 length 即可判断
+ * 是否能前进/后退，不需要自己维护栈。location 变更（含 POP）都会触发刷新。
+ */
+function useHistoryNav() {
+  const location = useLocation();
+  const [state, setState] = useState(() => ({
+    idx: (window.history.state as { idx?: number })?.idx ?? 0,
+    len: window.history.length,
+  }));
+  useEffect(() => {
+    setState({
+      idx: (window.history.state as { idx?: number })?.idx ?? 0,
+      len: window.history.length,
+    });
+  }, [location]);
+  return {
+    canGoBack: state.idx > 0,
+    canGoForward: state.idx < state.len - 1,
+  };
+}
+
 export function AppLayout() {
   const {
     themeCategory,
@@ -104,6 +127,9 @@ export function AppLayout() {
   // SidePanel 是否最终可见：视图自身有 panel + 用户未手动折叠 + 不在 standalone 路由
   const panelShown =
     !isStandalonePage && sidePanelVisible && viewHasPanel(activeView);
+  // 折叠按钮是否值得显示：当前视图本身要有 panel，否则按钮没有作用对象
+  const canTogglePanel = !isStandalonePage && viewHasPanel(activeView);
+  const { canGoBack, canGoForward } = useHistoryNav();
   // Sider 永远只占 ActivityBar 宽度（48px），SidePanel 走绝对定位浮层覆盖在主区上方，
   // 这样 panel 出现/消失不会让主内容横向 reflow，彻底消掉"home → notes"卡顿
   const siderWidth = ACTIVITY_BAR_WIDTH;
@@ -430,19 +456,26 @@ export function AppLayout() {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 4, paddingLeft: HEADER_LEFT_PADDING }}>
-            <Tooltip title={sidePanelVisible ? "折叠面板" : "展开面板"}>
-              <Button
-                type="text"
-                icon={
-                  sidePanelVisible ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />
-                }
-                onClick={toggleSidePanel}
-              />
-            </Tooltip>
+            {canTogglePanel && (
+              <Tooltip title={sidePanelVisible ? "折叠面板" : "展开面板"}>
+                <Button
+                  type="text"
+                  icon={
+                    sidePanelVisible ? (
+                      <PanelLeftClose size={16} />
+                    ) : (
+                      <PanelLeftOpen size={16} />
+                    )
+                  }
+                  onClick={toggleSidePanel}
+                />
+              </Tooltip>
+            )}
             <Tooltip title="后退 (Alt+←)">
               <Button
                 type="text"
                 icon={<ArrowLeft size={16} />}
+                disabled={!canGoBack}
                 onClick={() => navigate(-1)}
               />
             </Tooltip>
@@ -450,6 +483,7 @@ export function AppLayout() {
               <Button
                 type="text"
                 icon={<ArrowRight size={16} />}
+                disabled={!canGoForward}
                 onClick={() => navigate(1)}
               />
             </Tooltip>
