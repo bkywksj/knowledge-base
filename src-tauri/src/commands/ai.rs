@@ -101,6 +101,18 @@ pub fn delete_ai_conversation(
         .map_err(|e| e.to_string())
 }
 
+/// 批量清理对话：older_than_days = None 清空全部；= Some(N) 清理 N 天前。返回删除条数。
+#[tauri::command]
+pub fn delete_ai_conversations_before(
+    state: State<'_, AppState>,
+    older_than_days: Option<i64>,
+) -> Result<usize, String> {
+    state
+        .db
+        .delete_ai_conversations_before(older_than_days)
+        .map_err(|e| e.to_string())
+}
+
 /// 重命名对话
 #[tauri::command]
 pub fn rename_ai_conversation(

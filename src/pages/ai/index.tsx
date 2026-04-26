@@ -12,6 +12,7 @@ import {
   Dropdown,
   theme as antdTheme,
 } from "antd";
+import type { MenuProps } from "antd";
 import {
   Send,
   Plus,
@@ -77,6 +78,30 @@ export default function AiChatPage() {
 
   const [conversations, setConversations] = useState<AiConversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<number | null>(null);
+  // 双击会话进入重命名态：editingConvId 标识哪条在编辑，editingTitle 是受控值
+  const [editingConvId, setEditingConvId] = useState<number | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+
+  async function commitRenameConversation() {
+    if (editingConvId == null) return;
+    const id = editingConvId;
+    const title = editingTitle.trim();
+    setEditingConvId(null);
+    setEditingTitle("");
+    // 空标题视为取消
+    if (!title) return;
+    const original = conversations.find((c) => c.id === id);
+    if (!original || original.title === title) return;
+    try {
+      await aiChatApi.renameConversation(id, title);
+      // 局部更新避免整列表抖动；后端是 source-of-truth，下一次 list 会校正
+      setConversations((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, title } : c)),
+      );
+    } catch (e) {
+      message.error(`重命名失败: ${e}`);
+    }
+  }
   const [messages, setMessages] = useState<AiMessage[]>([]);
   const [models, setModels] = useState<AiModel[]>([]);
   const [inputText, setInputText] = useState("");
@@ -256,6 +281,40 @@ export default function AiChatPage() {
     }
   }
 
+  /** 批量清理：days = undefined 全清，否则清理 N 天前未活动的对话；走二次确认 */
+  function handleCleanupConversations(days: number | undefined) {
+    const title = days == null ? "清空全部对话？" : `清理 ${days} 天前未活动的对话？`;
+    const content =
+      days == null
+        ? "所有对话及其消息将被永久删除，且不可恢复。"
+        : `所有 ${days} 天内没有活动的对话将被永久删除，且不可恢复。`;
+    Modal.confirm({
+      title,
+      content,
+      okText: "删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      async onOk() {
+        try {
+          const removed = await aiChatApi.deleteConversationsBefore(days);
+          if (removed === 0) {
+            message.info("没有符合条件的对话");
+            return;
+          }
+          message.success(`已清理 ${removed} 条对话`);
+          // 拉新列表；若当前激活会话已被清掉，清空选中避免聊天区残留旧消息
+          const fresh = await aiChatApi.listConversations();
+          setConversations(fresh);
+          if (activeConvId != null && !fresh.some((c) => c.id === activeConvId)) {
+            setActiveConvId(null);
+          }
+        } catch (e) {
+          message.error(`清理失败: ${e}`);
+        }
+      },
+    });
+  }
+
   async function handleChangeConvModel(modelId: number) {
     if (!activeConvId) return;
     try {
@@ -381,15 +440,44 @@ export default function AiChatPage() {
           background: token.colorBgContainer,
         }}
       >
-        <div className="p-3 shrink-0">
+        <div className="p-3 shrink-0 flex items-center gap-2">
           <Button
             type="primary"
             icon={<Plus size={14} />}
-            block
+            className="flex-1"
             onClick={handleNewConversation}
           >
             新对话
           </Button>
+          <Dropdown
+            menu={{
+              items: [
+                {
+                  key: "clean-7d",
+                  label: "清理 7 天前未活动",
+                  onClick: () => handleCleanupConversations(7),
+                },
+                {
+                  key: "clean-30d",
+                  label: "清理 30 天前未活动",
+                  onClick: () => handleCleanupConversations(30),
+                },
+                { type: "divider" },
+                {
+                  key: "clean-all",
+                  label: "清空全部对话",
+                  danger: true,
+                  onClick: () => handleCleanupConversations(undefined),
+                },
+              ],
+            }}
+            trigger={["click"]}
+            placement="bottomRight"
+          >
+            <Tooltip title="批量清理">
+              <Button icon={<MoreHorizontal size={14} />} />
+            </Tooltip>
+          </Dropdown>
         </div>
 
         <div className="flex-1 overflow-auto px-2 pb-2">
@@ -401,16 +489,55 @@ export default function AiChatPage() {
               暂无对话
             </div>
           ) : (
-            conversations.map((conv) => (
-              <div
+            conversations.map((conv) => {
+              const isActive = activeConvId === conv.id;
+              // 同一组卡片操作复用给两处 trigger：右键整条 + 点击 MoreHorizontal
+              // 阻止 e.domEvent 冒泡，避免触发 div 的 onClick 切换会话
+              const convMenuItems: MenuProps["items"] = [
+                {
+                  key: "rename",
+                  label: "重命名",
+                  icon: <Edit3 size={12} />,
+                  onClick: (e) => {
+                    e.domEvent.stopPropagation();
+                    setEditingConvId(conv.id);
+                    setEditingTitle(conv.title);
+                  },
+                },
+                {
+                  key: "delete",
+                  label: "删除",
+                  danger: true,
+                  icon: <Trash2 size={12} />,
+                  onClick: (e) => {
+                    e.domEvent.stopPropagation();
+                    handleDeleteConversation(conv.id);
+                  },
+                },
+              ];
+              return (
+              <Dropdown
                 key={conv.id}
-                className="flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer group mb-0.5"
+                menu={{ items: convMenuItems }}
+                trigger={["contextMenu"]}
+              >
+              <div
+                className="ai-conv-item flex items-center gap-2 px-3 py-2 cursor-pointer group mb-1"
                 style={{
-                  background:
-                    activeConvId === conv.id
-                      ? token.colorPrimaryBg
-                      : "transparent",
+                  background: isActive ? token.colorPrimaryBg : "transparent",
                   color: token.colorText,
+                  borderRadius: 10,
+                  transition: "background 0.15s ease",
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) {
+                    (e.currentTarget as HTMLDivElement).style.background = token.colorFillTertiary;
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) {
+                    (e.currentTarget as HTMLDivElement).style.background = "transparent";
+                  }
                 }}
                 onClick={() => setActiveConvId(conv.id)}
               >
@@ -419,7 +546,42 @@ export default function AiChatPage() {
                   style={{ flexShrink: 0, color: token.colorTextSecondary }}
                 />
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm truncate">{conv.title}</div>
+                  {editingConvId === conv.id ? (
+                    // 重命名输入框：Enter / 失焦提交；Esc 放弃；点击不冒泡到 div 切换会话
+                    <Input
+                      autoFocus
+                      size="small"
+                      value={editingTitle}
+                      onChange={(e) => setEditingTitle(e.target.value)}
+                      onPressEnter={commitRenameConversation}
+                      onBlur={commitRenameConversation}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          e.stopPropagation();
+                          setEditingConvId(null);
+                          setEditingTitle("");
+                        }
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      onDoubleClick={(e) => e.stopPropagation()}
+                      style={{ fontSize: 13, padding: "2px 6px" }}
+                    />
+                  ) : (
+                    <div
+                      className="text-sm truncate select-none"
+                      onDoubleClick={(e) => {
+                        // 双击重命名：阻止冒泡避免 div 的 onClick 切换会话；
+                        // select-none + e.preventDefault 阻止双击选中文本
+                        e.stopPropagation();
+                        e.preventDefault();
+                        setEditingConvId(conv.id);
+                        setEditingTitle(conv.title);
+                      }}
+                      title="双击重命名"
+                    >
+                      {conv.title}
+                    </div>
+                  )}
                   <div
                     className="text-xs"
                     style={{ color: token.colorTextQuaternary }}
@@ -427,32 +589,31 @@ export default function AiChatPage() {
                     {relativeTime(conv.updated_at)}
                   </div>
                 </div>
-                <Dropdown
-                  menu={{
-                    items: [
-                      {
-                        key: "delete",
-                        label: "删除",
-                        danger: true,
-                        icon: <Trash2 size={12} />,
-                        onClick: (e) => {
-                          e.domEvent.stopPropagation();
-                          handleDeleteConversation(conv.id);
-                        },
-                      },
-                    ],
+                <button
+                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-black/5 transition-opacity"
+                  onClick={(e) => {
+                    // 不切换会话；不冒泡到外层 contextMenu Dropdown 的 click 监听
+                    e.stopPropagation();
+                    // 把"点三个点"翻译成一次右键事件，让外层 Dropdown
+                    // (trigger=contextMenu) 接住——单一 Dropdown 实例，
+                    // 不会出现"右键菜单 + 点三点菜单"两层并存的情况
+                    const ev = new MouseEvent("contextmenu", {
+                      bubbles: true,
+                      cancelable: true,
+                      view: window,
+                      button: 2,
+                      clientX: e.clientX,
+                      clientY: e.clientY,
+                    });
+                    e.currentTarget.dispatchEvent(ev);
                   }}
-                  trigger={["click"]}
                 >
-                  <button
-                    className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-black/5 transition-opacity"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <MoreHorizontal size={14} />
-                  </button>
-                </Dropdown>
+                  <MoreHorizontal size={14} />
+                </button>
               </div>
-            ))
+              </Dropdown>
+              );
+            })
           )}
         </div>
       </div>
@@ -834,18 +995,24 @@ function MessageBubble({
         {isUser ? "我" : "AI"}
       </div>
 
-      {/* 内容 */}
-      <div className={`max-w-[75%] flex flex-col gap-2 ${isUser ? "items-end" : "items-start"}`}>
+      {/* 内容
+          min-w-0：默认 flex 子项 min-width: auto = 内容固有宽度，会顶破 max-w-[75%]；
+          手动归零才能让 max-width 生效，长文本/无空格长串才能被裁到 75% 以内。 */}
+      <div className={`max-w-[75%] min-w-0 flex flex-col gap-2 ${isUser ? "items-end" : "items-start"}`}>
         {/* Skill 调用折叠卡片（在气泡上方） */}
         {skillCalls.length > 0 && (
           <SkillCallList calls={skillCalls} token={token} />
         )}
 
         <div
-          className={`px-3 py-2 rounded-lg text-sm ${isUser ? "whitespace-pre-wrap" : "ai-markdown"}`}
+          className={`px-3 py-2 rounded-lg text-sm break-words ${isUser ? "whitespace-pre-wrap" : "ai-markdown"}`}
           style={{
             background: isUser ? token.colorPrimary : token.colorBgContainer,
             color: isUser ? "#fff" : token.colorText,
+            // overflowWrap: anywhere 比 break-word 更激进：连无空格的纯英文长串
+            // （如 DOI / URL）也能在任意字符处断行，避免气泡被撑开溢出聊天区
+            overflowWrap: "anywhere",
+            maxWidth: "100%",
           }}
         >
           {isUser ? msg.content : <Markdown>{msg.content}</Markdown>}

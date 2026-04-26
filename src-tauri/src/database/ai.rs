@@ -404,6 +404,27 @@ impl Database {
         Ok(())
     }
 
+    /// 批量清理对话：older_than_days = None 时清空全部；
+    /// = Some(N) 时删除 updated_at 早于 N 天前的对话。返回被删除的行数。
+    /// Why: 让前端给一个"清理全部 / 清理 7 天前 / 清理 30 天前"快捷入口，
+    ///      不用做复选框管理态。靠 SQL datetime('now', '-N days') 比较更准。
+    pub fn delete_ai_conversations_before(
+        &self,
+        older_than_days: Option<i64>,
+    ) -> Result<usize, AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let affected = match older_than_days {
+            None => conn.execute("DELETE FROM ai_conversations", [])?,
+            Some(days) if days >= 0 => conn.execute(
+                "DELETE FROM ai_conversations
+                 WHERE updated_at < datetime('now', 'localtime', ?1)",
+                [format!("-{} days", days)],
+            )?,
+            Some(_) => 0,
+        };
+        Ok(affected)
+    }
+
     /// 重命名对话
     pub fn rename_ai_conversation(&self, id: i64, title: &str) -> Result<(), AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
