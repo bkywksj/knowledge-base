@@ -23,35 +23,17 @@ Tauri Desktop App 的 Git 工作流与版本管理技能，规范分支命名、
 
 本项目有三个远端（`git remote -v`）：
 
-| remote | 用途 | 定位 |
+| remote | 角色 | 定位 |
 |--------|------|------|
-| **`origin`** | **Gitee (`gitee.com/bkywksj/knowledge-base`)** | **主开发仓库**，承载每一条 commit |
-| **`github`** | **GitHub (`github.com/bkywksj/knowledge-base`)** | **开源镜像**，所有 commit 是从 Gitee cherry-pick 过来的 **独立哈希**；两端 **无共同 git 祖先**（首次开源时是用 squash init 建的） |
+| **`origin`** | **Gitee (`gitee.com/bkywksj/knowledge-base`)** | 国内主仓 |
+| **`github`** | **GitHub (`github.com/bkywksj/knowledge-base`)** | CI 构建源 + 海外开源镜像 |
 | `upstream` | 原 tauri 框架模板 | 极少用，仅在同步模板时拉取 |
 
-### 双端关系核心事实
+### 历史已对齐（v1.3.0 起）
 
-- 两端 commit **subject 一一对应**但 **hash 不同**。举例：
-  - Gitee `5cb19ba chore(docs): .docs-meta.json 记录 faq.md 开源状态审计同步`
-  - GitHub `5efb7cc chore(docs): .docs-meta.json 记录 faq.md 开源状态审计同步`
-- GitHub 上不存在 Gitee 的早期历史（被压缩成一个 `init: v1.1.0 首次开源发布` commit）
-- GitHub 上也不存在一些仅开源合规相关的 commit（CLA、docs-meta 同步等）——这些是 GitHub 侧独立做的
+v1.3.0 发布时（2026-04-26）已经把 GitHub 历史 force-sync 到 Gitee，**两端 commit hash 完全一致、共享 git 祖先**，从此可以走标准 git workflow，**不再需要 cherry-pick 同步**。
 
-### 同步点识别法
-
-想把 Gitee 新改动同步到 GitHub？按 subject 匹配找同步边界：
-
-```bash
-# 1. 取 GitHub 最新 commit 的 subject
-git log -1 --format='%s' github/master
-
-# 2. 在 Gitee 分支里搜同 subject 的 commit（这就是两端对齐的最后一点）
-git log --oneline -n 1 origin/master --grep='<上一步的 subject 关键词>'
-# 得到 Gitee 端对应 hash，记为 SYNC_POINT
-
-# 3. 列出 Gitee 上 SYNC_POINT 之后的所有增量
-git log --oneline --reverse <SYNC_POINT>..HEAD
-```
+> 备份分支 `backup-before-gh-sync-v1.3.0` 还留在 Gitee 上，万一以后发现丢了什么内容可以从这里救回来。
 
 ---
 
@@ -59,54 +41,23 @@ git log --oneline --reverse <SYNC_POINT>..HEAD
 
 ### 「日常 commit」— 用户说"提交推送"时
 
-**默认只推 Gitee**：
-```bash
-git push origin master
-```
-
-GitHub 不自动同步。但用户可随时要求把"Gitee 上 SYNC_POINT 之后的增量"推 GitHub。
-
-### 「同步 GitHub」— 把积压增量批量推到 GitHub
-
-**推荐：worktree + 分支 + batch cherry-pick（实测零冲突比单条更顺）**
+**默认两端都推**（两端历史已统一，没有任何冲突风险）：
 
 ```bash
-# 1. 在项目外新建 worktree，基于 github/master 开同步分支
-git worktree add ../knowledge_base_gh_test github/master
-cd ../knowledge_base_gh_test
-git checkout -b gh-sync
-
-# 2. 批量 cherry-pick Gitee 的增量（按时间序）
-#    注：在 worktree 里主仓的 master 分支名可直接引用
-git cherry-pick <SYNC_POINT>..master
-
-# 3. 遇到冲突按下方"冲突处理"章节操作；全部 pick 完后验证
-git diff master HEAD --stat   # 应当为空：内容 ≡ Gitee HEAD
-
-# 4. 推 GitHub（推送分支 → master）
-git push github gh-sync:master
-
-# 5. 清理
-cd <主仓目录>
-git worktree remove --force ../knowledge_base_gh_test
+git push origin master       # Gitee 主仓
+git push github master       # GitHub（CI 触发源 + 海外镜像）
 ```
 
-**不推荐：单条 cherry-pick**。单条 patch 的 diff 锚点常常依赖"前面几条 commit 的产物"，单独应用容易冲突；批量顺序应用反而 clean。
-
-### 冲突处理
-
-- **schema.rs 冲突**：一般是版本号对不上（比如 GitHub 还在 v17，新增 v19 patch 上下文找不到 `17 =>` 分支行）。解决办法：cherry-pick 时 3-way merge 会把缺失的迁移函数（如 `migrate_v17_to_v18`）作为新增代码整段带过来，手动合并时选择保留两侧所有 match 分支 + 所有迁移函数即可。
-- **Sidebar.tsx / 大幅改动的共享文件冲突**：**不要**用 `git checkout --theirs`（会整体替换为 Gitee 版，引入 GitHub 侧不存在的组件/类型依赖），而是基于 GitHub 原版手动加 T-001 真正改动的那几小行。
+如果用户只说"推 Gitee"，按字面只推 origin。
 
 ### 「发布版本」— 调 /release 时
 
-仍然走下方"发布流程"章节的标准流程；CI 会自动处理 GitHub 产物。
+走下方"发布流程"章节；tag 同时推两端，CI 会从 GitHub 端打 tag 触发构建。
 
-### ⛔ 绝对禁止
+### ⛔ 注意事项
 
-1. 禁止 `git push --force github master`（用 Gitee 历史覆盖 GitHub），会毁掉 GitHub 侧独立 commit
-2. 禁止 `git merge github/master` 到本地（无共同祖先的 merge 产生污染的合并图）
-3. 推 GitHub 只能通过"cherry-pick 增量"路径，不能直推本地 master（本地 master 带整条 Gitee 历史）
+1. **不要在 master 上直接 force push**（除非你像 v1.3.0 那种明确做"两端历史合并"，且已备份）
+2. 推送前 fetch 双端确认本地是最新的，避免覆盖另一端有但本地没有的 commit
 
 ---
 
