@@ -25,13 +25,13 @@ const MULTI_INSTANCE_FLAG: &str = "multi_instance.enabled";
 
 // ───────── 多开实例支持 ─────────
 
-/// 从命令行参数中提取 .md / .markdown 文件路径
+/// 从命令行参数中提取 .md / .markdown / .txt 文件路径
 fn extract_md_paths_from_args<I: IntoIterator<Item = String>>(args: I) -> Vec<String> {
     args.into_iter()
         .filter(|a| !a.starts_with('-'))
         .filter(|a| {
             let lo = a.to_lowercase();
-            lo.ends_with(".md") || lo.ends_with(".markdown")
+            lo.ends_with(".md") || lo.ends_with(".markdown") || lo.ends_with(".txt")
         })
         .collect()
 }
@@ -536,6 +536,11 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     services::sync_scheduler::run_scheduler(app_handle_sched).await;
                 });
+                // V1 多端同步调度器：每分钟扫到期 backend 跑双向（pull → push）
+                let app_handle_v1 = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    services::sync_v1_scheduler::run_v1_scheduler(app_handle_v1).await;
+                });
             }
 
             // 待办定时提醒：每个实例独立（操作各自实例 db）
@@ -771,8 +776,13 @@ pub fn run() {
         // ─── 窗口事件处理 ─────────────────────────
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                // 关闭决策放前端（要读 app_config 里的 window.close_action）。
-                // 这里只拦截系统默认关闭 + emit，前端再决定弹窗 / 隐藏 / 真退出。
+                // 关闭决策只对主窗口生效（要读 app_config 里的 window.close_action）。
+                // 子窗口（emergency-*、migration-splash 等）的 close 应该自然完成，
+                // 否则 emit 出的 app:close-requested 会被主窗 CloseRequestedListener 接到
+                // 误弹"关闭/最小化"询问框。
+                if window.label() != "main" {
+                    return;
+                }
                 api.prevent_close();
                 let _ = window.emit("app:close-requested", ());
             }

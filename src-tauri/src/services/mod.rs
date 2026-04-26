@@ -33,6 +33,7 @@ pub mod source_writeback;
 pub mod sync;
 pub mod sync_scheduler;
 pub mod sync_v1;
+pub mod sync_v1_scheduler;
 pub mod task_reminder;
 pub mod tasks;
 pub mod template;

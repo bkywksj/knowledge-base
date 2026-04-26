@@ -177,6 +177,28 @@ export function SyncV1Section() {
     };
   }, []);
 
+  // 自动同步结果通知：成功不打扰（仅刷新列表更新 last_*_ts 显示），失败弹 toast
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    void listen<{ backendId: number; ok: boolean; error?: string | null }>(
+      "sync_v1:auto-triggered",
+      (e) => {
+        const { ok, error, backendId } = e.payload;
+        if (ok) {
+          void loadBackends();
+        } else {
+          message.warning(`自动同步失败 (backend #${backendId})：${error ?? "未知错误"}`);
+        }
+      },
+    ).then((u) => {
+      unlisten = u;
+    });
+    return () => {
+      unlisten?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     void loadBackends();
   }, []);
@@ -711,9 +733,8 @@ export function SyncV1Section() {
               <Switch
                 checked={form.autoSync}
                 onChange={(v) => setForm((s) => ({ ...s, autoSync: v }))}
-                disabled
               />
-              <Text type="secondary">自动同步（待实现）</Text>
+              <Text>自动同步</Text>
             </span>
             <span className="flex items-center gap-2">
               <Text type="secondary">间隔</Text>

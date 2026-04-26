@@ -82,9 +82,7 @@ export function CloseRequestedListener() {
       maskClosable={false}
       footer={
         <Space>
-          <Button type="primary" onClick={handleMinimize}>
-            最小化到托盘
-          </Button>
+          <Button onClick={handleMinimize}>最小化到托盘</Button>
           <Button danger onClick={handleExit}>
             退出程序
           </Button>
