@@ -30,6 +30,7 @@ import type {
   AttachmentInfo,
   ScannedFile,
   ExportResult,
+  SingleExportResult,
   NoteTemplate,
   NoteTemplateInput,
   DailyWritingStat,
@@ -53,6 +54,8 @@ import type {
   PromptTemplateInput,
   PlanTodayRequest,
   PlanTodayResponse,
+  PlanFromGoalRequest,
+  PlanFromGoalResponse,
   DraftNoteRequest,
   DraftNoteResponse,
   VaultStatus,
@@ -391,13 +394,14 @@ export const imageMaintApi = {
 
 /** 导出 API */
 export const exportApi = {
-  /** 批量导出笔记为 Markdown 文件 */
+  /** 批量导出笔记。`outputDir` 是用户选择的父目录，
+   *  实际会在其下创建一层 `知识库导出_YYYYMMDD_HHmmss/` 作为导出根（见返回值 root_dir） */
   exportNotes: (outputDir: string, folderId?: number | null) =>
     invoke<ExportResult>("export_notes", { outputDir, folderId }),
-  /** 导出单篇笔记为 Markdown 文件（同时拷贝图片/附件到 .assets/）
-   *  返回拷贝的资产文件数 */
-  exportSingle: (id: number, filePath: string) =>
-    invoke<number>("export_single_note", { id, filePath }),
+  /** 导出单篇笔记。`parentDir` 是用户选择的父目录，
+   *  实际会在其下创建一层 `{标题}/`，里面放 `{标题}.md` 与 `assets/` */
+  exportSingle: (id: number, parentDir: string) =>
+    invoke<SingleExportResult>("export_single_note", { id, parentDir }),
 };
 
 /** 附件 API（PDF/Office/ZIP/音视频等非图片非文本文件） */
@@ -425,6 +429,14 @@ export const imageApi = {
     invoke<void>("delete_note_images", { noteId }),
   /** 获取图片存储目录路径 */
   getImagesDir: () => invoke<string>("get_images_dir"),
+  /** 读取图片字节流：路径以 `.enc` 结尾时由后端自动解密。
+   * 加密笔记的图片不能用 convertFileSrc 走 asset 协议（那读到的是密文），
+   * 必须经此 Command 拿到明文 bytes，前端再转成 blob URL 喂给 <img>。
+   * vault 锁定时此调用会失败。 */
+  getBlob: async (path: string): Promise<Uint8Array> => {
+    const v = await invoke<number[]>("get_image_blob", { path });
+    return new Uint8Array(v);
+  },
 };
 
 /** 模板 API */
@@ -459,6 +471,12 @@ export const aiPlanApi = {
   /** T-006: AI 生成笔记草稿 + 归档目录建议（未落库）*/
   draftNote: (request: DraftNoteRequest) =>
     invoke<DraftNoteResponse>("ai_draft_note", { request }),
+  /** 目标驱动 AI 智能规划：生成 10~30 条结构化待办 + 阶段里程碑（未落库） */
+  planFromGoal: (request: PlanFromGoalRequest) =>
+    invoke<PlanFromGoalResponse>("ai_plan_from_goal", { request }),
+  /** 一键撤销某次 AI 智能规划生成的所有任务，返回删除条数 */
+  undoBatch: (batchId: string) =>
+    invoke<number>("undo_task_batch", { batchId }),
 };
 
 /**

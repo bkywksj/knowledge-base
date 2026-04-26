@@ -43,7 +43,7 @@ impl super::Database {
             "SELECT id, title, description, priority, important, status, due_date,
                     completed_at, created_at, updated_at, remind_before_minutes, reminded_at,
                     repeat_kind, repeat_interval, repeat_weekdays, repeat_until,
-                    repeat_count, repeat_done_count
+                    repeat_count, repeat_done_count, source_batch_id
              FROM tasks
              {}
              ORDER BY status ASC,
@@ -76,6 +76,7 @@ impl super::Database {
                     repeat_until: row.get(15)?,
                     repeat_count: row.get(16)?,
                     repeat_done_count: row.get(17)?,
+                    source_batch_id: row.get(18)?,
                     links: Vec::new(),
                 })
             })?
@@ -147,6 +148,7 @@ impl super::Database {
                         repeat_until: row.get(15)?,
                         repeat_count: row.get(16)?,
                         repeat_done_count: row.get(17)?,
+                        source_batch_id: row.get(18)?,
                         links: Vec::new(),
                     })
                 },
@@ -193,8 +195,9 @@ impl super::Database {
         tx.execute(
             "INSERT INTO tasks (title, description, priority, important, due_date,
                                 remind_before_minutes, repeat_kind, repeat_interval,
-                                repeat_weekdays, repeat_until, repeat_count)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                                repeat_weekdays, repeat_until, repeat_count,
+                                source_batch_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 input.title,
                 input.description,
@@ -207,6 +210,7 @@ impl super::Database {
                 input.repeat_weekdays,
                 input.repeat_until,
                 input.repeat_count,
+                input.source_batch_id,
             ],
         )?;
         let task_id = tx.last_insert_rowid();
@@ -467,6 +471,7 @@ impl super::Database {
                     repeat_until: row.get(15)?,
                     repeat_count: row.get(16)?,
                     repeat_done_count: row.get(17)?,
+                    source_batch_id: row.get(18)?,
                     links: Vec::new(),
                 })
             })?
@@ -558,6 +563,39 @@ impl super::Database {
             overdue,
             due_today,
         })
+    }
+
+    // ─── 批次操作（AI 智能规划）─────────────────
+
+    /// 删除某个 source_batch_id 下的所有任务（task_links 因 ON DELETE CASCADE 一并清掉）
+    /// 返回删除的任务条数。
+    pub fn delete_tasks_by_batch(&self, batch_id: &str) -> Result<usize, AppError> {
+        if batch_id.trim().is_empty() {
+            return Err(AppError::InvalidInput("batch_id 不能为空".into()));
+        }
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let affected = conn.execute(
+            "DELETE FROM tasks WHERE source_batch_id = ?1",
+            params![batch_id],
+        )?;
+        Ok(affected)
+    }
+
+    /// 统计某批次的任务数（用于在 UI 上显示「最近一次 AI 导入 N 条，可撤销」）
+    pub fn count_tasks_in_batch(&self, batch_id: &str) -> Result<usize, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let n: usize = conn.query_row(
+            "SELECT COUNT(*) FROM tasks WHERE source_batch_id = ?1",
+            params![batch_id],
+            |row| row.get(0),
+        )?;
+        Ok(n)
     }
 }
 

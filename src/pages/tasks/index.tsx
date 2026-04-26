@@ -26,16 +26,20 @@ import {
   Trash2,
   Edit3,
   Sparkles,
+  Target,
 } from "lucide-react";
 import { PlanTodayModal } from "@/components/ai/PlanTodayModal";
+import { PlanFromGoalModal } from "@/components/ai/PlanFromGoalModal";
+import { aiPlanApi } from "@/lib/api";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { taskApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import type { Task, TaskPriority } from "@/types";
 
-type ViewMode = "list" | "kanban" | "calendar";
+type ViewMode = "list" | "kanban" | "quadrant" | "calendar";
 import { CreateTaskModal } from "@/components/tasks/CreateTaskModal";
 import { KanbanView } from "@/components/tasks/KanbanView";
+import { QuadrantView } from "@/components/tasks/QuadrantView";
 import { CalendarView } from "@/components/tasks/CalendarView";
 
 const { Text, Paragraph } = Typography;
@@ -237,15 +241,18 @@ export default function TasksPage() {
   const [keyword, setKeyword] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [showPlanModal, setShowPlanModal] = useState(false);
+  const [showGoalModal, setShowGoalModal] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [presetPriority, setPresetPriority] = useState<TaskPriority | undefined>(undefined);
+  const [presetImportant, setPresetImportant] = useState<boolean | undefined>(undefined);
   const [presetDueDate, setPresetDueDate] = useState<string | undefined>(undefined);
 
   // SidePanel 传 ?new=1 唤起新建 Modal（一次性，消费后清掉参数）
   useEffect(() => {
     if (searchParams.get("new") === "1") {
       setPresetPriority(undefined);
+      setPresetImportant(undefined);
       setPresetDueDate(undefined);
       setCreateOpen(true);
       const next = new URLSearchParams(searchParams);
@@ -269,7 +276,7 @@ export default function TasksPage() {
       let statusArg: 0 | 1 | undefined;
       if (viewMode === "calendar") {
         statusArg = undefined;
-      } else if (viewMode === "kanban") {
+      } else if (viewMode === "kanban" || viewMode === "quadrant") {
         statusArg = 0;
       } else {
         statusArg = filter === "todo" ? undefined : filterToStatusArg(filter);
@@ -367,6 +374,7 @@ export default function TasksPage() {
             options={[
               { label: "列表", value: "list" },
               { label: "看板", value: "kanban" },
+              { label: "四象限", value: "quadrant" },
               { label: "日历", value: "calendar" },
             ]}
           />
@@ -378,10 +386,18 @@ export default function TasksPage() {
             AI 规划今日
           </Button>
           <Button
+            icon={<Target size={14} />}
+            onClick={() => setShowGoalModal(true)}
+            title="输入长期目标，AI 用艾森豪威尔四象限自动拆出 10~30 条待办"
+          >
+            AI 智能规划
+          </Button>
+          <Button
             type="primary"
             icon={<Plus size={14} />}
             onClick={() => {
               setPresetPriority(undefined);
+              setPresetImportant(undefined);
               setPresetDueDate(undefined);
               setCreateOpen(true);
             }}
@@ -412,6 +428,18 @@ export default function TasksPage() {
           onEdit={setEditing}
           onNew={(p) => {
             setPresetPriority(p);
+            setPresetImportant(undefined);
+            setCreateOpen(true);
+          }}
+        />
+      ) : viewMode === "quadrant" ? (
+        <QuadrantView
+          tasks={tasks}
+          onRefresh={loadTasks}
+          onEdit={setEditing}
+          onNew={(preset) => {
+            setPresetPriority(preset.priority);
+            setPresetImportant(preset.important);
             setCreateOpen(true);
           }}
         />
@@ -422,6 +450,7 @@ export default function TasksPage() {
           onEdit={setEditing}
           onNewOnDate={(ymd) => {
             setPresetPriority(undefined);
+            setPresetImportant(undefined);
             setPresetDueDate(ymd);
             setCreateOpen(true);
           }}
@@ -563,13 +592,16 @@ export default function TasksPage() {
       <CreateTaskModal
         open={createOpen}
         presetPriority={presetPriority}
+        presetImportant={presetImportant}
         presetDueDate={presetDueDate}
         onClose={() => {
           setCreateOpen(false);
+          setPresetImportant(undefined);
           setPresetDueDate(undefined);
         }}
         onSaved={() => {
           setCreateOpen(false);
+          setPresetImportant(undefined);
           setPresetDueDate(undefined);
           loadTasks();
         }}
@@ -590,6 +622,38 @@ export default function TasksPage() {
           // 刷新列表 + 侧边栏紧急待办计数
           loadTasks();
           useAppStore.getState().refreshTaskStats();
+        }}
+      />
+      <PlanFromGoalModal
+        open={showGoalModal}
+        onClose={() => setShowGoalModal(false)}
+        onSaved={(batchId, count) => {
+          loadTasks();
+          useAppStore.getState().refreshTaskStats();
+          // 提供"撤销整批"按钮（5 秒后自动消失）
+          message.success({
+            content: (
+              <span>
+                AI 智能规划：已导入 {count} 条待办{" "}
+                <a
+                  style={{ marginLeft: 8 }}
+                  onClick={async () => {
+                    try {
+                      const removed = await aiPlanApi.undoBatch(batchId);
+                      message.info(`已撤销 ${removed} 条`);
+                      loadTasks();
+                      useAppStore.getState().refreshTaskStats();
+                    } catch (e) {
+                      message.error(`撤销失败: ${e}`);
+                    }
+                  }}
+                >
+                  撤销整批
+                </a>
+              </span>
+            ),
+            duration: 8,
+          });
         }}
       />
     </div>

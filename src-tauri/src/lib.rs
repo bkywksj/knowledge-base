@@ -619,6 +619,8 @@ pub fn run() {
             commands::ai::ai_write_assist,
             commands::ai::cancel_ai_write_assist,
             commands::ai::ai_plan_today,
+            commands::ai::ai_plan_from_goal,
+            commands::ai::undo_task_batch,
             commands::ai::ai_draft_note,
             commands::ai::set_ai_conversation_attached_notes,
             commands::ai::archive_ai_conversation_to_note,
@@ -647,6 +649,7 @@ pub fn run() {
             commands::image::get_images_dir,
             commands::image::scan_orphan_images,
             commands::image::clean_orphan_images,
+            commands::image::get_image_blob,
             // 附件模块（PDF/Office/ZIP/音视频等通用文件）
             commands::attachment::save_note_attachment,
             commands::attachment::delete_note_attachments,

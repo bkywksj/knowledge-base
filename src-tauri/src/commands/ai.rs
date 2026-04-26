@@ -3,7 +3,8 @@ use tokio::sync::watch;
 
 use crate::models::{
     AiConversation, AiMessage, AiModel, AiModelInput, DraftNoteRequest, DraftNoteResponse,
-    Note, NoteInput, PlanTodayRequest, PlanTodayResponse,
+    Note, NoteInput, PlanFromGoalRequest, PlanFromGoalResponse, PlanTodayRequest,
+    PlanTodayResponse,
 };
 use crate::services::ai::AiService;
 use crate::state::AppState;
@@ -287,6 +288,36 @@ pub async fn ai_plan_today(
 ) -> Result<PlanTodayResponse, String> {
     let db = &state.db;
     AiService::plan_today(db, request).await.map_err(|e| e.to_string())
+}
+
+/// 目标驱动 AI 智能规划：把一个长期目标拆成多条可执行待办 + 阶段里程碑
+///
+/// 与 `ai_plan_today` 区别：本方法不依赖历史笔记，按 `horizon_days` 跨度展开。
+/// 返回的 `batchId` 必须由前端在批量落库时透传到每条任务的 `source_batch_id`，
+/// 后续可用 `undo_task_batch(batch_id)` 一键撤销整批。
+///
+/// 非流式；典型耗时 10~30 秒（任务条数较多）。
+#[tauri::command]
+pub async fn ai_plan_from_goal(
+    state: State<'_, AppState>,
+    request: PlanFromGoalRequest,
+) -> Result<PlanFromGoalResponse, String> {
+    let db = &state.db;
+    AiService::plan_from_goal(db, request)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 一键撤销某次 AI 智能规划生成的所有任务（按 source_batch_id 删除）
+///
+/// 返回删除的任务条数；批次不存在或已被删完时返回 0。task_links 由数据库
+/// ON DELETE CASCADE 自动清理。
+#[tauri::command]
+pub fn undo_task_batch(state: State<'_, AppState>, batch_id: String) -> Result<usize, String> {
+    state
+        .db
+        .delete_tasks_by_batch(&batch_id)
+        .map_err(|e| e.to_string())
 }
 
 // ─── T-006 AI 写笔记并归档 Commands ─────────

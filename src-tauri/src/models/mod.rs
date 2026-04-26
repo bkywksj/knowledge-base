@@ -403,8 +403,22 @@ pub struct OrphanImageClean {
 pub struct ExportResult {
     pub exported: usize,
     pub errors: Vec<String>,
+    /// 用户选择的父目录（与入参一致，便于前端展示）
     pub output_dir: String,
+    /// 实际创建的导出根目录（在 output_dir 下自动包一层时间戳目录）
+    pub root_dir: String,
     /// 拷贝到 .assets/ 目录的资产文件总数（图片 + 附件，按物理文件去重）
+    pub assets_copied: usize,
+}
+
+/// 单篇导出结果
+#[derive(Debug, Clone, Serialize)]
+pub struct SingleExportResult {
+    /// 实际创建的笔记根目录（含 .md 和 assets/）
+    pub root_dir: String,
+    /// .md 文件绝对路径
+    pub file_path: String,
+    /// 拷贝到 assets/ 的资产文件数
     pub assets_copied: usize,
 }
 
@@ -615,6 +629,8 @@ pub struct Task {
     pub repeat_count: Option<i32>,
     /// 已触发次数
     pub repeat_done_count: i32,
+    /// 批次来源标识（AI 批量导入用，同次生成共享同一个 UUID）；手动创建为 NULL
+    pub source_batch_id: Option<String>,
     pub links: Vec<TaskLink>,
 }
 
@@ -634,6 +650,8 @@ pub struct CreateTaskInput {
     pub repeat_weekdays: Option<String>,
     pub repeat_until: Option<String>,
     pub repeat_count: Option<i32>,
+    /// AI 批量导入时同批次共享一个 UUID，用于一键撤销整批
+    pub source_batch_id: Option<String>,
 }
 
 /// 更新任务入参（字段缺省表示不改动）
@@ -785,6 +803,56 @@ pub struct PlanTodayResponse {
     pub tasks: Vec<TaskSuggestion>,
     /// 一句总结 AI 对今日安排的思路；可选
     pub summary: Option<String>,
+}
+
+// ─── AI 智能规划（目标驱动）─────────────────
+
+/// "目标驱动 AI 规划"入参：用户给一个长期目标，AI 自己拆成多条待办 + 阶段里程碑
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanFromGoalRequest {
+    /// 用户描述的目标，例如"180 天减肥到 55 公斤"
+    pub goal: String,
+    /// 计划周期总天数；默认 30
+    #[serde(default = "default_horizon_days")]
+    pub horizon_days: i32,
+    /// 起始日期 'YYYY-MM-DD'；缺省取今天
+    pub start_date: Option<String>,
+    /// 用户额外补充信息（可选），例如作息/兴趣/约束
+    pub profile_hint: Option<String>,
+}
+
+fn default_horizon_days() -> i32 {
+    30
+}
+
+/// 阶段里程碑（项目级节点，例如「第 1 月：身体激活」）
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MilestoneDraft {
+    pub title: String,
+    /// 日期范围文本（如 "5月1日-5月31日"），AI 自由格式
+    pub date_range: Option<String>,
+    /// 该阶段的核心任务/目标描述
+    pub description: Option<String>,
+}
+
+/// "目标驱动 AI 规划"返回结构：批次内一次性生成所有产出，由前端在预览页勾选后落库
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanFromGoalResponse {
+    /// AI 拆出的待办（带四象限标注）
+    pub tasks: Vec<TaskSuggestion>,
+    /// AI 拆出的阶段里程碑（用户可参考但不强制落库）
+    #[serde(default)]
+    pub milestones: Vec<MilestoneDraft>,
+    /// 整体规划思路（一段话）
+    pub summary: Option<String>,
+    /// 此次生成的批次 ID（服务端生成），前端落库时每条任务都要带上，
+    /// 后续可用 undo_task_batch(batch_id) 一键撤销整批。
+    /// AI 输出 JSON 时不包含此字段，由 service 层填充，因此反序列化时缺省为空。
+    #[serde(default)]
+    pub batch_id: String,
 }
 
 // ─── AI 写笔记并归档（T-006） ──────────────

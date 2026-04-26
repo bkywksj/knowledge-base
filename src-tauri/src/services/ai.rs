@@ -7,8 +7,9 @@ use tokio::sync::watch;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::models::{
-    AiMessage, AiModel, DraftNoteRequest, DraftNoteResponse, Folder, PlanTodayRequest,
-    PlanTodayResponse, SkillCall, TaskQuery,
+    AiMessage, AiModel, DraftNoteRequest, DraftNoteResponse, Folder, MilestoneDraft,
+    PlanFromGoalRequest, PlanFromGoalResponse, PlanTodayRequest, PlanTodayResponse, SkillCall,
+    TaskQuery, TaskSuggestion,
 };
 use crate::services::skills;
 
@@ -1554,6 +1555,174 @@ impl AiService {
             ))
         })
     }
+
+    // ══════════════════════════════════════════════════════════════════
+    // 目标驱动 AI 智能规划（plan_from_goal）
+    // ══════════════════════════════════════════════════════════════════
+
+    /// 根据用户目标 + 计划周期，AI 一次性产出多条结构化待办 + 阶段里程碑。
+    ///
+    /// 与 `plan_today` 的区别：plan_today 只看今天 3~7 条且依赖笔记上下文；
+    /// 本方法是"开新计划"，无历史依赖，按 horizon_days 跨度铺到未来。
+    ///
+    /// 落库由前端在预览页勾选后调 `taskApi.create`，**必须**把响应里的
+    /// `batch_id` 透传到每条任务的 `source_batch_id` 字段，方便整批撤销。
+    pub async fn plan_from_goal(
+        db: &Database,
+        req: PlanFromGoalRequest,
+    ) -> Result<PlanFromGoalResponse, AppError> {
+        let goal = req.goal.trim();
+        if goal.is_empty() {
+            return Err(AppError::InvalidInput("目标不能为空".into()));
+        }
+        if goal.chars().count() < 4 {
+            return Err(AppError::InvalidInput(
+                "目标太短了（至少 4 个字），AI 难以理解你想做什么".into(),
+            ));
+        }
+        let horizon = req.horizon_days.clamp(1, 365);
+
+        let model = db.get_default_ai_model()?;
+        if model.provider == "ollama" {
+            return Err(AppError::Custom(
+                "AI 智能规划暂不支持 Ollama 协议，请切换到 OpenAI 兼容模型（含本地 LM Studio）。"
+                    .into(),
+            ));
+        }
+
+        // 起始日期：用户传入或默认今天
+        let start_date = req
+            .start_date
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
+        let end_date = chrono::NaiveDate::parse_from_str(&start_date, "%Y-%m-%d")
+            .ok()
+            .map(|d| d + chrono::Duration::days((horizon as i64) - 1))
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| start_date.clone());
+
+        let profile_section = req
+            .profile_hint
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("\n\n## 用户补充信息\n{}", s))
+            .unwrap_or_default();
+
+        let user_content = format!(
+            "请帮我用艾森豪威尔四象限法则规划一个 {} 天的计划。\n\n\
+             ## 我的目标\n{}\n\n\
+             ## 计划周期\n{} ~ {}（共 {} 天）{}\n\n\
+             请按下方 JSON 格式严格输出（不要 markdown 代码块、不要任何解释）。",
+            horizon, goal, start_date, end_date, horizon, profile_section,
+        );
+
+        let system_prompt = format!(
+            "你是一个用艾森豪威尔四象限法则规划长期目标的助手。\
+             根据用户给的目标和周期，把目标拆成可执行的待办（10~30 条）\
+             + 阶段里程碑（2~6 条）。\n\n\
+             严格返回 JSON 对象，不要 markdown 代码块、不要任何额外文字，格式如下：\n\
+             {{\n  \
+             \"tasks\": [\n    \
+             {{\"title\": \"任务标题（具体可执行）\", \"priority\": 0|1|2, \"important\": true|false, \"dueDate\": \"YYYY-MM-DD\", \"reason\": \"为什么做这条 + Q几\"}}\n  \
+             ],\n  \
+             \"milestones\": [\n    \
+             {{\"title\": \"阶段标题（如『第1月：身体激活』）\", \"dateRange\": \"5月1日-5月31日\", \"description\": \"该阶段重点\"}}\n  \
+             ],\n  \
+             \"summary\": \"整体规划思路（1~3 句）\"\n\
+             }}\n\n\
+             ⚠️ 关键：priority 和 important 是两个独立维度！\n\
+             - priority（紧急度）：0=紧急（短期内必须完成）/ 1=一般 / 2=不急\n\
+             - important（重要性）：true=对长期目标显著贡献；false=琐事或被动响应\n\n\
+             组合成四象限：\n\
+             - Q1 紧急+重要 (0,true)：关键 deadline / 关键节点\n\
+             - Q2 不紧急+重要 (1或2,true)：长期投入、积累型任务，应占主体（>60%）\n\
+             - Q3 紧急+不重要 (0,false)：处理一下就行的琐事\n\
+             - Q4 不紧急+不重要 (1或2,false)：能不做就不做\n\n\
+             其他规则：\n\
+             1. dueDate 必须落在 {} ~ {} 范围内，按计划进度合理铺开\n\
+             2. 任务粒度要可执行，避免『加油』『坚持』之类不可量化的词\n\
+             3. milestones 是阶段级总结，颗粒度比 tasks 大\n\
+             4. 全部用中文。\n\
+             5. 🔴 JSON 字符串字段中若需要引用名称，一律使用中文书名号「」或单引号 『』，严禁使用英文双引号 \"（否则会破坏 JSON 结构）。",
+            start_date, end_date
+        );
+
+        let messages = vec![
+            json!({ "role": "system", "content": system_prompt }),
+            json!({ "role": "user", "content": user_content }),
+        ];
+
+        let client = crate::services::http_client::shared();
+        let url = build_openai_chat_url(&model.api_url);
+        let mut req_body = json!({
+            "model": model.model_id,
+            "messages": messages,
+            "stream": false,
+            "response_format": { "type": "json_object" },
+            "max_tokens": 4000,
+        });
+        if model.provider == "claude" {
+            req_body
+                .as_object_mut()
+                .and_then(|m| m.remove("response_format"));
+        }
+
+        let mut builder = client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&req_body);
+        if let Some(key) = &model.api_key {
+            if !key.is_empty() {
+                builder = builder.header("Authorization", format!("Bearer {}", key));
+            }
+        }
+        let response = builder
+            .send()
+            .await
+            .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(AppError::Custom(format_openai_api_error(status, &body)));
+        }
+
+        let resp_json: Value = response
+            .json()
+            .await
+            .map_err(|e| AppError::Custom(format!("解析响应失败: {}", e)))?;
+        let content = resp_json["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| {
+                AppError::Custom(
+                    "AI 返回格式异常：缺少 choices[0].message.content".to_string(),
+                )
+            })?;
+
+        let mut parsed = parse_plan_from_goal_response(content).ok_or_else(|| {
+            AppError::Custom(format!(
+                "AI 返回的 JSON 无法解析。原始响应：\n{}",
+                content.chars().take(400).collect::<String>()
+            ))
+        })?;
+
+        // 服务端生成 batch_id（前端落库时回填到每条任务的 source_batch_id）
+        parsed.batch_id = generate_batch_id();
+        // 兜底：AI 偶尔会跳过这两个字段
+        if parsed.tasks.is_empty() {
+            return Err(AppError::Custom(
+                "AI 没有生成任何待办，请补充更多目标细节后重试".into(),
+            ));
+        }
+        // 提示编译器引用 TaskSuggestion / MilestoneDraft（被反序列化使用）
+        let _ = std::mem::size_of::<TaskSuggestion>();
+        let _ = std::mem::size_of::<MilestoneDraft>();
+
+        Ok(parsed)
+    }
 }
 
 /// 递归扁平化 Folder 树为 "父/子/孙" 路径字符串
@@ -1692,5 +1861,61 @@ mod plan_today_tests {
         let raw = "好的，我来为你规划：\n{\"tasks\":[{\"title\":\"写周报\",\"priority\":1}],\"summary\":\"\"}\n希望对你有帮助";
         let r = parse_plan_today_response(raw).unwrap();
         assert_eq!(r.tasks.len(), 1);
+    }
+}
+
+/// 解析 AI 返回的 PlanFromGoalResponse JSON（三轮兜底，与 plan_today 同模式）
+fn parse_plan_from_goal_response(raw: &str) -> Option<PlanFromGoalResponse> {
+    if let Ok(r) = serde_json::from_str::<PlanFromGoalResponse>(raw.trim()) {
+        return Some(r);
+    }
+    let stripped = raw
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    if let Ok(r) = serde_json::from_str::<PlanFromGoalResponse>(stripped) {
+        return Some(r);
+    }
+    let start = raw.find('{')?;
+    let end = raw.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    serde_json::from_str(&raw[start..=end]).ok()
+}
+
+/// 生成批次 ID：本地时间戳 + 64 位随机数 hex，避免依赖 uuid crate
+fn generate_batch_id() -> String {
+    use rand::RngCore;
+    let mut rng = rand::thread_rng();
+    let n: u64 = rng.next_u64();
+    format!(
+        "plan_{}_{:016x}",
+        chrono::Local::now().format("%Y%m%d%H%M%S"),
+        n
+    )
+}
+
+#[cfg(test)]
+mod plan_from_goal_tests {
+    use super::*;
+
+    #[test]
+    fn parse_plain_json() {
+        let raw = r#"{"tasks":[{"title":"每日跑步30分","priority":1,"important":true,"dueDate":"2026-05-01"}],"milestones":[{"title":"第1月","dateRange":"5月1日-5月31日"}],"summary":"先建立习惯"}"#;
+        let r = parse_plan_from_goal_response(raw).unwrap();
+        assert_eq!(r.tasks.len(), 1);
+        assert_eq!(r.milestones.len(), 1);
+        assert_eq!(r.batch_id, ""); // 反序列化时为空，由 service 层填充
+    }
+
+    #[test]
+    fn batch_id_unique_per_call() {
+        let a = generate_batch_id();
+        let b = generate_batch_id();
+        assert_ne!(a, b, "batch_id 必须每次都不同");
+        assert!(a.starts_with("plan_"));
     }
 }

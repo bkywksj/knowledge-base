@@ -80,6 +80,8 @@ export interface NoteQuery {
   keyword?: string | null;
   page?: number;
   page_size?: number;
+  /** true 时只返回 folder_id IS NULL 的笔记（"未分类"虚拟文件夹） */
+  uncategorized?: boolean;
 }
 
 // ─── 文件夹 ───────────────────────────────────
@@ -255,6 +257,34 @@ export interface PlanTodayResponse {
   summary?: string | null;
 }
 
+// ─── AI 智能规划（目标驱动）────────────
+
+export interface PlanFromGoalRequest {
+  /** 用户描述的目标，例如"180 天减肥到 55 公斤" */
+  goal: string;
+  /** 计划周期天数，默认 30，最大 365 */
+  horizonDays?: number;
+  /** 起始日期 'YYYY-MM-DD'；缺省=今天 */
+  startDate?: string | null;
+  /** 用户额外补充信息（作息/兴趣/约束） */
+  profileHint?: string | null;
+}
+
+export interface MilestoneDraft {
+  title: string;
+  /** 自然语言日期范围，如 "5月1日-5月31日" */
+  dateRange?: string | null;
+  description?: string | null;
+}
+
+export interface PlanFromGoalResponse {
+  tasks: TaskSuggestion[];
+  milestones: MilestoneDraft[];
+  summary?: string | null;
+  /** 服务端生成的批次 ID，前端落库时每条任务都要透传到 source_batch_id */
+  batchId: string;
+}
+
 // ─── AI 写笔记并归档（T-006） ────────────
 
 export type TargetLength = "short" | "medium" | "long";
@@ -375,8 +405,21 @@ export interface AttachmentInfo {
 export interface ExportResult {
   exported: number;
   errors: string[];
+  /** 用户选择的父目录 */
   output_dir: string;
+  /** 实际创建的导出根目录（在 output_dir 下自动包一层 知识库导出_YYYYMMDD_HHmmss） */
+  root_dir: string;
   /** 拷贝到 .assets/ 的资产文件总数（图片+附件，按物理文件去重） */
+  assets_copied: number;
+}
+
+/** 单篇导出结果 */
+export interface SingleExportResult {
+  /** 实际创建的笔记根目录（含 .md 与 assets/） */
+  root_dir: string;
+  /** .md 文件绝对路径 */
+  file_path: string;
+  /** 拷贝到 assets/ 的资产文件数 */
   assets_copied: number;
 }
 
@@ -555,6 +598,8 @@ export interface Task {
   repeat_count: number | null;
   /** 已触发次数 */
   repeat_done_count: number;
+  /** AI 智能规划批次 ID（手动创建为 null） */
+  source_batch_id: string | null;
   links: TaskLink[];
 }
 
@@ -577,6 +622,8 @@ export interface CreateTaskInput {
   repeat_weekdays?: string | null;
   repeat_until?: string | null;
   repeat_count?: number | null;
+  /** AI 智能规划批次 ID（同次生成共享一个 UUID，可一键撤销整批） */
+  source_batch_id?: string | null;
 }
 
 export interface UpdateTaskInput {

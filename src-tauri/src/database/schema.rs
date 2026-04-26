@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 26;
+pub const SCHEMA_VERSION: i32 = 28;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -56,6 +56,8 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             23 => migrate_v23_to_v24(conn)?,
             24 => migrate_v24_to_v25(conn)?,
             25 => migrate_v25_to_v26(conn)?,
+            26 => migrate_v26_to_v27(conn)?,
+            27 => migrate_v27_to_v28(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -1050,5 +1052,70 @@ fn migrate_v25_to_v26(conn: &Connection) -> Result<(), AppError> {
         "#,
     )?;
     set_version(conn, 26)?;
+    Ok(())
+}
+
+/// v26 -> v27: tasks 表加 source_batch_id（AI 批量导入用，支持一键撤销整批）
+///
+/// 当用户用「AI 智能规划」一次生成 N 条待办时，所有同批次任务共享一个 batch_id，
+/// 后续可以按 batch_id 批量删除/撤销，避免用户手动一条条清理。
+/// 老数据 source_batch_id 为 NULL，自然不参与批次操作。
+fn migrate_v26_to_v27(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v26 -> v27 (tasks 新增 source_batch_id)");
+
+    let cols = list_columns(conn, "tasks")?;
+    if !cols.iter().any(|c| c == "source_batch_id") {
+        conn.execute_batch("ALTER TABLE tasks ADD COLUMN source_batch_id TEXT;")?;
+    }
+
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_source_batch
+            ON tasks(source_batch_id)
+            WHERE source_batch_id IS NOT NULL;",
+    )?;
+
+    set_version(conn, 27)?;
+    Ok(())
+}
+
+/// v27 -> v28: 外部 .md 双向同步基础设施
+///
+/// 1. 新表 `note_url_mapping`：记录笔记里每张图的"内部 URL ↔ 原始 URL"映射
+///    - 打开 .md 时：原始链接（./images/foo.png 或 https://...）→ 内部 asset.localhost URL
+///      在收集替换的同时把这一对落库；
+///    - 写回 .md 时：扫笔记 content 的所有 URL，命中映射就反查替换回原始 URL
+///      → 原文件链接保持原样，不污染用户的图床/相对路径写法。
+///    - 用户在编辑器里新插的图（不在映射表）按"复制到 <basename>.assets/"策略处理。
+///    UNIQUE (note_id, internal_url) 保证同一张图不会被反复写多条。
+///
+/// 2. notes 表新增 `last_writeback_mtime`：上次成功写回原 .md 时该文件的 mtime（秒级时间戳）。
+///    每次写回前比对：若磁盘当前 mtime ≠ 此值，说明外部编辑器（VSCode 等）改过文件，
+///    弹冲突 Modal 让用户选「覆盖外部 / 保留外部 / 取消」。
+fn migrate_v27_to_v28(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v27 -> v28 (外部 .md 双向同步: note_url_mapping + last_writeback_mtime)");
+
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS note_url_mapping (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_id       INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+            internal_url  TEXT    NOT NULL,
+            original_url  TEXT    NOT NULL,
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+            UNIQUE (note_id, internal_url)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_url_mapping_note ON note_url_mapping(note_id);
+        ",
+    )?;
+
+    let cols = list_columns(conn, "notes")?;
+    if !cols.iter().any(|c| c == "last_writeback_mtime") {
+        conn.execute_batch(
+            "ALTER TABLE notes ADD COLUMN last_writeback_mtime INTEGER;",
+        )?;
+    }
+
+    set_version(conn, 28)?;
     Ok(())
 }
