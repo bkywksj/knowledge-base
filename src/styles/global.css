@@ -673,3 +673,18 @@ body,
   border-bottom: 0 !important;
 }
 
+/* 设置页跳转高亮：从其他页面带锚点跳过来时短暂闪烁定位目标 */
+.settings-target-flash {
+  border-radius: 8px;
+  animation: settings-target-flash 1.6s ease-out;
+}
+@keyframes settings-target-flash {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(22, 119, 255, 0);
+  }
+  25% {
+    box-shadow: 0 0 0 4px rgba(22, 119, 255, 0.35);
+  }
+}
+

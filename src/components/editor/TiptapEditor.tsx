@@ -668,6 +668,101 @@ export function TiptapEditor({
     },
   });
 
+  // 加密笔记图片渲染拦截：editor 里 <img> 的 src 形如 asset://.../xxx.png.enc，
+  // 浏览器直接走 asset 协议拿到的是密文，img 显示 broken。这里用 MutationObserver
+  // 监视 editor DOM，发现 src 路径以 .enc 结尾的就 invoke get_image_blob 拿明文 bytes，
+  // 转 blob URL 替换 img.src。attrs.src 不动（保持 markdown 序列化稳定）。
+  useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom as HTMLElement;
+    // 单 editor 实例内复用 blob URL，避免重复 invoke + 重复创建
+    const blobCache = new Map<string, string>();
+
+    /** 从 asset URL（含 URL 编码）中还原出 .enc 文件的本地路径；非 .enc 返回 null */
+    const extractEncPath = (src: string): string | null => {
+      if (!src) return null;
+      // 去掉 asset 协议前缀，剩下的是 URL 编码的路径
+      let encoded = src;
+      if (encoded.startsWith("http://asset.localhost/")) {
+        encoded = encoded.slice("http://asset.localhost/".length);
+      } else if (encoded.startsWith("asset://localhost/")) {
+        encoded = encoded.slice("asset://localhost/".length);
+      } else if (encoded.startsWith("blob:")) {
+        return null; // 已经是 blob URL，跳过
+      } else {
+        return null; // 非 asset 协议（外链 / data: 等）
+      }
+      let decoded: string;
+      try {
+        decoded = decodeURIComponent(encoded);
+      } catch {
+        return null;
+      }
+      return decoded.endsWith(".enc") ? decoded : null;
+    };
+
+    const processImg = async (img: HTMLImageElement) => {
+      const path = extractEncPath(img.getAttribute("src") ?? "");
+      if (!path) return;
+      const cached = blobCache.get(path);
+      if (cached) {
+        if (img.src !== cached) img.src = cached;
+        return;
+      }
+      try {
+        const bytes = await imageApi.getBlob(path);
+        const blob = new Blob([bytes as BlobPart]);
+        const url = URL.createObjectURL(blob);
+        blobCache.set(path, url);
+        img.src = url;
+      } catch (e) {
+        // vault 锁定 / 文件丢失 → 静默；用户在 UI 上能看到 broken img + 锁图标提示
+        console.warn("[encrypted-image] 解密失败:", path, e);
+      }
+    };
+
+    // 初始化：先扫一遍现有 img
+    dom.querySelectorAll("img").forEach((img) => {
+      void processImg(img as HTMLImageElement);
+    });
+
+    // 持续观察：粘贴 / 拖放新图后 DOM 节点插入会触发
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type === "childList") {
+          m.addedNodes.forEach((node) => {
+            if (node instanceof HTMLImageElement) {
+              void processImg(node);
+            } else if (node instanceof HTMLElement) {
+              node.querySelectorAll("img").forEach((img) => {
+                void processImg(img as HTMLImageElement);
+              });
+            }
+          });
+        } else if (
+          m.type === "attributes" &&
+          m.attributeName === "src" &&
+          m.target instanceof HTMLImageElement
+        ) {
+          void processImg(m.target);
+        }
+      }
+    });
+    observer.observe(dom, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["src"],
+    });
+
+    return () => {
+      observer.disconnect();
+      // 释放 blob URL 防内存泄漏
+      blobCache.forEach((url) => URL.revokeObjectURL(url));
+      blobCache.clear();
+    };
+  }, [editor]);
+
   // 拦截编辑器内 file:// 链接的点击，交给 opener 用系统默认程序打开。
   // Why: Link 扩展配置 openOnClick=false，默认点击无效；附件链接靠 DOM 事件代理开。
   //      普通 http(s) 链接此处不介入，由外层页面其他逻辑处理。

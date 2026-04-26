@@ -22,11 +22,11 @@ import {
 import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, MessageSquare } from "lucide-react";
 import { useAppStore } from "@/store";
 import { useTabsStore } from "@/store/tabs";
-import { noteApi, tagApi, folderApi, linkApi, exportApi, sourceFileApi, vaultApi } from "@/lib/api";
+import { noteApi, tagApi, folderApi, linkApi, exportApi, sourceFileApi, vaultApi, sourceWritebackApi } from "@/lib/api";
 import { VaultModal } from "@/components/vault/VaultModal";
-import { save } from "@tauri-apps/plugin-dialog";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { relativeTime, stripHtml } from "@/lib/utils";
 import { TiptapEditor } from "@/components/editor";
 import { TagColorPicker } from "@/components/TagColorPicker";
@@ -629,6 +629,50 @@ export default function NoteEditorPage() {
       } else if (!silent) {
         message.success("保存成功");
       }
+
+      // 外部 .md 双向同步：若该笔记是从 .md 文件打开来的，把当前内容写回原文件
+      if (updated.source_file_type === "md" && updated.source_file_path) {
+        try {
+          const r = await sourceWritebackApi.writeBack(noteId, false);
+          if (r.kind === "conflict") {
+            // 弹 Modal 让用户选；选"覆盖外部"再调一次 force=true
+            Modal.confirm({
+              title: "原文件被外部改过",
+              content: (
+                <div>
+                  <p style={{ marginBottom: 4 }}>检测到原文件在本应用之外被修改：</p>
+                  <p style={{ fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
+                    {r.file_path}
+                  </p>
+                  <p style={{ marginTop: 8 }}>选择"覆盖外部"会用本应用里的内容覆盖磁盘文件；选"取消"则保留外部修改，本应用的修改仅停留在数据库里。</p>
+                </div>
+              ),
+              okText: "覆盖外部",
+              okButtonProps: { danger: true },
+              cancelText: "取消",
+              onOk: async () => {
+                try {
+                  await sourceWritebackApi.writeBack(noteId, true);
+                  message.success("已覆盖原文件");
+                } catch (err) {
+                  message.error(`写回失败: ${err}`);
+                }
+              },
+            });
+          } else if (r.kind === "missing") {
+            notification.warning({
+              message: "原文件已不可访问",
+              description: "本应用与外部 .md 的双向同步暂时中断，但你的修改已保存到本地数据库。",
+              duration: 6,
+            });
+          } else if (r.kind === "ok" && r.assets_copied > 0 && !silent) {
+            message.info(`已同步原文件，新插入 ${r.assets_copied} 个图片复制到旁侧 .assets/`);
+          }
+        } catch (err) {
+          // 写回失败不阻塞保存主流程，只静默记日志
+          console.warn("[writeback] failed:", err);
+        }
+      }
     } catch (e) {
       message.error(String(e));
     } finally {
@@ -887,17 +931,32 @@ export default function NoteEditorPage() {
   }
 
   async function handleExportNote() {
-    const safeName = title.replace(/[/\\:*?"<>|]/g, "_").trim() || "未命名";
-    const filePath = await save({
-      defaultPath: `${safeName}.md`,
-      filters: [{ name: "Markdown", extensions: ["md"] }],
+    const parentDir = await openDialog({
+      directory: true,
+      title: "选择导出目录",
     });
-    if (!filePath) return;
+    if (!parentDir) return;
     try {
-      const assets = await exportApi.exportSingle(noteId, filePath);
-      message.success(
-        assets > 0 ? `导出成功，附带 ${assets} 个资产文件` : "导出成功"
-      );
+      const result = await exportApi.exportSingle(noteId, parentDir as string);
+      // 通过 Modal.success 给两个明确的后续操作按钮
+      Modal.success({
+        title: "导出成功",
+        content: (
+          <div>
+            <p style={{ marginBottom: 4 }}>
+              {result.assets_copied > 0
+                ? `已导出 .md 与 ${result.assets_copied} 个资产文件，目录：`
+                : "已导出 .md，目录："}
+            </p>
+            <p style={{ fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
+              {result.root_dir}
+            </p>
+          </div>
+        ),
+        okText: "打开所在文件夹",
+        onOk: () => revealItemInDir(result.root_dir).catch(() => {}),
+        closable: true,
+      });
     } catch (e) {
       message.error(`导出失败: ${e}`);
     }
