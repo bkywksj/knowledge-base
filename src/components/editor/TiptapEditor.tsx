@@ -30,11 +30,12 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { useEffect, useRef, useCallback, useState } from "react";
 import { message } from "antd";
 import { theme as antdTheme } from "antd";
-import { attachmentApi, imageApi } from "@/lib/api";
+import { attachmentApi, imageApi, videoApi } from "@/lib/api";
 import { EditorToolbar } from "./EditorToolbar";
 import { AiWriteMenu } from "./AiWriteMenu";
 import { WikiLinkDecoration } from "./WikiLinkDecoration";
 import { WikiLinkSuggestion } from "./WikiLinkSuggestion";
+import { Video as VideoNode } from "./VideoNode";
 import "tippy.js/dist/tippy.css";
 
 const lowlight = createLowlight(common);
@@ -223,6 +224,25 @@ function collectImageFiles(dt: DataTransfer | null | undefined): File[] {
   return collectFiles(dt, (f) => f.type.startsWith("image/"));
 }
 
+/** 视频识别：MIME 或扩展名命中即视为视频 */
+const VIDEO_FILE_EXTS = new Set(["mp4", "webm", "mkv", "mov", "avi", "m4v", "ogv"]);
+function isVideoFile(f: File): boolean {
+  if (f.type.startsWith("video/")) return true;
+  const dot = f.name.lastIndexOf(".");
+  if (dot < 0) return false;
+  return VIDEO_FILE_EXTS.has(f.name.slice(dot + 1).toLowerCase());
+}
+function collectVideoFiles(dt: DataTransfer | null | undefined): File[] {
+  return collectFiles(dt, isVideoFile);
+}
+
+/** 单个视频体积上限（字节）—— 与后端 MAX_BYTES 协同：
+ *  - 粘贴：50MB（剪贴板视频极少见，主要给截屏录像用）
+ *  - 拖入：100MB（IPC binary 通道传 100MB 体感 1~2s 可接受）
+ *  - 超过 → 提示用文件选择器走 saveFromPath（零拷贝） */
+const VIDEO_MAX_PASTE_BYTES = 50 * 1024 * 1024;
+const VIDEO_MAX_DROP_BYTES = 100 * 1024 * 1024;
+
 /** 文本类拖入：.md/.markdown/.txt（按 MIME 或扩展名识别） */
 const TEXT_FILE_EXTS = new Set(["md", "markdown", "txt"]);
 function collectTextFiles(dt: DataTransfer | null | undefined): File[] {
@@ -258,6 +278,7 @@ function collectAttachmentFiles(dt: DataTransfer | null | undefined): {
   const blocked: string[] = [];
   const files = collectFiles(dt, (f) => {
     if (f.type.startsWith("image/")) return false; // 图片走图片分支
+    if (isVideoFile(f)) return false; // 视频走视频分支（内联 <video> 节点）
     const ext = getExt(f.name);
     if (TEXT_FILE_EXTS.has(ext)) return false; // 文本走文本分支
     if (ATTACHMENT_BLOCKED_EXTS.has(ext)) {
@@ -446,6 +467,81 @@ export function TiptapEditor({
   );
 
   /**
+   * 处理粘贴/拖入的视频：Uint8Array 走 binary IPC 直传后端落盘，
+   * 返回 asset URL 后插入自定义 Video 节点（内联 <video controls preload="metadata">）。
+   *
+   * `maxBytesEach` 控制单文件上限（粘贴 50MB / 拖入 100MB），超限提示用工具栏。
+   */
+  const handleVideoFiles = useCallback(
+    async (files: File[], editor: ReturnType<typeof useEditor>, maxBytesEach: number) => {
+      if (!editor || files.length === 0) return;
+
+      let effectiveNoteId = noteId;
+      if (!effectiveNoteId && ensureNoteIdRef.current) {
+        try {
+          effectiveNoteId = await ensureNoteIdRef.current();
+        } catch (e) {
+          message.error(`视频插入失败: ${e}`);
+          return;
+        }
+      }
+      if (!effectiveNoteId) {
+        message.warning("请先保存笔记后再插入视频");
+        return;
+      }
+
+      // 单独筛超大文件 → 一次性提示
+      const ok: File[] = [];
+      const oversized: string[] = [];
+      for (const f of files) {
+        if (f.size > maxBytesEach) {
+          oversized.push(`${f.name} (${humanSize(f.size)})`);
+        } else {
+          ok.push(f);
+        }
+      }
+      if (oversized.length > 0) {
+        message.warning(
+          `${oversized.length} 个视频超过单文件 ${maxBytesEach / 1024 / 1024} MB 上限，请用工具栏的「插入视频」按钮选择文件：${oversized.join("、")}`,
+          6,
+        );
+      }
+      if (ok.length === 0) return;
+
+      const results = await Promise.all(
+        ok.map(async (file) => {
+          try {
+            const buf = await file.arrayBuffer();
+            const filePath = await videoApi.save(
+              effectiveNoteId!,
+              file.name,
+              new Uint8Array(buf),
+            );
+            return { ok: true as const, filePath, name: file.name };
+          } catch (e) {
+            return { ok: false as const, err: String(e), name: file.name };
+          }
+        }),
+      );
+
+      const nodes: { type: string; attrs: { src: string } }[] = [];
+      for (const r of results) {
+        if (r.ok) {
+          nodes.push({
+            type: "video",
+            attrs: { src: convertFileSrc(r.filePath) },
+          });
+        } else {
+          message.error(`视频插入失败(${r.name}): ${r.err}`);
+        }
+      }
+      if (nodes.length === 0) return;
+      editor.chain().focus().insertContent(nodes).run();
+    },
+    [noteId],
+  );
+
+  /**
    * 处理拖入的通用附件：上传到 kb_assets/attachments/<note_id>/ 后，
    * 以普通 markdown 链接插入到光标处 —— 链接文本形如 "📎 filename.pdf (1.2 MB)"，
    * href 是 file:// 绝对路径；点击时由 DOM 级 click handler 拦截并调 opener。
@@ -576,6 +672,7 @@ export function TiptapEditor({
         minWidth: 50,
         maxWidth: 1200,
       }),
+      VideoNode,
       WikiLinkDecoration.configure({
         onClick: (title: string) => wikiClickRef.current?.(title),
       }),
@@ -629,6 +726,12 @@ export function TiptapEditor({
         const types = Array.from(dt?.types ?? []);
         const hasText = types.includes("text/html") || types.includes("text/plain");
         if (!hasText) {
+          // 视频优先于图片：避免 video 文件被某些系统误标为 image MIME
+          const videos = collectVideoFiles(dt);
+          if (videos.length > 0) {
+            handleVideoFiles(videos, editor, VIDEO_MAX_PASTE_BYTES);
+            return true;
+          }
           const images = collectImageFiles(dt);
           if (images.length > 0) {
             handleImageFiles(images, editor);
@@ -638,6 +741,12 @@ export function TiptapEditor({
         return false;
       },
       handleDrop: (_view, event) => {
+        const videos = collectVideoFiles(event.dataTransfer);
+        if (videos.length > 0) {
+          event.preventDefault();
+          handleVideoFiles(videos, editor, VIDEO_MAX_DROP_BYTES);
+          return true;
+        }
         const images = collectImageFiles(event.dataTransfer);
         if (images.length > 0) {
           event.preventDefault();

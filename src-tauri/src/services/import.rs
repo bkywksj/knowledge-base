@@ -364,6 +364,58 @@ impl ImportService {
                         }
                     }
 
+                    // 视频本地引用（与图片同步骤：先本地路径，再外链下载）
+                    match crate::services::import_video_attachments::rewrite_video_paths(
+                        &current_body,
+                        note.id,
+                        &note_dir_for_local,
+                        local_root,
+                        app_data_dir,
+                    ) {
+                        Ok(rewrite) => {
+                            if rewrite.copied > 0 {
+                                attachments_copied += rewrite.copied;
+                            }
+                            for m in rewrite.missing {
+                                attachments_missing
+                                    .push(format!("{}: {}", final_title, m));
+                            }
+                            current_body = rewrite.new_body;
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "[import] 笔记 {} 本地视频重写失败: {}",
+                                note.id, e
+                            );
+                        }
+                    }
+
+                    // 视频外链下载
+                    match crate::services::import_video_attachments::rewrite_external_videos(
+                        &current_body,
+                        note.id,
+                        app_data_dir,
+                    )
+                    .await
+                    {
+                        Ok(rewrite) => {
+                            if rewrite.copied > 0 {
+                                attachments_copied += rewrite.copied;
+                            }
+                            for m in rewrite.missing {
+                                attachments_missing
+                                    .push(format!("{}: {}", final_title, m));
+                            }
+                            current_body = rewrite.new_body;
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "[import] 笔记 {} 外链视频下载失败: {}",
+                                note.id, e
+                            );
+                        }
+                    }
+
                     // 内容真的变了才回写，省一次 DB 写
                     if current_body != input.content {
                         if let Err(e) = db.update_note_content(note.id, &current_body) {
@@ -546,6 +598,27 @@ async fn process_single_md_images(
         all_mappings.extend(rewrite.mappings);
     }
     if let Ok(rewrite) = crate::services::import_attachments::rewrite_external_images(
+        &current,
+        note_id,
+        app_data_dir,
+    )
+    .await
+    {
+        current = rewrite.new_body;
+        all_mappings.extend(rewrite.mappings);
+    }
+    // 视频本地引用 + 外链下载（与图片同序：先本地，再外链）
+    if let Ok(rewrite) = crate::services::import_video_attachments::rewrite_video_paths(
+        &current,
+        note_id,
+        &note_dir,
+        &note_dir,
+        app_data_dir,
+    ) {
+        current = rewrite.new_body;
+        all_mappings.extend(rewrite.mappings);
+    }
+    if let Ok(rewrite) = crate::services::import_video_attachments::rewrite_external_videos(
         &current,
         note_id,
         app_data_dir,

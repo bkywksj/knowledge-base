@@ -26,7 +26,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost https://fonts.gstatic.com data: blob:; connect-src 'self' http://localhost:* https://*; font-src 'self' data:",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost https://fonts.gstatic.com data: blob:; media-src 'self' asset: http://asset.localhost blob:; connect-src 'self' http://localhost:* https://*; font-src 'self' data:",
       "assetProtocol": {
         "enable": true,
         "scope": ["$APPDATA/**"]
