@@ -39,6 +39,20 @@ const PRIORITY_OPTIONS = [
   { value: 2, label: "低" },
 ];
 
+/** 由 priority + important 推导四象限 */
+function quadrantOf(priority?: number | null, important?: boolean | null): {
+  num: 1 | 2 | 3 | 4;
+  label: string;
+  color: string;
+} {
+  const urgent = priority === 0;
+  const imp = !!important;
+  if (urgent && imp) return { num: 1, label: "立即做", color: "#f5222d" };
+  if (!urgent && imp) return { num: 2, label: "计划做", color: "#fa8c16" };
+  if (urgent && !imp) return { num: 3, label: "委派", color: "#1677ff" };
+  return { num: 4, label: "可延后", color: "#8c8c8c" };
+}
+
 function todayStr(): string {
   const d = new Date();
   const y = d.getFullYear();
@@ -361,6 +375,22 @@ function DraftRow({
             }}
           />
           <div className="flex items-center gap-2 flex-wrap text-xs">
+            {(() => {
+              const q = quadrantOf(draft.priority, draft.important);
+              return (
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-semibold"
+                  style={{
+                    background: `${q.color}1a`,
+                    color: q.color,
+                    border: `1px solid ${q.color}33`,
+                  }}
+                  title={`艾森豪威尔四象限 Q${q.num}`}
+                >
+                  Q{q.num} · {q.label}
+                </span>
+              );
+            })()}
             <Select
               size="small"
               value={draft.priority ?? 1}

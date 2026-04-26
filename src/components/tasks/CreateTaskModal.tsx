@@ -12,12 +12,14 @@ import {
   Select,
   App as AntdApp,
   Space,
+  Typography,
   theme as antdTheme,
 } from "antd";
 import type { MenuProps, RefSelectProps } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
 import { Plus, NotebookText, Folder as FolderIcon, File as FileIcon, Link as LinkIcon } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { useNavigate } from "react-router-dom";
 import { taskApi, noteApi, configApi } from "@/lib/api";
 import { relativeTime } from "@/lib/utils";
 import type {
@@ -39,6 +41,8 @@ interface Props {
   editing?: Task | null;
   /** 新建时预设紧急度（看板某列 + 号传进来） */
   presetPriority?: TaskPriority;
+  /** 新建时预设"重要"标记（四象限视图 + 号传进来） */
+  presetImportant?: boolean;
   /** 新建时预设截止日期 YYYY-MM-DD（日历双击格子传进来） */
   presetDueDate?: string;
   onClose: () => void;
@@ -49,20 +53,26 @@ export function CreateTaskModal({
   open,
   editing,
   presetPriority,
+  presetImportant,
   presetDueDate,
   onClose,
   onSaved,
 }: Props) {
   const { message } = AntdApp.useApp();
   const { token } = antdTheme.useToken();
+  const navigate = useNavigate();
+
+  /** 跳到设置页对应区块（默认提醒时刻），关闭当前弹窗 */
+  function handleGoSettingsTaskReminder() {
+    onClose();
+    navigate("/settings", { state: { scrollTo: "settings-task-reminder" } });
+  }
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<TaskPriority>(1);
   const [important, setImportant] = useState(false);
   const [dueDate, setDueDate] = useState<Dayjs | null>(null);
-  /** 是否"全天"——true 时不展示时间选择器，写 DB 时只存 YYYY-MM-DD */
-  const [allDay, setAllDay] = useState(true);
   /** 提前多少分钟提醒；null=不提醒；0=准时 */
   const [remindBefore, setRemindBefore] = useState<number | null>(null);
   const [links, setLinks] = useState<TaskLinkInput[]>([]);
@@ -78,33 +88,34 @@ export function CreateTaskModal({
   const [repeatCount, setRepeatCount] = useState<number>(10);
   const [urlInputOpen, setUrlInputOpen] = useState(false);
   const [urlInput, setUrlInput] = useState("");
-  /** 全天任务的提醒基准时刻（从 app_config.all_day_reminder_time 读，默认 09:00） */
-  const [allDayBaseTime, setAllDayBaseTime] = useState("09:00");
+  /** 选日期时用于填充的默认时分（从 app_config.all_day_reminder_time 读，默认 09:00） */
+  const [defaultTime, setDefaultTime] = useState("09:00");
 
-  // 打开弹窗时拉一次基准时刻，用于实时预览
+  // 组件首次挂载时拉一次默认时分；早于用户打开弹窗加载，避免首屏跳变
   useEffect(() => {
-    if (!open) return;
     configApi
       .get("all_day_reminder_time")
       .then((v) => {
-        if (v && /^\d{2}:\d{2}/.test(v)) setAllDayBaseTime(v.slice(0, 5));
+        if (v && /^\d{2}:\d{2}/.test(v)) setDefaultTime(v.slice(0, 5));
       })
       .catch(() => {});
-  }, [open]);
+  }, []);
 
-  /** 算出任务实际提醒时刻：基准时间 - remindBefore 分钟 */
+  /** 算出任务实际提醒时刻：截止时间 - remindBefore 分钟 */
   const reminderAt = useMemo<Dayjs | null>(() => {
     if (!dueDate || remindBefore === null) return null;
-    if (allDay) {
-      const [h, m] = allDayBaseTime.split(":").map(Number);
-      return dueDate
-        .hour(h ?? 9)
-        .minute(m ?? 0)
-        .second(0)
-        .subtract(remindBefore, "minute");
-    }
     return dueDate.second(0).subtract(remindBefore, "minute");
-  }, [dueDate, remindBefore, allDay, allDayBaseTime]);
+  }, [dueDate, remindBefore]);
+
+  /** 切日期时，若已有 dueDate 则保留时分，否则用 defaultTime */
+  function applyDate(target: Dayjs): Dayjs {
+    const [h, m] = defaultTime.split(":").map(Number);
+    return target
+      .hour(dueDate?.hour() ?? h ?? 9)
+      .minute(dueDate?.minute() ?? m ?? 0)
+      .second(0)
+      .millisecond(0);
+  }
 
   // 笔记选择器状态（原地下拉）
   const [notePickerOpen, setNotePickerOpen] = useState(false);
@@ -123,9 +134,17 @@ export function CreateTaskModal({
       setDescription(editing.description ?? "");
       setPriority(editing.priority);
       setImportant(editing.important);
-      setDueDate(editing.due_date ? dayjs(editing.due_date) : null);
-      // due_date 长度 > 10（"YYYY-MM-DD" 是 10 位）说明带时分
-      setAllDay(!editing.due_date || editing.due_date.length <= 10);
+      // 旧数据若长度 = 10（仅日期），自动补默认时分以满足"始终带时间"
+      if (editing.due_date) {
+        let d = dayjs(editing.due_date);
+        if (editing.due_date.length <= 10) {
+          const [h, m] = defaultTime.split(":").map(Number);
+          d = d.hour(h ?? 9).minute(m ?? 0).second(0);
+        }
+        setDueDate(d);
+      } else {
+        setDueDate(null);
+      }
       setRemindBefore(editing.remind_before_minutes);
       setLinks(
         editing.links.map((l) => ({
@@ -158,9 +177,13 @@ export function CreateTaskModal({
       setTitle("");
       setDescription("");
       setPriority(presetPriority ?? 1);
-      setImportant(false);
-      setDueDate(presetDueDate ? dayjs(presetDueDate) : null);
-      setAllDay(true);
+      setImportant(presetImportant ?? false);
+      if (presetDueDate) {
+        const [h, m] = defaultTime.split(":").map(Number);
+        setDueDate(dayjs(presetDueDate).hour(h ?? 9).minute(m ?? 0).second(0));
+      } else {
+        setDueDate(null);
+      }
       setRemindBefore(null);
       setLinks([]);
       // 循环默认清零
@@ -178,7 +201,7 @@ export function CreateTaskModal({
     setNotePickerOpen(false);
     setNoteQuery("");
     setNoteOptions([]);
-  }, [open, editing, presetPriority, presetDueDate]);
+  }, [open, editing, presetPriority, presetImportant, presetDueDate]);
 
   /** 拉候选笔记：keyword 空 → 最近 8 条，非空 → 模糊搜前 10 条 */
   const loadNoteCandidates = useCallback(async (keyword: string) => {
@@ -284,11 +307,7 @@ export function CreateTaskModal({
     }
     setSaving(true);
     try {
-      const dueStr = dueDate
-        ? allDay
-          ? dueDate.format("YYYY-MM-DD")
-          : dueDate.format("YYYY-MM-DD HH:mm:ss")
-        : null;
+      const dueStr = dueDate ? dueDate.format("YYYY-MM-DD HH:mm:ss") : null;
       const repeatPayload = buildRepeatPayload({
         mode: repeatMode,
         unit: customUnit,
@@ -371,6 +390,7 @@ export function CreateTaskModal({
       onCancel={onClose}
       width={520}
       destroyOnHidden
+      styles={{ body: { maxHeight: "65vh", overflowY: "auto", paddingRight: 12 } }}
       footer={
         <div className="flex items-center justify-between">
           <Checkbox
@@ -475,28 +495,17 @@ export function CreateTaskModal({
           <div className="flex items-center gap-2 flex-wrap">
             <DatePicker
               value={dueDate}
-              onChange={(v) => {
-                // 切日期时：若之前没选过时间（allDay），保留默认；否则保留已选时分
-                if (!v) setDueDate(null);
-                else if (allDay) setDueDate(v.startOf("day"));
-                else
-                  setDueDate(
-                    v
-                      .hour(dueDate?.hour() ?? 9)
-                      .minute(dueDate?.minute() ?? 0)
-                      .second(0),
-                  );
-              }}
+              onChange={(v) => setDueDate(v ? applyDate(v) : null)}
               format="YYYY-MM-DD"
               placeholder="选择日期"
               style={{ flex: 1, minWidth: 160 }}
             />
-            <Button size="small" onClick={() => setDueDate(dayjs().startOf("day"))}>
+            <Button size="small" onClick={() => setDueDate(applyDate(dayjs()))}>
               今天
             </Button>
             <Button
               size="small"
-              onClick={() => setDueDate(dayjs().add(1, "day").startOf("day"))}
+              onClick={() => setDueDate(applyDate(dayjs().add(1, "day")))}
             >
               明天
             </Button>
@@ -504,10 +513,11 @@ export function CreateTaskModal({
               size="small"
               onClick={() =>
                 setDueDate(
-                  (dayjs().day(6).isBefore(dayjs())
-                    ? dayjs().day(6).add(7, "day")
-                    : dayjs().day(6)
-                  ).startOf("day"),
+                  applyDate(
+                    dayjs().day(6).isBefore(dayjs())
+                      ? dayjs().day(6).add(7, "day")
+                      : dayjs().day(6),
+                  ),
                 )
               }
             >
@@ -519,25 +529,12 @@ export function CreateTaskModal({
               </Button>
             )}
           </div>
-          {/* 全天 / 具体时间 */}
-          <div className="flex items-center gap-2 flex-wrap mt-2">
-            <Checkbox
-              checked={allDay}
-              disabled={!dueDate}
-              onChange={(e) => {
-                const checked = e.target.checked;
-                setAllDay(checked);
-                if (checked && dueDate) {
-                  setDueDate(dueDate.startOf("day"));
-                } else if (!checked && dueDate) {
-                  // 切到具体时间：默认填今天 09:00
-                  setDueDate(dueDate.hour(9).minute(0).second(0));
-                }
-              }}
-            >
-              <span className="text-xs">全天</span>
-            </Checkbox>
-            {!allDay && dueDate && (
+          {/* 时间选择器：始终显示，默认填充设置中的"默认提醒时刻" */}
+          {dueDate && (
+            <div className="flex items-center gap-2 flex-wrap mt-2">
+              <span className="text-xs" style={{ color: token.colorTextSecondary }}>
+                时间
+              </span>
               <DatePicker
                 picker="time"
                 value={dueDate}
@@ -547,8 +544,18 @@ export function CreateTaskModal({
                 allowClear={false}
                 style={{ width: 120 }}
               />
-            )}
-          </div>
+              <span className="text-[11px]" style={{ color: token.colorTextTertiary }}>
+                默认 {defaultTime}（
+                <Typography.Link
+                  onClick={handleGoSettingsTaskReminder}
+                  style={{ fontSize: 11 }}
+                >
+                  去设置中修改
+                </Typography.Link>
+                ）
+              </span>
+            </div>
+          )}
         </div>
 
         {/* 提醒 */}
@@ -580,11 +587,6 @@ export function CreateTaskModal({
                 </span>
               ) : (
                 <>将于 <strong style={{ color: token.colorText }}>{formatReminderAt(reminderAt)}</strong> 提醒</>
-              )}
-              {allDay && (
-                <span className="ml-1">
-                  · 全天基准 {allDayBaseTime}（可在设置中修改）
-                </span>
               )}
             </div>
           )}
