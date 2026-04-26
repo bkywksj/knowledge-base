@@ -308,6 +308,61 @@ pub async fn ai_draft_note(
         .map_err(|e| e.to_string())
 }
 
+/// 获取或创建笔记的"伴生 AI 对话"
+///
+/// 编辑器右侧抽屉用：每篇笔记有一条专属对话，懒创建（首次开抽屉才建）。
+/// 如果对话还在 → 直接返回；如果对话被删了 / 没建过 → 新建并挂载本笔记。
+///
+/// 流程：
+///   1. 读 notes.companion_conversation_id
+///   2. 若有 → 验证对话还存在；存在直接返回，不存在置 None 走步骤 3
+///   3. 没有 → 用默认模型建对话 + setAttachedNotes([note_id]) + 写回 notes 表
+#[tauri::command]
+pub fn get_or_create_companion_conversation(
+    state: State<'_, AppState>,
+    note_id: i64,
+) -> Result<AiConversation, String> {
+    let db = &state.db;
+
+    // 1) 看现有的还在不在
+    let existing = db
+        .get_note_companion_conversation(note_id)
+        .map_err(|e| e.to_string())?;
+    if let Some(conv_id) = existing {
+        if let Ok(conv) = db.get_ai_conversation(conv_id) {
+            return Ok(conv);
+        }
+        // 对话被删了：解除关联，下面重建
+        let _ = db.set_note_companion_conversation(note_id, None);
+    }
+
+    // 2) 没有就建一条新对话，标题取笔记当前标题
+    let note = db
+        .get_note(note_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("笔记 {} 不存在", note_id))?;
+    let title = if note.title.trim().is_empty() {
+        format!("笔记 #{}", note_id)
+    } else {
+        note.title.chars().take(40).collect::<String>()
+    };
+    let default_model = db
+        .get_default_ai_model()
+        .map_err(|e| e.to_string())?;
+    let conv = db
+        .create_ai_conversation(&title, default_model.id)
+        .map_err(|e| e.to_string())?;
+    // 自动把本笔记挂上去作为附加上下文
+    db.set_conversation_attached_notes(conv.id, &[note_id])
+        .map_err(|e| e.to_string())?;
+    // 关联回笔记
+    db.set_note_companion_conversation(note_id, Some(conv.id))
+        .map_err(|e| e.to_string())?;
+
+    // 重新拉一次拿带 attached_note_ids 的最新版本
+    db.get_ai_conversation(conv.id).map_err(|e| e.to_string())
+}
+
 /// B 方向：把整个 AI 对话归档为一篇笔记
 ///
 /// 对话内所有消息按用户/AI 顺序拼成 markdown，落库到 `notes` 表，

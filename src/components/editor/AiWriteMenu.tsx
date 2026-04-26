@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import type { Editor } from "@tiptap/react";
 import { Button, Tooltip, theme as antdTheme } from "antd";
 import {
@@ -21,6 +21,12 @@ import type { PromptOutputMode, PromptTemplate } from "@/types";
 
 interface AiWriteMenuProps {
   editor: Editor;
+  /**
+   * 选中文本时浮起按钮行的「leading 按钮」回调（即「问 AI 这段」）。
+   * 不传时不渲染该按钮；按钮跟着同一个浮动菜单出现，不会和右侧续写/总结/改写
+   * 等工具按钮重叠。点击时携带选中纯文本作为参数；调用方负责打开抽屉 / 预填问题。
+   */
+  onAskAi?: (selectedText: string) => void;
 }
 
 // Lucide 图标名 → React 元素工厂，保持和管理页"图标名"字段一致
@@ -40,7 +46,7 @@ function renderIcon(name: string | null, size: number): React.ReactNode {
   return <Wand2 size={size} />; // 用户自定义没填图标时的默认占位
 }
 
-export function AiWriteMenu({ editor }: AiWriteMenuProps) {
+export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
   const { token } = antdTheme.useToken();
   const [visible, setVisible] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
@@ -54,6 +60,11 @@ export function AiWriteMenu({ editor }: AiWriteMenuProps) {
   const [promptsLoaded, setPromptsLoaded] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const unlistenRefs = useRef<UnlistenFn[]>([]);
+  // 最近一次 mouseup 的坐标（拖选完毕时记下来，让 AI 菜单贴在鼠标附近而不是
+  // 跑到选区末尾——长选区末尾常常在视口外）
+  const mouseUpPosRef = useRef<{ x: number; y: number; ts: number } | null>(
+    null,
+  );
 
   // 首次挂载时拉一次提示词；管理页增删后由用户重新选中触发刷新（下面 selectionUpdate 里刷）。
   // 不做全局事件订阅：管理页和编辑器通常不同时打开，多拉一次成本可以忽略。
@@ -74,6 +85,16 @@ export function AiWriteMenu({ editor }: AiWriteMenuProps) {
 
   // 监听编辑器选区变化，显示/隐藏菜单
   useEffect(() => {
+    const dom = editor.view.dom as HTMLElement;
+    const onMouseUp = (e: MouseEvent) => {
+      mouseUpPosRef.current = {
+        x: e.clientX,
+        y: e.clientY,
+        ts: Date.now(),
+      };
+    };
+    dom.addEventListener("mouseup", onMouseUp);
+
     function handleSelectionUpdate() {
       const { from, to } = editor.state.selection;
       if (from === to) {
@@ -91,16 +112,47 @@ export function AiWriteMenu({ editor }: AiWriteMenuProps) {
 
       setSelectedText(text);
 
-      // 计算菜单位置（基于选区末尾的 DOM 坐标）
+      // 计算菜单位置：
+      //   1) 鼠标拖选 → 紧贴 mouseup 位置（最贴近用户视线）
+      //   2) 键盘选（Ctrl+A、Shift+方向）或 mouseup 已过期 → 兜底用选区末尾坐标
       const view = editor.view;
-      const coords = view.coordsAtPos(to);
-      const editorRect = view.dom.closest(".tiptap-wrapper")?.getBoundingClientRect();
-      if (editorRect) {
-        setPosition({
-          top: coords.bottom - editorRect.top + 6,
-          left: coords.left - editorRect.left,
-        });
+      const wrapper = view.dom.closest(".tiptap-wrapper") as HTMLElement | null;
+      if (!wrapper) return;
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const mp = mouseUpPosRef.current;
+      const useMouse = mp && Date.now() - mp.ts < 400;
+      let top: number;
+      let left: number;
+      if (useMouse && mp) {
+        top = mp.y - wrapperRect.top + 8;
+        left = mp.x - wrapperRect.left + 8;
+      } else {
+        // 键盘选兜底：起点在视口里用起点；起点不行用终点；
+        // 全选/跨视口的极端情况两端都不在视口 → 锚点放在视口中央
+        const fromCoords = view.coordsAtPos(from);
+        const toCoords = view.coordsAtPos(to);
+        const vh = window.innerHeight;
+        const inViewport = (y: number) => y >= 0 && y <= vh - 60;
+        let anchorTop: number;
+        let anchorLeft: number;
+        if (inViewport(fromCoords.top)) {
+          anchorTop = fromCoords.bottom;
+          anchorLeft = fromCoords.left;
+        } else if (inViewport(toCoords.top)) {
+          anchorTop = toCoords.bottom;
+          anchorLeft = toCoords.left;
+        } else {
+          anchorTop = vh / 2;
+          anchorLeft = wrapperRect.left + 80;
+        }
+        top = anchorTop - wrapperRect.top + 6;
+        left = anchorLeft - wrapperRect.left;
       }
+      // 初次定位：先按 wrapper 宽度兜底 clamp（菜单实际宽度待渲染后由 useLayoutEffect 二次修正）
+      const wrapperH = wrapper.clientHeight;
+      left = Math.max(0, left);
+      top = Math.max(0, Math.min(wrapperH - 60, top));
+      setPosition({ top, left });
 
       if (!streaming) {
         setResult("");
@@ -112,8 +164,25 @@ export function AiWriteMenu({ editor }: AiWriteMenuProps) {
     editor.on("selectionUpdate", handleSelectionUpdate);
     return () => {
       editor.off("selectionUpdate", handleSelectionUpdate);
+      dom.removeEventListener("mouseup", onMouseUp);
     };
   }, [editor, streaming]);
+
+  // 渲染后用菜单**实际宽度**修正 left：保证整条按钮行单行显示，不被右边界挤换行
+  // useLayoutEffect 在浏览器 paint 前同步执行，避免用户看到先错位再修正的闪烁
+  useLayoutEffect(() => {
+    if (!visible || !menuRef.current) return;
+    const wrapper = (editor.view.dom as HTMLElement).closest(
+      ".tiptap-wrapper",
+    ) as HTMLElement | null;
+    if (!wrapper) return;
+    const wrapperW = wrapper.clientWidth;
+    const menuW = menuRef.current.offsetWidth;
+    const maxLeft = Math.max(0, wrapperW - menuW - 8);
+    if (position.left > maxLeft) {
+      setPosition((p) => ({ ...p, left: maxLeft }));
+    }
+  }, [visible, position.left, editor]);
 
   // 点击外部关闭
   useEffect(() => {
@@ -238,24 +307,58 @@ export function AiWriteMenu({ editor }: AiWriteMenuProps) {
       className="absolute z-50"
       style={{
         top: position.top,
-        left: Math.max(0, position.left - 100),
+        left: position.left,
       }}
     >
-      {/* AI 操作按钮行 */}
+      {/* AI 操作按钮行 — 强制单行（nowrap），右边界由 useLayoutEffect 反向 clamp left
+          保证菜单永远完整显示在 wrapper 内，鼠标在哪都不会换行 */}
       {!result && !streaming && (
         <div
-          className="flex items-center gap-0.5 px-1.5 py-1 rounded-lg shadow-lg"
+          className="flex items-center gap-1 px-1.5 py-1 rounded-lg shadow-lg"
           style={{
             background: token.colorBgElevated,
             border: `1px solid ${token.colorBorderSecondary}`,
-            maxWidth: 560,
-            flexWrap: "wrap",
+            flexWrap: "nowrap",
+            whiteSpace: "nowrap",
           }}
         >
-          <Sparkles
-            size={13}
-            style={{ color: token.colorPrimary, marginRight: 4 }}
-          />
+          {/* leading：问 AI 这段（蓝色 CTA，与右侧轻量工具按钮做视觉区分） */}
+          {onAskAi && (
+            <>
+              <button
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap"
+                style={{
+                  background: token.colorPrimary,
+                  color: "#fff",
+                  border: "none",
+                  cursor: "pointer",
+                }}
+                onMouseDown={(e) => {
+                  // mousedown 先于 blur，避免点击瞬间菜单消失
+                  e.preventDefault();
+                  onAskAi(selectedText);
+                }}
+              >
+                🤖 问 AI 这段
+              </button>
+              {/* 主 CTA 和工具按钮之间的细分隔线，比图标更克制 */}
+              <span
+                style={{
+                  width: 1,
+                  height: 18,
+                  background: token.colorBorderSecondary,
+                  margin: "0 4px",
+                }}
+              />
+            </>
+          )}
+          {/* 没有 onAskAi 时（独立用 AiWriteMenu 的场景）保留原来的 ✨ 前缀 */}
+          {!onAskAi && (
+            <Sparkles
+              size={13}
+              style={{ color: token.colorPrimary, marginRight: 4 }}
+            />
+          )}
           {prompts.length === 0 && promptsLoaded && (
             <span
               style={{

@@ -331,6 +331,12 @@ interface TiptapEditorProps {
   ensureNoteId?: () => Promise<number>;
   /** Ctrl/Cmd + 点击 [[标题]] 时触发（编辑器内 wiki 链接跳转） */
   onWikiLinkClick?: (title: string) => void;
+  /**
+   * 选中文本后浮起的「问 AI」按钮回调。
+   * 传入选中的纯文本，调用方负责弹抽屉 / 预填问题。
+   * 不传则不显示该按钮。
+   */
+  onAskAi?: (selectedText: string) => void;
 }
 
 export function TiptapEditor({
@@ -340,6 +346,7 @@ export function TiptapEditor({
   noteId,
   ensureNoteId,
   onWikiLinkClick,
+  onAskAi,
 }: TiptapEditorProps) {
   const isExternalUpdate = useRef(false);
 
@@ -747,7 +754,10 @@ export function TiptapEditor({
     <div className="tiptap-wrapper" style={{ position: "relative" }}>
       <EditorToolbar editor={editor} noteId={noteId} ensureNoteId={ensureNoteId} />
       <EditorContent editor={editor} className="tiptap-content" />
-      <AiWriteMenu editor={editor} />
+      {/* 「问 AI 这段」与续写/总结/改写等工具按钮共享同一个浮动菜单：
+          AiWriteMenu 接 onAskAi prop 后会在按钮行最前面渲染蓝色 CTA，
+          整个菜单跟随鼠标位置出现，零重叠，无需独立定位逻辑 */}
+      <AiWriteMenu editor={editor} onAskAi={onAskAi} />
       <div
         className="flex items-center gap-4 px-3 pt-4 pb-3 text-xs"
         style={{ color: token.colorTextTertiary }}

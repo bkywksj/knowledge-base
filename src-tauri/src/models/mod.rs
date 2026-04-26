@@ -82,6 +82,9 @@ pub struct NoteQuery {
     pub keyword: Option<String>,
     pub page: Option<usize>,
     pub page_size: Option<usize>,
+    /// true 时只返回 folder_id IS NULL 的笔记（"未分类"虚拟文件夹）。
+    /// 与 folder_id 互斥（同时传 folder_id 优先生效）。
+    pub uncategorized: Option<bool>,
 }
 
 // ─── 文件夹 ───────────────────────────────────

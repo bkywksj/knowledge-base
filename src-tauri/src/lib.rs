@@ -622,6 +622,7 @@ pub fn run() {
             commands::ai::ai_draft_note,
             commands::ai::set_ai_conversation_attached_notes,
             commands::ai::archive_ai_conversation_to_note,
+            commands::ai::get_or_create_companion_conversation,
             // 提示词库模块
             commands::prompt::list_prompts,
             commands::prompt::get_prompt,

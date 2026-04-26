@@ -142,12 +142,16 @@ impl Database {
     }
 
     /// 查询笔记列表（分页 + 可选 folder_id 和 keyword 过滤）
+    ///
+    /// `uncategorized=true` 时只返回 folder_id IS NULL 的笔记（"未分类"虚拟文件夹）；
+    /// 与 `folder_id` 互斥，同时传 `folder_id` 优先生效。
     pub fn list_notes(
         &self,
         folder_id: Option<i64>,
         keyword: Option<&str>,
         page: usize,
         page_size: usize,
+        uncategorized: bool,
     ) -> Result<(Vec<Note>, usize), AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
 
@@ -159,6 +163,9 @@ impl Database {
         if let Some(fid) = folder_id {
             conditions.push(format!("folder_id = ?{}", param_values.len() + 1));
             param_values.push(Box::new(fid));
+        } else if uncategorized {
+            // 未分类虚拟文件夹：folder_id 为 NULL 的笔记
+            conditions.push("folder_id IS NULL".to_string());
         }
 
         if let Some(kw) = keyword {
@@ -740,6 +747,42 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
         let affected = conn.execute(
             "UPDATE notes SET from_ai_conversation_id = ?1 WHERE id = ?2",
+            params![conversation_id, note_id],
+        )?;
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("笔记 {} 不存在", note_id)));
+        }
+        Ok(())
+    }
+
+    /// 读笔记的伴生 AI 对话 ID（编辑器右侧抽屉用）
+    ///
+    /// 返回 None 时调用方应负责创建一条新对话，再 set_note_companion_conversation 写回。
+    pub fn get_note_companion_conversation(
+        &self,
+        note_id: i64,
+    ) -> Result<Option<i64>, AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let result: Option<i64> = conn
+            .query_row(
+                "SELECT companion_conversation_id FROM notes WHERE id = ?1",
+                [note_id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .ok()
+            .flatten();
+        Ok(result)
+    }
+
+    /// 关联笔记的伴生 AI 对话 ID（None 解除）
+    pub fn set_note_companion_conversation(
+        &self,
+        note_id: i64,
+        conversation_id: Option<i64>,
+    ) -> Result<(), AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let affected = conn.execute(
+            "UPDATE notes SET companion_conversation_id = ?1 WHERE id = ?2",
             params![conversation_id, note_id],
         )?;
         if affected == 0 {

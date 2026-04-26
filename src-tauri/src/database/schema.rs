@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 25;
+pub const SCHEMA_VERSION: i32 = 26;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -55,6 +55,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             22 => migrate_v22_to_v23(conn)?,
             23 => migrate_v23_to_v24(conn)?,
             24 => migrate_v24_to_v25(conn)?,
+            25 => migrate_v25_to_v26(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -1026,5 +1027,28 @@ fn migrate_v24_to_v25(conn: &Connection) -> Result<(), AppError> {
     )?;
 
     set_version(conn, 25)?;
+    Ok(())
+}
+
+/// v25 -> v26: 笔记伴生 AI 对话
+///
+/// `companion_conversation_id` 给"在编辑器右侧抽屉里问 AI"功能用：
+/// 每篇笔记懒创建一个独立 AI 对话，下次打开同笔记自动复用对话历史。
+/// 删除笔记时如果对话还在，对话不会被强制删（用户可能想保留聊天记录），
+/// 这里 ON DELETE SET NULL 让对话自由存在。
+fn migrate_v25_to_v26(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v25 -> v26");
+    conn.execute_batch(
+        r#"
+        ALTER TABLE notes
+            ADD COLUMN companion_conversation_id INTEGER
+            REFERENCES ai_conversations(id) ON DELETE SET NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_notes_companion_conv
+            ON notes(companion_conversation_id)
+            WHERE companion_conversation_id IS NOT NULL;
+        "#,
+    )?;
+    set_version(conn, 26)?;
     Ok(())
 }

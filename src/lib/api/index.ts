@@ -339,6 +339,12 @@ export const aiChatApi = {
       title,
       folderId,
     }),
+  /**
+   * 取得 / 懒建笔记的伴生 AI 对话（给编辑器右侧抽屉用）。
+   * 每篇笔记一条专属对话，自动挂当前笔记为附加上下文；对话被删后重新调会重建。
+   */
+  getOrCreateCompanionConversation: (noteId: number) =>
+    invoke<AiConversation>("get_or_create_companion_conversation", { noteId }),
 };
 
 /** 导入 API */

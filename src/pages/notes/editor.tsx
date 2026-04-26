@@ -19,7 +19,7 @@ import {
   App as AntdApp,
   theme as antdTheme,
 } from "antd";
-import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, Bot } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, MessageSquare } from "lucide-react";
 import { useAppStore } from "@/store";
 import { useTabsStore } from "@/store/tabs";
 import { noteApi, tagApi, folderApi, linkApi, exportApi, sourceFileApi, vaultApi } from "@/lib/api";
@@ -30,7 +30,7 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { relativeTime, stripHtml } from "@/lib/utils";
 import { TiptapEditor } from "@/components/editor";
 import { TagColorPicker } from "@/components/TagColorPicker";
-import { startAiChatWithNotes } from "@/lib/aiAttach";
+import { NoteAiDrawer } from "@/components/ai/NoteAiDrawer";
 import type { Note, Tag, Folder, NoteLink } from "@/types";
 
 const { Text } = Typography;
@@ -470,6 +470,11 @@ export default function NoteEditorPage() {
   const [disambigOpen, setDisambigOpen] = useState(false);
   const [disambigItems, setDisambigItems] = useState<Note[]>([]);
   const [disambigTitle, setDisambigTitle] = useState("");
+
+  // 右侧 AI 抽屉（方案 A：编辑笔记时不离页问 AI；伴生对话存到 ai_conversations）
+  const [aiDrawerOpen, setAiDrawerOpen] = useState(false);
+  // 选段触发（方案 C）：携带的选中文本，抽屉里展示为引用 chip 而不是塞输入框
+  const [aiSelection, setAiSelection] = useState<string | undefined>(undefined);
 
   // PDF 预览 Modal 状态
   const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
@@ -1121,17 +1126,14 @@ export default function NoteEditorPage() {
               onClick={handleExportNote}
             />
           </Tooltip>
-          <Tooltip title="把本笔记作为上下文发起 AI 会话">
+          <Tooltip title="问 AI">
             <Button
-              icon={<Bot size={16} />}
+              icon={<MessageSquare size={16} />}
               onClick={async () => {
                 // 先确保未保存内容已落库，否则 AI 拿到的还是老正文
                 if (dirty) await handleSave(true);
-                try {
-                  await startAiChatWithNotes([noteId], note?.title, navigate);
-                } catch (e) {
-                  message.error(`发起 AI 会话失败: ${e}`);
-                }
+                setAiSelection(undefined);
+                setAiDrawerOpen(true);
               }}
             />
           </Tooltip>
@@ -1176,6 +1178,11 @@ export default function NoteEditorPage() {
             placeholder="开始写点什么..."
             noteId={noteId}
             onWikiLinkClick={handleWikiLinkClick}
+            onAskAi={(selected) => {
+              // 选段触发 → 选段挂到抽屉的"引用 chip"，输入框留空给用户写问题
+              setAiSelection(selected);
+              setAiDrawerOpen(true);
+            }}
           />
 
           {/* 反向链接 */}
@@ -1303,6 +1310,13 @@ export default function NoteEditorPage() {
           )}
         />
       </Modal>
+
+      <NoteAiDrawer
+        noteId={noteId}
+        open={aiDrawerOpen}
+        onClose={() => setAiDrawerOpen(false)}
+        pendingSelection={aiSelection}
+      />
 
       <VaultModal
         open={vaultModal.open}
