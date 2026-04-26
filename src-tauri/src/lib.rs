@@ -17,6 +17,11 @@ use tauri::{Emitter, Manager, WindowEvent};
 const IDENTIFIER: &str = "com.agilefr.kb";
 /// .md 文件投递文件名（默认实例的轮询 watcher 监听此文件）
 const DELIVER_FILE: &str = "deliver-md.txt";
+/// 「允许多开实例」flag 文件名。
+/// 存在 = 允许多开；缺失 = 不允许（默认）。
+/// 故意用文件存在与否而不是文件内容：避免在 Tauri Builder 启动前还得读 SQLite / JSON
+/// 这种重设施。`Path::exists()` 本身就是原子查询。
+const MULTI_INSTANCE_FLAG: &str = "multi_instance.enabled";
 
 // ───────── 多开实例支持 ─────────
 
@@ -175,14 +180,56 @@ fn deliver_md_to_default(app_data_dir: &Path, md_paths: &[String]) -> std::io::R
     Ok(())
 }
 
-/// 默认实例的 .md 投递监听线程：轮询 deliver 文件 mtime，
-/// 检测到变化即读取所有路径并 emit `open-md-file` 事件给前端
+/// 仅写一个空行到投递文件，触发已运行实例的 watcher 唤起主窗。
+/// 用于"不允许多开"模式下，第二个进程退出前把焦点让给已运行的实例。
+fn ping_default_to_focus(app_data_dir: &Path) -> std::io::Result<()> {
+    use std::io::Write;
+    let path = app_data_dir.join(DELIVER_FILE);
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    writeln!(f)?; // 空行 → mtime 变化 → watcher 唤起窗口
+    Ok(())
+}
+
+/// 检查是否允许多开实例（flag 文件存在即允许）。
+/// 注意：必须在 Tauri Builder 启动前能跑，所以走 `early_app_data_dir` 估算路径，
+/// 不依赖 AppHandle / State。
+pub(crate) fn is_multi_instance_enabled(framework_app_data_dir: &Path) -> bool {
+    framework_app_data_dir.join(MULTI_INSTANCE_FLAG).exists()
+}
+
+/// 写/删 flag 文件，下一次启动生效。
+pub(crate) fn set_multi_instance_enabled(
+    framework_app_data_dir: &Path,
+    enabled: bool,
+) -> std::io::Result<()> {
+    let path = framework_app_data_dir.join(MULTI_INSTANCE_FLAG);
+    if enabled {
+        std::fs::create_dir_all(framework_app_data_dir)?;
+        std::fs::write(&path, b"")?;
+    } else if path.exists() {
+        std::fs::remove_file(&path)?;
+    }
+    Ok(())
+}
+
+/// 默认实例的投递监听线程：轮询 deliver 文件 mtime。
+/// 检测到 mtime 变化即唤起主窗（前置 + 取消最小化），如果文件里有 .md 路径
+/// 则同时 emit `open-md-file` 事件。
+///
+/// 「不允许多开」时，第二个进程会用 `ping_default_to_focus` 写空行触发这个唤起 ——
+/// 所以即使没有 .md 内容也要把窗口前置。
 fn start_md_deliver_watcher(handle: tauri::AppHandle, app_data_dir: PathBuf) {
     tauri::async_runtime::spawn(async move {
         let path = app_data_dir.join(DELIVER_FILE);
-        // 启动时清空，避免上次残留被误处理
+        // 启动时清空文件，避免上次残留被误处理；
+        // baseline mtime 取清空后的值，防止首轮把"自己刚清空"误认成"有人投递"造成自唤起。
         let _ = std::fs::write(&path, "");
-        let mut last_mtime = std::time::SystemTime::UNIX_EPOCH;
+        let mut last_mtime = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(800)).await;
             let Ok(meta) = std::fs::metadata(&path) else {
@@ -193,17 +240,8 @@ fn start_md_deliver_watcher(handle: tauri::AppHandle, app_data_dir: PathBuf) {
                 continue;
             }
             last_mtime = mtime;
-            let Ok(content) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            if content.trim().is_empty() {
-                continue;
-            }
-            // 清空（这次写入会更新 mtime，下轮跳过）
-            let _ = std::fs::write(&path, "");
-            last_mtime = std::fs::metadata(&path)
-                .and_then(|m| m.modified())
-                .unwrap_or(last_mtime);
+            let content = std::fs::read_to_string(&path).unwrap_or_default();
+            // 处理 .md 路径（如有）——空行只用于"唤起窗口"，会被 trim 跳过
             for line in content.lines() {
                 let p = line.trim();
                 if p.is_empty() {
@@ -212,6 +250,12 @@ fn start_md_deliver_watcher(handle: tauri::AppHandle, app_data_dir: PathBuf) {
                 log::info!("[deliver] 收到 md: {}", p);
                 let _ = handle.emit("open-md-file", p.to_string());
             }
+            // 清空文件准备下一轮投递
+            let _ = std::fs::write(&path, "");
+            last_mtime = std::fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .unwrap_or(last_mtime);
+            // mtime 变化即视为"有人想唤起这个窗口"——把主窗前置
             if let Some(win) = handle.get_webview_window("main") {
                 let _ = win.unminimize();
                 let _ = win.show();
@@ -289,8 +333,10 @@ pub fn run() {
     let lock_prefix = if cfg!(debug_assertions) { "dev-" } else { "" };
     let explicit_id = parse_instance_arg();
 
-    // 早期路径：默认实例已运行 + argv 里有 .md → 投递并退出
-    // 这样双击 .md 时，已存在的默认实例接管打开（符合直觉），不会盲目开新实例
+    // 早期路径：默认实例已运行时的处理。
+    // - 有 .md 投递 → 转给已有实例打开 + 退出（双击 .md 的直觉行为，不开新窗）
+    // - 不允许多开（默认）→ 让已有实例把窗口前置 + 退出
+    // - 允许多开（flag 文件存在）→ 继续启动，下面 acquire_instance_lock 会自动分配 instance-2/3...
     if explicit_id.is_none() {
         let app_data_dir = early_app_data_dir();
         let _ = std::fs::create_dir_all(&app_data_dir);
@@ -299,9 +345,14 @@ pub fn run() {
             let md_paths = extract_md_paths_from_args(std::env::args().skip(1));
             if !md_paths.is_empty() {
                 let _ = deliver_md_to_default(&app_data_dir, &md_paths);
-                return; // 直接退出，不进 Tauri Builder
+                return;
             }
-            // 没 .md 就继续启动，下面 acquire_instance_lock 会自动分配 instance-2/3...
+            if !is_multi_instance_enabled(&app_data_dir) {
+                // 默认行为：唤起已有窗口然后退出，避免用户误开第二个实例造成 SQLite 并发冲突
+                let _ = ping_default_to_focus(&app_data_dir);
+                return;
+            }
+            // 用户显式开了"允许多开"，继续走自动分配
         }
     }
 
@@ -520,6 +571,8 @@ pub fn run() {
             commands::system::get_system_info,
             commands::system::get_dashboard_stats,
             commands::system::get_writing_trend,
+            commands::system::get_multi_instance_enabled,
+            commands::system::set_multi_instance_enabled,
             // 配置模块
             commands::config::get_all_config,
             commands::config::get_config,
@@ -589,6 +642,8 @@ pub fn run() {
             commands::trash::permanent_delete_note,
             commands::trash::list_trash,
             commands::trash::empty_trash,
+            commands::trash::restore_notes_batch,
+            commands::trash::permanent_delete_notes_batch,
             // 每日笔记模块
             commands::daily::get_daily,
             commands::daily::get_or_create_daily,
@@ -618,6 +673,7 @@ pub fn run() {
             commands::ai::list_ai_conversations,
             commands::ai::create_ai_conversation,
             commands::ai::delete_ai_conversation,
+            commands::ai::delete_ai_conversations_before,
             commands::ai::rename_ai_conversation,
             commands::ai::update_ai_conversation_model,
             commands::ai::list_ai_messages,
@@ -715,9 +771,10 @@ pub fn run() {
         // ─── 窗口事件处理 ─────────────────────────
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                // 点击关闭按钮时隐藏到托盘，而不是退出
-                let _ = window.hide();
+                // 关闭决策放前端（要读 app_config 里的 window.close_action）。
+                // 这里只拦截系统默认关闭 + emit，前端再决定弹窗 / 隐藏 / 真退出。
                 api.prevent_close();
+                let _ = window.emit("app:close-requested", ());
             }
         })
         .run(tauri::generate_context!())

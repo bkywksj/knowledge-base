@@ -45,6 +45,7 @@ import type {
   SyncResult,
   SyncHistoryItem,
   RemoteSnapshot,
+  RestoreBatchResult,
   Task,
   TaskLinkInput,
   CreateTaskInput,
@@ -79,6 +80,12 @@ export const systemApi = {
   getDashboardStats: () => invoke<DashboardStats>("get_dashboard_stats"),
   getWritingTrend: (days?: number) =>
     invoke<DailyWritingStat[]>("get_writing_trend", { days }),
+  /** 是否允许多开实例（默认 false：第二个进程会唤起已有窗口并退出） */
+  getMultiInstanceEnabled: () =>
+    invoke<boolean>("get_multi_instance_enabled"),
+  /** 切换"允许多开"开关，下次启动生效 */
+  setMultiInstanceEnabled: (enabled: boolean) =>
+    invoke<void>("set_multi_instance_enabled", { enabled }),
 };
 
 /** 更新相关 API */
@@ -264,12 +271,19 @@ export const searchApi = {
 /** 回收站 API */
 export const trashApi = {
   softDelete: (id: number) => invoke<void>("soft_delete_note", { id }),
-  restore: (id: number) => invoke<void>("restore_note", { id }),
+  /** 单条恢复；返回 true=回到原文件夹，false=原文件夹已不存在落到根目录 */
+  restore: (id: number) => invoke<boolean>("restore_note", { id }),
   permanentDelete: (id: number) =>
     invoke<void>("permanent_delete_note", { id }),
   list: (page?: number, pageSize?: number) =>
     invoke<PageResult<Note>>("list_trash", { page, pageSize }),
   empty: () => invoke<number>("empty_trash"),
+  /** 批量恢复；返回 {restored, toRoot} */
+  restoreBatch: (ids: number[]) =>
+    invoke<RestoreBatchResult>("restore_notes_batch", { ids }),
+  /** 批量永久删除；返回实际删除条数 */
+  permanentDeleteBatch: (ids: number[]) =>
+    invoke<number>("permanent_delete_notes_batch", { ids }),
 };
 
 /** 每日笔记 API */
@@ -336,6 +350,9 @@ export const aiChatApi = {
     invoke<AiConversation>("create_ai_conversation", { title, modelId }),
   deleteConversation: (id: number) =>
     invoke<void>("delete_ai_conversation", { id }),
+  /** 批量清理：olderThanDays 不传 = 全清；传 N = 删除 N 天前未活动的对话；返回删除条数 */
+  deleteConversationsBefore: (olderThanDays?: number) =>
+    invoke<number>("delete_ai_conversations_before", { olderThanDays }),
   renameConversation: (id: number, title: string) =>
     invoke<void>("rename_ai_conversation", { id, title }),
   updateConversationModel: (id: number, modelId: number) =>

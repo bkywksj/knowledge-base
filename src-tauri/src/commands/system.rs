@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{Manager, State};
 
 use crate::models::{DailyWritingStat, DashboardStats, SystemInfo};
 use crate::services::image::ImageService;
@@ -51,4 +51,23 @@ pub fn greet(name: &str) -> Result<String, String> {
         return Err("名称不能为空".into());
     }
     Ok(format!("Hello, {}! 来自 Rust 的问候!", name))
+}
+
+/// 查询是否允许多开实例。
+/// flag 文件位于 framework_app_data_dir 根（与单实例锁同目录），
+/// 在 Tauri Builder 启动前由 lib.rs 读取以决定是否拒绝第二个进程。
+#[tauri::command]
+pub fn get_multi_instance_enabled(app: tauri::AppHandle) -> Result<bool, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(crate::is_multi_instance_enabled(&dir))
+}
+
+/// 切换"允许多开实例"开关。下次启动生效（当前进程的实例锁不会变）。
+#[tauri::command]
+pub fn set_multi_instance_enabled(
+    app: tauri::AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    crate::set_multi_instance_enabled(&dir, enabled).map_err(|e| e.to_string())
 }
