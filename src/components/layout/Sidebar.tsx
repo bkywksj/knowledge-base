@@ -31,6 +31,7 @@ import {
   CheckSquare,
   FolderOpen,
   FolderInput,
+  Folder as FolderIcon,
   Sparkles,
   EyeOff,
   Globe,
@@ -915,6 +916,55 @@ export function Sidebar() {
                 </div>
               )
             )}
+            {/* 常驻虚拟文件夹"未分类"：folder_id IS NULL 的笔记自动归在这里，
+                不需要用户手动建。点击跳到 /notes?folder=uncategorized */}
+            <div
+              className="cursor-pointer select-none flex items-center gap-2"
+              style={{
+                padding: "4px 8px",
+                marginTop: 4,
+                borderRadius: 4,
+                fontSize: 13,
+                color:
+                  location.pathname === "/notes" &&
+                  new URLSearchParams(location.search).get("folder") ===
+                    "uncategorized"
+                    ? token.colorPrimary
+                    : token.colorTextSecondary,
+                background:
+                  location.pathname === "/notes" &&
+                  new URLSearchParams(location.search).get("folder") ===
+                    "uncategorized"
+                    ? token.colorPrimaryBg
+                    : "transparent",
+              }}
+              onClick={() => navigate("/notes?folder=uncategorized")}
+              onMouseEnter={(e) => {
+                if (
+                  !(
+                    location.pathname === "/notes" &&
+                    new URLSearchParams(location.search).get("folder") ===
+                      "uncategorized"
+                  )
+                ) {
+                  e.currentTarget.style.background = token.colorFillTertiary;
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (
+                  !(
+                    location.pathname === "/notes" &&
+                    new URLSearchParams(location.search).get("folder") ===
+                      "uncategorized"
+                  )
+                ) {
+                  e.currentTarget.style.background = "transparent";
+                }
+              }}
+            >
+              <FolderIcon size={13} style={{ opacity: 0.6 }} />
+              <span>未分类</span>
+            </div>
           </div>
         )}
       </div>

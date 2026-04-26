@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import {
   Tree,
   Button,
@@ -20,6 +20,7 @@ import {
   Plus,
   FolderOpen,
   FolderInput,
+  Folder as FolderIcon,
   ChevronsDownUp,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -134,6 +135,10 @@ function findFolderParentId(folders: Folder[], id: number): number | null {
 
 export function NotesPanel() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isUncategorizedActive =
+    location.pathname === "/notes" &&
+    new URLSearchParams(location.search).get("folder") === "uncategorized";
   const foldersRefreshTick = useAppStore((s) => s.foldersRefreshTick);
   const { token } = antdTheme.useToken();
 
@@ -970,6 +975,38 @@ export function NotesPanel() {
                 </div>
               )
             )}
+            {/* 常驻虚拟"未分类"文件夹：folder_id IS NULL 的笔记自动归在这里，
+                不需要用户手动建。点击跳到 /notes?folder=uncategorized */}
+            <div
+              className="cursor-pointer select-none flex items-center gap-2"
+              style={{
+                padding: "4px 10px",
+                marginTop: 4,
+                borderRadius: 4,
+                fontSize: 13,
+                color: isUncategorizedActive
+                  ? token.colorPrimary
+                  : token.colorTextSecondary,
+                background: isUncategorizedActive
+                  ? token.colorPrimaryBg
+                  : "transparent",
+                transition: "background-color .12s",
+              }}
+              onClick={() => navigate("/notes?folder=uncategorized")}
+              onMouseEnter={(e) => {
+                if (!isUncategorizedActive) {
+                  e.currentTarget.style.background = token.colorFillTertiary;
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!isUncategorizedActive) {
+                  e.currentTarget.style.background = "transparent";
+                }
+              }}
+            >
+              <FolderIcon size={13} style={{ opacity: 0.6 }} />
+              <span>未分类</span>
+            </div>
           </div>
         )}
       </div>

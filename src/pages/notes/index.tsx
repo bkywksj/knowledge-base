@@ -40,7 +40,8 @@ import {
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ColumnsType } from "antd/es/table";
-import { save } from "@tauri-apps/plugin-dialog";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { noteApi, exportApi, folderApi, tagApi } from "@/lib/api";
 import { useTabsStore } from "@/store/tabs";
 import { useAppStore } from "@/store";
@@ -488,6 +489,8 @@ export default function NoteListPage() {
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState(searchParams.get("keyword") || "");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
+  /** 列表视图每页条数，受分页组件 sizeChanger 控制；初始 12 */
+  const [listPageSize, setListPageSize] = useState(12);
   /** 列表视图下选中的笔记 id，切换到其他视图/翻页自动清空 */
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   /** 批量移动 Popover 的开关 */
@@ -537,14 +540,24 @@ export default function NoteListPage() {
   }, [searchParams]);
 
   const loadNotes = useCallback(
-    async (page: number, kw?: string) => {
+    async (page: number, kw?: string, pageSizeOverride?: number) => {
       setLoading(true);
       try {
+        const isUncategorized = folderId === "uncategorized";
         const result = await noteApi.list({
           page,
-          page_size: viewMode === "timeline" ? 50 : 12,
+          page_size:
+            viewMode === "timeline"
+              ? 50
+              : (pageSizeOverride ?? listPageSize),
           keyword: (kw ?? keyword) || undefined,
-          folder_id: folderId ? Number(folderId) : undefined,
+          // folder=uncategorized 是常驻"未分类"虚拟文件夹（folder_id IS NULL）
+          folder_id: isUncategorized
+            ? undefined
+            : folderId
+              ? Number(folderId)
+              : undefined,
+          uncategorized: isUncategorized || undefined,
         });
         setData(result);
       } catch (e) {
@@ -553,7 +566,7 @@ export default function NoteListPage() {
         setLoading(false);
       }
     },
-    [viewMode, keyword, folderId],
+    [viewMode, keyword, folderId, listPageSize],
   );
 
   const handleDelete = useCallback(
@@ -571,17 +584,31 @@ export default function NoteListPage() {
   );
 
   const handleExport = useCallback(async (record: Note) => {
-    const safeName = record.title.replace(/[/\\:*?"<>|]/g, "_").trim() || "未命名";
-    const filePath = await save({
-      defaultPath: `${safeName}.md`,
-      filters: [{ name: "Markdown", extensions: ["md"] }],
+    const parentDir = await openDialog({
+      directory: true,
+      title: "选择导出目录",
     });
-    if (!filePath) return;
+    if (!parentDir) return;
     try {
-      const assets = await exportApi.exportSingle(record.id, filePath);
-      message.success(
-        assets > 0 ? `导出成功，附带 ${assets} 个资产文件` : "导出成功"
-      );
+      const result = await exportApi.exportSingle(record.id, parentDir as string);
+      Modal.success({
+        title: "导出成功",
+        content: (
+          <div>
+            <p style={{ marginBottom: 4 }}>
+              {result.assets_copied > 0
+                ? `已导出 .md 与 ${result.assets_copied} 个资产文件，目录：`
+                : "已导出 .md，目录："}
+            </p>
+            <p style={{ fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
+              {result.root_dir}
+            </p>
+          </div>
+        ),
+        okText: "打开所在文件夹",
+        onOk: () => revealItemInDir(result.root_dir).catch(() => {}),
+        closable: true,
+      });
     } catch (e) {
       message.error(`导出失败: ${e}`);
     }
@@ -918,10 +945,18 @@ export default function NoteListPage() {
               pageSize={data.page_size}
               total={data.total}
               showTotal={(total) => `共 ${total} 篇`}
-              showSizeChanger={false}
-              onChange={(page) => {
+              showSizeChanger
+              pageSizeOptions={["12", "20", "50", "100", "200"]}
+              onChange={(page, size) => {
                 setSelectedIds([]);
-                loadNotes(page);
+                if (size !== listPageSize) {
+                  // 改了每页条数 → 同步 state；loadNotes 用 override 立即生效，
+                  // 不依赖 useCallback 重建后才生效（否则会闪一次旧 size）
+                  setListPageSize(size);
+                  loadNotes(page, undefined, size);
+                } else {
+                  loadNotes(page);
+                }
               }}
               size="small"
             />
