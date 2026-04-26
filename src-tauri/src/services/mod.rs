@@ -15,6 +15,7 @@ pub mod trash;
 pub mod import;
 pub mod import_attachments;
 pub mod web_clip;
+pub mod excel_parser;
 pub mod export;
 pub mod markdown;
 pub mod converter;

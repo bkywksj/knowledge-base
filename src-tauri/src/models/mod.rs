@@ -853,6 +853,24 @@ pub struct PlanFromGoalResponse {
     /// AI 输出 JSON 时不包含此字段，由 service 层填充，因此反序列化时缺省为空。
     #[serde(default)]
     pub batch_id: String,
+    /// 服务端给前端的友好警告（如"Excel 太大，已截断 X 个 Sheet"）；可空
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+/// "Excel 文件 → AI 规划"入参：用户选一个 Excel/ODS 文件，AI 据此拆任务
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanFromExcelRequest {
+    /// 用户选择的 Excel 文件绝对路径（来自 Tauri dialog）
+    pub file_path: String,
+    /// 计划周期天数；默认 30
+    #[serde(default = "default_horizon_days")]
+    pub horizon_days: i32,
+    /// 起始日期 'YYYY-MM-DD'；缺省取今天
+    pub start_date: Option<String>,
+    /// 用户对 Excel 内容的额外说明（可选），例如"重点关注健身部分"
+    pub extra_goal: Option<String>,
 }
 
 // ─── AI 写笔记并归档（T-006） ──────────────
