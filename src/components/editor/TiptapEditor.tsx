@@ -6,7 +6,7 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Link from "@tiptap/extension-link";
 import Underline from "@tiptap/extension-underline";
-import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
+import { CodeBlockEnhanced } from "./CodeBlockEnhanced";
 import { Mathematics } from "@tiptap/extension-mathematics";
 import Typography from "@tiptap/extension-typography";
 import { Table } from "@tiptap/extension-table";
@@ -653,7 +653,7 @@ export function TiptapEditor({
         HTMLAttributes: { class: "tiptap-link" },
       }),
       Underline,
-      CodeBlockLowlight.configure({ lowlight }),
+      CodeBlockEnhanced.configure({ lowlight }),
       // T-011: LaTeX 公式渲染（行内 $...$、块级 $$...$$，KaTeX 后端）
       Mathematics,
       Typography,

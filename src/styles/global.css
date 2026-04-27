@@ -829,3 +829,116 @@ body,
   }
 }
 
+/* ─── 代码块增强（CodeBlockEnhanced）：toolbar + 行号 + 自动换行 ─── */
+
+/* NodeView 外壳：把 toolbar 和 pre 收进同一个圆角容器 */
+.code-block-enhanced {
+  margin: 0.6em 0;
+  border: 1px solid color-mix(in srgb, var(--ant-color-text, #000) 8%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ant-color-text, #000) 3.5%, transparent);
+  overflow: hidden;
+}
+
+/* 顶部 toolbar */
+.code-block-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ant-color-text, #000) 6%, transparent);
+  background: color-mix(in srgb, var(--ant-color-text, #000) 2%, transparent);
+  user-select: none;
+}
+
+.code-block-toolbar-spacer {
+  flex: 1;
+}
+
+.code-block-title {
+  max-width: 240px;
+  font-size: 12px !important;
+  font-weight: 500;
+  color: var(--ant-color-text) !important;
+}
+
+.code-block-lang {
+  min-width: 110px;
+  font-size: 12px !important;
+}
+.code-block-lang .ant-select-selection-item {
+  font-size: 12px !important;
+  color: var(--ant-color-text-secondary) !important;
+}
+
+.code-block-wrap-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ant-color-text-secondary);
+}
+.code-block-wrap-label {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 代码块内的 pre：去掉外层圆角/边框（外壳已有），保留内边距 */
+.code-block-enhanced pre {
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  margin: 0 !important;
+  padding: 12px 16px !important;
+  position: relative; /* 给 gutter absolute 锚点 */
+}
+
+/* 启用行号时：给 code 左侧留出行号宽度 + 安全间距，避免与 gutter 重叠
+   注意：JSX 里 showLineNumbers=true 时不设 data-line-numbers 属性（默认就是开），
+   只有显式关闭时才设 data-line-numbers="false"。所以选择器用 :not(="false") 兜底。 */
+.code-block-enhanced:not([data-line-numbers="false"]) pre {
+  /* gutter 占 3.5em（含内 padding 和 border），再给 code 12px 起始空隙 */
+  padding-left: calc(3.5em + 12px) !important;
+}
+
+.code-block-line-gutter {
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3.5em;
+  box-sizing: border-box; /* width 含 padding/border，避免外溢挤到代码 */
+  padding-right: 10px;
+  text-align: right;
+  color: var(--ant-color-text-tertiary, #999);
+  font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+  font-size: 0.9em;
+  line-height: 1.6;
+  user-select: none;
+  pointer-events: none;
+  border-right: 1px solid color-mix(in srgb, var(--ant-color-text, #000) 6%, transparent);
+  white-space: pre;
+}
+.code-block-line-gutter > div {
+  /* 跟 code 行高对齐：code 是 font-size:0.9em + line-height:1.6 → 实际 1.44em
+     gutter 自身也是 0.9em 字号 + 1.6 行高，所以 1.6em 跟 code 行高一致 */
+  height: 1.6em;
+}
+
+/* 自动换行模式 */
+.code-block-enhanced[data-wrap="true"] pre {
+  overflow-x: hidden;
+}
+.code-block-enhanced[data-wrap="true"] pre code {
+  white-space: pre-wrap !important;
+  word-break: break-word;
+}
+
+/* 暗色主题：toolbar 背景 + 边框颜色微调（现有 .tiptap pre 颜色已在暗色模式下兼容） */
+[data-theme-category="dark"] .code-block-enhanced {
+  border-color: color-mix(in srgb, var(--ant-color-text, #fff) 12%, transparent);
+}
+[data-theme-category="dark"] .code-block-toolbar {
+  background: color-mix(in srgb, var(--ant-color-text, #fff) 5%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--ant-color-text, #fff) 8%, transparent);
+}
