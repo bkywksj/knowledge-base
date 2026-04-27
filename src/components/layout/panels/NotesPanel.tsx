@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   Tree,
@@ -94,17 +94,21 @@ function foldersToTreeData(
   folders: Folder[],
   creatingUnderKey: string | null,
   notesByFolder: Map<number, Note[]>,
+  tabTitleByNoteId: Map<number, string>,
 ): EnrichedNode[] {
   return folders.map((f) => {
     const subFolders: EnrichedNode[] = f.children.length
-      ? foldersToTreeData(f.children, creatingUnderKey, notesByFolder)
+      ? foldersToTreeData(f.children, creatingUnderKey, notesByFolder, tabTitleByNoteId)
       : [];
 
     const noteLeaves: EnrichedNode[] = (notesByFolder.get(f.id) ?? [])
       .slice(0, NOTES_PER_FOLDER_LIMIT)
       .map((n) => ({
         key: noteKey(n.id),
-        title: n.title || "未命名",
+        // 当该笔记 tab 已打开时，优先用 tabs store 的实时 title（编辑器
+        // handleTitleChange 同步进去）→ 用户在编辑器键入即可看到侧边栏跟随。
+        // 没打开 tab 时回退到 DB 拉的 n.title。
+        title: tabTitleByNoteId.get(n.id) || n.title || "未命名",
         isLeaf: true,
         data: { isNote: true, note: n },
       }));
@@ -184,6 +188,14 @@ export function NotesPanel() {
     new URLSearchParams(location.search).get("folder") === "uncategorized";
   const foldersRefreshTick = useAppStore((s) => s.foldersRefreshTick);
   const notesRefreshTick = useAppStore((s) => s.notesRefreshTick);
+  // 订阅 tabs：编辑器 handleTitleChange 实时调 updateTabTitle，这里把 tab.title
+  // 当作 ephemeral overlay 覆盖渲染——用户在编辑器输入标题立刻能看到侧边栏跟随，
+  // 不必等保存。tab 关闭后 overlay 自然消失，回退到 DB 标题。
+  const tabs = useTabsStore((s) => s.tabs);
+  const tabTitleByNoteId = useMemo(
+    () => new Map(tabs.map((t) => [t.id, t.title])),
+    [tabs],
+  );
   const { token } = antdTheme.useToken();
 
   // 文件夹直属笔记缓存（按 folderId 索引）。
@@ -1050,7 +1062,7 @@ export function NotesPanel() {
     );
   }
 
-  const treeData = foldersToTreeData(folders, creatingUnderKey, notesByFolder);
+  const treeData = foldersToTreeData(folders, creatingUnderKey, notesByFolder, tabTitleByNoteId);
 
   return (
     <div
