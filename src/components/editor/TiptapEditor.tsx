@@ -20,7 +20,8 @@ import { TextAlign } from "@tiptap/extension-text-align";
 import { Color } from "@tiptap/extension-color";
 import Superscript from "@tiptap/extension-superscript";
 import Subscript from "@tiptap/extension-subscript";
-import ImageResize from "tiptap-extension-resize-image";
+import { FigureImage } from "./FigureExtension";
+import { calcEditorStats } from "@/lib/textStats";
 import { FontSize, LineHeight, Indent } from "./TextStyleExtras";
 // tiptap-markdown 未提供 TS 声明，用 import 后以 any 访问
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -940,7 +941,7 @@ export function TiptapEditor({
       TextAlign.configure({
         types: ["heading", "paragraph"],
       }),
-      ImageResize.configure({
+      FigureImage.configure({
         inline: false,
         minWidth: 50,
         maxWidth: 1200,
@@ -1247,8 +1248,7 @@ export function TiptapEditor({
   const { token } = antdTheme.useToken();
 
   // 编辑器统计信息：打字时不实时算，停顿 300ms 后再遍历整篇。
-  // 旧实现把 `editor.getText()` 放在 useMemo 依赖里，每次 render 都要 O(n) 遍历文档 +
-  // 2 次全文正则替换；长笔记在 Mac WKWebView 上会明显卡顿。
+  // 算法与右上角 EditorStats 共用 src/lib/textStats.ts，确保两处数字永远一致。
   const [stats, setStats] = useState({ chars: 0, words: 0, readingTime: "< 1 min" });
   useEffect(() => {
     if (!editor) {
@@ -1256,19 +1256,11 @@ export function TiptapEditor({
       return;
     }
     const timer = setTimeout(() => {
-      const text = editor.getText();
-      const chars = text.length;
-      // 中文按字数，英文按空格分词
-      const cjkCount = (text.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) || []).length;
-      const nonCjk = text.replace(/[\u4e00-\u9fff\u3400-\u4dbf]/g, " ");
-      const engWords = nonCjk.split(/\s+/).filter((w) => w.length > 0).length;
-      const words = cjkCount + engWords;
-      // 按 400 字/分钟估算阅读时间
-      const minutes = Math.ceil(words / 400);
+      const s = calcEditorStats(editor);
       setStats({
-        chars,
-        words,
-        readingTime: minutes < 1 ? "< 1 min" : `${minutes} min`,
+        chars: s.chars,
+        words: s.words,
+        readingTime: `${s.readMinutes} min`,
       });
     }, 300);
     return () => clearTimeout(timer);

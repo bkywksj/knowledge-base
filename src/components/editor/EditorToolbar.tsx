@@ -28,6 +28,7 @@ import {
   Redo2,
   Link as LinkIcon,
   ImagePlus,
+  Captions,
   Film,
   Paperclip,
   MapPin,
@@ -73,6 +74,35 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
   const [tsModalOpen, setTsModalOpen] = useState(false);
   const [tsVideoId, setTsVideoId] = useState<string>("");
   const [tsTimeText, setTsTimeText] = useState<string>("00:00");
+  /** 图注 / Alt 弹窗：选中图片 → 编辑 caption（图注）和 alt（替代文本） */
+  const [captionModalOpen, setCaptionModalOpen] = useState(false);
+  const [captionDraft, setCaptionDraft] = useState("");
+  const [altDraft, setAltDraft] = useState("");
+
+  function openCaptionModal() {
+    if (!editor.isActive("imageResize")) {
+      message.info("请先点击一张图片再编辑图注");
+      return;
+    }
+    const attrs = editor.getAttributes("imageResize");
+    setCaptionDraft(String(attrs.caption ?? ""));
+    setAltDraft(String(attrs.alt ?? ""));
+    setCaptionModalOpen(true);
+  }
+
+  function applyCaption() {
+    const caption = captionDraft.trim();
+    const alt = altDraft.trim();
+    editor
+      .chain()
+      .focus()
+      .updateAttributes("imageResize", {
+        caption: caption || null,
+        alt: alt || null,
+      })
+      .run();
+    setCaptionModalOpen(false);
+  }
   async function insertImage() {
     // 与 TiptapEditor.handleImageFiles 行为对齐：优先显式 noteId，
     // 缺失时尝试 ensureNoteId（日记按需建档），仍拿不到才 warning
@@ -759,6 +789,12 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
         action: insertImage,
       },
       {
+        icon: <Captions size={15} />,
+        title: "图注 / Alt（先选中图片）",
+        action: openCaptionModal,
+        isActive: () => editor.isActive("imageResize"),
+      },
+      {
         icon: <Film size={15} />,
         title: "插入视频",
         action: insertVideo,
@@ -826,7 +862,7 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
         {groups.map((group, gi) => (
           <span key={gi} className="inline-flex items-center">
             {gi > 0 && (
-              <Divider type="vertical" style={{ height: 18, margin: "0 1px", borderColor: "var(--ant-color-border-secondary, #f0f0f0)" }} />
+              <Divider orientation="vertical" style={{ height: 18, margin: "0 1px", borderColor: "var(--ant-color-border-secondary, #f0f0f0)" }} />
             )}
             {group.map((item, ii) => {
               if (item.customRender) {
@@ -889,7 +925,7 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
         okText="确定"
         cancelText="取消"
         width={420}
-        destroyOnClose
+        destroyOnHidden
       >
         <Input
           placeholder="请输入链接地址，如 https://example.com"
@@ -912,7 +948,7 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
         okText="插入"
         cancelText="取消"
         width={460}
-        destroyOnClose
+        destroyOnHidden
       >
         <div className="space-y-3">
           <div>
@@ -945,6 +981,47 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
             <div className="mt-1 text-xs" style={{ color: "var(--ant-color-text-quaternary)" }}>
               提示：在视频块顶部点「📍 加时间戳」可一键采用当前播放位置
             </div>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 图注 / Alt 弹窗：选中图片后用 */}
+      <Modal
+        title="编辑图注与替代文本"
+        open={captionModalOpen}
+        onCancel={() => setCaptionModalOpen(false)}
+        onOk={applyCaption}
+        okText="保存"
+        cancelText="取消"
+        destroyOnHidden
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 12, marginBottom: 4 }}>图注（caption）</div>
+            <Input.TextArea
+              value={captionDraft}
+              onChange={(e) => setCaptionDraft(e.target.value)}
+              autoSize={{ minRows: 2, maxRows: 4 }}
+              placeholder="例：图 1：系统架构图"
+              autoFocus
+            />
+          </div>
+          <div>
+            <div style={{ fontSize: 12, marginBottom: 4 }}>
+              替代文本（alt，无障碍 / 搜索用）
+            </div>
+            <Input
+              value={altDraft}
+              onChange={(e) => setAltDraft(e.target.value)}
+              placeholder="不显示给用户，但搜索引擎和读屏器会读"
+            />
+          </div>
+          <div
+            className="text-xs"
+            style={{ color: "var(--ant-color-text-quaternary)", lineHeight: 1.5 }}
+          >
+            提示：只有"图注"非空时，导出 markdown 才会落 HTML &lt;figure&gt; 块；
+            否则保持标准 ![alt](url) 写法，与其他笔记工具兼容。
           </div>
         </div>
       </Modal>

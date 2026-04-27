@@ -201,6 +201,28 @@ body,
   min-height: 100%;
 }
 
+/* 图片 + 图注（FigureExtension 渲染的 <figure> 块） */
+.tiptap-figure {
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.tiptap-figure img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+.tiptap-figure figcaption {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--ant-color-text-tertiary, #8c8c8c);
+  text-align: center;
+  font-style: italic;
+  line-height: 1.5;
+  max-width: 90%;
+}
+
 /* 右侧大纲面板：sticky 在滚动容器内跟随滚动 */
 .editor-outline-aside {
   position: sticky;
