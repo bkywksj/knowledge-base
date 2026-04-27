@@ -216,10 +216,42 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
         isActive: () => editor.isActive("blockquote"),
       },
       {
-        icon: <CodeSquare size={15} />,
+        icon: (
+          <span className="inline-flex items-center gap-0.5">
+            <CodeSquare size={15} />
+            <ChevronDown size={11} style={{ opacity: 0.6 }} />
+          </span>
+        ),
         title: "代码块",
-        action: () => editor.chain().focus().toggleCodeBlock().run(),
         isActive: () => editor.isActive("codeBlock"),
+        dropdownItems: [
+          {
+            key: "code-plain",
+            icon: <CodeSquare size={14} />,
+            label: "普通代码块",
+            onClick: () => editor.chain().focus().toggleCodeBlock().run(),
+          },
+          {
+            key: "code-mermaid",
+            icon: <CodeSquare size={14} />,
+            label: "Mermaid 流程图",
+            onClick: () =>
+              editor
+                .chain()
+                .focus()
+                .insertContent({
+                  type: "codeBlock",
+                  attrs: { language: "mermaid" },
+                  content: [
+                    {
+                      type: "text",
+                      text: "flowchart TD\n  A[开始] --> B{判断}\n  B -- 是 --> C[执行]\n  B -- 否 --> D[结束]",
+                    },
+                  ],
+                })
+                .run(),
+          },
+        ],
       },
     ],
     // 对齐

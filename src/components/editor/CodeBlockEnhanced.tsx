@@ -23,8 +23,14 @@ import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { Button, Input, Select, Switch, Tooltip, message } from "antd";
 import { Copy, Check } from "lucide-react";
 import { common, createLowlight } from "lowlight";
+import { MermaidPreview } from "./MermaidPreview";
 
 const lowlight = createLowlight(common);
+
+/** 不属于 lowlight 高亮语言、但在编辑器中有特殊 NodeView 行为的"伪语言" */
+const PSEUDO_LANGUAGES: { value: string; label: string }[] = [
+  { value: "mermaid", label: "Mermaid 流程图" },
+];
 
 /** 推荐的常用语言（下拉前 N 项），其余按字母序排在后面 */
 const POPULAR_LANGUAGES = [
@@ -76,6 +82,7 @@ function buildLanguageOptions(): { value: string; label: string }[] {
   const others = all.filter((l) => !popular.includes(l)).sort();
   return [
     { value: "", label: "纯文本 / 未识别" },
+    ...PSEUDO_LANGUAGES,
     ...popular.map((l) => ({ value: l, label: labelOf(l) })),
     ...others.map((l) => ({ value: l, label: labelOf(l) })),
   ];
@@ -118,7 +125,12 @@ export const CodeBlockEnhanced = CodeBlockLowlight.extend({
 });
 
 /** React NodeView — toolbar + 代码内容（PM 管） + 行号 */
-function CodeBlockNodeView({ node, updateAttributes, editor }: NodeViewProps) {
+function CodeBlockNodeView({
+  node,
+  updateAttributes,
+  editor,
+  getPos,
+}: NodeViewProps) {
   const language: string = (node.attrs.language as string | null) ?? "";
   const title: string = (node.attrs.title as string | null) ?? "";
   const wrap: boolean = Boolean(node.attrs.wrap);
@@ -129,6 +141,46 @@ function CodeBlockNodeView({ node, updateAttributes, editor }: NodeViewProps) {
   const detectTimerRef = useRef<number | null>(null);
 
   const languageOptions = useMemo(buildLanguageOptions, []);
+
+  // ── Mermaid 模式：判断光标是否在本块内，决定显示源码还是预览 ─────────
+  const isMermaid = language === "mermaid";
+  const [cursorInBlock, setCursorInBlock] = useState(false);
+  useEffect(() => {
+    if (!isMermaid) return;
+    const recompute = () => {
+      const pos = typeof getPos === "function" ? getPos() : undefined;
+      if (typeof pos !== "number") {
+        setCursorInBlock(false);
+        return;
+      }
+      const { from, to } = editor.state.selection;
+      const start = pos;
+      const end = pos + node.nodeSize;
+      setCursorInBlock(
+        editor.isFocused && from >= start && to <= end,
+      );
+    };
+    recompute();
+    editor.on("selectionUpdate", recompute);
+    editor.on("focus", recompute);
+    editor.on("blur", recompute);
+    return () => {
+      editor.off("selectionUpdate", recompute);
+      editor.off("focus", recompute);
+      editor.off("blur", recompute);
+    };
+  }, [editor, getPos, node, isMermaid]);
+
+  // 空内容时强制显示源码（否则预览空白会让用户不知道点哪进入编辑）
+  const codeText = node.textContent;
+  const showMermaidPreview = isMermaid && !cursorInBlock && codeText.trim().length > 0;
+
+  /** 点击预览：把光标聚焦到本块内部 */
+  const focusIntoBlock = () => {
+    const pos = typeof getPos === "function" ? getPos() : undefined;
+    if (typeof pos !== "number") return;
+    editor.chain().focus().setTextSelection(pos + 1).run();
+  };
 
   // 自动识别语言：仅在 attrs.language 为空时跑，debounce 800ms
   useEffect(() => {
@@ -269,8 +321,16 @@ function CodeBlockNodeView({ node, updateAttributes, editor }: NodeViewProps) {
           />
         </Tooltip>
       </div>
-      <pre className={`hljs language-${language || "plaintext"}`}>
-        {showLineNumbers && (
+      {showMermaidPreview && (
+        <MermaidPreview code={codeText} onClick={focusIntoBlock} />
+      )}
+      {/* NodeViewContent 必须始终挂载在 DOM 中，否则 ProseMirror 无法把内容写入；
+          mermaid 预览态下用 display:none 隐藏，但保留 PM 的 contentDOM 锚点 */}
+      <pre
+        className={`hljs language-${language || "plaintext"}`}
+        style={showMermaidPreview ? { display: "none" } : undefined}
+      >
+        {showLineNumbers && !showMermaidPreview && (
           <CodeLineGutter text={node.textContent} contentEditable={false} />
         )}
         {/* NodeViewContent 类型签名只列了 div/span，但 Tiptap 实际接受任何标签；
