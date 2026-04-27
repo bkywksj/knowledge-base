@@ -20,6 +20,7 @@ import {
   Tree,
   Divider,
   Pagination,
+  Dropdown,
   theme as antdTheme,
 } from "antd";
 import {
@@ -37,10 +38,11 @@ import {
   CornerUpLeft,
   Filter as FilterIcon,
   Bot,
+  ChevronDown,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ColumnsType } from "antd/es/table";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { noteApi, exportApi, folderApi, tagApi } from "@/lib/api";
 import { useTabsStore } from "@/store/tabs";
@@ -656,6 +658,144 @@ export default function NoteListPage() {
     });
   }, []);
 
+  /** 单条 Word 导出（save dialog 选最终 .docx 路径） */
+  const handleExportWordSingle = useCallback(async (record: Note) => {
+    const safeName = record.title.replace(/[/\\:*?"<>|]/g, "_").trim() || "未命名";
+    const filePath = await save({
+      defaultPath: `${safeName}.docx`,
+      filters: [{ name: "Word", extensions: ["docx"] }],
+    });
+    if (!filePath) return;
+    try {
+      const result = await exportApi.exportSingleToWord(record.id, filePath);
+      Modal.success({
+        title: "导出 Word 成功",
+        content: (
+          <div>
+            <p style={{ marginBottom: 4 }}>
+              {`嵌入图片 ${result.imagesEmbedded} 张` +
+                (result.imagesMissing > 0
+                  ? `（${result.imagesMissing} 张缺失，已用占位符替代）`
+                  : "")}
+              ，文件：
+            </p>
+            <p style={{ fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
+              {result.filePath}
+            </p>
+          </div>
+        ),
+        okText: "打开所在文件夹",
+        onOk: () => revealItemInDir(result.filePath).catch(() => {}),
+        closable: true,
+      });
+    } catch (e) {
+      message.error(`导出 Word 失败: ${e}`);
+    }
+  }, []);
+
+  /** 单条 HTML 导出（save dialog 选最终 .html 路径） */
+  const handleExportHtmlSingle = useCallback(async (record: Note) => {
+    const safeName = record.title.replace(/[/\\:*?"<>|]/g, "_").trim() || "未命名";
+    const filePath = await save({
+      defaultPath: `${safeName}.html`,
+      filters: [{ name: "HTML", extensions: ["html", "htm"] }],
+    });
+    if (!filePath) return;
+    try {
+      const result = await exportApi.exportSingleToHtml(record.id, filePath);
+      Modal.success({
+        title: "导出 HTML 成功",
+        content: (
+          <div>
+            <p style={{ marginBottom: 4 }}>
+              {`内嵌图片 ${result.imagesInlined} 张` +
+                (result.imagesMissing > 0
+                  ? `（${result.imagesMissing} 张缺失）`
+                  : "")}
+              ，文件：
+            </p>
+            <p style={{ fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
+              {result.filePath}
+            </p>
+          </div>
+        ),
+        okText: "打开所在文件夹",
+        onOk: () => revealItemInDir(result.filePath).catch(() => {}),
+        closable: true,
+      });
+    } catch (e) {
+      message.error(`导出 HTML 失败: ${e}`);
+    }
+  }, []);
+
+  /** 批量 Word/HTML 导出：选一次目录，循环按 `{title}.{ext}` 命名；同名自动加序号 _2、_3 */
+  const handleExportBatchSingleFile = useCallback(
+    async (ids: number[], ext: "docx" | "html") => {
+      if (ids.length === 0) return;
+      const parentDir = await openDialog({
+        directory: true,
+        title: `选择导出目录（共 ${ids.length} 篇 → .${ext}）`,
+      });
+      if (!parentDir) return;
+
+      const sep = (parentDir as string).includes("\\") ? "\\" : "/";
+      // 同次批量内的命名去重：记录已用名（去 ext 后小写比较，模拟 Windows 不分大小写文件名冲突）
+      const usedKeys = new Set<string>();
+      const allocatePath = (rawTitle: string): string => {
+        const base = rawTitle.replace(/[/\\:*?"<>|]/g, "_").trim() || "未命名";
+        let candidate = base;
+        let n = 2;
+        while (usedKeys.has(candidate.toLowerCase())) {
+          candidate = `${base}_${n}`;
+          n += 1;
+        }
+        usedKeys.add(candidate.toLowerCase());
+        return `${parentDir}${sep}${candidate}.${ext}`;
+      };
+
+      const hide = message.loading(`正在导出 ${ids.length} 篇 .${ext}…`, 0);
+      let success = 0;
+      let images = 0;
+      const failed: number[] = [];
+      for (const id of ids) {
+        const note = data.items.find((n) => n.id === id);
+        const targetPath = allocatePath(note?.title ?? `note-${id}`);
+        try {
+          if (ext === "docx") {
+            const r = await exportApi.exportSingleToWord(id, targetPath);
+            images += r.imagesEmbedded;
+          } else {
+            const r = await exportApi.exportSingleToHtml(id, targetPath);
+            images += r.imagesInlined;
+          }
+          success += 1;
+        } catch (e) {
+          failed.push(id);
+          console.warn(`[export] 笔记 ${id} 导出 ${ext} 失败:`, e);
+        }
+      }
+      hide();
+      Modal.success({
+        title: failed.length === 0 ? `导出 .${ext} 完成` : `导出 .${ext} 完成（部分失败）`,
+        content: (
+          <div>
+            <p style={{ marginBottom: 4 }}>
+              成功 {success} 篇{failed.length > 0 ? `，失败 ${failed.length} 篇` : ""}；
+              {ext === "docx" ? "嵌入" : "内嵌"} {images} 张图片。目录：
+            </p>
+            <p style={{ fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
+              {parentDir}
+            </p>
+          </div>
+        ),
+        okText: "打开所在文件夹",
+        onOk: () => revealItemInDir(parentDir as string).catch(() => {}),
+        closable: true,
+      });
+    },
+    [data.items],
+  );
+
   const handleTrashAll = useCallback(() => {
     Modal.confirm({
       title: "全部移到回收站",
@@ -800,14 +940,32 @@ export default function NoteListPage() {
                 onClick={() => navigate(`/notes/${record.id}`)}
               />
             </Tooltip>
-            <Tooltip title="导出">
-              <Button
-                type="link"
-                size="small"
-                icon={<Share size={14} />}
-                onClick={() => handleExport(record)}
-              />
-            </Tooltip>
+            <Dropdown
+              trigger={["click"]}
+              menu={{
+                items: [
+                  {
+                    key: "md",
+                    label: "导出为 Markdown",
+                    onClick: () => void handleExport(record),
+                  },
+                  {
+                    key: "docx",
+                    label: "导出为 Word (.docx)",
+                    onClick: () => void handleExportWordSingle(record),
+                  },
+                  {
+                    key: "html",
+                    label: "导出为 HTML (单文件)",
+                    onClick: () => void handleExportHtmlSingle(record),
+                  },
+                ],
+              }}
+            >
+              <Tooltip title="导出">
+                <Button type="link" size="small" icon={<Share size={14} />} />
+              </Tooltip>
+            </Dropdown>
             <Popconfirm title="确认删除此笔记？" onConfirm={() => handleDelete(record.id)}>
               <Tooltip title="删除">
                 <Button type="link" danger size="small" icon={<Trash2 size={14} />} />
@@ -817,7 +975,7 @@ export default function NoteListPage() {
         ),
       },
     ],
-    [navigate, token.colorWarning, token.colorTextTertiary, handleDelete, handleExport, folderMap, folders, loadNotes, data.page, data.page_size],
+    [navigate, token.colorWarning, token.colorTextTertiary, handleDelete, handleExport, handleExportWordSingle, handleExportHtmlSingle, folderMap, folders, loadNotes, data.page, data.page_size],
   );
 
   // 时间线分组（缓存）
@@ -957,13 +1115,41 @@ export default function NoteListPage() {
               删除
             </Button>
           </Popconfirm>
-          <Button
-            size="small"
-            icon={<Share size={14} />}
-            onClick={() => handleExportBatch(selectedIds)}
-          >
-            批量导出
-          </Button>
+          <Space.Compact size="small">
+            <Tooltip title="批量导出为 Markdown">
+              <Button
+                size="small"
+                icon={<Share size={14} />}
+                onClick={() => handleExportBatch(selectedIds)}
+              >
+                批量导出
+              </Button>
+            </Tooltip>
+            <Dropdown
+              trigger={["click"]}
+              menu={{
+                items: [
+                  {
+                    key: "md",
+                    label: "批量导出为 Markdown",
+                    onClick: () => void handleExportBatch(selectedIds),
+                  },
+                  {
+                    key: "docx",
+                    label: "批量导出为 Word (.docx)",
+                    onClick: () => void handleExportBatchSingleFile(selectedIds, "docx"),
+                  },
+                  {
+                    key: "html",
+                    label: "批量导出为 HTML (单文件)",
+                    onClick: () => void handleExportBatchSingleFile(selectedIds, "html"),
+                  },
+                ],
+              }}
+            >
+              <Button size="small" icon={<ChevronDown size={12} />} title="更多导出格式" />
+            </Dropdown>
+          </Space.Compact>
           <Button
             size="small"
             icon={<Bot size={14} />}
@@ -1128,15 +1314,38 @@ export default function NoteListPage() {
                                     {note.word_count > 0 && ` · ${note.word_count} 字`}
                                   </Text>
                                   <Space size={0}>
-                                    <Tooltip title="导出">
-                                      <Button
-                                        type="text"
-                                        size="small"
-                                        icon={<Share size={11} />}
-                                        onClick={(e) => { e.stopPropagation(); handleExport(note); }}
-                                        style={{ height: 20, width: 20, padding: 0 }}
-                                      />
-                                    </Tooltip>
+                                    <Dropdown
+                                      trigger={["click"]}
+                                      menu={{
+                                        items: [
+                                          {
+                                            key: "md",
+                                            label: "导出为 Markdown",
+                                            onClick: () => void handleExport(note),
+                                          },
+                                          {
+                                            key: "docx",
+                                            label: "导出为 Word (.docx)",
+                                            onClick: () => void handleExportWordSingle(note),
+                                          },
+                                          {
+                                            key: "html",
+                                            label: "导出为 HTML (单文件)",
+                                            onClick: () => void handleExportHtmlSingle(note),
+                                          },
+                                        ],
+                                      }}
+                                    >
+                                      <Tooltip title="导出">
+                                        <Button
+                                          type="text"
+                                          size="small"
+                                          icon={<Share size={11} />}
+                                          onClick={(e) => e.stopPropagation()}
+                                          style={{ height: 20, width: 20, padding: 0 }}
+                                        />
+                                      </Tooltip>
+                                    </Dropdown>
                                     <Popconfirm
                                       title="确认删除？"
                                       onConfirm={(e) => {

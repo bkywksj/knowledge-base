@@ -588,12 +588,11 @@ body,
 }
 
 .tiptap table th {
-  /* T-B09: 用 8% 文本色叠加（之前 5% 在亮色主题下与字色混色不可读）+ 显式绑定字色到主题
-     文本色，避免某些 antd 内部 default 用 colorBgLayout 推导导致 th 底色偏白
+  /* 与 .code-block-toolbar 同源（亮色 2% 文本叠加），统一表头/代码块工具栏视觉调性。
      fallback：macOS Safari/WKWebView 早期版本对 color-mix 透明叠加渲染异常时会
      回落到 user-agent 默认深色 ButtonFace 把字盖掉，先给一个明确的浅灰 RGBA */
-  background: rgba(0, 0, 0, 0.05);
-  background: color-mix(in srgb, var(--ant-color-text, #000) 8%, transparent);
+  background: rgba(0, 0, 0, 0.02);
+  background: color-mix(in srgb, var(--ant-color-text, #000) 2%, transparent);
   color: var(--ant-color-text, #000);
   font-weight: 600;
 }

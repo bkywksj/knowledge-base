@@ -13,6 +13,8 @@ import { Table } from "@tiptap/extension-table";
 import { TableRow } from "@tiptap/extension-table-row";
 import { TableCell } from "@tiptap/extension-table-cell";
 import { TableHeader } from "@tiptap/extension-table-header";
+import { Fragment } from "@tiptap/pm/model";
+import { getHTMLFromFragment } from "@tiptap/core";
 import { TextAlign } from "@tiptap/extension-text-align";
 import ImageResize from "tiptap-extension-resize-image";
 // tiptap-markdown 未提供 TS 声明，用 import 后以 any 访问
@@ -24,6 +26,143 @@ function getEditorMarkdown(editor: { storage: unknown }): string {
   const storage = editor.storage as { markdown?: { getMarkdown: () => string } };
   return storage.markdown?.getMarkdown() ?? "";
 }
+
+/**
+ * 表格是否含手动调过的列宽
+ *
+ * Tiptap Table 的 `tableCell` / `tableHeader` 在用户拖动列宽分隔条后会写入
+ * `colwidth` 属性（数组，元素为 number 或 null）；只要任意单元格里有非 null
+ * 的值就视为"自定义列宽"。
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function tableHasCustomColWidth(tableNode: any): boolean {
+  let found = false;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tableNode.descendants((cell: any) => {
+    if (found) return false;
+    const name = cell.type.name;
+    if (name === "tableCell" || name === "tableHeader") {
+      const cw = cell.attrs.colwidth;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (Array.isArray(cw) && cw.some((w: any) => w != null)) {
+        found = true;
+        return false;
+      }
+    }
+    return undefined;
+  });
+  return found;
+}
+
+/**
+ * 复刻 tiptap-markdown/src/extensions/nodes/table.js 的同名判断：
+ * 表格能否用 GFM 管道语法表达。出现 rowspan/colspan、首行非全表头、cell 含
+ * 多段落等情况都不行 —— 这些情况下原版 tiptap-markdown 自己也会回退到 HTML。
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function isTableMarkdownSerializable(node: any): boolean {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows: any[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  node.forEach((row: any) => rows.push(row));
+  const firstRow = rows[0];
+  if (!firstRow) return true;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cellsOf = (row: any): any[] => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const arr: any[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    row.forEach((c: any) => arr.push(c));
+    return arr;
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const hasSpan = (c: any) => c.attrs.colspan > 1 || c.attrs.rowspan > 1;
+  if (
+    cellsOf(firstRow).some(
+      (c) => c.type.name !== "tableHeader" || hasSpan(c) || c.childCount > 1,
+    )
+  ) {
+    return false;
+  }
+  for (let i = 1; i < rows.length; i++) {
+    if (
+      cellsOf(rows[i]).some(
+        (c) => c.type.name === "tableHeader" || hasSpan(c) || c.childCount > 1,
+      )
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * 自定义 Table：在 tiptap-markdown 默认 serializer 上叠加"含 colwidth → 退成 HTML"。
+ *
+ * 默认 tiptap-markdown 只检查"是否能用 GFM 管道语法表达"（spans/多段落/首行）；
+ * 一旦发现自定义列宽我们也要走 HTML，否则 colwidth 在 markdown 表格里无法保存。
+ *
+ * tiptap-markdown 的 getMarkdownSpec() 是 `{ ...default, ...userOverride }`，
+ * 我们 addStorage 后整段 serialize 会被替换 —— 所以不能"复用默认再补一刀"，
+ * 这里把默认的管道语法逻辑原样抄一份。
+ */
+const TableWithMarkdown = Table.extend({
+  addStorage() {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const parentStorage = ((this as any).parent?.() ?? {}) as Record<string, unknown>;
+    return {
+      ...parentStorage,
+      markdown: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        serialize(state: any, node: any, _parent: any) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const editor = (this as any).editor;
+          const htmlAllowed = editor?.storage?.markdown?.options?.html;
+
+          // 含自定义列宽 / 不能 markdown 表达 → 走 HTML（前提是 markdown 配 html: true）
+          if (
+            (tableHasCustomColWidth(node) || !isTableMarkdownSerializable(node)) &&
+            htmlAllowed
+          ) {
+            const html = getHTMLFromFragment(Fragment.from(node), node.type.schema);
+            state.write(html);
+            state.closeBlock(node);
+            return;
+          }
+
+          // 默认 GFM 管道语法（与 tiptap-markdown 内置实现一致）
+          state.inTable = true;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          node.forEach((row: any, _p: number, i: number) => {
+            state.write("| ");
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            row.forEach((col: any, _p2: number, j: number) => {
+              if (j) state.write(" | ");
+              const cellContent = col.firstChild;
+              if (cellContent && cellContent.textContent.trim()) {
+                state.renderInline(cellContent);
+              }
+            });
+            state.write(" |");
+            state.ensureNewLine();
+            if (!i) {
+              const delimiterRow = Array.from({ length: row.childCount })
+                .map(() => "---")
+                .join(" | ");
+              state.write(`| ${delimiterRow} |`);
+              state.ensureNewLine();
+            }
+          });
+          state.closeBlock(node);
+          state.inTable = false;
+        },
+        parse: {
+          // 解析端 tiptap-markdown 走 markdown-it；HTML 表格作为 raw HTML 块直接保留
+        },
+      },
+    };
+  },
+});
 import { common, createLowlight } from "lowlight";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
@@ -657,7 +796,7 @@ export function TiptapEditor({
       // T-011: LaTeX 公式渲染（行内 $...$、块级 $$...$$，KaTeX 后端）
       Mathematics,
       Typography,
-      Table.configure({
+      TableWithMarkdown.configure({
         resizable: true,
         HTMLAttributes: { class: "tiptap-table" },
       }),

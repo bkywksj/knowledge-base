@@ -458,7 +458,8 @@
   color: #ffd666;
 }
 [data-theme-category="dark"] .tiptap table th {
-  background: rgba(255, 255, 255, 0.06) !important;
+  /* 与 .code-block-toolbar 暗色版同源（5% 文本叠加） */
+  background: color-mix(in srgb, var(--ant-color-text, #fff) 5%, transparent) !important;
 }
 [data-theme-category="dark"] .tiptap table td.selectedCell,
 [data-theme-category="dark"] .tiptap table th.selectedCell {
