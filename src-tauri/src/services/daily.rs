@@ -18,6 +18,16 @@ impl DailyService {
         db.get_or_create_daily(date)
     }
 
+    /// 找当前日期相邻的"真实存在"的日记日期。
+    /// 用于每日笔记顶部 ← / → 按钮跳转——按真实日记跳，跳过没写的日子。
+    pub fn get_neighbors(
+        db: &Database,
+        date: &str,
+    ) -> Result<(Option<String>, Option<String>), AppError> {
+        validate_date(date)?;
+        db.get_daily_neighbors(date)
+    }
+
     /// 获取某月有日记的日期列表
     pub fn list_dates(db: &Database, year: i32, month: i32) -> Result<Vec<String>, AppError> {
         if !(1..=12).contains(&month) {

@@ -32,13 +32,6 @@ function formatDateCN(dateStr: string): string {
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
-/** 日期偏移 */
-function offsetDate(dateStr: string, days: number): string {
-  const d = new Date(dateStr + "T00:00:00");
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
 /** 获取今天日期字符串 */
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
@@ -68,6 +61,11 @@ export default function DailyPage() {
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(true);
   const [showPlanModal, setShowPlanModal] = useState(false);
+  // 相邻"真实存在"的日记日期（跳过空白日）；按当前 date 拉
+  const [neighbors, setNeighbors] = useState<{ prev: string | null; next: string | null }>({
+    prev: null,
+    next: null,
+  });
 
   const isToday = date === todayStr();
 
@@ -101,6 +99,22 @@ export default function DailyPage() {
   useEffect(() => {
     loadDaily(date);
   }, [date, loadDaily]);
+
+  // 拉相邻日记日期：按真实存在的日记跳，跳过空白日
+  useEffect(() => {
+    let cancelled = false;
+    dailyApi
+      .getNeighbors(date)
+      .then(([prev, next]) => {
+        if (!cancelled) setNeighbors({ prev, next });
+      })
+      .catch(() => {
+        if (!cancelled) setNeighbors({ prev: null, next: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [date]);
 
   /**
    * 自动保存：内容变化后 1.2s 防抖入库。
@@ -198,7 +212,10 @@ export default function DailyPage() {
           <Button
             size="small"
             icon={<ChevronLeft size={14} />}
-            onClick={() => goToDate(offsetDate(date, -1))}
+            // 跳到上一篇真实存在的日记，跳过空白日（更符合"翻日记本"直觉）
+            onClick={() => neighbors.prev && goToDate(neighbors.prev)}
+            disabled={!neighbors.prev}
+            title={neighbors.prev ? `上一篇：${formatDateCN(neighbors.prev)}` : "没有更早的日记"}
           />
           <DatePicker
             value={dayjs(date)}
@@ -214,8 +231,9 @@ export default function DailyPage() {
           <Button
             size="small"
             icon={<ChevronRight size={14} />}
-            onClick={() => goToDate(offsetDate(date, 1))}
-            disabled={isToday}
+            onClick={() => neighbors.next && goToDate(neighbors.next)}
+            disabled={!neighbors.next}
+            title={neighbors.next ? `下一篇：${formatDateCN(neighbors.next)}` : "没有更晚的日记"}
           />
           {!isToday && (
             <Button size="small" onClick={() => goToDate(todayStr())}>

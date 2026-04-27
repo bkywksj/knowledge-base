@@ -1,4 +1,4 @@
-use rusqlite::{params, params_from_iter};
+use rusqlite::{params, params_from_iter, OptionalExtension};
 
 use crate::error::AppError;
 use crate::models::{Note, NoteInput};
@@ -768,6 +768,35 @@ impl Database {
     }
 
     /// 获取有日记的日期列表（用于日历标记）
+    /// 找当前日期的相邻日记（仅返回真实存在的日记，跳过没写的日子）。
+    /// 用于每日笔记顶部的 ← / → 箭头按"上一篇/下一篇真实存在的日记"跳转。
+    /// `(prev, next)`：分别是 < date 的最近一条 + > date 的最近一条；不存在时返回 None。
+    pub fn get_daily_neighbors(
+        &self,
+        date: &str,
+    ) -> Result<(Option<String>, Option<String>), AppError> {
+        let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let prev: Option<String> = conn
+            .query_row(
+                "SELECT daily_date FROM notes
+                 WHERE is_daily = 1 AND is_deleted = 0 AND daily_date < ?1
+                 ORDER BY daily_date DESC LIMIT 1",
+                params![date],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let next: Option<String> = conn
+            .query_row(
+                "SELECT daily_date FROM notes
+                 WHERE is_daily = 1 AND is_deleted = 0 AND daily_date > ?1
+                 ORDER BY daily_date ASC LIMIT 1",
+                params![date],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok((prev, next))
+    }
+
     pub fn list_daily_dates(&self, year: i32, month: i32) -> Result<Vec<String>, AppError> {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
 

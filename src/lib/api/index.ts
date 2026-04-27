@@ -294,6 +294,9 @@ export const dailyApi = {
     invoke<Note>("get_or_create_daily", { date }),
   listDates: (year: number, month: number) =>
     invoke<string[]>("list_daily_dates", { year, month }),
+  /** 找当前日期相邻的真实存在的日记，返回 [prev, next]；按真实日记跳，跳过空白日 */
+  getNeighbors: (date: string) =>
+    invoke<[string | null, string | null]>("get_daily_neighbors", { date }),
 };
 
 /** 笔记链接 API */
