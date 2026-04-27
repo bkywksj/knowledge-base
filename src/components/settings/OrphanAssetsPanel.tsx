@@ -12,6 +12,7 @@
  */
 import { useMemo, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { openPath } from "@tauri-apps/plugin-opener";
 import {
   Alert,
   Badge,
@@ -24,7 +25,7 @@ import {
   message,
 } from "antd";
 import { SyncOutlined } from "@ant-design/icons";
-import { Trash2 } from "lucide-react";
+import { Trash2, ExternalLink } from "lucide-react";
 
 import { orphanAssetApi } from "@/lib/api";
 import type {
@@ -221,7 +222,8 @@ export default function OrphanAssetsPanel() {
         footer={null}
         width={680}
       >
-        {previewItem && previewItem.kind === "image" ? (
+        {/* 仅图片/视频走 Modal 全屏预览；其他类型在 PathList 里直接 openPath 走系统应用 */}
+        {previewItem && previewItem.kind === "image" && (
           <img
             src={convertFileSrc(previewItem.path)}
             alt={previewItem.path}
@@ -230,7 +232,15 @@ export default function OrphanAssetsPanel() {
               (e.currentTarget as HTMLImageElement).style.display = "none";
             }}
           />
-        ) : null}
+        )}
+        {previewItem && previewItem.kind === "video" && (
+          <video
+            src={convertFileSrc(previewItem.path)}
+            controls
+            preload="metadata"
+            style={{ maxWidth: "100%", display: "block", margin: "0 auto" }}
+          />
+        )}
         {previewItem && (
           <div className="text-xs text-gray-500 mt-3 break-all">
             {previewItem.path}
@@ -291,8 +301,8 @@ function OrphanTabContent({
         </Popconfirm>
       </div>
 
-      {kind === "image" ? (
-        <ImageGrid items={group.items} onPreview={onPreview} />
+      {kind === "image" || kind === "video" ? (
+        <MediaGrid kind={kind} items={group.items} onPreview={onPreview} />
       ) : (
         <PathList items={group.items} onPreview={onPreview} />
       )}
@@ -300,18 +310,23 @@ function OrphanTabContent({
   );
 }
 
-function ImageGrid({
+function MediaGrid({
+  kind,
   items,
   onPreview,
 }: {
+  kind: OrphanKind;
   items: OrphanItem[];
   onPreview: (it: OrphanItem) => void;
 }) {
+  // 视频缩略图比图片宽一些，给"首帧/控件"留位置
+  const minColumn = kind === "video" ? 200 : 140;
+  const tileHeight = kind === "video" ? 130 : 100;
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+        gridTemplateColumns: `repeat(auto-fill, minmax(${minColumn}px, 1fr))`,
         gap: 12,
         maxHeight: "60vh",
         overflow: "auto",
@@ -326,21 +341,35 @@ function ImageGrid({
         >
           <div
             style={{
-              height: 100,
+              height: tileHeight,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              background: "#fff",
+              background: "#000",
             }}
           >
-            <img
-              src={convertFileSrc(it.path)}
-              alt={it.path}
-              style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).style.display = "none";
-              }}
-            />
+            {kind === "image" ? (
+              <img
+                src={convertFileSrc(it.path)}
+                alt={it.path}
+                style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                }}
+              />
+            ) : (
+              // 视频缩略图：preload="metadata" 只下载首帧 + 时长，不会拉整个视频；
+              // muted 让浏览器允许 play 不需要用户交互；点击卡片走 onPreview 全屏看
+              <video
+                src={convertFileSrc(it.path)}
+                preload="metadata"
+                muted
+                playsInline
+                controls
+                style={{ maxWidth: "100%", maxHeight: "100%" }}
+                onClick={(e) => e.stopPropagation()}
+              />
+            )}
           </div>
           <div className="text-xs px-2 py-1 truncate" style={{ color: "#666" }} title={it.path}>
             {pickFileName(it.path)}
@@ -356,11 +385,19 @@ function ImageGrid({
 
 function PathList({
   items,
-  onPreview,
 }: {
   items: OrphanItem[];
   onPreview: (it: OrphanItem) => void;
 }) {
+  /** 点击 → 用系统默认应用打开（PDF 启 Acrobat / Word 启 Office 等） */
+  async function handleOpen(path: string) {
+    try {
+      await openPath(path);
+    } catch (e) {
+      message.error(`无法打开: ${e}`);
+    }
+  }
+
   return (
     <div
       style={{
@@ -373,21 +410,21 @@ function PathList({
       {items.map((it) => (
         <div
           key={it.path}
-          className="px-3 py-2 border-b last:border-b-0 cursor-pointer hover:bg-gray-50"
+          className="px-3 py-2 border-b last:border-b-0 cursor-pointer hover:bg-gray-50 flex items-center gap-3"
           style={{ borderColor: "#f0f0f0" }}
-          onClick={() => onPreview(it)}
+          onClick={() => handleOpen(it.path)}
+          title="点击用系统默认应用打开"
         >
-          <div className="text-sm truncate" title={it.path}>
-            {pickFileName(it.path)}
+          <div className="flex-1 min-w-0">
+            <div className="text-sm truncate">{pickFileName(it.path)}</div>
+            <div className="text-xs text-gray-500 truncate">{it.path}</div>
+            <div className="text-xs text-gray-400 mt-0.5">
+              {fmtMB(it.size)}
+              {it.noteId != null && <span className="ml-2">笔记 ID: {it.noteId}</span>}
+              <span className="ml-2">{reasonLabel(it.reason)}</span>
+            </div>
           </div>
-          <div className="text-xs text-gray-500 truncate" title={it.path}>
-            {it.path}
-          </div>
-          <div className="text-xs text-gray-400 mt-0.5">
-            {fmtMB(it.size)}
-            {it.noteId != null && <span className="ml-2">笔记 ID: {it.noteId}</span>}
-            <span className="ml-2">{reasonLabel(it.reason)}</span>
-          </div>
+          <ExternalLink size={14} className="text-gray-400 shrink-0" />
         </div>
       ))}
     </div>
