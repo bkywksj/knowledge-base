@@ -177,6 +177,55 @@ fn derive_conversation_title(user_message: &str) -> String {
     }
 }
 
+/// 剥掉 AI 在最后一轮（tools 已禁用）退化输出的"伪工具调用文本"。
+///
+/// 当 `chat_stream_with_skills` 进入 finalization 轮（不带 tools schema）时，
+/// 模型有时会因为前几轮的工具调用惯性，仍按训练数据里的 ChatML / 自定义格式
+/// 在 content 通道吐出工具调用语法。这些字符串没有任何执行效果，但会被前端
+/// 当成正文 markdown 渲染给用户，看起来很迷惑。
+///
+/// 兜底处理：把这些片段从 content 里抹掉。覆盖三种常见伪格式：
+/// - `<tool_call>{...}</tool_call>` / `<tool_use>{...}</tool_use>`（XML 风格）
+/// - 围栏代码块 ` ```tool_call ... ``` ` / ` ```tool_code ... ``` `
+/// - 行首 `functions.search_notes({...})` 这种"函数调用看起来像 JS"的形式
+///
+/// 多个空行会被合并为单空行，避免剥完留下大段空白。
+pub fn strip_pseudo_tool_calls(s: &str) -> String {
+    use std::sync::OnceLock;
+    static XML_RE: OnceLock<regex::Regex> = OnceLock::new();
+    static FENCE_RE: OnceLock<regex::Regex> = OnceLock::new();
+    static FUNC_RE: OnceLock<regex::Regex> = OnceLock::new();
+    static BLANKS_RE: OnceLock<regex::Regex> = OnceLock::new();
+
+    let xml = XML_RE.get_or_init(|| {
+        // Rust regex 不支持反向引用，所以闭合标签也用同样的 alternation。
+        // 即使 model 写出错配（<tool_call>...</tool>），也属于要剥的伪文，无所谓。
+        regex::Regex::new(
+            r"(?is)<\s*(?:tool_call|tool_use|tool|function_call)\b[^>]*>.*?<\s*/\s*(?:tool_call|tool_use|tool|function_call)\s*>",
+        )
+        .expect("XML pseudo tool_call regex must compile")
+    });
+    let fence = FENCE_RE.get_or_init(|| {
+        regex::Regex::new(r"(?is)```\s*(?:tool_call|tool_code|tool_use|function_call)\b.*?```")
+            .expect("fenced pseudo tool_call regex must compile")
+    });
+    let func = FUNC_RE.get_or_init(|| {
+        // 匹配 "functions.search_notes(...)" / "tool:search_notes(...)" 这种行
+        regex::Regex::new(
+            r"(?im)^\s*(?:functions\.|tool:\s*|tool_call:\s*)[a-z_][a-z0-9_]*\s*\([^\n]*\)\s*$",
+        )
+        .expect("function-call style pseudo tool regex must compile")
+    });
+    let blanks = BLANKS_RE.get_or_init(|| {
+        regex::Regex::new(r"\n{3,}").expect("blank-line collapse regex must compile")
+    });
+
+    let s1 = xml.replace_all(s, "");
+    let s2 = fence.replace_all(&s1, "");
+    let s3 = func.replace_all(&s2, "");
+    blanks.replace_all(&s3, "\n\n").trim().to_string()
+}
+
 /// 围绕用户问题关键词命中点，从笔记正文中截取窗口片段供 RAG 上下文使用。
 ///
 /// 旧实现 `chars().take(500)` 只取开头 500 字，命中段在文档后半部时 AI 完全看不到。
@@ -1010,6 +1059,10 @@ impl AiService {
         user_message: &str,
         cancel_rx: watch::Receiver<bool>,
     ) -> Result<(), AppError> {
+        // 最多 3 轮"AI 调工具"，外加 1 轮"finalization"（不带 tools schema，强制最终答复）。
+        // 所以 `for round in 0..=MAX_TOOL_ROUNDS` 实际跑 4 次，最后一次 round=3 时
+        // `allow_tools=false`。这种结构能防死循环，但需要小心 finalization 轮里模型
+        // 可能输出"伪工具调用文本"（详见 strip_pseudo_tool_calls 的注释）。
         const MAX_TOOL_ROUNDS: usize = 3;
 
         // 1. 取会话使用的模型
@@ -1077,10 +1130,28 @@ impl AiService {
             // 最后一轮不给 tools，强制 AI 给出最终答复（防死循环）
             let allow_tools = round < MAX_TOOL_ROUNDS;
 
+            // finalization 轮：临时往 messages 里加一条 system 提示，劝模型不要继续模仿
+            // 工具调用语法（前几轮的 tool_calls 历史会让模型有"再调一次"的惯性）。
+            // 用本地 Cow 避免污染主 messages 数组——下一轮请求又得用原始版。
+            let req_messages: std::borrow::Cow<'_, [Value]> = if allow_tools {
+                std::borrow::Cow::Borrowed(&messages[..])
+            } else {
+                let mut m = messages.clone();
+                m.push(json!({
+                    "role": "system",
+                    "content": "工具调用次数已达上限，工具不再可用。请基于你已经从工具拿到的信息，\
+                                直接给出最终中文答复。\
+                                绝对不要再输出 <tool_call>、<tool_use>、```tool_call、\
+                                functions.xxx(...) 等任何形式的工具调用语法或代码块；\
+                                如果信息不足以回答，明确告诉用户笔记里没有相关内容。"
+                }));
+                std::borrow::Cow::Owned(m)
+            };
+
             let (content, tool_calls) = Self::stream_openai_with_tools(
                 &app,
                 &model,
-                &messages,
+                req_messages.as_ref(),
                 if allow_tools { &tool_schemas } else { &[] },
                 cancel_rx.clone(),
             )
@@ -1101,8 +1172,9 @@ impl AiService {
             }
 
             if tool_calls.is_empty() {
-                // 模型给出最终答复
-                final_content = content;
+                // 模型给出最终答复——剥掉伪工具调用残文（仅 finalization 轮容易触发，
+                // 其他轮模型本就该走 tool_calls 通道；剥一下零成本，多一道兜底）
+                final_content = strip_pseudo_tool_calls(&content);
                 break;
             }
 
@@ -2245,5 +2317,55 @@ mod plan_from_goal_tests {
         let b = generate_batch_id();
         assert_ne!(a, b, "batch_id 必须每次都不同");
         assert!(a.starts_with("plan_"));
+    }
+}
+
+#[cfg(test)]
+mod strip_pseudo_tool_calls_tests {
+    use super::strip_pseudo_tool_calls;
+
+    #[test]
+    fn strips_xml_tool_call_block() {
+        let s = "前文。\n<tool_call>{\"name\":\"search_notes\",\"arguments\":{\"query\":\"x\"}}</tool_call>\n后文。";
+        let out = strip_pseudo_tool_calls(s);
+        assert!(!out.contains("tool_call"), "XML 标签未被剥除：{}", out);
+        assert!(out.contains("前文") && out.contains("后文"));
+    }
+
+    #[test]
+    fn strips_tool_use_and_function_call_variants() {
+        let s = "<tool_use>{\"a\":1}</tool_use><function_call>foo()</function_call>";
+        assert_eq!(strip_pseudo_tool_calls(s), "");
+    }
+
+    #[test]
+    fn strips_fenced_tool_call_codeblock() {
+        let s = "Hello\n```tool_call\n{\"name\":\"x\"}\n```\nWorld";
+        let out = strip_pseudo_tool_calls(s);
+        assert!(!out.contains("```"));
+        assert!(out.contains("Hello") && out.contains("World"));
+    }
+
+    #[test]
+    fn strips_function_call_style_line() {
+        let s = "前文\nfunctions.search_notes({\"query\":\"abc\"})\n后文";
+        let out = strip_pseudo_tool_calls(s);
+        assert!(!out.contains("functions.search_notes"));
+        assert!(out.contains("前文") && out.contains("后文"));
+    }
+
+    #[test]
+    fn keeps_genuine_content_intact() {
+        let s = "用户笔记里没有相关内容。建议你检索其他关键词。";
+        assert_eq!(strip_pseudo_tool_calls(s), s);
+    }
+
+    #[test]
+    fn collapses_blank_lines_after_strip() {
+        let s = "A\n\n<tool_call>{}</tool_call>\n\n\n\nB";
+        let out = strip_pseudo_tool_calls(s);
+        // 不应留下连续 3+ 空行
+        assert!(!out.contains("\n\n\n"), "残留连续空行：{:?}", out);
+        assert!(out.contains('A') && out.contains('B'));
     }
 }

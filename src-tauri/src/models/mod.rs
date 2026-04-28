@@ -778,6 +778,23 @@ pub struct TaskQuery {
     pub uncategorized: Option<bool>,
 }
 
+/// 顶栏 Ctrl+K 搜索的任务命中（轻量）
+///
+/// 不复用 Task 是为了少传字段，搜索面板只展示这几条，结构更扁平
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskSearchHit {
+    pub id: i64,
+    pub title: String,
+    /// 简短上下文片段：description 截断后；description 为空时回退用 due_date 描述
+    pub snippet: String,
+    /// 0=todo / 1=done（前端可据此显示已完成置灰）
+    pub status: i32,
+    /// 0=urgent / 1=normal / 2=low
+    pub priority: i32,
+    pub due_date: Option<String>,
+}
+
 /// 待办分类（一级，扁平）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskCategory {

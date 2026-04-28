@@ -2,7 +2,7 @@ use tauri::State;
 
 use crate::models::{
     CreateTaskCategoryInput, CreateTaskInput, Task, TaskCategory, TaskLinkInput, TaskQuery,
-    TaskStats, UpdateTaskCategoryInput, UpdateTaskInput,
+    TaskSearchHit, TaskStats, UpdateTaskCategoryInput, UpdateTaskInput,
 };
 use crate::services::tasks::TaskService;
 use crate::state::AppState;
@@ -116,6 +116,16 @@ pub fn snooze_task_reminder(
     let ok = TaskService::snooze(&state.db, id, minutes).map_err(|e| e.to_string())?;
     notify_reminder(&state);
     Ok(ok)
+}
+
+/// 顶栏 Ctrl+K 全局搜索：按关键词查待办（title / description LIKE）
+#[tauri::command]
+pub fn search_tasks(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<TaskSearchHit>, String> {
+    TaskService::search(&state.db, &query, limit).map_err(|e| e.to_string())
 }
 
 // ─── 分类 CRUD ────────────────────────────────

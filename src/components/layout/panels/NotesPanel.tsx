@@ -187,6 +187,29 @@ function findFolderParentId(folders: Folder[], id: number): number | null {
   return result;
 }
 
+/**
+ * 收集从根到 targetId（含）的所有祖先文件夹 id 路径
+ *
+ * 用于"跳到笔记 → 自动展开树"：把这条路径上的所有文件夹从 collapsed 集合中移除，
+ * 即可把目标笔记所在层级展开到可见。targetId 不在树里时返回空数组。
+ */
+function collectAncestorFolderIds(folders: Folder[], targetId: number): number[] {
+  let path: number[] = [];
+  const walk = (list: Folder[], stack: number[]): boolean => {
+    for (const f of list) {
+      const next = [...stack, f.id];
+      if (f.id === targetId) {
+        path = next;
+        return true;
+      }
+      if (f.children.length && walk(f.children, next)) return true;
+    }
+    return false;
+  };
+  walk(folders, []);
+  return path;
+}
+
 export function NotesPanel() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -351,6 +374,76 @@ export function NotesPanel() {
     loadFolders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [foldersRefreshTick]);
+
+  /**
+   * URL → 树状态同步：当路由进入 /notes/:id（来自搜索面板、Ctrl+K、首页 dropdown 等）时，
+   *
+   *   1. 立刻把 selectedKey 设到该笔记，让侧栏高亮一致
+   *   2. 异步查 note.folder_id：
+   *        - null → 展开"未分类"虚拟节点 + 触发拉取
+   *        - 非 null → 收集从根到 folder 的所有祖先 id，
+   *          从 collapsed 集合中移除，让该层级在树上可见 + 拉笔记列表
+   *
+   * 不依赖任何缓存（直接 noteApi.get 拿权威 folder_id），避免缓存陈旧导致跳错位置。
+   * folders 加进 deps：首次 panel mount 时 folders 可能还在加载，等加载完会重跑这条 effect。
+   */
+  const noteIdFromUrl = useMemo<number | null>(() => {
+    const m = location.pathname.match(/^\/notes\/(\d+)$/);
+    return m ? Number(m[1]) : null;
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (noteIdFromUrl == null) return;
+
+    // ① 立即高亮（不等异步）—— 用户视觉立刻有反馈
+    setSelectedKey(noteKey(noteIdFromUrl));
+
+    // ② 异步：查 folder_id 并展开到对应位置
+    let cancelled = false;
+    noteApi
+      .get(noteIdFromUrl)
+      .then((note) => {
+        if (cancelled) return;
+        const fid = note.folder_id;
+        if (fid === null) {
+          // 未分类：展开虚拟节点 + 拉笔记
+          const store = useAppStore.getState();
+          if (!store.notesUncategorizedExpanded) {
+            store.setNotesUncategorizedExpanded(true);
+          }
+          if (uncategorizedNotes.length === 0) {
+            void loadUncategorizedNotes();
+          }
+        } else {
+          // 在文件夹下：把祖先全展开
+          const path = collectAncestorFolderIds(folders, fid);
+          if (path.length > 0) {
+            const expandKeys = new Set(path.map(String));
+            const store = useAppStore.getState();
+            const newCollapsed = store.notesCollapsedFolderKeys.filter(
+              (k) => !expandKeys.has(k),
+            );
+            if (
+              newCollapsed.length !== store.notesCollapsedFolderKeys.length
+            ) {
+              store.setNotesAllFoldersCollapsed(newCollapsed);
+            }
+          }
+          // 拉这个文件夹的直属笔记（懒加载缓存）
+          if (!notesByFolder.has(fid)) {
+            void loadNotesForFolder(fid);
+          }
+        }
+      })
+      .catch(() => {
+        // 笔记不存在 / 已删，安静失败：保留高亮即可，不打扰用户
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noteIdFromUrl, folders]);
 
   // notes 数据变化时（新建/编辑/删除）：清空缓存 + 重拉所有已展开的文件夹。
   // 避免遗留旧标题。expand 阶段没拉过的文件夹不需要预热。

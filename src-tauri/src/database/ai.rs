@@ -82,6 +82,7 @@ mod tests {
             api_url: "http://localhost".into(),
             api_key: None,
             model_id: "test-model".into(),
+            max_context: None,
         }
     }
 

@@ -1,8 +1,9 @@
-use rusqlite::{params, params_from_iter, Connection};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 
 use crate::error::AppError;
 use crate::models::{
-    CreateTaskInput, Task, TaskLink, TaskLinkInput, TaskQuery, TaskStats, UpdateTaskInput,
+    CreateTaskInput, Task, TaskLink, TaskLinkInput, TaskQuery, TaskSearchHit, TaskStats,
+    UpdateTaskInput,
 };
 
 impl super::Database {
@@ -128,15 +129,17 @@ impl super::Database {
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
 
+        // SELECT 必须包含 20 列以对齐下方 row.get(0..=19)。
+        // 历史教训 1：缺 source_batch_id 时 row.get(18)? 抛 InvalidColumnIndex。
+        // 历史教训 2：v30 加 category_id 后这里漏改，导致搜索点中跳详情时永远报"任务不存在"。
+        // 改用 .optional()? 而不是 .ok() —— "无行" 仍是 Ok(None)，但 SQL 错误（缺列/类型转换失败）
+        // 会被原样向上抛，避免静默吞掉问题、误导前端。
         let task: Option<Task> = conn
             .query_row(
-                // SELECT 必须包含 19 列以对齐下方 row.get(0..=18)；缺 source_batch_id
-                // 时 row.get(18)? 抛 InvalidColumnIndex，被 .ok() 吞成 None，前端永远收到
-                // "任务 X 不存在" —— 这导致紧急窗口加载详情失败
                 "SELECT id, title, description, priority, important, status, due_date,
                         completed_at, created_at, updated_at, remind_before_minutes, reminded_at,
                         repeat_kind, repeat_interval, repeat_weekdays, repeat_until,
-                        repeat_count, repeat_done_count, source_batch_id
+                        repeat_count, repeat_done_count, source_batch_id, category_id
                  FROM tasks WHERE id = ?1",
                 params![id],
                 |row| {
@@ -165,7 +168,7 @@ impl super::Database {
                     })
                 },
             )
-            .ok();
+            .optional()?;
 
         let Some(mut task) = task else { return Ok(None) };
 
@@ -186,6 +189,49 @@ impl super::Database {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Some(task))
+    }
+
+    /// 顶栏 Ctrl+K 搜索：按 title / description LIKE，未完成优先，高优先级靠前
+    ///
+    /// 只走简单 LIKE（不接 FTS5），原因：tasks 数据量小（用户级，几百条封顶），
+    /// 索引收益不抵复杂度；未来如要全文 + 排名再切。
+    pub fn search_tasks(
+        &self,
+        keyword: &str,
+        limit: usize,
+    ) -> Result<Vec<TaskSearchHit>, AppError> {
+        let kw = keyword.trim();
+        if kw.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let pattern = format!("%{}%", kw);
+        let mut stmt = conn.prepare(
+            "SELECT id, title, IFNULL(description, ''), status, priority, due_date
+             FROM tasks
+             WHERE title LIKE ?1 OR IFNULL(description, '') LIKE ?1
+             ORDER BY status ASC, priority ASC,
+                      (due_date IS NULL) ASC, due_date ASC,
+                      updated_at DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![pattern, limit as i64], |row| {
+                let description: String = row.get(2)?;
+                Ok(TaskSearchHit {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    snippet: description,
+                    status: row.get(3)?,
+                    priority: row.get(4)?,
+                    due_date: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     // ─── 写操作 ────────────────────────────────

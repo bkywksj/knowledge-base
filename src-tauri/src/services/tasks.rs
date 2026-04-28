@@ -4,7 +4,7 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::models::{
     CreateTaskCategoryInput, CreateTaskInput, Task, TaskCategory, TaskLinkInput, TaskQuery,
-    TaskStats, UpdateTaskCategoryInput, UpdateTaskInput,
+    TaskSearchHit, TaskStats, UpdateTaskCategoryInput, UpdateTaskInput,
 };
 
 pub struct TaskService;
@@ -75,6 +75,16 @@ impl TaskService {
 
     pub fn stats(db: &Database) -> Result<TaskStats, AppError> {
         db.get_task_stats()
+    }
+
+    /// 顶栏全局搜索：keyword 空时返回空数组；limit 默认 20，封顶 50
+    pub fn search(
+        db: &Database,
+        keyword: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<TaskSearchHit>, AppError> {
+        let n = limit.unwrap_or(20).min(50);
+        db.search_tasks(keyword, n)
     }
 
     /// 稍后提醒：把截止时间向后推 N 分钟 + 清提醒已触发标记

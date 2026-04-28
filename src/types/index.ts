@@ -797,6 +797,19 @@ export interface TaskStats {
   dueToday: number;
 }
 
+/** 顶栏 Ctrl+K 搜索的待办命中（轻量结果，与 SearchResult 对齐风格） */
+export interface TaskSearchHit {
+  id: number;
+  title: string;
+  /** description 截断 */
+  snippet: string;
+  /** 0=todo / 1=done */
+  status: TaskStatus;
+  /** 0=urgent / 1=normal / 2=low */
+  priority: TaskPriority;
+  dueDate: string | null;
+}
+
 // ─── AI 提示词库 ───────────────────────────────
 
 /**

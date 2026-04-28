@@ -303,6 +303,37 @@ export default function TasksPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
+  // 顶栏 Ctrl+K 搜索点中某条待办：?taskId=N → 自动打开编辑 Modal
+  // 一次性消费：拉到任务后 setEditing 并清掉 URL 参数，避免后续刷新还触发
+  useEffect(() => {
+    const tid = searchParams.get("taskId");
+    if (!tid) return;
+    const id = Number(tid);
+    if (!Number.isFinite(id) || id <= 0) return;
+    let cancelled = false;
+    taskApi
+      .get(id)
+      .then((task) => {
+        if (cancelled) return;
+        setEditing(task);
+      })
+      .catch((e) => {
+        message.error(`任务不存在或已删除: ${e}`);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        const next = new URLSearchParams(searchParams);
+        next.delete("taskId");
+        navigate(`/tasks${next.toString() ? `?${next.toString()}` : ""}`, {
+          replace: true,
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   const loadTasks = useCallback(async () => {
     setLoading(true);
     try {

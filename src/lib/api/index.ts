@@ -54,6 +54,7 @@ import type {
   UpdateTaskInput,
   TaskQuery,
   TaskStats,
+  TaskSearchHit,
   TaskCategory,
   CreateTaskCategoryInput,
   UpdateTaskCategoryInput,
@@ -740,6 +741,9 @@ export const taskApi = {
   /** 完成本次：循环任务推进到下一次；非循环任务等同于 toggleStatus */
   completeOccurrence: (id: number) =>
     invoke<void>("complete_task_occurrence", { id }),
+  /** 顶栏 Ctrl+K 搜索：按关键词查待办（LIKE title/description） */
+  search: (query: string, limit?: number) =>
+    invoke<TaskSearchHit[]>("search_tasks", { query, limit }),
 };
 
 /** 待办分类 API（一级扁平分类） */

@@ -861,6 +861,7 @@ pub fn run() {
             commands::tasks::get_task_stats,
             commands::tasks::snooze_task_reminder,
             commands::tasks::complete_task_occurrence,
+            commands::tasks::search_tasks,
             // 待办分类
             commands::tasks::list_task_categories,
             commands::tasks::create_task_category,

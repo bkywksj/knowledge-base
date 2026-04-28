@@ -37,6 +37,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { aiChatApi, aiModelApi, noteApi } from "@/lib/api";
 import type { AiConversation, AiMessage, AiModel, Note, SkillCall } from "@/types";
 import { relativeTime } from "@/lib/utils";
+import { stripPseudoToolCalls } from "@/lib/aiFilter";
 
 const { TextArea } = Input;
 
@@ -780,37 +781,42 @@ export default function AiChatPage() {
                 />
               ))}
 
-              {/* 流式响应中 */}
-              {streaming && (streamingText || streamingSkillCalls.length > 0) && (
-                <div className="flex gap-3 mb-4">
-                  <div
-                    className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-bold"
-                    style={{
-                      background: token.colorPrimaryBg,
-                      color: token.colorPrimary,
-                    }}
-                  >
-                    AI
+              {/* 流式响应中 —— 渲染前剥掉伪 tool_call 残文（与 Rust 侧 strip_pseudo_tool_calls
+                  同口径），避免最后一轮模型退化输出的 XML/围栏标签直接秀给用户 */}
+              {streaming && (() => {
+                const cleanText = stripPseudoToolCalls(streamingText);
+                if (!cleanText && streamingSkillCalls.length === 0) return null;
+                return (
+                  <div className="flex gap-3 mb-4">
+                    <div
+                      className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-bold"
+                      style={{
+                        background: token.colorPrimaryBg,
+                        color: token.colorPrimary,
+                      }}
+                    >
+                      AI
+                    </div>
+                    <div className="max-w-[75%] flex flex-col gap-2">
+                      {streamingSkillCalls.length > 0 && (
+                        <SkillCallList calls={streamingSkillCalls} token={token} defaultOpen />
+                      )}
+                      {cleanText && (
+                        <div
+                          className="px-3 py-2 rounded-lg text-sm ai-markdown"
+                          style={{
+                            background: token.colorBgContainer,
+                            color: token.colorText,
+                          }}
+                        >
+                          <Markdown>{cleanText}</Markdown>
+                          <span className="inline-block w-1.5 h-4 ml-0.5 animate-pulse" style={{ background: token.colorPrimary }} />
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="max-w-[75%] flex flex-col gap-2">
-                    {streamingSkillCalls.length > 0 && (
-                      <SkillCallList calls={streamingSkillCalls} token={token} defaultOpen />
-                    )}
-                    {streamingText && (
-                      <div
-                        className="px-3 py-2 rounded-lg text-sm ai-markdown"
-                        style={{
-                          background: token.colorBgContainer,
-                          color: token.colorText,
-                        }}
-                      >
-                        <Markdown>{streamingText}</Markdown>
-                        <span className="inline-block w-1.5 h-4 ml-0.5 animate-pulse" style={{ background: token.colorPrimary }} />
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+                );
+              })()}
 
               <div ref={messagesEndRef} />
             </div>

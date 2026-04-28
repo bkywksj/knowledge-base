@@ -13,7 +13,6 @@ import {
 import {
   NotebookText,
   CalendarDays,
-  Search,
   ArrowRight,
   Pin,
   Bot,
@@ -43,6 +42,7 @@ import { relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { NewNoteButton } from "@/components/NewNoteButton";
 import { NewTodoButton } from "@/components/NewTodoButton";
+import { HomeSearchInput } from "@/components/HomeSearchInput";
 import { useAppStore } from "@/store";
 import type {
   Note,
@@ -304,18 +304,13 @@ export default function HomePage() {
   return (
     <div className="max-w-5xl mx-auto" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
-      {/* ① 顶部搜索 + 新建笔记 */}
+      {/* ① 顶部搜索 + 新建笔记
+          搜索：输入即下拉建议（笔记 + 待办，点击跳详情），回车去 /search 全量结果 */}
       <div className="flex gap-3">
-        <Input
-          size="large"
-          placeholder="搜索笔记 / 待办 / 标签…  (Ctrl+K)"
-          prefix={<Search size={16} style={{ color: token.colorTextQuaternary }} />}
+        <HomeSearchInput
           value={searchKeyword}
-          onChange={(e) => setSearchKeyword(e.target.value)}
+          onChange={setSearchKeyword}
           onPressEnter={handleSearch}
-          allowClear
-          style={{ borderRadius: 8 }}
-          className="flex-1"
         />
         <NewNoteButton size="large" style={{ borderRadius: 8 }} />
       </div>
