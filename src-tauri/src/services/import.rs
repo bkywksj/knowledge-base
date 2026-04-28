@@ -11,6 +11,7 @@ use crate::models::{
     ScannedFile,
 };
 use crate::services::hash::sha256_hex;
+use crate::services::quick_capture::normalize_plain_text_for_markdown;
 
 /// 接受导入的纯文本扩展名（小写，不含点）。
 /// .txt 与 .md 走同一通路：纯文本本身就是合法 markdown，无需独立 Service。
@@ -302,9 +303,19 @@ impl ImportService {
                 None => batch_root_id,
             };
 
+            // .txt 来源是 plain text，需要做两道规范化才能正确渲染：
+            // 1. 合并孤立列表标记（Notion / 飞书风格的 "1.\n内容" 模式）
+            // 2. 行首 ASCII 空格 → NBSP（避免被 markdown 当代码块或 trim 掉）
+            // .md / .markdown 已经是合法 markdown，原样写入避免破坏列表 / 代码块语义
+            let final_content = if ext_lower(file_path) == "txt" {
+                normalize_plain_text_for_markdown(&body_content)
+            } else {
+                body_content
+            };
+
             let input = NoteInput {
                 title: final_title.clone(),
-                content: body_content,
+                content: final_content,
                 folder_id: target_folder_id,
             };
 

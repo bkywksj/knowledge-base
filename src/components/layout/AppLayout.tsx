@@ -274,6 +274,12 @@ export function AppLayout() {
       }
     ).then((fn) => unlisteners.push(fn));
 
+    // 全局快捷键「剪贴板 → 新笔记」捕获成功后的事件：刷新笔记列表 / 首页统计。
+    // 后端已经走系统通知反馈，这里只负责让 UI 跟上。
+    listen("quick_capture:note_created", () => {
+      useAppStore.getState().bumpNotesRefresh();
+    }).then((fn) => unlisteners.push(fn));
+
     listen("tray:check-update", async () => {
       const key = "tray-check-update";
       message.loading({ content: "正在检查更新…", key, duration: 0 });

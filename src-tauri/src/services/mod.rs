@@ -29,6 +29,8 @@ pub mod image;
 pub mod orphan_scan;
 pub mod pdf;
 pub mod prompt;
+pub mod quick_capture;
+pub mod shortcut;
 pub mod safe_filename;
 pub mod skills;
 pub mod source_file;

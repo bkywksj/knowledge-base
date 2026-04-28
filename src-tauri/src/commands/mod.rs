@@ -7,6 +7,7 @@ pub mod folders;
 pub mod links;
 pub mod notes;
 pub mod search;
+pub mod shortcut;
 pub mod system;
 pub mod tags;
 pub mod trash;

@@ -413,6 +413,8 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         // ─── 应用初始化 ─────────────────────────────
         .setup(move |app| {
             // ⚠️ 第一步：立即显示主窗口，不依赖任何后续初始化成败。
@@ -575,6 +577,13 @@ pub fn run() {
                 start_md_deliver_watcher(
                     app.handle().clone(),
                     framework_app_data_dir.clone(),
+                );
+
+                // 全局快捷键：仅默认实例注册，避免多开实例互抢系统级热键。
+                // 单条注册失败只 log warn，不阻断启动；用户可在设置页改键/禁用
+                services::shortcut::ShortcutService::register_all(
+                    app.handle(),
+                    &app.state::<AppState>().db,
                 );
             }
 
@@ -862,6 +871,11 @@ pub fn run() {
             commands::tasks::snooze_task_reminder,
             commands::tasks::complete_task_occurrence,
             commands::tasks::search_tasks,
+            // 全局快捷键（settings/快捷键页用）
+            commands::shortcut::list_shortcut_bindings,
+            commands::shortcut::set_shortcut_binding,
+            commands::shortcut::reset_shortcut_binding,
+            commands::shortcut::disable_shortcut_binding,
             // 待办分类
             commands::tasks::list_task_categories,
             commands::tasks::create_task_category,
@@ -917,3 +931,5 @@ fn migrate_to_dev_prefix(data_dir: &std::path::Path) {
 #[cfg(not(debug_assertions))]
 #[allow(dead_code)]
 fn migrate_to_dev_prefix(_data_dir: &std::path::Path) {}
+
+// 全局快捷键的注册 / 派发 / 缓存逻辑全部在 services::shortcut 中

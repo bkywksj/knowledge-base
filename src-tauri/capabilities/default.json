@@ -31,6 +31,10 @@
     "process:default",
     "dialog:default",
     "autostart:default",
-    "notification:default"
+    "notification:default",
+    "global-shortcut:default",
+    "clipboard-manager:default",
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-write-text"
   ]
 }

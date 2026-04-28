@@ -46,6 +46,7 @@ import { SyncTabs } from "@/components/settings/SyncTabs";
 import { DataDirSection } from "@/components/settings/DataDirSection";
 import OrphanAssetsPanel from "@/components/settings/OrphanAssetsPanel";
 import { HiddenPinSection } from "@/components/hidden/HiddenPinSection";
+import { ShortcutsSection } from "@/components/settings/ShortcutsSection";
 import { TiptapEditor } from "@/components/editor";
 import type { Folder } from "@/types";
 
@@ -215,6 +216,7 @@ const SETTINGS_NAV_ITEMS: { id: string; label: string }[] = [
   { id: "settings-update", label: "软件更新" },
   { id: "settings-startup", label: "启动设置" },
   { id: "settings-hidden-pin", label: "隐藏笔记 PIN" },
+  { id: "settings-shortcuts", label: "全局快捷键" },
   { id: "settings-editor", label: "编辑器外观" },
   { id: "settings-task-reminder", label: "待办提醒" },
   { id: "settings-import", label: "导入笔记" },
@@ -1162,6 +1164,10 @@ export default function SettingsPage() {
 
       <div id="settings-hidden-pin">
         <HiddenPinSection />
+      </div>
+
+      <div id="settings-shortcuts">
+        <ShortcutsSection />
       </div>
 
       <Card

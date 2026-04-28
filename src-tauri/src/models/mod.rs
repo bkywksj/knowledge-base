@@ -7,6 +7,21 @@ pub struct AppConfig {
     pub value: String,
 }
 
+/// 全局快捷键绑定信息（返回给前端的视图模型）
+///
+/// - `accel = ""` 表示「禁用」（用户主动关掉这条热键）
+/// - `is_custom`：用户改过键（与 `default_accel` 不同 / 已禁用）
+/// - 注：仅 global scope 的热键经过 Rust 侧绑定；app/editor 内键不参与此模型
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutBinding {
+    pub id: String,
+    pub accel: String,
+    pub default_accel: String,
+    pub is_custom: bool,
+    pub disabled: bool,
+}
+
 /// 系统信息
 ///
 /// `instance_id` / `is_dev` 用于 UI 区分多开实例（默认实例 = None；多开 = Some(N)）。

@@ -77,6 +77,7 @@ import type {
   MigrationMarker,
   WordExportResult,
   HtmlExportResult,
+  ShortcutBinding,
 } from "@/types";
 
 /** 系统相关 API */
@@ -151,6 +152,15 @@ export const sourceFileApi = {
 };
 
 /** 配置管理 API */
+/** 全局快捷键管理 API（系统级热键，由 Rust 侧 global-shortcut 插件管理） */
+export const shortcutsApi = {
+  list: () => invoke<ShortcutBinding[]>("list_shortcut_bindings"),
+  set: (id: string, accel: string) =>
+    invoke<void>("set_shortcut_binding", { id, accel }),
+  reset: (id: string) => invoke<void>("reset_shortcut_binding", { id }),
+  disable: (id: string) => invoke<void>("disable_shortcut_binding", { id }),
+};
+
 export const configApi = {
   getAll: () => invoke<AppConfig[]>("get_all_config"),
   get: (key: string) => invoke<string>("get_config", { key }),

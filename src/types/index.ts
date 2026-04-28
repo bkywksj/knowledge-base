@@ -4,6 +4,20 @@ export interface AppConfig {
   value: string;
 }
 
+/** 全局快捷键绑定（仅 global scope，由 Rust 侧 global-shortcut 插件管理） */
+export interface ShortcutBinding {
+  /** 内部唯一 ID（如 'global.quickCapture'） */
+  id: string;
+  /** 当前生效的 accelerator；空字符串 = 已禁用 */
+  accel: string;
+  /** 默认 accelerator */
+  defaultAccel: string;
+  /** 用户已改键 / 已禁用 */
+  isCustom: boolean;
+  /** 是否被禁用（accel 为空） */
+  disabled: boolean;
+}
+
 /** 系统信息 */
 export interface SystemInfo {
   os: string;

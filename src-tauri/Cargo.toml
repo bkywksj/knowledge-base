@@ -63,6 +63,9 @@ zeroize = { version = "1", features = ["zeroize_derive"] }
 rand = "0.8"
 tauri-plugin-autostart = "2"
 tauri-plugin-notification = "2"
+# 全局快捷键 + 剪贴板：用于「后台运行时按 Ctrl+Shift+N 把剪贴板内容存为新笔记」
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-clipboard-manager = "2"
 # Excel / ODS 解析（纯 Rust，零系统依赖；AI 智能规划"Excel 导入"模式用）
 calamine = "0.28"
 # T-020 笔记导出为 Word：纯 Rust 生成 .docx；零系统依赖
