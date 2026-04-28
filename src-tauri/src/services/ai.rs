@@ -353,9 +353,11 @@ impl AiService {
     ///
     /// 事件前缀 `ai-write:token` / `ai-write:done` / `ai-write:error`
     ///
-    /// `action` 支持两种格式：
+    /// `action` 支持三种格式：
     /// - `prompt:{id}`：从 prompt_templates 表查模板，`{{selection}} {{context}} {{title}}` 占位符
     ///   替换成实际值后作为 user message 发送（推荐路径，v19 起前端 AI 菜单都走这里）
+    /// - `custom:{指令}`：前端"自定义提问"路径，把用户即兴写的指令和选区/上下文打包成
+    ///   一条 user message 发送（不写回 DB）
     /// - 裸词如 `continue` / `summarize`：先尝试按 `builtin_code` 查 DB，查不到再回退到内置硬编码
     ///   提示（保留这条路径是为了兼容老版本或外部脚本直接调用）
     pub async fn write_assist(
@@ -374,8 +376,16 @@ impl AiService {
         // 上下文窗口限制：旧逻辑 500 字，保持不变；太长会侵蚀 selection 的 token 预算
         let context_snippet: String = context_plain_full.chars().take(500).collect();
 
-        // 优先按 DB Prompt 走（prompt:id 或 builtin_code）
-        let rendered = if let Ok(tmpl) = crate::services::prompt::PromptService::resolve(db, action)
+        // 自定义提问路径：前端把用户即兴指令塞进 action 的 `custom:` 前缀里
+        let custom_instruction = action
+            .strip_prefix("custom:")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        // 优先按 DB Prompt 走（prompt:id 或 builtin_code），custom 路径跳过 resolve
+        let rendered = if custom_instruction.is_some() {
+            None
+        } else if let Ok(tmpl) = crate::services::prompt::PromptService::resolve(db, action)
         {
             let vars = crate::services::prompt::PromptVars {
                 selection: &selection_plain,
@@ -388,7 +398,27 @@ impl AiService {
             None
         };
 
-        let messages = if let Some(user_content) = rendered {
+        let messages = if let Some(instruction) = custom_instruction {
+            // 自定义提问：把指令 + 上下文 + 选区组装成一条 user message
+            let mut user_content = format!("【指令】\n{}\n", instruction);
+            if !context_snippet.is_empty() {
+                user_content.push_str(&format!(
+                    "\n【上下文（参考）】\n{}\n",
+                    context_snippet
+                ));
+            }
+            user_content.push_str(&format!(
+                "\n【待处理文本】\n{}",
+                selection_plain
+            ));
+            vec![
+                json!({
+                    "role": "system",
+                    "content": "你是一个写作助手。请严格按照用户的指令处理文本，只输出最终结果，不要额外解释。使用中文。"
+                }),
+                json!({ "role": "user", "content": user_content }),
+            ]
+        } else if let Some(user_content) = rendered {
             // DB Prompt 路径：单轮 user message（模板里已经把上下文/选区织进去了）
             vec![
                 json!({

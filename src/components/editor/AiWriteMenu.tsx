@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import type { Editor } from "@tiptap/react";
-import { Button, Tooltip, theme as antdTheme } from "antd";
+import { Button, Input, Popover, Tooltip, message, theme as antdTheme } from "antd";
 import {
   Sparkles,
   ArrowRight,
@@ -14,6 +14,8 @@ import {
   Loader2,
   StopCircle,
   Wand2,
+  PenLine,
+  Copy,
 } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { aiWriteApi, promptApi } from "@/lib/api";
@@ -58,6 +60,9 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
   // DB 里的提示词列表，AI 菜单从这里渲染；为空时显示"去添加提示词"占位
   const [prompts, setPrompts] = useState<PromptTemplate[]>([]);
   const [promptsLoaded, setPromptsLoaded] = useState(false);
+  // 自定义提示词弹窗
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customInstruction, setCustomInstruction] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
   const unlistenRefs = useRef<UnlistenFn[]>([]);
   // 最近一次 mouseup 的坐标（拖选完毕时记下来，让 AI 菜单贴在鼠标附近而不是
@@ -184,21 +189,28 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
     }
   }, [visible, position.left, editor]);
 
-  // 点击外部关闭
+  // 点击外部关闭（流式中 / 自定义弹窗打开时不响应，避免误关）
   useEffect(() => {
     function handleClick(e: MouseEvent) {
+      if (streaming || customOpen) return;
+      const target = e.target as HTMLElement | null;
+      // antd Popover/Dropdown/message 走 Portal 渲染在 body 下，命中这些容器时不关菜单
       if (
-        menuRef.current &&
-        !menuRef.current.contains(e.target as Node) &&
-        !streaming
+        target &&
+        target.closest(
+          ".ant-popover, .ant-popover-inner, .ant-popover-content, .ant-dropdown, .ant-message",
+        )
       ) {
+        return;
+      }
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setVisible(false);
         setResult("");
       }
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, [streaming]);
+  }, [streaming, customOpen]);
 
   const cleanup = useCallback(async () => {
     for (const fn of unlistenRefs.current) {
@@ -213,12 +225,20 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
     };
   }, [cleanup]);
 
-  async function handlePrompt(prompt: PromptTemplate) {
+  /**
+   * 通用：发起一次 AI 写作辅助流式请求。
+   * `action` 直接交给后端：`prompt:{id}` / `custom:{指令}` / 内置 builtin_code。
+   * `display` 用作结果标题栏显示（自定义路径不在 DB，没有 PromptTemplate 可用）。
+   */
+  async function runAssist(
+    action: string,
+    display: PromptTemplate,
+  ): Promise<void> {
     if (streaming) return;
 
     setStreaming(true);
     setResult("");
-    setActivePrompt(prompt);
+    setActivePrompt(display);
     await cleanup();
 
     // 获取选区周围的上下文（与旧版本一致：各取 300 字符）
@@ -248,11 +268,51 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
     unlistenRefs.current = [tokenUnlisten, doneUnlisten, errorUnlisten];
 
     try {
-      await aiWriteApi.assist(`prompt:${prompt.id}`, selectedText, context);
+      await aiWriteApi.assist(action, selectedText, context);
     } catch (e) {
       setStreaming(false);
       setResult(`错误: ${e}`);
       await cleanup();
+    }
+  }
+
+  function handlePrompt(prompt: PromptTemplate) {
+    void runAssist(`prompt:${prompt.id}`, prompt);
+  }
+
+  async function handleCustomSubmit() {
+    const instruction = customInstruction.trim();
+    if (!instruction) {
+      message.warning("请输入提示词");
+      return;
+    }
+    // 伪 PromptTemplate：仅供结果标题栏显示和 applyResult 默认 mode 用
+    const ephemeral: PromptTemplate = {
+      id: -1,
+      title: "自定义",
+      description: instruction,
+      prompt: instruction,
+      outputMode: "replace",
+      icon: "PenLine",
+      isBuiltin: false,
+      builtinCode: null,
+      sortOrder: 0,
+      enabled: true,
+      createdAt: "",
+      updatedAt: "",
+    };
+    setCustomOpen(false);
+    setCustomInstruction("");
+    await runAssist(`custom:${instruction}`, ephemeral);
+  }
+
+  async function handleCopy() {
+    if (!result) return;
+    try {
+      await navigator.clipboard.writeText(result);
+      message.success("已复制");
+    } catch {
+      message.error("复制失败");
     }
   }
 
@@ -339,7 +399,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
                   onAskAi(selectedText);
                 }}
               >
-                🤖 问 AI 这段
+                🤖 问AI
               </button>
               {/* 主 CTA 和工具按钮之间的细分隔线，比图标更克制 */}
               <span
@@ -386,6 +446,62 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
               </button>
             </Tooltip>
           ))}
+          {/* 自定义提示词：贴在按钮下方的小 Popover 输入即兴指令，不写入 DB */}
+          <Popover
+            open={customOpen}
+            onOpenChange={(o) => {
+              setCustomOpen(o);
+              if (!o) setCustomInstruction("");
+            }}
+            trigger="click"
+            placement="bottomLeft"
+            destroyTooltipOnHide
+            content={
+              <div style={{ width: 320 }}>
+                <Input.TextArea
+                  autoFocus
+                  value={customInstruction}
+                  onChange={(e) => setCustomInstruction(e.target.value)}
+                  placeholder="例如：翻译为日文，并解释每个词的含义"
+                  autoSize={{ minRows: 2, maxRows: 6 }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void handleCustomSubmit();
+                    }
+                  }}
+                />
+                <div className="flex items-center justify-between mt-2">
+                  <span
+                    className="text-xs"
+                    style={{ color: token.colorTextTertiary }}
+                  >
+                    Enter 发送 / Shift+Enter 换行
+                  </span>
+                  <Button
+                    type="primary"
+                    size="small"
+                    onClick={handleCustomSubmit}
+                  >
+                    发送
+                  </Button>
+                </div>
+              </div>
+            }
+          >
+            <Tooltip title="输入自定义指令" mouseEnterDelay={0.3}>
+              <button
+                className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-black/5 transition-colors whitespace-nowrap"
+                style={{
+                  color: customOpen ? token.colorPrimary : token.colorText,
+                }}
+                onMouseDown={(e) => e.preventDefault()}
+              >
+                <PenLine size={13} />
+                自定义
+              </button>
+            </Tooltip>
+          </Popover>
         </div>
       )}
 
@@ -460,6 +576,15 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
                 borderTop: `1px solid ${token.colorBorderSecondary}`,
               }}
             >
+              <Tooltip title="复制到剪贴板">
+                <Button
+                  size="small"
+                  icon={<Copy size={12} />}
+                  onClick={handleCopy}
+                >
+                  复制
+                </Button>
+              </Tooltip>
               <Button
                 size="small"
                 icon={<X size={12} />}
@@ -487,6 +612,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
           )}
         </div>
       )}
+
     </div>
   );
 }
