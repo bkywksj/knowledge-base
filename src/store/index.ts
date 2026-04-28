@@ -130,6 +130,12 @@ interface AppStore {
   /** NotesPanel 末尾"未分类"虚拟节点是否展开（持久化） */
   notesUncategorizedExpanded: boolean;
   /**
+   * NotesPanel 首次进入是否已执行"全部折叠初始化"（持久化）。
+   * false = 用户从未打开过侧栏（或老版本升级），首次拿到 folders 时把全部 id 灌进 collapsed。
+   * true = 已初始化，后续完全由用户操作驱动展开/折叠。
+   */
+  notesFoldersInitialCollapseDone: boolean;
+  /**
    * 当前进程的系统信息（含多开实例编号 + 数据目录）。
    * null = 启动时还没拉到；UI 据此渲染实例徽章
    */
@@ -209,6 +215,8 @@ interface AppStore {
   pruneNotesCollapsedFolders: (existingKeys: string[]) => void;
   /** 设置"未分类"展开/收起 */
   setNotesUncategorizedExpanded: (expanded: boolean) => void;
+  /** 标记 NotesPanel 已完成首次"全部折叠"初始化（一次性） */
+  markNotesFoldersInitialCollapseDone: () => void;
   /**
    * 启动时预取的文件夹树缓存。
    * 让 NotesPanel 第一次 mount 时立即拿到种子数据，避免"点笔记 → 等 invoke"的空白闪烁。
@@ -253,6 +261,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   outlineVisible: true,
   notesCollapsedFolderKeys: [],
   notesUncategorizedExpanded: false,
+  notesFoldersInitialCollapseDone: false,
   instanceInfo: null,
   loadInstanceInfo: async () => {
     try {
@@ -372,6 +381,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }),
   setNotesUncategorizedExpanded: (expanded) =>
     set({ notesUncategorizedExpanded: expanded }),
+  markNotesFoldersInitialCollapseDone: () =>
+    set({ notesFoldersInitialCollapseDone: true }),
   prefetchedFolders: null,
   prefetchFolders: async () => {
     try {
@@ -496,6 +507,10 @@ export async function loadThemeFromStore() {
     if (typeof nue === "boolean") {
       useAppStore.getState().setNotesUncategorizedExpanded(nue);
     }
+    const nficd = await store.get<boolean>("notesFoldersInitialCollapseDone");
+    if (typeof nficd === "boolean") {
+      useAppStore.setState({ notesFoldersInitialCollapseDone: nficd });
+    }
   } catch {
     // 首次启动时 store 可能不存在
   } finally {
@@ -522,6 +537,7 @@ export async function saveThemeToStore() {
       outlineVisible,
       notesCollapsedFolderKeys,
       notesUncategorizedExpanded,
+      notesFoldersInitialCollapseDone,
     } = useAppStore.getState();
     const store = await Store.load(STORE_FILE);
     await store.set("lightTheme", lightTheme);
@@ -537,6 +553,10 @@ export async function saveThemeToStore() {
     await store.set("outlineVisible", outlineVisible);
     await store.set("notesCollapsedFolderKeys", notesCollapsedFolderKeys);
     await store.set("notesUncategorizedExpanded", notesUncategorizedExpanded);
+    await store.set(
+      "notesFoldersInitialCollapseDone",
+      notesFoldersInitialCollapseDone,
+    );
     await store.save();
   } catch {
     // 静默失败
@@ -546,7 +566,7 @@ export async function saveThemeToStore() {
 // 监听主题 + 置顶 + SidePanel + 编辑器字体偏好变化自动保存
 let _prevPersistKey = "";
 useAppStore.subscribe((state) => {
-  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.outlineVisible}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}`;
+  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.outlineVisible}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesFoldersInitialCollapseDone}`;
   if (key !== _prevPersistKey) {
     _prevPersistKey = key;
     saveThemeToStore();

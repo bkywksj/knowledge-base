@@ -307,6 +307,18 @@ export function NotesPanel() {
     return allFolderKeys.filter((k) => !collapsed.has(k));
   }, [allFolderKeys, collapsedFolderKeys]);
 
+  // 首次进入（含老版本升级后第一次打开）：把全部文件夹默认折叠。
+  // 之后由用户操作驱动，flag 持久化后不再重置。
+  const initialCollapseDone = useAppStore(
+    (s) => s.notesFoldersInitialCollapseDone,
+  );
+  useEffect(() => {
+    if (initialCollapseDone) return;
+    if (folders.length === 0) return;
+    useAppStore.getState().setNotesAllFoldersCollapsed(allFolderKeys);
+    useAppStore.getState().markNotesFoldersInitialCollapseDone();
+  }, [initialCollapseDone, folders.length, allFolderKeys]);
+
   const [creatingRoot, setCreatingRoot] = useState(false);
   const [newRootName, setNewRootName] = useState("");
 
