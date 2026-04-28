@@ -776,6 +776,7 @@ pub fn run() {
             commands::ai::send_ai_message,
             commands::ai::cancel_ai_generation,
             commands::ai::ai_write_assist,
+            commands::ai::ai_suggest_prompt,
             commands::ai::cancel_ai_write_assist,
             commands::ai::ai_plan_today,
             commands::ai::ai_plan_from_goal,

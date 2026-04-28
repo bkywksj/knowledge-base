@@ -284,6 +284,23 @@ pub async fn ai_write_assist(
     result.map_err(|e| e.to_string())
 }
 
+/// 根据选区 + 上下文，向 AI 拿一条"最有用"的处理指令建议
+/// 给前端"自定义提问" Popover 输入框下方做提示气泡用，一次性返回，不走流式
+#[tauri::command]
+pub async fn ai_suggest_prompt(
+    state: State<'_, AppState>,
+    selected_text: String,
+    context: Option<String>,
+) -> Result<String, String> {
+    AiService::suggest_prompt(
+        &state.db,
+        &selected_text,
+        &context.unwrap_or_default(),
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// 取消写作辅助生成
 #[tauri::command]
 pub fn cancel_ai_write_assist(

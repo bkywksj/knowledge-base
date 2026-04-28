@@ -592,6 +592,12 @@ export const aiWriteApi = {
     invoke<void>("ai_write_assist", { action, selectedText, context }),
   /** 取消写作辅助 */
   cancel: () => invoke<void>("cancel_ai_write_assist"),
+  /**
+   * 根据选区 + 上下文，向 AI 拿一条"最有用"的处理指令建议（一次性，不走流式）。
+   * 失败时调用方应静默忽略（例如未配置默认模型 / 离线 / 限流）。
+   */
+  suggestPrompt: (selectedText: string, context?: string) =>
+    invoke<string>("ai_suggest_prompt", { selectedText, context }),
 };
 
 /**

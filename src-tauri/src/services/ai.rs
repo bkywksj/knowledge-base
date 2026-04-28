@@ -471,6 +471,126 @@ impl AiService {
         Ok(())
     }
 
+    /// 给定选区 + 上下文，让 AI 提出"最有用的一条处理指令"，供前端"自定义提问"
+    /// 的输入框下方做建议气泡。
+    ///
+    /// 设计：
+    /// - 一次性（非流式）请求，10s 超时；失败直接返回 Err 让前端静默隐藏建议区
+    /// - 强约束输出：单条祈使句、≤30 字、不带前后缀；后端再做清洗（去引号 / 截断）
+    /// - 用 default ai model；没配置默认模型时返回 Err
+    pub async fn suggest_prompt(
+        db: &Database,
+        selected_text: &str,
+        context: &str,
+    ) -> Result<String, AppError> {
+        let model = db.get_default_ai_model()?;
+        let selection_plain = strip_html(selected_text);
+        let context_plain_full = strip_html(context);
+        let context_snippet: String = context_plain_full.chars().take(300).collect();
+
+        let mut user_content = String::from("待处理文本：\n");
+        user_content.push_str(&selection_plain);
+        if !context_snippet.is_empty() {
+            user_content.push_str("\n\n上下文（参考）：\n");
+            user_content.push_str(&context_snippet);
+        }
+
+        let messages = vec![
+            json!({
+                "role": "system",
+                "content": "你是写作助手。读完用户提供的文本后，给出最可能有用的一条处理指令（例如：翻译为英文 / 用更专业的语气改写 / 总结成一句话 / 提炼要点 / 转成 Markdown 列表 等）。要求：① 命令式祈使句 ② 不超过 25 个字 ③ 直接输出指令本身，不要解释、不要前后缀、不要标点结尾。使用中文。"
+            }),
+            json!({ "role": "user", "content": user_content }),
+        ];
+
+        let timeout = std::time::Duration::from_secs(10);
+        let raw = if model.provider == "ollama" {
+            let client = build_ollama_client();
+            let url = format!("{}/api/chat", model.api_url.trim_end_matches('/'));
+            let response = client
+                .post(&url)
+                .timeout(timeout)
+                .json(&json!({
+                    "model": model.model_id,
+                    "messages": messages,
+                    "stream": false,
+                    "options": { "num_predict": 64, "temperature": 0.4 }
+                }))
+                .send()
+                .await
+                .map_err(|e| AppError::Custom(format_ollama_send_error(&e, &url)))?;
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                return Err(AppError::Custom(format!(
+                    "Ollama 返回错误 {}：{}",
+                    status,
+                    body.chars().take(200).collect::<String>()
+                )));
+            }
+            let body: Value = response
+                .json()
+                .await
+                .map_err(|e| AppError::Custom(format!("Ollama 响应解析失败: {}", e)))?;
+            body["message"]["content"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        } else {
+            let client = crate::services::http_client::shared();
+            let url = build_openai_chat_url(&model.api_url);
+            let mut request = client
+                .post(&url)
+                .timeout(timeout)
+                .header("Content-Type", "application/json")
+                .json(&json!({
+                    "model": model.model_id,
+                    "messages": messages,
+                    "max_tokens": 64,
+                    "temperature": 0.4,
+                    "stream": false
+                }));
+            if let Some(key) = &model.api_key {
+                if !key.trim().is_empty() {
+                    request = request.header("Authorization", format!("Bearer {}", key));
+                }
+            }
+            let response = request
+                .send()
+                .await
+                .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                return Err(AppError::Custom(format_openai_api_error(status, &body)));
+            }
+            let body: Value = response
+                .json()
+                .await
+                .map_err(|e| AppError::Custom(format!("响应解析失败: {}", e)))?;
+            body["choices"][0]["message"]["content"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        };
+
+        // 清洗：去首尾空白 / 引号 / 句号；截断到 60 字（保险，模型偶尔不守 25 字约束）
+        let cleaned: String = raw
+            .trim()
+            .trim_matches(|c: char| {
+                c == '"' || c == '\'' || c == '「' || c == '」' || c == '“' || c == '”'
+            })
+            .trim_end_matches(|c: char| c == '。' || c == '.' || c == '：' || c == ':')
+            .chars()
+            .take(60)
+            .collect();
+
+        if cleaned.is_empty() {
+            return Err(AppError::Custom("AI 未返回有效建议".into()));
+        }
+        Ok(cleaned)
+    }
+
     /// 测试 AI 模型连通性。
     ///
     /// 不依赖数据库，直接基于 `AiModelInput` 试探，方便用户在「添加/编辑模型」Modal
