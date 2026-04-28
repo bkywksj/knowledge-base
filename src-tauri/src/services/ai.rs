@@ -488,21 +488,58 @@ impl AiService {
         let context_plain_full = strip_html(context);
         let context_snippet: String = context_plain_full.chars().take(300).collect();
 
-        let mut user_content = String::from("待处理文本：\n");
-        user_content.push_str(&selection_plain);
-        if !context_snippet.is_empty() {
-            user_content.push_str("\n\n上下文（参考）：\n");
-            user_content.push_str(&context_snippet);
-        }
+        // 文本特征：长度、是否含 CJK、是否含代码片段。给模型作为硬约束的输入，
+        // 抑制"无脑总结"——这是 LLM 在写作助手任务上的高频默认坍塌。
+        let char_count = selection_plain.chars().count();
+        let has_cjk = selection_plain
+            .chars()
+            .any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c));
+        let has_code_signal = selection_plain.contains("```")
+            || selection_plain.contains("    ")
+            || selection_plain.contains("function ")
+            || selection_plain.contains("def ")
+            || selection_plain.contains("=> ")
+            || selection_plain.contains("const ")
+            || selection_plain.contains("import ");
+        let language_hint = if has_cjk { "中文" } else { "外文（英/日/其他）" };
+        let length_band = if char_count < 30 {
+            "极短（<30 字）"
+        } else if char_count < 120 {
+            "短（30–120 字）"
+        } else if char_count < 400 {
+            "中等（120–400 字）"
+        } else {
+            "长（>400 字）"
+        };
 
+        let user_content = format!(
+            "【文本特征】\n语言: {language_hint}\n长度: {length_band}（共 {char_count} 字）\n含代码痕迹: {code}\n\n【待处理文本】\n{selection}{ctx}",
+            language_hint = language_hint,
+            length_band = length_band,
+            char_count = char_count,
+            code = if has_code_signal { "是" } else { "否" },
+            selection = selection_plain,
+            ctx = if context_snippet.is_empty() {
+                String::new()
+            } else {
+                format!("\n\n【周围上下文（仅参考）】\n{}", context_snippet)
+            },
+        );
+
+        // 重写过的 system prompt：
+        // - 用动词谱更广的示例（翻译/改写/扩写/修订/找错字/转表格/列术语/挑反例 …）
+        // - 显式禁止"总结/提炼要点/概括"作为默认（除非真的是长篇散文）
+        // - 强制先看文本特征再选指令，挑"用户最可能想做下一步"那条
         let messages = vec![
             json!({
                 "role": "system",
-                "content": "你是写作助手。读完用户提供的文本后，给出最可能有用的一条处理指令（例如：翻译为英文 / 用更专业的语气改写 / 总结成一句话 / 提炼要点 / 转成 Markdown 列表 等）。要求：① 命令式祈使句 ② 不超过 25 个字 ③ 直接输出指令本身，不要解释、不要前后缀、不要标点结尾。使用中文。"
+                "content": "你是贴心的写作助理。用户会发来一段他刚选中的文本和它的特征摘要，你要给出**针对这段具体内容**最可能有用的一条处理指令。\n\n挑选指令的思考路径：\n1) 先识别文本类型：是中文还是外文？是诗/段落/列表/代码/表格/对话/数据/标题？\n2) 再判断它最缺什么：缺翻译？缺校对？缺更生动的表达？缺结构化？缺扩展？缺反例？缺转换为另一种格式？\n3) 选一条与该文本特征**最匹配**的处理指令。\n\n动作多样性参考（不要只在'总结/提炼'里打转）：\n - 翻译为英文/日文/古文/白话\n - 改写得更口语 / 更正式 / 更幽默 / 更简洁\n - 扩展为 200 字详细论述\n - 续写下一段\n - 找出错别字和病句\n - 列出关键术语并解释\n - 挑出逻辑漏洞并提反例\n - 转成 Markdown 表格 / 列表 / 代码块\n - 抽取所有数字/日期/人名\n - 标注重点字词加粗\n - 把这段代码加注释 / 重构得更可读 / 找潜在 bug\n - 把对话整理成纪要\n\n硬性约束：\n① **禁止**默认建议「总结」「概括」「提炼要点」这类指令——除非文本明显是长篇叙述（>300 字且非列表/代码/对话）；优先选其他动作。\n② 命令式祈使句，直接以动词开头。\n③ 不超过 25 个字。\n④ 只输出指令本身，不要解释、不要引号、不要前后缀、不要句末标点。\n⑤ 使用中文。\n⑥ 不同次调用要尽量给不同的指令，不要重复。"
             }),
             json!({ "role": "user", "content": user_content }),
         ];
 
+        // 每次调用换一个 seed，避免相同输入坍塌到同一答案；OpenAI / Ollama 都认这个键
+        let seed: u32 = rand::random();
         let timeout = std::time::Duration::from_secs(10);
         let raw = if model.provider == "ollama" {
             let client = build_ollama_client();
@@ -514,7 +551,12 @@ impl AiService {
                     "model": model.model_id,
                     "messages": messages,
                     "stream": false,
-                    "options": { "num_predict": 64, "temperature": 0.4 }
+                    "options": {
+                        "num_predict": 64,
+                        "temperature": 0.85,
+                        "top_p": 0.95,
+                        "seed": seed,
+                    }
                 }))
                 .send()
                 .await
@@ -547,7 +589,9 @@ impl AiService {
                     "model": model.model_id,
                     "messages": messages,
                     "max_tokens": 64,
-                    "temperature": 0.4,
+                    "temperature": 0.85,
+                    "top_p": 0.95,
+                    "seed": seed,
                     "stream": false
                 }));
             if let Some(key) = &model.api_key {
