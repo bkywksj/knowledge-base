@@ -1,8 +1,24 @@
-use tauri::{Manager, State};
+use tauri::State;
 
 use crate::models::{DailyWritingStat, DashboardStats, SystemInfo};
+use crate::services::asset_path;
 use crate::services::image::ImageService;
 use crate::state::AppState;
+
+/// 把笔记里的相对资产路径（kb-asset:// 后那段）还原成绝对路径。
+///
+/// 用途：附件链接需要走 OS opener 打开（必须传绝对路径）；其它素材渲染走 asset 协议
+/// 不需要这个 Command，前端 `convertFileSrc` 自己拼即可。
+///
+/// 安全：拒绝含 `..` 或绝对前缀的输入，强制限定在 data_dir 之内。
+#[tauri::command]
+pub fn resolve_asset_absolute_path(
+    state: State<'_, AppState>,
+    rel: String,
+) -> Result<String, String> {
+    let abs = asset_path::rel_to_abs(&rel, &state.data_dir)?;
+    Ok(abs.to_string_lossy().into_owned())
+}
 
 /// 获取系统信息
 ///
@@ -56,9 +72,10 @@ pub fn greet(name: &str) -> Result<String, String> {
 /// 查询是否允许多开实例。
 /// flag 文件位于 framework_app_data_dir 根（与单实例锁同目录），
 /// 在 Tauri Builder 启动前由 lib.rs 读取以决定是否拒绝第二个进程。
+/// dev 模式下走 `-dev` 隔离目录，避免污染 prod 设置。
 #[tauri::command]
 pub fn get_multi_instance_enabled(app: tauri::AppHandle) -> Result<bool, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let dir = crate::framework_app_data_dir(&app).map_err(|e| e.to_string())?;
     Ok(crate::is_multi_instance_enabled(&dir))
 }
 
@@ -68,6 +85,6 @@ pub fn set_multi_instance_enabled(
     app: tauri::AppHandle,
     enabled: bool,
 ) -> Result<(), String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let dir = crate::framework_app_data_dir(&app).map_err(|e| e.to_string())?;
     crate::set_multi_instance_enabled(&dir, enabled).map_err(|e| e.to_string())
 }

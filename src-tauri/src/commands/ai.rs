@@ -2,9 +2,9 @@ use tauri::State;
 use tokio::sync::watch;
 
 use crate::models::{
-    AiConversation, AiMessage, AiModel, AiModelInput, DraftNoteRequest, DraftNoteResponse,
-    Note, NoteInput, PlanFromExcelRequest, PlanFromGoalRequest, PlanFromGoalResponse,
-    PlanTodayRequest, PlanTodayResponse,
+    AiConversation, AiMessage, AiModel, AiModelInput, AiModelTestResult, DraftNoteRequest,
+    DraftNoteResponse, Note, NoteInput, PlanFromExcelRequest, PlanFromGoalRequest,
+    PlanFromGoalResponse, PlanTodayRequest, PlanTodayResponse,
 };
 use crate::services::ai::AiService;
 use crate::state::AppState;
@@ -51,6 +51,17 @@ pub fn set_default_ai_model(state: State<'_, AppState>, id: i64) -> Result<(), S
     state
         .db
         .set_default_ai_model(id)
+        .map_err(|e| e.to_string())
+}
+
+/// 测试 AI 模型连通性。
+///
+/// 入参用 `AiModelInput` 而非 id：用户在「添加模型」Modal 还没保存时也能先点测试，
+/// 避免必须先保存一次才能验证。
+#[tauri::command]
+pub async fn test_ai_model(input: AiModelInput) -> Result<AiModelTestResult, String> {
+    AiService::test_model_connection(&input)
+        .await
         .map_err(|e| e.to_string())
 }
 

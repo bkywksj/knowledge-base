@@ -29,6 +29,7 @@ import {
   MessageCircle,
   Check,
   Star,
+  Type,
 } from "lucide-react";
 import { Tooltip as AntTooltip } from "antd";
 import {
@@ -266,6 +267,7 @@ export default function HomePage() {
 
     return {
       totalNotes: stats?.total_notes ?? 0,
+      totalWords: stats?.total_words ?? 0,
       streak,
       lastSinceLabel,
       thisWeekWords: thisWeek,
@@ -609,12 +611,19 @@ export default function HomePage() {
             近 14 天
           </Text>
         </div>
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-5 gap-3">
           <MetricItem
             icon={<NotebookText size={16} style={{ color: token.colorPrimary }} />}
             iconBg={`${token.colorPrimary}15`}
             value={vitalityMetrics.totalNotes}
             label="笔记总数"
+          />
+          <MetricItem
+            icon={<Type size={16} style={{ color: "#7c3aed" }} />}
+            iconBg="#ede9fe"
+            value={vitalityMetrics.totalWords.toLocaleString()}
+            label="总字数"
+            isText
           />
           <MetricItem
             icon={<Flame size={16} style={{ color: "#ea580c" }} />}

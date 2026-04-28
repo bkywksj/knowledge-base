@@ -7,9 +7,9 @@ use tokio::sync::watch;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::models::{
-    AiMessage, AiModel, DraftNoteRequest, DraftNoteResponse, Folder, MilestoneDraft,
-    PlanFromExcelRequest, PlanFromGoalRequest, PlanFromGoalResponse, PlanTodayRequest,
-    PlanTodayResponse, SkillCall, TaskQuery, TaskSuggestion,
+    AiMessage, AiModel, AiModelInput, AiModelTestResult, DraftNoteRequest, DraftNoteResponse,
+    Folder, MilestoneDraft, PlanFromExcelRequest, PlanFromGoalRequest, PlanFromGoalResponse,
+    PlanTodayRequest, PlanTodayResponse, SkillCall, TaskQuery, TaskSuggestion,
 };
 use crate::services::skills;
 
@@ -390,6 +390,107 @@ impl AiService {
 
         let _ = app.emit("ai-write:done", "");
         Ok(())
+    }
+
+    /// 测试 AI 模型连通性。
+    ///
+    /// 不依赖数据库，直接基于 `AiModelInput` 试探，方便用户在「添加/编辑模型」Modal
+    /// 还没保存时就先验证。策略：
+    /// - Ollama: POST /api/chat，`num_predict=1`，绕系统代理（Clash 会劫本地包）
+    /// - 其它（OpenAI 兼容）: POST /chat/completions，`max_tokens=5`
+    ///
+    /// 整体每次请求 12s 超时，失败错误经 `format_*_error` 中文化，前端 `Modal.error`
+    /// 多行展示。
+    pub async fn test_model_connection(
+        input: &AiModelInput,
+    ) -> Result<AiModelTestResult, AppError> {
+        if input.api_url.trim().is_empty() {
+            return Err(AppError::InvalidInput("API 地址不能为空".into()));
+        }
+        if input.model_id.trim().is_empty() {
+            return Err(AppError::InvalidInput("模型标识不能为空".into()));
+        }
+
+        let timeout = std::time::Duration::from_secs(12);
+        let started = std::time::Instant::now();
+
+        if input.provider == "ollama" {
+            let client = build_ollama_client();
+            let url = format!("{}/api/chat", input.api_url.trim_end_matches('/'));
+            let response = client
+                .post(&url)
+                .timeout(timeout)
+                .json(&json!({
+                    "model": input.model_id,
+                    "messages": [{ "role": "user", "content": "ping" }],
+                    "stream": false,
+                    "options": { "num_predict": 1 }
+                }))
+                .send()
+                .await
+                .map_err(|e| AppError::Custom(format_ollama_send_error(&e, &url)))?;
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                let snippet: String = body.chars().take(200).collect();
+                return Err(AppError::Custom(format!(
+                    "Ollama 返回错误 {}\n详情: {}\n\n建议：先确认本地已 `ollama pull {}` 拉到此模型",
+                    status, snippet, input.model_id
+                )));
+            }
+            let body: Value = response
+                .json()
+                .await
+                .map_err(|e| AppError::Custom(format!("Ollama 响应解析失败: {}", e)))?;
+            let sample = body["message"]["content"]
+                .as_str()
+                .map(|s| s.chars().take(40).collect::<String>());
+            return Ok(AiModelTestResult {
+                ok: true,
+                latency_ms: started.elapsed().as_millis() as u64,
+                sample,
+            });
+        }
+
+        // OpenAI 兼容（含 lmstudio / deepseek / zhipu / claude proxy / minimax / siliconflow / custom）
+        let client = crate::services::http_client::shared();
+        let url = build_openai_chat_url(&input.api_url);
+        let mut request = client
+            .post(&url)
+            .timeout(timeout)
+            .header("Content-Type", "application/json")
+            .json(&json!({
+                "model": input.model_id,
+                "messages": [{ "role": "user", "content": "ping" }],
+                "max_tokens": 5,
+                "stream": false
+            }));
+        if let Some(key) = &input.api_key {
+            if !key.trim().is_empty() {
+                request = request.header("Authorization", format!("Bearer {}", key));
+            }
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(AppError::Custom(format_openai_api_error(status, &body)));
+        }
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|e| AppError::Custom(format!("响应解析失败: {}", e)))?;
+        let sample = body["choices"][0]["message"]["content"]
+            .as_str()
+            .map(|s| s.chars().take(40).collect::<String>());
+        Ok(AiModelTestResult {
+            ok: true,
+            latency_ms: started.elapsed().as_millis() as u64,
+            sample,
+        })
     }
 
     /// 通用 Ollama 流式请求（使用 EventEmitter trait）
@@ -1259,6 +1360,8 @@ impl AiService {
             status: Some(0),
             keyword: None,
             priority: None,
+            category_id: None,
+            uncategorized: None,
         })?;
 
         let carry_over: Vec<_> = if req.include_yesterday_unfinished {

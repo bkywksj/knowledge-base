@@ -71,6 +71,8 @@ export function DataDirSection() {
       directory: true,
       multiple: false,
       title: "选择新的数据目录",
+      // 让对话框默认定位到当前数据目录的父级，方便用户在原位置附近找新目录
+      defaultPath: info?.currentDir,
     });
     if (typeof sel !== "string") return;
 

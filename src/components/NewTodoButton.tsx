@@ -94,7 +94,7 @@ export function NewTodoButton({
     <>
       <Space.Compact style={block ? { width: "100%", ...style } : style}>
         <Button
-          type="default"
+          type="primary"
           size={size}
           icon={<CheckSquare size={14} />}
           onClick={() => setCreateOpen(true)}
@@ -109,7 +109,7 @@ export function NewTodoButton({
           placement="bottomRight"
         >
           <Button
-            type="default"
+            type="primary"
             size={size}
             icon={<ChevronDown size={14} />}
             title="AI 规划入口"

@@ -20,7 +20,7 @@ import {
   Radio,
 } from "antd";
 import { SyncOutlined, PlusOutlined, CheckCircleFilled, CheckCircleOutlined } from "@ant-design/icons";
-import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate, Power, ExternalLink, Type } from "lucide-react";
+import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate, Power, ExternalLink, Type, Zap } from "lucide-react";
 import dayjs, { type Dayjs } from "dayjs";
 import { TimePicker } from "antd";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -286,6 +286,8 @@ export default function SettingsPage() {
   const [form] = Form.useForm<AiModelInput>();
   // 表单内 provider 变化 → 动态占位
   const watchedProvider = Form.useWatch("provider", form) || "ollama";
+  /** 行内"测试"按钮 loading 锁：值为正在测试的 model.id；Modal 内的测试按钮锁用 -1 */
+  const [testingModelId, setTestingModelId] = useState<number | null>(null);
 
   // 导入状态
   const [importing, setImporting] = useState(false);
@@ -896,6 +898,70 @@ export default function SettingsPage() {
     }
   }
 
+  /**
+   * 跑一次模型连通性测试。
+   *
+   * 两个入口共用：
+   * - 表格行内"测试"按钮：传 record（已保存模型，rowId = record.id）
+   * - Modal 里"测试连接"按钮：传当前表单值（未保存，rowId = -1 占位）
+   *
+   * 失败信息行数往往较多（含 hint + 详情），用 `Modal.error` 多行展示，
+   * 与 ai/index.tsx 里 send 失败的处理保持一致。
+   */
+  async function runModelTest(input: AiModelInput, rowId: number, label: string) {
+    setTestingModelId(rowId);
+    try {
+      const result = await aiModelApi.test(input);
+      const tail = result.sample ? ` · 样本: "${result.sample}"` : "";
+      message.success(`✓ [${label}] 连接成功 · 延迟 ${result.latency_ms}ms${tail}`);
+    } catch (e) {
+      Modal.error({
+        title: `[${label}] 测试失败`,
+        width: 560,
+        content: (
+          <pre className="whitespace-pre-wrap text-xs leading-relaxed m-0">
+            {String(e)}
+          </pre>
+        ),
+      });
+    } finally {
+      setTestingModelId(null);
+    }
+  }
+
+  function handleTestRow(record: AiModel) {
+    runModelTest(
+      {
+        name: record.name,
+        provider: record.provider,
+        api_url: record.api_url,
+        api_key: record.api_key,
+        model_id: record.model_id,
+        max_context: record.max_context,
+      },
+      record.id,
+      record.name,
+    );
+  }
+
+  async function handleTestForm() {
+    try {
+      const values = await form.validateFields();
+      const max_context_num = values.max_context
+        ? parseInt(String(values.max_context), 10)
+        : 32000;
+      const payload: AiModelInput = {
+        ...values,
+        max_context: Number.isFinite(max_context_num) ? max_context_num : 32000,
+      };
+      await runModelTest(payload, -1, payload.name || "当前表单");
+    } catch (e) {
+      // antd validateFields 的字段错误自带高亮，无需再弹
+      if (e && typeof e === "object" && "errorFields" in e) return;
+      message.error(`测试失败: ${e}`);
+    }
+  }
+
   function handleProviderChange(provider: string) {
     form.setFieldValue("api_url", DEFAULT_URLS[provider] || "");
   }
@@ -936,9 +1002,18 @@ export default function SettingsPage() {
     {
       title: "操作",
       key: "action",
-      width: 160,
+      width: 200,
       render: (_: unknown, record: AiModel) => (
         <Space size="small">
+          <Button
+            type="text"
+            size="small"
+            icon={<Zap size={14} />}
+            loading={testingModelId === record.id}
+            disabled={testingModelId !== null && testingModelId !== record.id}
+            onClick={() => handleTestRow(record)}
+            title="测试连通性"
+          />
           <Button
             type="text"
             size="small"
@@ -1685,10 +1760,7 @@ export default function SettingsPage() {
       <Modal
         title={editingModel ? "编辑 AI 模型" : "添加 AI 模型"}
         open={modelModalOpen}
-        onOk={handleModelSave}
         onCancel={() => setModelModalOpen(false)}
-        okText="保存"
-        cancelText="取消"
         destroyOnHidden
         // 类名配合 global.css 里的 .ai-model-modal .ant-form-item-extra → 提示文字 12px
         className="ai-model-modal"
@@ -1699,6 +1771,23 @@ export default function SettingsPage() {
             overflowY: "auto",
           },
         }}
+        // 自定义 footer：在「保存/取消」前面加「测试连接」，让用户填完字段不必先存就能验
+        footer={
+          <Space>
+            <Button
+              icon={<Zap size={14} />}
+              loading={testingModelId === -1}
+              disabled={testingModelId !== null && testingModelId !== -1}
+              onClick={handleTestForm}
+            >
+              测试连接
+            </Button>
+            <Button onClick={() => setModelModalOpen(false)}>取消</Button>
+            <Button type="primary" onClick={handleModelSave}>
+              保存
+            </Button>
+          </Space>
+        }
       >
         <Form
           form={form}
