@@ -261,6 +261,10 @@ export function NotesPanel() {
         include_descendants: false,
         page: 1,
         page_size: NOTES_PER_FOLDER_LIMIT,
+        // 树是组织视图，按用户自定义顺序展示（sort_order ASC）；
+        // 未拖排过的笔记 sort_order 由 v31 迁移按 updated_at DESC 初始化，
+        // 肉眼仍是时间序，拖排后立刻可见
+        sort_by: "custom",
       });
       setNotesByFolder((prev) => {
         const next = new Map(prev);
@@ -283,6 +287,7 @@ export function NotesPanel() {
         uncategorized: true,
         page: 1,
         page_size: NOTES_PER_FOLDER_LIMIT,
+        sort_by: "custom",
       });
       setUncategorizedNotes(r.items);
     } catch (e) {
