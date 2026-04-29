@@ -377,29 +377,35 @@ function backfillVideoIds(editor: import("@tiptap/react").Editor): void {
 
 /**
  * 从 Clipboard/DataTransfer 收集所有文件，按 predicate 筛选。
- * Why: 部分来源（浏览器、某些 IM 工具）`files` 只给第一个，但 `items[]` 里齐全；
- *      用 Set<File> 去重避免两边都给时重复插入。
+ *
+ * Why "items 优先 + files 兜底"：
+ *   - 现代 WebView（Edge/Chromium/WebView2）`items[]` 总是齐全
+ *   - 部分老来源 / IM 工具只填 `files`，不填 `items`
+ *   - 早期实现是两边都读 + `Set<File>` 身份去重 —— 但 WebView2 粘贴截图时
+ *     `getAsFile()` 和 `dt.files[i]` 经常返回内容相同但身份不同的两个 File
+ *     对象，导致同一张截图被插入两次（issue: 截图粘贴出现两份）
+ *   - 改为：`items` 取到任何文件就不再读 `files`；只有 `items` 完全为空才兜底
  */
 function collectFiles(
   dt: DataTransfer | null | undefined,
   predicate: (f: File) => boolean,
 ): File[] {
   if (!dt) return [];
-  const seen = new Set<File>();
   const out: File[] = [];
   const push = (f: File | null) => {
-    if (f && predicate(f) && !seen.has(f)) {
-      seen.add(f);
-      out.push(f);
-    }
+    if (f && predicate(f)) out.push(f);
   };
+  let itemsHadFile = false;
   if (dt.items) {
     for (let i = 0; i < dt.items.length; i++) {
       const item = dt.items[i];
-      if (item.kind === "file") push(item.getAsFile());
+      if (item.kind === "file") {
+        itemsHadFile = true;
+        push(item.getAsFile());
+      }
     }
   }
-  if (dt.files) {
+  if (!itemsHadFile && dt.files) {
     for (let i = 0; i < dt.files.length; i++) push(dt.files[i]);
   }
   return out;
