@@ -760,6 +760,18 @@ export function NotesPanel() {
 
       // 同 folder + 落在另一个笔记叶子上/旁 → 重排该 folder 内笔记顺序
       if (dropNoteId == null || dropNoteId === noteId) return;
+      const dropNote = findNoteById(dropNoteId);
+      if (!dropNote) return;
+      // 同档校验：list_notes 第一排序键是 is_pinned DESC，置顶笔记永远在前。
+      // 跨档拖排 sort_order 写入后视觉上会"跳回"置顶档，体验非常迷惑——直接拒绝
+      if (note.is_pinned !== dropNote.is_pinned) {
+        message.info(
+          note.is_pinned
+            ? "置顶笔记不能拖到普通笔记之间（先取消置顶）"
+            : "普通笔记不能拖到置顶笔记之间（先置顶它）",
+        );
+        return;
+      }
       const siblings: Note[] =
         targetFolderId == null
           ? uncategorizedNotes

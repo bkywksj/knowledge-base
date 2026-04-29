@@ -913,6 +913,18 @@ export default function NoteListPage() {
       const oldIdx = data.items.findIndex((n) => String(n.id) === String(active.id));
       const newIdx = data.items.findIndex((n) => String(n.id) === String(over.id));
       if (oldIdx < 0 || newIdx < 0) return;
+      // 同档校验：list_notes 第一排序键是 is_pinned DESC，跨档拖排会被 ORDER BY 拉回原档，
+      // 视觉上"跳到最上"非常迷惑 → 直接拒绝
+      const dragNote = data.items[oldIdx];
+      const dropNote = data.items[newIdx];
+      if (dragNote.is_pinned !== dropNote.is_pinned) {
+        message.info(
+          dragNote.is_pinned
+            ? "置顶笔记不能拖到普通笔记之间（先取消置顶）"
+            : "普通笔记不能拖到置顶笔记之间（先置顶它）",
+        );
+        return;
+      }
       const reordered = arrayMove(data.items, oldIdx, newIdx);
       // 乐观更新
       setData((prev) => ({ ...prev, items: reordered }));
