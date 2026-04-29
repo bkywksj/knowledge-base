@@ -6,7 +6,7 @@ import { List, Modal, Typography, message } from "antd";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { NavigateFunction } from "react-router-dom";
 
-import { noteApi, importApi, pdfApi, sourceFileApi } from "./api";
+import { noteApi, importApi, pdfApi, sourceFileApi, tagApi, folderApi } from "./api";
 import { importWordFiles } from "./wordImport";
 import { useAppStore } from "@/store";
 
@@ -44,22 +44,98 @@ function untitledTitle(): string {
   )} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** 创建一篇空白笔记并跳转到编辑器。用户想写就写，不想保留可直接删除。 */
+/**
+ * 创建一篇空白笔记并跳转到编辑器。用户想写就写，不想保留可直接删除。
+ *
+ * `opts.useDefaults`：true 时套用全局"默认文件夹/默认标签"偏好——仅在
+ * 调用方完全没有文件夹上下文时（顶部新建按钮、Ctrl+N、托盘"新建笔记"等）
+ * 才传 true。文件夹右键 / ?folder=X 等已声明 folderId 的入口保持 false，
+ * 不被默认覆盖。套用后给 toast 提示，方便用户感知"是否吃到默认"。
+ */
 export async function createBlankAndOpen(
   folderId: number | null,
   navigate: NavigateFunction,
+  opts?: { useDefaults?: boolean },
 ): Promise<void> {
   try {
+    let finalFolderId = folderId;
+    let appliedTagIds: number[] = [];
+    let appliedFolderName: string | null = null;
+    let appliedTagNames: string[] = [];
+
+    if (opts?.useDefaults && folderId == null) {
+      const { defaultFolderId, defaultTagIds } = useAppStore.getState();
+      if (defaultFolderId != null) {
+        finalFolderId = defaultFolderId;
+        // 拉一下文件夹名给 toast 用；失败不影响创建
+        try {
+          const allFolders = await folderApi.list();
+          appliedFolderName =
+            findFolderName(allFolders, defaultFolderId) ?? null;
+        } catch {
+          /* ignore */
+        }
+      }
+      if (defaultTagIds.length > 0) {
+        appliedTagIds = defaultTagIds;
+        try {
+          const allTags = await tagApi.list();
+          appliedTagNames = defaultTagIds
+            .map((id) => allTags.find((t) => t.id === id)?.name)
+            .filter((n): n is string => !!n);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
     const note = await noteApi.create({
       title: untitledTitle(),
       content: "",
-      folder_id: folderId,
+      folder_id: finalFolderId,
     });
+
+    // 套用默认标签：循环 addToNote（避免改动 noteApi.create 签名波及其他调用方）
+    if (appliedTagIds.length > 0) {
+      await Promise.all(
+        appliedTagIds.map((tid) =>
+          tagApi.addToNote(note.id, tid).catch((e) => {
+            console.warn(`套用默认标签 ${tid} 失败:`, e);
+          }),
+        ),
+      );
+    }
+
     useAppStore.getState().bumpNotesRefresh();
     navigate(`/notes/${note.id}`);
+
+    // 反馈：让用户知道默认有没有生效
+    if (appliedFolderName || appliedTagNames.length > 0) {
+      const parts: string[] = [];
+      if (appliedFolderName) parts.push(`文件夹「${appliedFolderName}」`);
+      if (appliedTagNames.length > 0) {
+        parts.push(`标签 ${appliedTagNames.map((n) => `「${n}」`).join("、")}`);
+      }
+      message.success(`已新建笔记 · 默认套用 ${parts.join(" + ")}`, 3);
+    }
   } catch (e) {
     message.error(String(e));
   }
+}
+
+/** 在文件夹树里按 id 找名字（深度优先） */
+function findFolderName(
+  folders: { id: number; name: string; children?: typeof folders }[],
+  id: number,
+): string | null {
+  for (const f of folders) {
+    if (f.id === id) return f.name;
+    if (f.children) {
+      const r = findFolderName(f.children, id);
+      if (r) return r;
+    }
+  }
+  return null;
 }
 
 /**

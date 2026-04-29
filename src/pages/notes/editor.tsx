@@ -174,6 +174,48 @@ function FolderPathEditor({
     }
   }, [open, treeData]);
 
+  // 默认文件夹偏好（"全局新建笔记"时套用）
+  const defaultFolderId = useAppStore((s) => s.defaultFolderId);
+  const setDefaultFolderId = useAppStore((s) => s.setDefaultFolderId);
+  const defaultFolderName = useMemo(
+    () =>
+      defaultFolderId != null
+        ? buildFolderPath(folders, defaultFolderId)
+            .map((f) => f.name)
+            .join(" › ")
+        : null,
+    [folders, defaultFolderId],
+  );
+
+  // antd Tree titleRender：标题右侧 hover 出图钉，已默认时常亮主题色
+  const renderTreeTitle = (nodeData: { key: React.Key; title?: ReactNode }) => {
+    const id = Number(nodeData.key);
+    const isDefault = defaultFolderId === id;
+    return (
+      <div className="kb-folder-tree-row flex items-center justify-between w-full pr-1">
+        <span className="truncate">{nodeData.title}</span>
+        <Tooltip
+          title={isDefault ? "取消默认（新建笔记不再自动归此处）" : "设为默认（新建笔记自动归此处）"}
+          mouseEnterDelay={0.4}
+        >
+          <button
+            className={`kb-folder-pin ${isDefault ? "active" : ""}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              void setDefaultFolderId(isDefault ? null : id);
+            }}
+            aria-label="设为默认文件夹"
+          >
+            <Pin
+              size={12}
+              fill={isDefault ? "currentColor" : "none"}
+            />
+          </button>
+        </Tooltip>
+      </div>
+    );
+  };
+
   const popoverContent = (
     <div style={{ width: 260 }}>
       <div
@@ -220,6 +262,7 @@ function FolderPathEditor({
                 setOpen(false);
               }
             }}
+            titleRender={renderTreeTitle}
           />
         )}
       </div>
@@ -238,6 +281,38 @@ function FolderPathEditor({
       >
         移到根目录
       </Button>
+      {/* 底部脚条：当前默认文件夹 + 一键清除 */}
+      <div
+        style={{
+          marginTop: 6,
+          padding: "6px 4px 2px",
+          borderTop: `1px dashed ${token.colorBorderSecondary}`,
+          fontSize: 11,
+          color: token.colorTextTertiary,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 6,
+        }}
+      >
+        <span className="truncate flex items-center gap-1">
+          <Pin size={11} style={{ color: token.colorPrimary, flexShrink: 0 }} />
+          <span className="truncate">
+            默认：
+            {defaultFolderName ?? <span style={{ opacity: 0.7 }}>未设置</span>}
+          </span>
+        </span>
+        {defaultFolderId != null && (
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0, fontSize: 11, height: "auto" }}
+            onClick={() => void setDefaultFolderId(null)}
+          >
+            清除
+          </Button>
+        )}
+      </div>
     </div>
   );
 
@@ -320,6 +395,24 @@ function MetaBar({
   const trimmedSearch = tagSearch.trim();
   const exactExists = allTags.some((t) => t.name === trimmedSearch);
   const showCreate = trimmedSearch.length > 0 && !exactExists;
+
+  // 默认标签偏好（"全局新建笔记"自动附加）
+  const defaultTagIds = useAppStore((s) => s.defaultTagIds);
+  const setDefaultTagIds = useAppStore((s) => s.setDefaultTagIds);
+  const defaultTagNames = useMemo(
+    () =>
+      defaultTagIds
+        .map((id) => allTags.find((t) => t.id === id)?.name)
+        .filter((n): n is string => !!n),
+    [defaultTagIds, allTags],
+  );
+  // 当前选中和默认是否一致——决定"设为默认"按钮是否可用
+  const sameAsDefault = useMemo(() => {
+    if (selectedTagIds.length !== defaultTagIds.length) return false;
+    const a = [...selectedTagIds].sort();
+    const b = [...defaultTagIds].sort();
+    return a.every((v, i) => v === b[i]);
+  }, [selectedTagIds, defaultTagIds]);
 
   return (
     <div className="flex items-center gap-3 py-2 flex-wrap">
@@ -436,6 +529,50 @@ function MetaBar({
                     </div>
                   </>
                 )}
+                {/* 默认标签管理脚条：把当前选中保存为默认 / 清除 */}
+                <Divider style={{ margin: "4px 0" }} />
+                <div
+                  onMouseDown={(e) => e.preventDefault()}
+                  style={{
+                    padding: "6px 12px 8px",
+                    fontSize: 11,
+                    color: "var(--ant-color-text-tertiary, #999)",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                  }}
+                >
+                  <div className="flex items-center gap-1 truncate">
+                    <Pin size={11} style={{ flexShrink: 0 }} />
+                    <span className="truncate">
+                      默认：
+                      {defaultTagNames.length > 0
+                        ? defaultTagNames.join("、")
+                        : <span style={{ opacity: 0.7 }}>未设置</span>}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ padding: 0, fontSize: 11, height: "auto" }}
+                      disabled={selectedTagIds.length === 0 || sameAsDefault}
+                      onClick={() => void setDefaultTagIds(selectedTagIds)}
+                    >
+                      把当前选中设为默认
+                    </Button>
+                    {defaultTagIds.length > 0 && (
+                      <Button
+                        type="link"
+                        size="small"
+                        style={{ padding: 0, fontSize: 11, height: "auto" }}
+                        onClick={() => void setDefaultTagIds([])}
+                      >
+                        清除
+                      </Button>
+                    )}
+                  </div>
+                </div>
               </>
             )}
           />

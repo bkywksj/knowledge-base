@@ -249,7 +249,7 @@ export function AppLayout() {
     const unlisteners: UnlistenFn[] = [];
 
     listen("tray:new-note", () => {
-      createBlankAndOpen(null, navigate);
+      createBlankAndOpen(null, navigate, { useDefaults: true });
     }).then((fn) => unlisteners.push(fn));
 
     listen("tray:open-daily", () => {
@@ -365,7 +365,7 @@ export function AppLayout() {
     // Ctrl/Cmd + N 新建笔记
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
       e.preventDefault();
-      createBlankAndOpen(null, navigate);
+      createBlankAndOpen(null, navigate, { useDefaults: true });
     }
   }, [focusMode, setFocusMode, navigate]);
 

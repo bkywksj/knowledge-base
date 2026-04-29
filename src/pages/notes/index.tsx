@@ -1401,7 +1401,11 @@ export default function NoteListPage() {
               description="暂无笔记"
               actionText="创建第一篇笔记"
               onAction={() =>
-                createBlankAndOpen(folderId ? Number(folderId) : null, navigate)
+                createBlankAndOpen(
+                  folderId ? Number(folderId) : null,
+                  navigate,
+                  { useDefaults: !folderId },
+                )
               }
             />
           )}
@@ -1479,7 +1483,11 @@ export default function NoteListPage() {
               description="暂无笔记"
               actionText="创建第一篇笔记"
               onAction={() =>
-                createBlankAndOpen(folderId ? Number(folderId) : null, navigate)
+                createBlankAndOpen(
+                  folderId ? Number(folderId) : null,
+                  navigate,
+                  { useDefaults: !folderId },
+                )
               }
             />
           )}

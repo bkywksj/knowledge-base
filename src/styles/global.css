@@ -1453,3 +1453,31 @@ body,
 [data-theme-category="dark"] .kb-fake-selection {
   background-color: rgba(96, 165, 250, 0.32);
 }
+
+/* 文件夹下拉树里的"设为默认"图钉按钮：行 hover 才出现，已默认常亮主题色 */
+.kb-folder-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--ant-color-text-quaternary, #bfbfbf);
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, background-color 0.12s;
+  border-radius: 4px;
+}
+.kb-folder-tree-row:hover .kb-folder-pin {
+  opacity: 1;
+}
+.kb-folder-pin:hover {
+  background: var(--ant-color-fill-tertiary, rgba(0, 0, 0, 0.06));
+  color: var(--ant-color-text-secondary, #595959);
+}
+.kb-folder-pin.active {
+  opacity: 1;
+  color: var(--ant-color-primary, #1677ff);
+}

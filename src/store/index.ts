@@ -2,7 +2,19 @@ import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
-import { taskApi, systemApi, folderApi } from "@/lib/api";
+import { taskApi, systemApi, folderApi, configApi } from "@/lib/api";
+
+/**
+ * 读取配置项；不存在时返回 null（避开 configApi.get 的 NotFound Err 抛出）。
+ * 仅用于"无值是合法状态"的偏好类配置（默认文件夹 / 默认标签）。
+ */
+async function getConfigOrNull(key: string): Promise<string | null> {
+  try {
+    return await configApi.get(key);
+  } catch {
+    return null;
+  }
+}
 import type { Folder, SystemInfo } from "@/types";
 import type { ThemeMode, ThemeCategory } from "@/theme/tokens";
 
@@ -130,6 +142,15 @@ interface AppStore {
   /** NotesPanel 末尾"未分类"虚拟节点是否展开（持久化） */
   notesUncategorizedExpanded: boolean;
   /**
+   * "全局新建笔记"时套用的默认文件夹 id；null = 没设默认（新建到根目录）。
+   * 由后端 app_config 持久化，应用启动时拉一次到 store。
+   * 仅对"无上下文"的入口生效（顶部+号 / Ctrl+N / 命令面板 / 托盘等）；
+   * 文件夹右键新建、?folder=X 列表内新建保留各自上下文，不被覆盖。
+   */
+  defaultFolderId: number | null;
+  /** "全局新建笔记"时自动附加的默认标签 ids；空数组 = 不附加 */
+  defaultTagIds: number[];
+  /**
    * NotesPanel 首次进入是否已执行"全部折叠初始化"（持久化）。
    * false = 用户从未打开过侧栏（或老版本升级），首次拿到 folders 时把全部 id 灌进 collapsed。
    * true = 已初始化，后续完全由用户操作驱动展开/折叠。
@@ -217,6 +238,12 @@ interface AppStore {
   setNotesUncategorizedExpanded: (expanded: boolean) => void;
   /** 标记 NotesPanel 已完成首次"全部折叠"初始化（一次性） */
   markNotesFoldersInitialCollapseDone: () => void;
+  /** 启动时从 app_config 拉默认文件夹 / 标签到 store（失败静默） */
+  loadNoteDefaults: () => Promise<void>;
+  /** 设置默认文件夹（null = 清除）+ 持久化到 app_config */
+  setDefaultFolderId: (folderId: number | null) => Promise<void>;
+  /** 设置默认标签集（空数组 = 清除）+ 持久化到 app_config */
+  setDefaultTagIds: (tagIds: number[]) => Promise<void>;
   /**
    * 启动时预取的文件夹树缓存。
    * 让 NotesPanel 第一次 mount 时立即拿到种子数据，避免"点笔记 → 等 invoke"的空白闪烁。
@@ -262,6 +289,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   notesCollapsedFolderKeys: [],
   notesUncategorizedExpanded: false,
   notesFoldersInitialCollapseDone: false,
+  defaultFolderId: null,
+  defaultTagIds: [],
   instanceInfo: null,
   loadInstanceInfo: async () => {
     try {
@@ -383,6 +412,59 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ notesUncategorizedExpanded: expanded }),
   markNotesFoldersInitialCollapseDone: () =>
     set({ notesFoldersInitialCollapseDone: true }),
+  loadNoteDefaults: async () => {
+    try {
+      const folderRaw = await getConfigOrNull("default_folder_id");
+      const tagsRaw = await getConfigOrNull("default_tag_ids");
+      const folderId = folderRaw ? Number(folderRaw) : null;
+      let tagIds: number[] = [];
+      if (tagsRaw) {
+        try {
+          const parsed = JSON.parse(tagsRaw);
+          if (Array.isArray(parsed)) {
+            tagIds = parsed
+              .map((x) => Number(x))
+              .filter((x) => Number.isFinite(x) && x > 0);
+          }
+        } catch {
+          // 持久化损坏：当作空集合处理，下次保存会覆盖
+        }
+      }
+      set({
+        defaultFolderId: Number.isFinite(folderId) && folderId !== null && folderId > 0
+          ? folderId
+          : null,
+        defaultTagIds: tagIds,
+      });
+    } catch {
+      // 后端不可用 / 启动早期 → 不阻塞 UI
+    }
+  },
+  setDefaultFolderId: async (folderId) => {
+    set({ defaultFolderId: folderId });
+    try {
+      if (folderId == null) {
+        await configApi.delete("default_folder_id").catch(() => {});
+      } else {
+        await configApi.set("default_folder_id", String(folderId));
+      }
+    } catch {
+      // 失败时已写入 store，下次启动会从持久化读出真实值；这里保持轻量
+    }
+  },
+  setDefaultTagIds: async (tagIds) => {
+    const cleaned = Array.from(new Set(tagIds.filter((x) => Number.isFinite(x) && x > 0)));
+    set({ defaultTagIds: cleaned });
+    try {
+      if (cleaned.length === 0) {
+        await configApi.delete("default_tag_ids").catch(() => {});
+      } else {
+        await configApi.set("default_tag_ids", JSON.stringify(cleaned));
+      }
+    } catch {
+      // 同上
+    }
+  },
   prefetchedFolders: null,
   prefetchFolders: async () => {
     try {

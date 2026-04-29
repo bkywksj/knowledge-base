@@ -50,7 +50,10 @@ export function NewNoteButton({
   const navigate = useNavigate();
   const [templateOpen, setTemplateOpen] = useState(false);
 
-  const handleCreate = () => createBlankAndOpen(folderId, navigate);
+  // 没有文件夹上下文时（顶部+按钮 / 首页大按钮）套用全局默认；
+  // 有 folderId（NotesPanel 文件夹下嵌入）就遵循上下文
+  const handleCreate = () =>
+    createBlankAndOpen(folderId, navigate, { useDefaults: folderId == null });
 
   const menuItems: MenuProps["items"] = [
     {
