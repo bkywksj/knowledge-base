@@ -369,12 +369,11 @@ export default function HiddenPage() {
                     title: record.title,
                   });
                 },
+                // 用整行背景高亮替代 outline：antd Table 的 tr 之间有 1px
+                // border-bottom，outline 会被遮挡显示不全；background 不受影响
                 style:
                   ctx.state.payload?.id === record.id
-                    ? {
-                        outline: `1px solid ${token.colorPrimary}`,
-                        outlineOffset: -1,
-                      }
+                    ? { background: token.colorPrimaryBg }
                     : undefined,
               })}
             />

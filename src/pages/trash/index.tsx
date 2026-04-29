@@ -18,6 +18,11 @@ import { useTabsStore } from "@/store/tabs";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { relativeTime } from "@/lib/utils";
 import type { Note, PageResult } from "@/types";
+import { useContextMenu } from "@/hooks/useContextMenu";
+import {
+  ContextMenuOverlay,
+  type ContextMenuEntry,
+} from "@/components/ui/ContextMenuOverlay";
 
 const { Title, Text } = Typography;
 
@@ -82,6 +87,45 @@ export default function TrashPage() {
       message.error(String(e));
     }
   }
+
+  // ─── 右键菜单 ────────────────────────────────
+  const ctx = useContextMenu<{ id: number; title: string }>();
+
+  const menuItems: ContextMenuEntry[] = useMemo(() => {
+    const p = ctx.state.payload;
+    if (!p) return [];
+    return [
+      {
+        key: "restore",
+        label: "恢复笔记",
+        icon: <RotateCcw size={13} />,
+        onClick: () => {
+          ctx.close();
+          void handleRestore(p.id);
+        },
+      },
+      { type: "divider" },
+      {
+        key: "permanent-delete",
+        label: "永久删除",
+        icon: <Trash2 size={13} />,
+        danger: true,
+        onClick: () => {
+          ctx.close();
+          Modal.confirm({
+            title: `永久删除「${p.title || "(无标题)"}」？`,
+            content: "此操作不可恢复。",
+            okText: "永久删除",
+            okButtonProps: { danger: true },
+            async onOk() {
+              await handlePermanentDelete(p.id);
+            },
+          });
+        },
+      },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.state.payload]);
 
   async function handleRestoreBatch() {
     if (selectedIds.length === 0) return;
@@ -214,7 +258,16 @@ export default function TrashPage() {
   );
 
   return (
-    <div className="max-w-4xl mx-auto h-full flex flex-col min-h-0">
+    <div
+      className="max-w-4xl mx-auto h-full flex flex-col min-h-0"
+      onContextMenu={(e) => {
+        // 顶层兜底：表格行有自己的 onContextMenu 会先 preventDefault；
+        // 其他位置统一吞 WebView 默认菜单。input 白名单留给搜索框等
+        const t = e.target as HTMLElement;
+        if (t.closest("input, textarea, [contenteditable='true']")) return;
+        e.preventDefault();
+      }}
+    >
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between mb-2 flex-shrink-0">
         <Title level={3} style={{ margin: 0, lineHeight: "32px" }}>
@@ -300,6 +353,21 @@ export default function TrashPage() {
                 onChange: (keys) => setSelectedIds(keys.map((k) => Number(k))),
                 columnWidth: 40,
               }}
+              onRow={(record) => ({
+                onContextMenu: (e) => {
+                  e.preventDefault();
+                  ctx.open(e.nativeEvent, {
+                    id: record.id,
+                    title: record.title,
+                  });
+                },
+                // 用整行背景高亮替代 outline：antd Table 的 tr 之间有 1px
+                // border-bottom，outline 会被遮挡显示不全；background 不受影响
+                style:
+                  ctx.state.payload?.id === record.id
+                    ? { background: token.colorPrimaryBg }
+                    : undefined,
+              })}
             />
           </div>
           <div className="flex-shrink-0 flex justify-end items-center px-3 py-2">
@@ -321,6 +389,14 @@ export default function TrashPage() {
       ) : (
         <EmptyState description="回收站为空" />
       )}
+
+      <ContextMenuOverlay
+        open={!!ctx.state.payload}
+        x={ctx.state.x}
+        y={ctx.state.y}
+        items={menuItems}
+        onClose={ctx.close}
+      />
     </div>
   );
 }
