@@ -216,9 +216,12 @@ impl Database {
 
         // 查询分页数据
         let offset = (page.saturating_sub(1)) * page_size;
+        // 置顶笔记优先（is_pinned DESC），同档内仍按修改时间倒序。
+        // 索引 idx_notes_pinned(is_pinned, updated_at DESC) WHERE is_deleted = 0
+        // 已为该排序量身定制（schema.rs:196）。
         let data_sql = format!(
             "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type
-             FROM notes {} ORDER BY updated_at DESC LIMIT ?{} OFFSET ?{}",
+             FROM notes {} ORDER BY is_pinned DESC, updated_at DESC LIMIT ?{} OFFSET ?{}",
             where_clause,
             param_values.len() + 1,
             param_values.len() + 2,
