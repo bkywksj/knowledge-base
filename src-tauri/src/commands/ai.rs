@@ -2,9 +2,10 @@ use tauri::State;
 use tokio::sync::watch;
 
 use crate::models::{
-    AiConversation, AiMessage, AiModel, AiModelInput, AiModelTestResult, DraftNoteRequest,
-    DraftNoteResponse, Note, NoteInput, PlanFromExcelRequest, PlanFromGoalRequest,
-    PlanFromGoalResponse, PlanTodayRequest, PlanTodayResponse,
+    AiConversation, AiMessage, AiModel, AiModelInput, AiModelTestResult, AttachmentPreview,
+    DraftNoteRequest, DraftNoteResponse, ExcelPreview, MessageAttachment, Note, NoteInput,
+    PlanFromExcelRequest, PlanFromGoalRequest, PlanFromGoalResponse, PlanTodayRequest,
+    PlanTodayResponse,
 };
 use crate::services::ai::AiService;
 use crate::state::AppState;
@@ -196,9 +197,16 @@ pub async fn send_ai_message(
     message: String,
     use_rag: Option<bool>,
     use_skills: Option<bool>,
+    attachments: Option<Vec<MessageAttachment>>,
 ) -> Result<(), String> {
     let use_skills = use_skills.unwrap_or(false);
     let use_rag = use_rag.unwrap_or(true);
+
+    // 拼附件区到 user message 前；无附件时等价原 message
+    let final_message = crate::services::ai::build_message_with_attachments(
+        &message,
+        attachments.as_deref().unwrap_or(&[]),
+    );
 
     // 创建取消信号
     let (cancel_tx, cancel_rx) = watch::channel(false);
@@ -212,9 +220,10 @@ pub async fn send_ai_message(
 
     let db = &state.db;
     let result = if use_skills {
-        AiService::chat_stream_with_skills(app, db, conversation_id, &message, cancel_rx).await
+        AiService::chat_stream_with_skills(app, db, conversation_id, &final_message, cancel_rx)
+            .await
     } else {
-        AiService::chat_stream(app, db, conversation_id, &message, use_rag, cancel_rx).await
+        AiService::chat_stream(app, db, conversation_id, &final_message, use_rag, cancel_rx).await
     };
 
     // 清理取消信号
@@ -374,6 +383,20 @@ pub async fn ai_plan_from_excel(
     AiService::plan_from_excel(db, request)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 通用 Excel 附件解析（保留作为兼容入口；新代码请用 ai_parse_attachment）。
+#[tauri::command]
+pub fn ai_parse_excel(file_path: String) -> Result<ExcelPreview, String> {
+    AiService::parse_excel_attachment(&file_path).map_err(|e| e.to_string())
+}
+
+/// 通用附件解析（路线 A）。后端按扩展名自动分发到 Excel / PDF / Text 解析器，
+/// 返回 tagged AttachmentPreview。前端用同一个 Command 即可处理多类型，
+/// dialog 选完文件直接传路径过来。
+#[tauri::command]
+pub fn ai_parse_attachment(file_path: String) -> Result<AttachmentPreview, String> {
+    AiService::parse_attachment_auto(&file_path).map_err(|e| e.to_string())
 }
 
 // ─── T-006 AI 写笔记并归档 Commands ─────────

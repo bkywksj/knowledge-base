@@ -1022,6 +1022,91 @@ pub struct PlanFromExcelRequest {
     pub extra_goal: Option<String>,
 }
 
+// ─── AI 会话附件（路线 A：导入文件给 AI 会话用） ──────────
+
+/// Excel/ODS 附件解析预览。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExcelPreview {
+    pub file_path: String,
+    pub display_name: String,
+    pub markdown: String,
+    pub total_rows: usize,
+    pub truncated_sheets: Vec<String>,
+    pub chars_estimated: usize,
+}
+
+/// 文本类附件（md / txt / json / 代码等）解析预览。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextPreview {
+    pub file_path: String,
+    pub display_name: String,
+    pub content: String,
+    pub total_lines: usize,
+    pub chars_estimated: usize,
+    /// 单文件超 60k 字符时尾部被截断
+    pub truncated: bool,
+}
+
+/// PDF 附件解析预览（仅文字层抽取）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfPreview {
+    pub file_path: String,
+    pub display_name: String,
+    pub content: String,
+    pub chars_estimated: usize,
+    pub truncated: bool,
+}
+
+/// 统一的附件解析预览（按文件扩展名自动分发到 Excel/Text/PDF）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AttachmentPreview {
+    Excel(ExcelPreview),
+    Text(TextPreview),
+    Pdf(PdfPreview),
+}
+
+/// 发送给 AI 的消息附件。tagged enum：kind=excel/text/pdf。
+/// 内容字段已是预解析结果，直接拼到 user message 前，发送时不再读盘
+/// （避免文件被改/删后行为不一致）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[allow(dead_code)] // file_path 仅用于反序列化追溯，build_message_with_attachments 不读
+pub enum MessageAttachment {
+    Excel {
+        #[serde(rename = "filePath")]
+        file_path: String,
+        #[serde(rename = "displayName")]
+        display_name: String,
+        markdown: String,
+        #[serde(rename = "totalRows")]
+        total_rows: usize,
+        #[serde(rename = "truncatedSheets", default)]
+        truncated_sheets: Vec<String>,
+    },
+    Text {
+        #[serde(rename = "filePath")]
+        file_path: String,
+        #[serde(rename = "displayName")]
+        display_name: String,
+        content: String,
+        #[serde(default)]
+        truncated: bool,
+    },
+    Pdf {
+        #[serde(rename = "filePath")]
+        file_path: String,
+        #[serde(rename = "displayName")]
+        display_name: String,
+        content: String,
+        #[serde(default)]
+        truncated: bool,
+    },
+}
+
 // ─── AI 写笔记并归档（T-006） ──────────────
 
 /// 笔记目标长度

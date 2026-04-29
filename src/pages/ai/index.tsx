@@ -29,15 +29,60 @@ import {
   XCircle,
   Loader2,
   Paperclip,
+  FileSpreadsheet,
   Save,
   X,
   Copy,
   Quote,
 } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useNavigate, useLocation } from "react-router-dom";
-import { aiChatApi, aiModelApi, noteApi } from "@/lib/api";
-import type { AiConversation, AiMessage, AiModel, Note, SkillCall } from "@/types";
+import { aiChatApi, aiModelApi, noteApi, aiAttachmentApi } from "@/lib/api";
+import type {
+  AiConversation,
+  AiMessage,
+  AiModel,
+  AttachmentPreview,
+  MessageAttachment,
+  Note,
+  SkillCall,
+} from "@/types";
+import { AttachmentChip } from "@/components/ai/AttachmentChip";
+
+/** 多附件总字符上限：超过则阻止再加，避免炸 context window */
+const TOTAL_ATTACHMENT_CHAR_LIMIT = 80_000;
+
+/** 把前端 AttachmentPreview 转成后端期望的 MessageAttachment（按 kind 分发字段） */
+function previewToMessageAttachment(a: AttachmentPreview): MessageAttachment {
+  switch (a.kind) {
+    case "excel":
+      return {
+        kind: "excel",
+        filePath: a.filePath,
+        displayName: a.displayName,
+        markdown: a.markdown,
+        totalRows: a.totalRows,
+        truncatedSheets: a.truncatedSheets,
+      };
+    case "text":
+      return {
+        kind: "text",
+        filePath: a.filePath,
+        displayName: a.displayName,
+        content: a.content,
+        truncated: a.truncated,
+      };
+    case "pdf":
+      return {
+        kind: "pdf",
+        filePath: a.filePath,
+        displayName: a.displayName,
+        content: a.content,
+        truncated: a.truncated,
+      };
+  }
+}
 import { relativeTime } from "@/lib/utils";
 import { stripPseudoToolCalls } from "@/lib/aiFilter";
 import { useContextMenu } from "@/hooks/useContextMenu";
@@ -127,6 +172,9 @@ export default function AiChatPage() {
   const [archiving, setArchiving] = useState(false);
   // 流式过程中 AI 调用的工具列表（带 running/ok/error 状态）；done 后并入 messages 清空
   const [streamingSkillCalls, setStreamingSkillCalls] = useState<SkillCall[]>([]);
+  // 路线 A 会话附件：当前输入框「待发送」的附件列表（Excel/Text/PDF 混合），发送后清空
+  const [pendingAttachments, setPendingAttachments] = useState<AttachmentPreview[]>([]);
+  const [attachingFile, setAttachingFile] = useState(false);
 
   // ─── 消息气泡右键菜单 ────────────────────────
   const msgCtx = useContextMenu<AiMessage>();
@@ -475,8 +523,21 @@ export default function AiChatPage() {
       });
     });
 
+    // 把 AttachmentPreview 按 kind 转成后端期望的 MessageAttachment
+    const attachmentsPayload: MessageAttachment[] = pendingAttachments.map(
+      previewToMessageAttachment,
+    );
+
     try {
-      await aiChatApi.sendMessage(activeConvId, text, useRag, useSkills);
+      await aiChatApi.sendMessage(
+        activeConvId,
+        text,
+        useRag,
+        useSkills,
+        attachmentsPayload.length > 0 ? attachmentsPayload : undefined,
+      );
+      // 发送成功后清空附件（失败时保留，让用户重试）
+      setPendingAttachments([]);
     } catch (e) {
       setStreaming(false);
       await cleanup();
@@ -484,7 +545,7 @@ export default function AiChatPage() {
       setStreamingSkillCalls([]);
       showAiError(e);
     }
-  }, [inputText, activeConvId, streaming, useRag, useSkills]);
+  }, [inputText, activeConvId, streaming, useRag, useSkills, pendingAttachments]);
 
   // handleSend 是 useCallback,闭包会随依赖变化重新生成；
   // pendingAutoSend 触发时需要拿最新的 handleSend,用 ref 桥接
@@ -503,6 +564,95 @@ export default function AiChatPage() {
     // microtask 让 handleSendRef 收到最新闭包(activeConvId 变化触发的 useCallback 重建)
     Promise.resolve().then(() => handleSendRef.current(pending.prompt));
   }, [activeConvId, streaming, handleSend]);
+
+  /**
+   * 选一个或多个文件 → 后端按扩展名自动分发到 Excel/Text/PDF 解析器 → 加入附件列表。
+   *
+   * 总字符守门：累计 > TOTAL_ATTACHMENT_CHAR_LIMIT 时拒绝继续加，避免爆 context window。
+   * 同名文件去重：filePath 已存在则跳过（用户重复点同一文件不会叠加）。
+   */
+  async function handleAddAttachment() {
+    if (attachingFile || streaming) return;
+    try {
+      const picked = await openDialog({
+        multiple: true,
+        filters: [
+          {
+            name: "支持的文件",
+            extensions: [
+              "xlsx", "xls", "xlsm", "xlsb", "ods",
+              "pdf",
+              "md", "markdown", "txt", "json", "csv", "log",
+            ],
+          },
+        ],
+      });
+      if (!picked) return;
+      const paths = Array.isArray(picked) ? picked : [picked];
+      if (paths.length === 0) return;
+
+      setAttachingFile(true);
+      const existingPaths = new Set(pendingAttachments.map((a) => a.filePath));
+      let totalChars = pendingAttachments.reduce(
+        (sum, a) => sum + a.charsEstimated,
+        0,
+      );
+
+      const addedNames: string[] = [];
+      const truncatedNames: string[] = [];
+      const skippedTooLarge: string[] = [];
+      const failed: string[] = [];
+
+      for (const path of paths) {
+        if (existingPaths.has(path)) continue;
+        try {
+          const preview = await aiAttachmentApi.parseAttachment(path);
+          if (totalChars + preview.charsEstimated > TOTAL_ATTACHMENT_CHAR_LIMIT) {
+            skippedTooLarge.push(preview.displayName);
+            continue;
+          }
+          totalChars += preview.charsEstimated;
+          existingPaths.add(path);
+          setPendingAttachments((prev) => [...prev, preview]);
+          addedNames.push(preview.displayName);
+          if (
+            (preview.kind === "excel" && preview.truncatedSheets.length > 0) ||
+            (preview.kind !== "excel" && preview.truncated)
+          ) {
+            truncatedNames.push(preview.displayName);
+          }
+        } catch (e) {
+          const fileName = path.split(/[\\/]/).pop() || path;
+          failed.push(`${fileName}: ${e}`);
+        }
+      }
+
+      if (addedNames.length > 0) {
+        message.success(`已添加 ${addedNames.length} 个附件`);
+      }
+      if (truncatedNames.length > 0) {
+        message.warning(
+          `${truncatedNames.length} 个附件体积较大，已自动截断：${truncatedNames.join("、")}`,
+        );
+      }
+      if (skippedTooLarge.length > 0) {
+        message.error(
+          `已跳过 ${skippedTooLarge.length} 个附件：累计字符将超过 ${Math.round(TOTAL_ATTACHMENT_CHAR_LIMIT / 1000)}k 上限`,
+        );
+      }
+      if (failed.length > 0) {
+        message.error(`${failed.length} 个文件解析失败：${failed.join("；")}`);
+      }
+    } catch (e) {
+      message.error(`选择文件失败：${e}`);
+    } finally {
+      setAttachingFile(false);
+    }
+  }
+
+  function handleRemoveAttachment(filePath: string) {
+    setPendingAttachments((prev) => prev.filter((a) => a.filePath !== filePath));
+  }
 
   async function handleCancel() {
     if (activeConvId) {
@@ -913,11 +1063,43 @@ export default function AiChatPage() {
                 </div>
               )}
 
+              {/* 路线 A：本次发送的附件 chip 区（每条消息独立，发送后清空） */}
+              {pendingAttachments.length > 0 && (
+                <div
+                  className="flex flex-wrap items-center gap-1.5 mb-2 pb-2"
+                  style={{
+                    borderBottom: `1px dashed ${token.colorBorderSecondary}`,
+                  }}
+                >
+                  <span
+                    className="text-xs shrink-0"
+                    style={{ color: token.colorTextSecondary }}
+                  >
+                    📊 本次附件（{pendingAttachments.length}）：
+                  </span>
+                  {pendingAttachments.map((a) => (
+                    <AttachmentChip
+                      key={a.filePath}
+                      attachment={a}
+                      onRemove={() => handleRemoveAttachment(a.filePath)}
+                    />
+                  ))}
+                </div>
+              )}
+
               <div className="flex gap-2 items-end">
                 <Tooltip title="附加笔记到本对话上下文（整对话共享）">
                   <Button
                     icon={<Paperclip size={16} />}
                     onClick={() => setAttachOpen(true)}
+                    disabled={streaming}
+                  />
+                </Tooltip>
+                <Tooltip title="附加文件作为本次提问的上下文（支持 Excel / PDF / Markdown / TXT 等，可多选）">
+                  <Button
+                    icon={<FileSpreadsheet size={16} />}
+                    loading={attachingFile}
+                    onClick={handleAddAttachment}
                     disabled={streaming}
                   />
                 </Tooltip>

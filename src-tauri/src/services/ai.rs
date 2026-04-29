@@ -7,9 +7,10 @@ use tokio::sync::watch;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::models::{
-    AiMessage, AiModel, AiModelInput, AiModelTestResult, DraftNoteRequest, DraftNoteResponse,
-    Folder, MilestoneDraft, PlanFromExcelRequest, PlanFromGoalRequest, PlanFromGoalResponse,
-    PlanTodayRequest, PlanTodayResponse, SkillCall, TaskQuery, TaskSuggestion,
+    AiMessage, AiModel, AiModelInput, AiModelTestResult, AttachmentPreview, DraftNoteRequest,
+    DraftNoteResponse, ExcelPreview, Folder, MessageAttachment, MilestoneDraft, PdfPreview,
+    PlanFromExcelRequest, PlanFromGoalRequest, PlanFromGoalResponse, PlanTodayRequest,
+    PlanTodayResponse, SkillCall, TaskQuery, TaskSuggestion, TextPreview,
 };
 use crate::services::skills;
 
@@ -2292,6 +2293,217 @@ impl AiService {
 
         Ok(parsed)
     }
+
+    // ══════════════════════════════════════════════════════════════════
+    // 通用 AI 会话附件（路线 A）：把 Excel 解析为 markdown 给前端 chip 展示，
+    // 发送时由 send_ai_message 拼到 user message 前。
+    // 跟 plan_from_excel 区别：plan_from_excel 是"Excel→四象限计划"专用通路；
+    // 这里只做解析，不绑定任何 prompt 模板，便于通用问答。
+    // ══════════════════════════════════════════════════════════════════
+    pub fn parse_excel_attachment(file_path: &str) -> Result<ExcelPreview, AppError> {
+        let file_path = file_path.trim();
+        if file_path.is_empty() {
+            return Err(AppError::InvalidInput("Excel 文件路径不能为空".into()));
+        }
+        let path = std::path::Path::new(file_path);
+        if !path.exists() {
+            return Err(AppError::Custom(format!("文件不存在: {}", file_path)));
+        }
+        let display_name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Excel")
+            .to_string();
+        let summary = crate::services::excel_parser::read_workbook(file_path)?;
+        let chars_estimated = summary.markdown.chars().count();
+        Ok(ExcelPreview {
+            file_path: file_path.to_string(),
+            display_name,
+            markdown: summary.markdown,
+            total_rows: summary.total_rows,
+            truncated_sheets: summary.truncated_sheet_names,
+            chars_estimated,
+        })
+    }
+
+    /// 文本类附件解析（md / txt / json / 代码等）。复用 import 的编码嗅探，
+    /// 单文件超 60k 字符时尾部硬截断（避免单个超大文件爆 token）。
+    pub fn parse_text_attachment(file_path: &str) -> Result<TextPreview, AppError> {
+        let file_path = file_path.trim();
+        if file_path.is_empty() {
+            return Err(AppError::InvalidInput("文件路径不能为空".into()));
+        }
+        let path = std::path::Path::new(file_path);
+        if !path.exists() {
+            return Err(AppError::Custom(format!("文件不存在: {}", file_path)));
+        }
+        let display_name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("文件")
+            .to_string();
+        let raw = crate::services::import::read_text_auto_encoding(path)?;
+        let (content, truncated) = truncate_for_attachment(&raw, SINGLE_ATTACHMENT_CHAR_LIMIT);
+        let total_lines = content.lines().count();
+        let chars_estimated = content.chars().count();
+        Ok(TextPreview {
+            file_path: file_path.to_string(),
+            display_name,
+            content,
+            total_lines,
+            chars_estimated,
+            truncated,
+        })
+    }
+
+    /// PDF 附件解析（仅文字层抽取，扫描件会报错）。同样有 60k 字符尾截断。
+    pub fn parse_pdf_attachment(file_path: &str) -> Result<PdfPreview, AppError> {
+        let file_path = file_path.trim();
+        if file_path.is_empty() {
+            return Err(AppError::InvalidInput("PDF 文件路径不能为空".into()));
+        }
+        let path = std::path::Path::new(file_path);
+        if !path.exists() {
+            return Err(AppError::Custom(format!("文件不存在: {}", file_path)));
+        }
+        let display_name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("PDF")
+            .to_string();
+        let raw = crate::services::pdf::PdfService::extract_text_only(path)?;
+        let (content, truncated) = truncate_for_attachment(&raw, SINGLE_ATTACHMENT_CHAR_LIMIT);
+        let chars_estimated = content.chars().count();
+        Ok(PdfPreview {
+            file_path: file_path.to_string(),
+            display_name,
+            content,
+            chars_estimated,
+            truncated,
+        })
+    }
+
+    /// 按扩展名自动分发到对应的解析器，返回统一的 AttachmentPreview。
+    /// 不识别的扩展名当文本处理（够用大多数代码 / 配置文件场景）。
+    pub fn parse_attachment_auto(file_path: &str) -> Result<AttachmentPreview, AppError> {
+        let ext = std::path::Path::new(file_path)
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase())
+            .unwrap_or_default();
+        match ext.as_str() {
+            "xlsx" | "xls" | "xlsm" | "xlsb" | "ods" => {
+                Ok(AttachmentPreview::Excel(Self::parse_excel_attachment(file_path)?))
+            }
+            "pdf" => Ok(AttachmentPreview::Pdf(Self::parse_pdf_attachment(file_path)?)),
+            _ => Ok(AttachmentPreview::Text(Self::parse_text_attachment(file_path)?)),
+        }
+    }
+}
+
+/// 单个附件的字符上限。Excel 已在 excel_parser 内做更精细的多 sheet 截断；
+/// 这里是给 text / pdf 用的简单尾部截断。
+const SINGLE_ATTACHMENT_CHAR_LIMIT: usize = 60_000;
+
+/// 简单尾部截断：超过 limit 字符就保留头部 + 末尾占位提示。
+fn truncate_for_attachment(text: &str, limit: usize) -> (String, bool) {
+    let count = text.chars().count();
+    if count <= limit {
+        return (text.to_string(), false);
+    }
+    let kept: String = text.chars().take(limit).collect();
+    let tail = format!(
+        "\n\n…（后续 {} 字符已省略，超出附件单文件 {} 字符限制）",
+        count - limit,
+        limit
+    );
+    (kept + &tail, true)
+}
+
+/// 把附件 markdown 拼到 user message 前面发给 AI。
+///
+/// 设计取舍：附件区跟随 user message 一并存进数据库（消息历史），
+/// 这样多轮追问时 AI 仍能"看见"原始表格；代价是数据库里这条消息体积变大。
+/// MVP 阶段不引入新表 / 不改 schema —— UI 端如果想折叠展示，靠头部前缀
+/// `📎 附件` 做正则识别就够用。
+pub fn build_message_with_attachments(text: &str, attachments: &[MessageAttachment]) -> String {
+    if attachments.is_empty() {
+        return text.to_string();
+    }
+    let mut out = String::new();
+    out.push_str(&format!(
+        "📎 用户附带了 {} 个附件，内容如下：\n\n",
+        attachments.len()
+    ));
+    for (i, att) in attachments.iter().enumerate() {
+        match att {
+            MessageAttachment::Excel {
+                display_name,
+                markdown,
+                total_rows,
+                truncated_sheets,
+                ..
+            } => {
+                let trunc_hint = if truncated_sheets.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "，已自动截断 sheet：{}",
+                        truncated_sheets.join("、")
+                    )
+                };
+                out.push_str(&format!(
+                    "## 附件 {}: {} （Excel，共 {} 行{}）\n{}\n\n",
+                    i + 1,
+                    display_name,
+                    total_rows,
+                    trunc_hint,
+                    markdown
+                ));
+            }
+            MessageAttachment::Text {
+                display_name,
+                content,
+                truncated,
+                ..
+            } => {
+                let trunc_hint = if *truncated {
+                    "，尾部已截断"
+                } else {
+                    ""
+                };
+                out.push_str(&format!(
+                    "## 附件 {}: {} （文本{}）\n```\n{}\n```\n\n",
+                    i + 1,
+                    display_name,
+                    trunc_hint,
+                    content
+                ));
+            }
+            MessageAttachment::Pdf {
+                display_name,
+                content,
+                truncated,
+                ..
+            } => {
+                let trunc_hint = if *truncated {
+                    "，尾部已截断"
+                } else {
+                    ""
+                };
+                out.push_str(&format!(
+                    "## 附件 {}: {} （PDF 文字层{}）\n{}\n\n",
+                    i + 1,
+                    display_name,
+                    trunc_hint,
+                    content
+                ));
+            }
+        }
+    }
+    out.push_str("---\n\n");
+    out.push_str(text);
+    out
 }
 
 /// 根据 Excel 解析结果生成给前端的友好警告

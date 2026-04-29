@@ -55,6 +55,19 @@ pub struct PdfService;
 
 impl PdfService {
     /// 获取 PDF 根目录: {app_data_dir}/{prefix}pdfs/
+    /// 仅抽取 PDF 纯文本（不落盘、不创建笔记）。供 AI 会话附件等场景复用，
+    /// 内部走与 `import_one` 相同的「pdf-extract → pdfium 修复重试」通路。
+    pub fn extract_text_only(source: &Path) -> Result<String, AppError> {
+        if !source.exists() {
+            return Err(AppError::NotFound(format!(
+                "PDF 文件不存在: {}",
+                source.display()
+            )));
+        }
+        let raw = extract_text_with_repair(source)?;
+        Ok(normalize_text(&raw))
+    }
+
     pub fn pdfs_dir(app_data_dir: &Path) -> PathBuf {
         app_data_dir.join(pdfs_dir_name())
     }

@@ -65,6 +65,9 @@ import type {
   PlanFromGoalRequest,
   PlanFromGoalResponse,
   PlanFromExcelRequest,
+  ExcelPreview,
+  AttachmentPreview,
+  MessageAttachment,
   DraftNoteRequest,
   DraftNoteResponse,
   VaultStatus,
@@ -390,18 +393,22 @@ export const aiChatApi = {
    * - `useRag`: 是否启用 RAG（默认 true）。`useSkills=true` 时自动失效（AI 自行调 search_notes）
    * - `useSkills`: T-004 Skills 框架。AI 可调 search_notes / get_note / list_tags 等工具
    *    监听 `ai:tool_call` 事件可实时拿到每次工具调用（含 running/ok/error 状态）
+   * - `attachments`: 路线 A 会话附件（当前支持 Excel）。后端把每个附件的 markdown
+   *   拼到 user message 前再发给 AI；附件区会随 user message 一起入库。
    */
   sendMessage: (
     conversationId: number,
     message: string,
     useRag?: boolean,
     useSkills?: boolean,
+    attachments?: MessageAttachment[],
   ) =>
     invoke<void>("send_ai_message", {
       conversationId,
       message,
       useRag,
       useSkills,
+      attachments,
     }),
   cancelGeneration: (conversationId: number) =>
     invoke<void>("cancel_ai_generation", { conversationId }),
@@ -434,6 +441,19 @@ export const aiChatApi = {
    */
   getOrCreateCompanionConversation: (noteId: number) =>
     invoke<AiConversation>("get_or_create_companion_conversation", { noteId }),
+};
+
+/** AI 会话附件 API（路线 A：导入文件给 AI 会话用） */
+export const aiAttachmentApi = {
+  /**
+   * 通用附件解析：后端按扩展名自动分发 Excel / PDF / 文本解析器，
+   * 返回 tagged AttachmentPreview。前端按 kind 渲染不同 chip。
+   */
+  parseAttachment: (filePath: string) =>
+    invoke<AttachmentPreview>("ai_parse_attachment", { filePath }),
+  /** @deprecated 用 parseAttachment；保留兼容旧调用方 */
+  parseExcel: (filePath: string) =>
+    invoke<ExcelPreview>("ai_parse_excel", { filePath }),
 };
 
 /** 导入 API */

@@ -326,6 +326,77 @@ export interface PlanFromExcelRequest {
   extraGoal?: string | null;
 }
 
+// ─── AI 会话附件（路线 A） ────────────
+
+/** Excel/ODS 附件解析预览。 */
+export interface ExcelPreview {
+  filePath: string;
+  displayName: string;
+  /** calamine 解析后的多 sheet markdown 全文 */
+  markdown: string;
+  totalRows: number;
+  /** 因体积过大被截断的 sheet 名（空数组=未截断） */
+  truncatedSheets: string[];
+  /** markdown 字符数（用于 UI 提示"占用约 12k 上下文"） */
+  charsEstimated: number;
+}
+
+/** 文本类附件（md / txt / json / 代码等）解析预览。 */
+export interface TextPreview {
+  filePath: string;
+  displayName: string;
+  content: string;
+  totalLines: number;
+  charsEstimated: number;
+  /** 单文件超 60k 字符时尾部被截断 */
+  truncated: boolean;
+}
+
+/** PDF 附件解析预览（仅文字层抽取，扫描件会报错）。 */
+export interface PdfPreview {
+  filePath: string;
+  displayName: string;
+  content: string;
+  charsEstimated: number;
+  truncated: boolean;
+}
+
+/**
+ * 统一附件预览：后端按扩展名自动分发到 Excel/Text/PDF 解析器返回。
+ * tagged union 用 kind 区分，对应后端 AttachmentPreview enum。
+ */
+export type AttachmentPreview =
+  | ({ kind: "excel" } & ExcelPreview)
+  | ({ kind: "text" } & TextPreview)
+  | ({ kind: "pdf" } & PdfPreview);
+
+/**
+ * 发送给 AI 的消息附件。每种 kind 字段不同（参考后端 MessageAttachment）。
+ */
+export type MessageAttachment =
+  | {
+      kind: "excel";
+      filePath: string;
+      displayName: string;
+      markdown: string;
+      totalRows: number;
+      truncatedSheets: string[];
+    }
+  | {
+      kind: "text";
+      filePath: string;
+      displayName: string;
+      content: string;
+      truncated: boolean;
+    }
+  | {
+      kind: "pdf";
+      filePath: string;
+      displayName: string;
+      content: string;
+      truncated: boolean;
+    };
+
 // ─── AI 写笔记并归档（T-006） ────────────
 
 export type TargetLength = "short" | "medium" | "long";
