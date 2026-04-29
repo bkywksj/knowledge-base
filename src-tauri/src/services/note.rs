@@ -86,6 +86,11 @@ impl NoteService {
         db.move_note_to_folder(note_id, folder_id)
     }
 
+    /// 批量重排同一 folder 内笔记的 sort_order（自定义排序专用）
+    pub fn reorder(db: &Database, ordered_ids: &[i64]) -> Result<(), AppError> {
+        db.reorder_notes(ordered_ids)
+    }
+
     /// 全部移到回收站（软删，可在回收站恢复）
     pub fn trash_all(db: &Database) -> Result<usize, AppError> {
         db.trash_all_notes()
@@ -104,6 +109,7 @@ impl NoteService {
             query.uncategorized.unwrap_or(false),
             // 默认递归子文件夹（符合用户直觉：点父目录看到所有子树笔记）
             query.include_descendants.unwrap_or(true),
+            query.sort_by.as_deref(),
         )?;
 
         Ok(PageResult {

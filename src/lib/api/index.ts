@@ -185,6 +185,9 @@ export const noteApi = {
   togglePin: (id: number) => invoke<boolean>("toggle_pin", { id }),
   moveToFolder: (noteId: number, folderId?: number | null) =>
     invoke<void>("move_note_to_folder", { noteId, folderId }),
+  /** 批量重排同 folder 内笔记的 sort_order；调用方传该 folder 内**完整**的 ID 顺序 */
+  reorder: (orderedIds: number[]) =>
+    invoke<void>("reorder_notes", { orderedIds }),
   /** 批量移动笔记到指定文件夹（folderId=null 表示根目录）；返回实际移动的条数 */
   moveBatch: (ids: number[], folderId: number | null) =>
     invoke<number>("move_notes_batch", { ids, folderId }),

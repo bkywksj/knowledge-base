@@ -227,7 +227,7 @@ impl Database {
 
         let mut stmt = conn.prepare(
             "SELECT n.id, n.title, n.content, n.folder_id, n.is_daily, n.daily_date,
-                    n.is_pinned, n.is_hidden, n.is_encrypted, n.word_count, n.created_at, n.updated_at, n.source_file_path, n.source_file_type
+                    n.is_pinned, n.is_hidden, n.is_encrypted, n.word_count, n.created_at, n.updated_at, n.source_file_path, n.source_file_type, n.sort_order
              FROM notes n
              INNER JOIN note_tags nt ON n.id = nt.note_id
              WHERE nt.tag_id = ?1 AND n.is_deleted = 0 AND n.is_hidden = 0
@@ -252,6 +252,7 @@ impl Database {
                     updated_at: row.get(11)?,
                     source_file_path: row.get(12)?,
                     source_file_type: row.get(13)?,
+                    sort_order: row.get(14)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

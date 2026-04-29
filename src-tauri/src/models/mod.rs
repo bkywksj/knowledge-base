@@ -64,6 +64,9 @@ pub struct Note {
     pub source_file_path: Option<String>,
     /// 原始文件类型："pdf" / "docx" / "doc" / null
     pub source_file_type: Option<String>,
+    /// 同一 folder 内的自定义排序值，越小越靠前（间隔 1000 留空隙）
+    /// 默认按 updated_at DESC 初始化；只有用户在"自定义排序"模式下拖拽过才与时间序偏离
+    pub sort_order: i64,
 }
 
 // ─── T-007 笔记加密保险库 ──────────────────────
@@ -103,6 +106,12 @@ pub struct NoteQuery {
     /// true 时点父文件夹连同所有子孙文件夹的笔记一起返回。
     /// 仅当传了 folder_id 时生效；未传时无意义。前端默认 true，符合用户直觉。
     pub include_descendants: Option<bool>,
+    /// 排序模式（默认 None=按 is_pinned DESC, updated_at DESC）
+    /// - None / "default" → is_pinned DESC, updated_at DESC（旧行为）
+    /// - "custom" → is_pinned DESC, sort_order ASC, updated_at DESC（用户自定义）
+    /// - "created" → is_pinned DESC, created_at DESC
+    /// - "title" → is_pinned DESC, title ASC
+    pub sort_by: Option<String>,
 }
 
 // ─── 文件夹 ───────────────────────────────────

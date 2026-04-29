@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 30;
+pub const SCHEMA_VERSION: i32 = 31;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -60,6 +60,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             27 => migrate_v27_to_v28(conn)?,
             28 => migrate_v28_to_v29(conn)?,
             29 => migrate_v29_to_v30(conn)?,
+            30 => migrate_v30_to_v31(conn)?,
             _ => {
                 return Err(AppError::Custom(format!(
                     "未知的数据库版本: {}",
@@ -1253,5 +1254,52 @@ fn migrate_v29_to_v30(conn: &Connection) -> Result<(), AppError> {
     )?;
 
     set_version(conn, 30)?;
+    Ok(())
+}
+
+/// v30 -> v31: notes 加 sort_order 字段（笔记自定义排序）
+///
+/// 设计：
+/// - INTEGER NOT NULL DEFAULT 0；越小越靠前；同 folder 内按 1000 间隔留空隙
+///   留给未来插队（同 folders.sort_order 一致的模式）
+/// - 初始化：每个 folder_id 分组内按 (updated_at DESC, id ASC) 给序号 *1000
+///   未分类（folder_id IS NULL）的笔记按 -1 单独分组
+/// - 索引 idx_notes_folder_sort 覆盖 (folder_id, sort_order)，is_deleted=0
+///   的部分索引，与 idx_notes_folder / idx_notes_pinned 思路一致
+fn migrate_v30_to_v31(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v30 -> v31 (notes.sort_order 自定义排序)");
+
+    let cols = list_columns(conn, "notes")?;
+    if !cols.iter().any(|c| c == "sort_order") {
+        conn.execute_batch(
+            "ALTER TABLE notes ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+
+    // 初始化已有数据：同一 folder 内按修改时间倒序分配 0/1000/2000...
+    // ROW_NUMBER 在 SQLite 3.25+ 提供，rusqlite bundled 自带的版本远高于此
+    conn.execute_batch(
+        "
+        WITH ranked AS (
+            SELECT id,
+                   (ROW_NUMBER() OVER (
+                        PARTITION BY COALESCE(folder_id, -1)
+                        ORDER BY updated_at DESC, id ASC
+                   ) - 1) * 1000 AS new_order
+            FROM notes
+            WHERE is_deleted = 0
+        )
+        UPDATE notes
+        SET sort_order = (SELECT new_order FROM ranked WHERE ranked.id = notes.id)
+        WHERE id IN (SELECT id FROM ranked);
+        ",
+    )?;
+
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_notes_folder_sort
+            ON notes(folder_id, sort_order) WHERE is_deleted = 0;",
+    )?;
+
+    set_version(conn, 31)?;
     Ok(())
 }

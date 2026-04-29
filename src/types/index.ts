@@ -54,6 +54,8 @@ export interface Note {
   source_file_path: string | null;
   /** 原始文件类型："pdf" / "docx" / "doc" / null */
   source_file_type: string | null;
+  /** 同 folder 内的自定义排序值，越小越靠前；只在 NoteQuery.sort_by="custom" 时生效 */
+  sort_order: number;
 }
 
 /** PDF 导入结果（单个文件） */
@@ -98,6 +100,8 @@ export interface NoteQuery {
   uncategorized?: boolean;
   /** true 时点父文件夹连同所有子孙文件夹的笔记一起返回（默认 true，符合"文件夹=容器"直觉） */
   include_descendants?: boolean;
+  /** 排序模式：默认按 is_pinned DESC, updated_at DESC */
+  sort_by?: "default" | "custom" | "created" | "title";
 }
 
 // ─── 文件夹 ───────────────────────────────────

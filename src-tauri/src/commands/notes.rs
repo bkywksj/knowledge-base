@@ -50,6 +50,16 @@ pub fn move_note_to_folder(
     NoteService::move_to_folder(&state.db, note_id, folder_id).map_err(|e| e.to_string())
 }
 
+/// 批量重排同一 folder 内笔记的 sort_order
+/// 调用方传同一 folder（或未分类组）内**全部**笔记按新顺序排列的 ID 列表
+#[tauri::command]
+pub fn reorder_notes(
+    state: tauri::State<'_, AppState>,
+    ordered_ids: Vec<i64>,
+) -> Result<(), String> {
+    NoteService::reorder(&state.db, &ordered_ids).map_err(|e| e.to_string())
+}
+
 /// 批量移动笔记到文件夹；返回实际移动的条数
 /// folder_id = None 表示移到根目录
 #[tauri::command]

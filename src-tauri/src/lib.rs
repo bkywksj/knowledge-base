@@ -680,6 +680,7 @@ pub fn run() {
             commands::notes::list_notes,
             commands::notes::toggle_pin,
             commands::notes::move_note_to_folder,
+            commands::notes::reorder_notes,
             commands::notes::move_notes_batch,
             commands::notes::trash_notes_batch,
             commands::notes::add_tags_to_notes_batch,

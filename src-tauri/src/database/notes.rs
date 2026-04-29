@@ -113,7 +113,7 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order
              FROM notes WHERE id = ?1",
         )?;
 
@@ -134,6 +134,7 @@ impl Database {
                     updated_at: row.get(11)?,
                     source_file_path: row.get(12)?,
                     source_file_type: row.get(13)?,
+                    sort_order: row.get(14)?,
                 })
             })
             .ok();
@@ -156,6 +157,7 @@ impl Database {
         page_size: usize,
         uncategorized: bool,
         include_descendants: bool,
+        sort_by: Option<&str>,
     ) -> Result<(Vec<Note>, usize), AppError> {
         // 先在锁外算好 folder_id 列表（涉及另一次 query，避免锁内嵌套）
         // include_descendants=true 时把 root 子树所有 ID 一起塞进 IN 子句
@@ -216,13 +218,20 @@ impl Database {
 
         // 查询分页数据
         let offset = (page.saturating_sub(1)) * page_size;
-        // 置顶笔记优先（is_pinned DESC），同档内仍按修改时间倒序。
-        // 索引 idx_notes_pinned(is_pinned, updated_at DESC) WHERE is_deleted = 0
-        // 已为该排序量身定制（schema.rs:196）。
+        // 置顶笔记永远优先（is_pinned DESC），二级排序由 sort_by 决定。
+        // 兜底全部带上 updated_at DESC 防止同值时顺序抖动。
+        let order_clause = match sort_by.unwrap_or("default") {
+            "custom" => "is_pinned DESC, sort_order ASC, updated_at DESC",
+            "created" => "is_pinned DESC, created_at DESC, updated_at DESC",
+            "title" => "is_pinned DESC, title COLLATE NOCASE ASC, updated_at DESC",
+            // "default" 及未知值都走 updated_at DESC
+            _ => "is_pinned DESC, updated_at DESC",
+        };
         let data_sql = format!(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type
-             FROM notes {} ORDER BY is_pinned DESC, updated_at DESC LIMIT ?{} OFFSET ?{}",
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order
+             FROM notes {} ORDER BY {} LIMIT ?{} OFFSET ?{}",
             where_clause,
+            order_clause,
             param_values.len() + 1,
             param_values.len() + 2,
         );
@@ -252,6 +261,7 @@ impl Database {
                     updated_at: row.get(11)?,
                     source_file_path: row.get(12)?,
                     source_file_type: row.get(13)?,
+                    sort_order: row.get(14)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -440,6 +450,7 @@ impl Database {
                 updated_at: row.get(11)?,
                 source_file_path: row.get(12)?,
                 source_file_type: row.get(13)?,
+                sort_order: row.get(14)?,
             })
         };
         let notes = if has_folder_param {
@@ -495,6 +506,31 @@ impl Database {
         )?;
 
         Ok(is_pinned)
+    }
+
+    /// 批量重排笔记的 sort_order（同 folder 内一次性按给定顺序赋值 0/1000/2000…）
+    ///
+    /// 调用约定：`ordered_ids` 为同一 folder（或同一虚拟分组，如未分类）内**完整**的
+    /// 笔记 ID 顺序列表。本函数不校验 folder_id 一致性——前端拿到该 folder 当前
+    /// 的全部笔记后调用即可，间隔 1000 留给未来插队。
+    ///
+    /// 用事务保证原子性：要么全部更新成功要么全部回滚。
+    pub fn reorder_notes(&self, ordered_ids: &[i64]) -> Result<(), AppError> {
+        if ordered_ids.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "UPDATE notes SET sort_order = ?1 WHERE id = ?2 AND is_deleted = 0",
+            )?;
+            for (i, id) in ordered_ids.iter().enumerate() {
+                stmt.execute(params![(i as i64) * 1000, id])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// 移动笔记到文件夹
@@ -587,7 +623,7 @@ impl Database {
         // 查询分页数据
         let offset = (page.saturating_sub(1)) * page_size;
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order
              FROM notes WHERE is_deleted = 1
              ORDER BY deleted_at DESC
              LIMIT ?1 OFFSET ?2",
@@ -610,6 +646,7 @@ impl Database {
                     updated_at: row.get(11)?,
                     source_file_path: row.get(12)?,
                     source_file_type: row.get(13)?,
+                    sort_order: row.get(14)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -715,7 +752,7 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| AppError::Custom(e.to_string()))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order
              FROM notes WHERE is_daily = 1 AND daily_date = ?1 AND is_deleted = 0",
         )?;
 
@@ -736,6 +773,7 @@ impl Database {
                     updated_at: row.get(11)?,
                     source_file_path: row.get(12)?,
                     source_file_type: row.get(13)?,
+                    sort_order: row.get(14)?,
                 })
             })
             .ok();
@@ -749,7 +787,7 @@ impl Database {
 
         // 先查询是否已存在
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order
              FROM notes WHERE is_daily = 1 AND daily_date = ?1 AND is_deleted = 0",
         )?;
 
@@ -770,6 +808,7 @@ impl Database {
                     updated_at: row.get(11)?,
                     source_file_path: row.get(12)?,
                     source_file_type: row.get(13)?,
+                    sort_order: row.get(14)?,
                 })
             })
             .ok();
@@ -846,7 +885,7 @@ impl Database {
         id: i64,
     ) -> Result<Note, AppError> {
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order
              FROM notes WHERE id = ?1",
         )?;
 
@@ -866,6 +905,7 @@ impl Database {
                 updated_at: row.get(11)?,
                 source_file_path: row.get(12)?,
                 source_file_type: row.get(13)?,
+                sort_order: row.get(14)?,
             })
         })?;
 
