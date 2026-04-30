@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "主窗口默认权限",
-  "windows": ["main", "emergency-*"],
+  "windows": ["main", "emergency-*", "popout-note-*"],
   "permissions": [
     "core:default",
     "core:window:default",

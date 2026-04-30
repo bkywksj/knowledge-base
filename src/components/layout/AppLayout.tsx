@@ -106,7 +106,7 @@ export function AppLayout() {
     lightTheme, darkTheme,
     setLightTheme, setDarkTheme,
     setThemeCategory,
-    focusMode, setFocusMode,
+    focusMode: focusModeRaw, setFocusMode,
     alwaysOnTop, setAlwaysOnTop,
     activeView,
     sidePanelWidth, setSidePanelWidth,
@@ -114,6 +114,13 @@ export function AppLayout() {
   } = useAppStore();
   const activeTheme = themeCategory === "light" ? lightTheme : darkTheme;
   const { token } = antdTheme.useToken();
+
+  // Pop-out 窗口：URL 带 ?popout=1 时复用 focusMode 的隐藏逻辑（无侧边栏 / Header / Tabs，
+  // 仅渲染 Outlet 的笔记编辑器）。OR 进 focusMode 而不新加变量，最小改动。
+  const isPopoutWindow =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("popout") === "1";
+  const focusMode = focusModeRaw || isPopoutWindow;
 
   const location = useLocation();
   // 当前路由是否为"全页路由"（不属于任何 ActivityBar 视图，且本身有自己的左侧导航）。

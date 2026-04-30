@@ -20,7 +20,7 @@ import {
   App as AntdApp,
   theme as antdTheme,
 } from "antd";
-import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, ChevronDown, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, MessageSquare, ListTree, Network } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, ChevronDown, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, MessageSquare, ListTree, Network, ExternalLink } from "lucide-react";
 import { useAppStore } from "@/store";
 import { useTabsStore } from "@/store/tabs";
 import { noteApi, tagApi, folderApi, linkApi, exportApi, sourceFileApi, vaultApi, sourceWritebackApi } from "@/lib/api";
@@ -1392,6 +1392,21 @@ export default function NoteEditorPage() {
             <Button
               icon={<Network size={16} />}
               onClick={() => setMindMapOpen(true)}
+            />
+          </Tooltip>
+          <Tooltip title="在新窗口打开（用于双屏 / 多笔记对照）">
+            <Button
+              icon={<ExternalLink size={16} />}
+              onClick={async () => {
+                if (!noteId) return;
+                // 弹新窗口前先把未保存内容落库，避免 pop-out 看到老版本
+                if (dirty) await handleSave(true);
+                try {
+                  await noteApi.openInNewWindow(noteId);
+                } catch (e) {
+                  message.error(`打开新窗口失败：${e}`);
+                }
+              }}
             />
           </Tooltip>
           <Tooltip

@@ -696,6 +696,8 @@ pub fn run() {
             commands::hidden_pin::get_hidden_pin_hint,
             // T-014 网页剪藏
             commands::notes::clip_url_to_note,
+            // 多窗口 pop-out（笔记对照 / 双显示器分屏）
+            commands::notes::open_note_in_new_window,
             // T-007 笔记加密 / Vault
             commands::vault::vault_status,
             commands::vault::vault_setup,

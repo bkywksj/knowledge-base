@@ -1,5 +1,6 @@
 use crate::models::{Note, NoteInput, NoteQuery, PageResult};
 use crate::services::note::NoteService;
+use crate::services::popout_window;
 use crate::services::trash::TrashService;
 use crate::state::AppState;
 
@@ -155,4 +156,12 @@ pub async fn clip_url_to_note(
     NoteService::clip_url(&state.db, &url, folder_id)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// 把指定笔记弹到独立 OS 窗口（双显示器对照 / 主副屏分屏用）
+///
+/// 同 note_id 已存在 pop-out 窗口则直接前置，避免重复弹。
+#[tauri::command]
+pub fn open_note_in_new_window(app: tauri::AppHandle, note_id: i64) -> Result<(), String> {
+    popout_window::open_note(&app, note_id).map_err(|e| e.to_string())
 }

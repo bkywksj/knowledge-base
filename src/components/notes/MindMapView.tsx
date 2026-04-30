@@ -1,32 +1,30 @@
 import { useEffect, useRef } from "react";
-import { Modal, Button, Space, Tooltip, App as AntdApp, theme as antdTheme } from "antd";
-import { ZoomIn, ZoomOut, Maximize2, Download } from "lucide-react";
+import { Drawer, Button, Space, Tooltip, App as AntdApp, theme as antdTheme } from "antd";
+import { ZoomIn, ZoomOut, Maximize2, Download, X } from "lucide-react";
 import { Transformer } from "markmap-lib";
 import { Markmap } from "markmap-view";
 import { save } from "@tauri-apps/plugin-dialog";
 import { systemApi } from "@/lib/api";
 
 interface Props {
-  /** Modal open 状态 */
+  /** Drawer open 状态 */
   open: boolean;
   onClose: () => void;
-  /** 笔记 markdown 原文 */
+  /** 笔记 markdown 原文（编辑时实时刷新视图） */
   markdown: string;
   /** 笔记标题（用作根节点 fallback / 导出文件名） */
   title: string;
 }
 
 /**
- * 思维导图视图（只读）
+ * 思维导图视图（只读，右侧浮动 Drawer 模式）
  *
- * 把笔记的 markdown 标题层级实时渲染成思维导图。基于 markmap-view（D3 SVG）。
- *
- * 设计取舍（参见对比 Notion/Logseq/Obsidian）：
- * - **只读**：不支持节点拖拽 / 富文本编辑。原始数据仍然是 markdown，避免双数据源同步问题。
- * - **从 markdown 而非 HTML**：tiptap 内容已是 markdown，markmap 直接吃，零损耗。
- * - **不持久化**：思维导图是 markdown 的"另一种视图"，不存数据库。
+ * 设计要点（v2，从 Modal 改为 Drawer）：
+ * - **mask={false}**：用户在右侧看导图的同时，左侧编辑器仍可写、滚动、保存
+ * - **markdown 实时跟随**：父级 content 变化（每次 onChange）→ 重新 setData
+ * - **fit 只做一次**：首次打开 fit 自适应；后续编辑不再 fit，避免每个键击都在缩放
+ * - **手动 fit 按钮**：用户写完一段想"重新看全局"时点头部 ⤢
  */
-// 同一笔记反复打开 Modal 时复用 transformer（避免每次重建 plugin 注册）
 const transformer = new Transformer();
 
 export function MindMapView({ open, onClose, markdown, title }: Props) {
@@ -34,33 +32,37 @@ export function MindMapView({ open, onClose, markdown, title }: Props) {
   const { message } = AntdApp.useApp();
   const svgRef = useRef<SVGSVGElement | null>(null);
   const mmRef = useRef<Markmap | null>(null);
+  /** 标记首次渲染——只有首次创建时做 fit；后续 markdown 变化只 setData，
+   * 避免敲键期间画布被反复"自适应"导致跳动 */
+  const firstRenderRef = useRef(true);
 
-  // Modal 打开后初始化 / 更新 markmap；关闭时销毁，避免内存泄漏
+  // Drawer 打开后初始化 / 更新；关闭时销毁
   useEffect(() => {
     if (!open) {
       if (mmRef.current) {
         mmRef.current.destroy();
         mmRef.current = null;
       }
+      firstRenderRef.current = true;
       return;
     }
 
-    // Modal 内容是 portal 渲染，open 切到 true 后下一帧 svgRef 才挂上
+    // Drawer 是 portal 渲染，open 切到 true 后下一帧 svgRef 才挂上
     const raf = requestAnimationFrame(() => {
       if (!svgRef.current) return;
 
-      // markdown 没有任何 # 标题时，markmap 会渲染成只有一个根节点的"光秃树"。
-      // 用笔记标题作为 H1 兜底，让用户至少看到一个有意义的节点。
       const md = markdown.trim()
         ? markdown
         : `# ${title || "未命名笔记"}\n`;
       const { root } = transformer.transform(md);
 
       if (mmRef.current) {
-        mmRef.current.setData(root);
-        void mmRef.current.fit();
+        // 后续更新：只 setData，不 fit（避免敲键时画布跳动）
+        void mmRef.current.setData(root);
       } else {
+        // 首次创建：create 时一并 fit 自适应
         mmRef.current = Markmap.create(svgRef.current, undefined, root);
+        firstRenderRef.current = false;
       }
     });
 
@@ -68,10 +70,7 @@ export function MindMapView({ open, onClose, markdown, title }: Props) {
   }, [open, markdown, title]);
 
   function handleZoom(factor: number) {
-    const mm = mmRef.current;
-    if (!mm) return;
-    // markmap 的 rescale 接受相对缩放系数（>1 放大，<1 缩小）
-    void mm.rescale(factor);
+    void mmRef.current?.rescale(factor);
   }
 
   function handleFit() {
@@ -82,7 +81,6 @@ export function MindMapView({ open, onClose, markdown, title }: Props) {
     const svg = svgRef.current;
     if (!svg) return;
     try {
-      // Tauri 2 WebView 默认拦截 `<a download>`，必须经 save 对话框 + Rust 写盘
       const targetPath = await save({
         title: "导出思维导图为 SVG",
         defaultPath: `${title || "mindmap"}.svg`,
@@ -99,13 +97,32 @@ export function MindMapView({ open, onClose, markdown, title }: Props) {
   }
 
   return (
-    <Modal
+    <Drawer
       open={open}
-      onCancel={onClose}
+      onClose={onClose}
+      placement="right"
+      // 不挡编辑器：左侧仍可写笔记，右侧实时看到导图
+      mask={false}
+      // 关闭后销毁 svg 节点，下次打开重建（避免持有过期 markmap 实例）
+      destroyOnHidden
+      // antd 5：宽度走 styles.wrapper；50vw 自适应窗口，最大 1200px
+      styles={{
+        wrapper: { width: "50vw", maxWidth: 1200, minWidth: 480 },
+        body: { padding: 0, background: token.colorBgContainer },
+        header: { padding: "8px 12px" },
+      }}
+      // 自定义关闭按钮去掉，改在右侧工具栏画
+      closable={false}
       title={
-        <div className="flex items-center justify-between pr-6">
-          <span>思维导图 · {title || "未命名"}</span>
-          <Space size="small">
+        <div className="flex items-center justify-between gap-2">
+          <span
+            className="truncate"
+            style={{ fontSize: 13, fontWeight: 500 }}
+            title={`思维导图 · ${title || "未命名"}`}
+          >
+            🧠 思维导图 · {title || "未命名"}
+          </span>
+          <Space size={2}>
             <Tooltip title="放大">
               <Button
                 size="small"
@@ -138,14 +155,17 @@ export function MindMapView({ open, onClose, markdown, title }: Props) {
                 onClick={() => void handleExportSvg()}
               />
             </Tooltip>
+            <Tooltip title="关闭">
+              <Button
+                size="small"
+                type="text"
+                icon={<X size={14} />}
+                onClick={onClose}
+              />
+            </Tooltip>
           </Space>
         </div>
       }
-      footer={null}
-      width="80vw"
-      // 顶部留小一些空间，让 svg 占满 Modal body
-      styles={{ body: { padding: 0, height: "70vh" } }}
-      destroyOnHidden
     >
       <svg
         ref={svgRef}
@@ -153,9 +173,8 @@ export function MindMapView({ open, onClose, markdown, title }: Props) {
           width: "100%",
           height: "100%",
           display: "block",
-          background: token.colorBgContainer,
         }}
       />
-    </Modal>
+    </Drawer>
   );
 }
