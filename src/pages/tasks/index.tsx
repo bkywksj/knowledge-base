@@ -47,6 +47,7 @@ import type { Task, TaskPriority, TaskCategory } from "@/types";
 type ViewMode = "list" | "kanban" | "quadrant" | "calendar";
 import { CreateTaskModal } from "@/components/tasks/CreateTaskModal";
 import { SubtaskList } from "@/components/tasks/SubtaskList";
+import { TaskDetailModal } from "@/components/tasks/TaskDetailModal";
 import { KanbanView } from "@/components/tasks/KanbanView";
 import { QuadrantView } from "@/components/tasks/QuadrantView";
 import { CalendarView } from "@/components/tasks/CalendarView";
@@ -256,6 +257,8 @@ export default function TasksPage() {
   const [keyword, setKeyword] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
+  /** 行点击 → 只读详情 Modal（与首页一致）；编辑走 hover Edit / 右键菜单 → setEditing */
+  const [detailViewing, setDetailViewing] = useState<Task | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [presetPriority, setPresetPriority] = useState<TaskPriority | undefined>(undefined);
   const [presetImportant, setPresetImportant] = useState<boolean | undefined>(undefined);
@@ -641,6 +644,7 @@ export default function TasksPage() {
               onToggle={handleToggle}
               onDelete={handleDelete}
               onEdit={setEditing}
+              onRowClick={setDetailViewing}
               onOpenLink={handleOpenLink}
               token={token}
               multiSelect={multiSelect}
@@ -660,6 +664,7 @@ export default function TasksPage() {
               onToggle={handleToggle}
               onDelete={handleDelete}
               onEdit={setEditing}
+              onRowClick={setDetailViewing}
               onOpenLink={handleOpenLink}
               token={token}
               multiSelect={multiSelect}
@@ -679,6 +684,7 @@ export default function TasksPage() {
               onToggle={handleToggle}
               onDelete={handleDelete}
               onEdit={setEditing}
+              onRowClick={setDetailViewing}
               onOpenLink={handleOpenLink}
               token={token}
               multiSelect={multiSelect}
@@ -697,6 +703,7 @@ export default function TasksPage() {
               onToggle={handleToggle}
               onDelete={handleDelete}
               onEdit={setEditing}
+              onRowClick={setDetailViewing}
               onOpenLink={handleOpenLink}
               token={token}
               multiSelect={multiSelect}
@@ -742,6 +749,7 @@ export default function TasksPage() {
                   onToggle={handleToggle}
                   onDelete={handleDelete}
                   onEdit={setEditing}
+                  onRowClick={setDetailViewing}
                   onOpenLink={handleOpenLink}
                   token={token}
                   multiSelect={multiSelect}
@@ -760,6 +768,7 @@ export default function TasksPage() {
                   onToggle={handleToggle}
                   onDelete={handleDelete}
                   onEdit={setEditing}
+                  onRowClick={setDetailViewing}
                   onOpenLink={handleOpenLink}
                   token={token}
                   multiSelect={multiSelect}
@@ -865,6 +874,19 @@ export default function TasksPage() {
           patchTask(editing.id, { subtask_done: done, subtask_total: total });
         }}
       />
+      {/* 行点击 → 只读详情 Modal（与首页一致）；编辑入口：详情 Modal 内编辑按钮 / hover Edit / 右键菜单 */}
+      <TaskDetailModal
+        task={detailViewing}
+        onClose={() => setDetailViewing(null)}
+        onToggleStatus={(id) => {
+          const t = tasks.find((x) => x.id === id);
+          if (t) void handleToggle(t);
+        }}
+        onSubtaskChanged={(id, done, total) => {
+          patchTask(id, { subtask_done: done, subtask_total: total });
+        }}
+        onEdit={(t) => setEditing(t)}
+      />
       {/* AI 规划 / 添加待办的三个 Modal 已封装进 NewTodoButton；本页面不再单独挂 */}
     </div>
   );
@@ -881,6 +903,8 @@ interface SectionProps {
   onToggle: (t: Task) => void;
   onDelete: (t: Task) => void;
   onEdit: (t: Task) => void;
+  /** 行 onClick → 弹只读详情 Modal（与首页保持一致）；编辑走 hover Edit / 右键菜单 */
+  onRowClick: (t: Task) => void;
   onOpenLink: (l: Task["links"][number]) => void;
   /** 右键菜单中"改优先级"等需要重拉列表的操作完成后回调，由父级触发 loadTasks */
   onUpdated?: () => void;
@@ -907,6 +931,7 @@ function TaskSection({
   onToggle,
   onDelete,
   onEdit,
+  onRowClick,
   onOpenLink,
   onUpdated,
   onPatchTask,
@@ -1050,6 +1075,7 @@ function TaskSection({
             onToggle={onToggle}
             onDelete={onDelete}
             onEdit={onEdit}
+            onRowClick={onRowClick}
             onOpenLink={onOpenLink}
             multiSelect={multiSelect}
             selected={selectedIds?.has(t.id)}
@@ -1097,6 +1123,7 @@ interface RowProps {
   onToggle: (t: Task) => void;
   onDelete: (t: Task) => void;
   onEdit: (t: Task) => void;
+  onRowClick: (t: Task) => void;
   onOpenLink: (l: Task["links"][number]) => void;
   multiSelect?: boolean;
   selected?: boolean;
@@ -1122,6 +1149,7 @@ function TaskRow({
   onToggle,
   onDelete,
   onEdit,
+  onRowClick,
   onOpenLink,
   multiSelect,
   selected,
@@ -1157,7 +1185,7 @@ function TaskRow({
       onClick={
         multiSelect
           ? () => onToggleSelect?.(task.id)
-          : () => onEdit(task)
+          : () => onRowClick(task)
       }
       onContextMenu={onContextMenu}
     >

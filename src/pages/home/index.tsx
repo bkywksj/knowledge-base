@@ -64,17 +64,10 @@ import type {
   AiConversation,
 } from "@/types";
 import { SubtaskList } from "@/components/tasks/SubtaskList";
+import { TaskDetailModal } from "@/components/tasks/TaskDetailModal";
+import { CreateTaskModal } from "@/components/tasks/CreateTaskModal";
 
-const { Text, Paragraph } = Typography;
-
-const PRIORITY_LABEL: Record<number, string> = { 0: "高", 1: "中", 2: "低" };
-const REPEAT_LABEL: Record<string, string> = {
-  none: "不循环",
-  daily: "每天",
-  weekly: "每周",
-  monthly: "每月",
-  yearly: "每年",
-};
+const { Text } = Typography;
 
 /**
  * 首页 v2(工作台模式)
@@ -111,6 +104,8 @@ export default function HomePage() {
   const [aiQuestion, setAiQuestion] = useState("");
   /** 待办详情弹窗 */
   const [taskDetail, setTaskDetail] = useState<Task | null>(null);
+  /** 编辑弹窗（详情 Modal 点「编辑」时打开）*/
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
   /** 行内展开子任务的任务 id 集合（仅 widget 内存态，不持久化） */
   const [expandedTodoIds, setExpandedTodoIds] = useState<Set<number>>(
     () => new Set(),
@@ -588,7 +583,10 @@ export default function HomePage() {
               </Text>
             </div>
           ) : (
-            <ul className="flex flex-col gap-2 m-0 p-0 list-none">
+            <ul
+              className="flex flex-col gap-2 m-0 p-0 list-none"
+              style={{ maxHeight: 280, overflowY: "auto" }}
+            >
               {displayedTodos.map((task) => {
                 const dueAt = new Date(task.due_date!).getTime();
                 const isOverdue = dueAt < Date.now();
@@ -1026,122 +1024,41 @@ export default function HomePage() {
         </Card>
       </div>
 
-      {/* 待办详情弹窗 — 点击列表项触发；展示 + 标记完成（状态切换由 handleToggleTask） */}
-      <Modal
-        open={taskDetail !== null}
-        onCancel={() => setTaskDetail(null)}
-        title="待办详情"
-        footer={
-          <div className="flex justify-end gap-2">
-            <Button onClick={() => setTaskDetail(null)}>关闭</Button>
-            <Button
-              type="primary"
-              onClick={() => {
-                if (taskDetail) {
-                  void handleToggleTask(taskDetail.id);
-                }
-                setTaskDetail(null);
-              }}
-            >
-              {taskDetail?.status === 1 ? "重新开启" : "标记完成"}
-            </Button>
-          </div>
-        }
-        width={480}
-      >
-        {taskDetail && (
-          <div className="flex flex-col gap-3">
-            <div>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                标题
-              </Text>
-              <div className="flex items-center gap-2 mt-1">
-                <Text strong style={{ fontSize: 15 }}>
-                  {taskDetail.title}
-                </Text>
-                {taskDetail.important && (
-                  <Star
-                    size={14}
-                    style={{ color: token.colorWarning }}
-                    fill={token.colorWarning}
-                  />
-                )}
-              </div>
-            </div>
-
-            <div className="flex gap-6">
-              <div>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  优先级
-                </Text>
-                <div className="mt-1">
-                  <Tag
-                    color={
-                      taskDetail.priority === 0
-                        ? "red"
-                        : taskDetail.priority === 1
-                          ? "blue"
-                          : "default"
-                    }
-                  >
-                    {PRIORITY_LABEL[taskDetail.priority] ?? "—"}
-                  </Tag>
-                </div>
-              </div>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  状态
-                </Text>
-                <div className="mt-1">
-                  <Tag color={taskDetail.status === 0 ? "processing" : "success"}>
-                    {taskDetail.status === 0 ? "未完成" : "已完成"}
-                  </Tag>
-                </div>
-              </div>
-              {taskDetail.due_date && (
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    截止
-                  </Text>
-                  <div className="mt-1" style={{ fontSize: 13 }}>
-                    {taskDetail.due_date}
-                  </div>
-                </div>
-              )}
-              {taskDetail.repeat_kind && taskDetail.repeat_kind !== "none" && (
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    重复
-                  </Text>
-                  <div className="mt-1" style={{ fontSize: 13 }}>
-                    每 {taskDetail.repeat_interval}{" "}
-                    {REPEAT_LABEL[taskDetail.repeat_kind] ?? taskDetail.repeat_kind}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                备注
-              </Text>
-              <Paragraph
-                style={{
-                  marginTop: 4,
-                  marginBottom: 0,
-                  fontSize: 13,
-                  whiteSpace: "pre-wrap",
-                  color: taskDetail.description?.trim()
-                    ? token.colorText
-                    : token.colorTextQuaternary,
-                }}
-              >
-                {taskDetail.description?.trim() || "暂无备注"}
-              </Paragraph>
-            </div>
-          </div>
-        )}
-      </Modal>
+      {/* 待办详情弹窗 — 点击今日待办列表项触发；只读视图 + 标记完成 + 子任务 + 编辑入口 */}
+      <TaskDetailModal
+        task={taskDetail}
+        onClose={() => setTaskDetail(null)}
+        onToggleStatus={(id) => void handleToggleTask(id)}
+        onSubtaskChanged={(id, done, total) => {
+          // 局部 patch todayTasks 中对应行的进度，避免重拉造成闪烁
+          setTodayTasks((prev) =>
+            prev.map((t) =>
+              t.id === id ? { ...t, subtask_done: done, subtask_total: total } : t,
+            ),
+          );
+        }}
+        onEdit={(t) => setEditingTask(t)}
+      />
+      {/* 详情 Modal 点「编辑」→ CreateTaskModal 编辑态；保存后重拉首页数据 */}
+      <CreateTaskModal
+        open={!!editingTask}
+        editing={editingTask}
+        onClose={() => setEditingTask(null)}
+        onSaved={() => {
+          setEditingTask(null);
+          void loadDashboard();
+        }}
+        onSubtaskChanged={(done, total) => {
+          if (!editingTask) return;
+          setTodayTasks((prev) =>
+            prev.map((t) =>
+              t.id === editingTask.id
+                ? { ...t, subtask_done: done, subtask_total: total }
+                : t,
+            ),
+          );
+        }}
+      />
 
       {/* 最近笔记右键菜单 */}
       <ContextMenuOverlay
