@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Drawer, Button, Space, Tooltip, App as AntdApp, theme as antdTheme } from "antd";
+import { Button, Space, Tooltip, App as AntdApp, theme as antdTheme } from "antd";
 import { ZoomIn, ZoomOut, Maximize2, Download, X } from "lucide-react";
 import { Transformer } from "markmap-lib";
 import { Markmap } from "markmap-view";
@@ -7,7 +7,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { systemApi } from "@/lib/api";
 
 interface Props {
-  /** Drawer open 状态 */
+  /** 是否显示——父级控制；隐藏时不挂载 svg、销毁 markmap 实例 */
   open: boolean;
   onClose: () => void;
   /** 笔记 markdown 原文（编辑时实时刷新视图） */
@@ -17,13 +17,15 @@ interface Props {
 }
 
 /**
- * 思维导图视图（只读，右侧浮动 Drawer 模式）
+ * 思维导图视图（只读，编辑器右侧嵌入式分栏）
  *
- * 设计要点（v2，从 Modal 改为 Drawer）：
- * - **mask={false}**：用户在右侧看导图的同时，左侧编辑器仍可写、滚动、保存
+ * 设计要点（v3，从 Drawer 改为编辑器内嵌 flex 子节点）：
+ * - **真分屏**：编辑器和导图是 sibling，共享主区宽度，互不覆盖
+ *   （v2 用 antd Drawer 是错的——Drawer 是 fixed 浮层不会推开 sibling）
+ * - **maxWidth=300**：限制 markmap 节点宽度，长代码块自动折行不溢出
  * - **markdown 实时跟随**：父级 content 变化（每次 onChange）→ 重新 setData
- * - **fit 只做一次**：首次打开 fit 自适应；后续编辑不再 fit，避免每个键击都在缩放
- * - **手动 fit 按钮**：用户写完一段想"重新看全局"时点头部 ⤢
+ * - **fit 只做一次**：首次打开 fit 自适应；后续 markdown 变化只 setData
+ * - **不渲染 chrome**：宽度 / 关闭由父级 splitter 控制；本组件只画工具栏 + svg
  */
 const transformer = new Transformer();
 
@@ -32,22 +34,17 @@ export function MindMapView({ open, onClose, markdown, title }: Props) {
   const { message } = AntdApp.useApp();
   const svgRef = useRef<SVGSVGElement | null>(null);
   const mmRef = useRef<Markmap | null>(null);
-  /** 标记首次渲染——只有首次创建时做 fit；后续 markdown 变化只 setData，
-   * 避免敲键期间画布被反复"自适应"导致跳动 */
-  const firstRenderRef = useRef(true);
 
-  // Drawer 打开后初始化 / 更新；关闭时销毁
+  // open 切到 true 时初始化；切到 false 时销毁 markmap 实例（svg 由父级 unmount）
   useEffect(() => {
     if (!open) {
       if (mmRef.current) {
         mmRef.current.destroy();
         mmRef.current = null;
       }
-      firstRenderRef.current = true;
       return;
     }
 
-    // Drawer 是 portal 渲染，open 切到 true 后下一帧 svgRef 才挂上
     const raf = requestAnimationFrame(() => {
       if (!svgRef.current) return;
 
@@ -60,9 +57,12 @@ export function MindMapView({ open, onClose, markdown, title }: Props) {
         // 后续更新：只 setData，不 fit（避免敲键时画布跳动）
         void mmRef.current.setData(root);
       } else {
-        // 首次创建：create 时一并 fit 自适应
-        mmRef.current = Markmap.create(svgRef.current, undefined, root);
-        firstRenderRef.current = false;
+        // 首次创建：限制节点最大宽度防止 foreignObject 溢出
+        mmRef.current = Markmap.create(
+          svgRef.current,
+          { maxWidth: 300 },
+          root,
+        );
       }
     });
 
@@ -96,85 +96,91 @@ export function MindMapView({ open, onClose, markdown, title }: Props) {
     }
   }
 
+  if (!open) return null;
+
   return (
-    <Drawer
-      open={open}
-      onClose={onClose}
-      placement="right"
-      // 不挡编辑器：左侧仍可写笔记，右侧实时看到导图
-      mask={false}
-      // 关闭后销毁 svg 节点，下次打开重建（避免持有过期 markmap 实例）
-      destroyOnHidden
-      // antd 5：宽度走 styles.wrapper；50vw 自适应窗口，最大 1200px
-      styles={{
-        wrapper: { width: "50vw", maxWidth: 1200, minWidth: 480 },
-        body: { padding: 0, background: token.colorBgContainer },
-        header: { padding: "8px 12px" },
+    <div
+      className="flex flex-col"
+      style={{
+        width: "100%",
+        height: "100%",
+        background: token.colorBgContainer,
+        borderLeft: `1px solid ${token.colorBorderSecondary}`,
+        minWidth: 0,
+        overflow: "hidden",
       }}
-      // 自定义关闭按钮去掉，改在右侧工具栏画
-      closable={false}
-      title={
-        <div className="flex items-center justify-between gap-2">
-          <span
-            className="truncate"
-            style={{ fontSize: 13, fontWeight: 500 }}
-            title={`思维导图 · ${title || "未命名"}`}
-          >
-            🧠 思维导图 · {title || "未命名"}
-          </span>
-          <Space size={2}>
-            <Tooltip title="放大">
-              <Button
-                size="small"
-                type="text"
-                icon={<ZoomIn size={14} />}
-                onClick={() => handleZoom(1.25)}
-              />
-            </Tooltip>
-            <Tooltip title="缩小">
-              <Button
-                size="small"
-                type="text"
-                icon={<ZoomOut size={14} />}
-                onClick={() => handleZoom(0.8)}
-              />
-            </Tooltip>
-            <Tooltip title="自适应">
-              <Button
-                size="small"
-                type="text"
-                icon={<Maximize2 size={14} />}
-                onClick={handleFit}
-              />
-            </Tooltip>
-            <Tooltip title="导出 SVG">
-              <Button
-                size="small"
-                type="text"
-                icon={<Download size={14} />}
-                onClick={() => void handleExportSvg()}
-              />
-            </Tooltip>
-            <Tooltip title="关闭">
-              <Button
-                size="small"
-                type="text"
-                icon={<X size={14} />}
-                onClick={onClose}
-              />
-            </Tooltip>
-          </Space>
-        </div>
-      }
     >
-      <svg
-        ref={svgRef}
+      {/* 工具栏：标题 + 缩放/适应/导出/关闭 */}
+      <div
+        className="flex items-center justify-between gap-2"
         style={{
-          width: "100%",
-          height: "100%",
-          display: "block",
+          padding: "6px 10px",
+          borderBottom: `1px solid ${token.colorBorderSecondary}`,
+          flexShrink: 0,
         }}
-      />
-    </Drawer>
+      >
+        <span
+          className="truncate"
+          style={{ fontSize: 12, color: token.colorTextSecondary }}
+          title={`思维导图 · ${title || "未命名"}`}
+        >
+          🧠 {title || "未命名"}
+        </span>
+        <Space size={2}>
+          <Tooltip title="放大">
+            <Button
+              size="small"
+              type="text"
+              icon={<ZoomIn size={13} />}
+              onClick={() => handleZoom(1.25)}
+            />
+          </Tooltip>
+          <Tooltip title="缩小">
+            <Button
+              size="small"
+              type="text"
+              icon={<ZoomOut size={13} />}
+              onClick={() => handleZoom(0.8)}
+            />
+          </Tooltip>
+          <Tooltip title="自适应">
+            <Button
+              size="small"
+              type="text"
+              icon={<Maximize2 size={13} />}
+              onClick={handleFit}
+            />
+          </Tooltip>
+          <Tooltip title="导出 SVG">
+            <Button
+              size="small"
+              type="text"
+              icon={<Download size={13} />}
+              onClick={() => void handleExportSvg()}
+            />
+          </Tooltip>
+          <Tooltip title="关闭">
+            <Button
+              size="small"
+              type="text"
+              icon={<X size={13} />}
+              onClick={onClose}
+            />
+          </Tooltip>
+        </Space>
+      </div>
+
+      {/* SVG 容器：占满剩余空间 */}
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+        <svg
+          ref={svgRef}
+          style={{
+            width: "100%",
+            height: "100%",
+            display: "block",
+          }}
+        />
+      </div>
+    </div>
   );
 }

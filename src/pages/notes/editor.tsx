@@ -596,8 +596,15 @@ export default function NoteEditorPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
-  /** 思维导图视图弹窗：渲染当前 markdown 的标题层级（只读） */
+  /** 思维导图视图：在编辑器右侧以 flex 分栏方式渲染（不是浮层） */
   const [mindMapOpen, setMindMapOpen] = useState(false);
+  /** 思维导图分栏宽度（像素，持久化到 localStorage 跨笔记记忆） */
+  const [mindMapWidth, setMindMapWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem("editor.mindMapWidth"));
+    return Number.isFinite(saved) && saved >= 320 ? saved : 480;
+  });
+  // latest 字段：handleMove 写入最新宽度，handleUp 关闭时读出落库（避免闭包陷阱）
+  const splitterDragRef = useRef<{ startX: number; startWidth: number; latest: number } | null>(null);
 
   // 标签状态
   const [noteTags, setNoteTags] = useState<Tag[]>([]);
@@ -615,6 +622,11 @@ export default function NoteEditorPage() {
   const editorBodyRef = useRef<HTMLDivElement | null>(null);
   const outlineVisible = useAppStore((s) => s.outlineVisible);
   const toggleOutline = useAppStore((s) => s.toggleOutline);
+  /**
+   * 思维导图打开时自动暂时隐藏大纲——三栏（编辑器+大纲+导图）会挤压编辑可读宽度。
+   * 不动用户在 store 里的偏好；mindMapOpen 切回 false 后大纲自动恢复。
+   */
+  const effectiveOutlineVisible = outlineVisible && !mindMapOpen;
 
   // 同名消歧 Modal 状态
   const [disambigOpen, setDisambigOpen] = useState(false);
@@ -1381,11 +1393,20 @@ export default function NoteEditorPage() {
               onClick={handleToggleEncrypt}
             />
           </Tooltip>
-          <Tooltip title={outlineVisible ? "隐藏大纲" : "显示大纲"}>
+          <Tooltip
+            title={
+              mindMapOpen
+                ? "思维导图打开期间大纲已暂时隐藏（关闭导图后恢复）"
+                : outlineVisible
+                  ? "隐藏大纲"
+                  : "显示大纲"
+            }
+          >
             <Button
-              type={outlineVisible ? "primary" : "default"}
+              type={effectiveOutlineVisible ? "primary" : "default"}
               icon={<ListTree size={16} />}
               onClick={toggleOutline}
+              disabled={mindMapOpen}
             />
           </Tooltip>
           <Tooltip title="思维导图（只读视图）">
@@ -1511,11 +1532,22 @@ export default function NoteEditorPage() {
         </Space>
       </div>
 
+      {/* 编辑器 + 思维导图 横向分栏容器（mindMapOpen=true 时变两栏，否则编辑器独占） */}
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "row",
+          minHeight: 0,
+          overflow: "hidden",
+        }}
+      >
       {/* 可滚动的编辑主体 */}
       <div
         className="editor-body"
         ref={editorBodyRef}
-        data-outline={outlineVisible ? "on" : undefined}
+        data-outline={effectiveOutlineVisible ? "on" : undefined}
+        style={{ flex: 1, minWidth: 0 }}
       >
         <div className="editor-content-area">
           {/* 标题 */}
@@ -1566,12 +1598,77 @@ export default function NoteEditorPage() {
           />
         </div>
 
-        {/* 右侧大纲面板：sticky 跟随滚动；用户偏好关闭 / heading < 2 时自隐 */}
-        {outlineVisible && (
+        {/* 右侧大纲面板：sticky 跟随滚动；用户偏好关闭 / 思维导图打开 时自隐 */}
+        {effectiveOutlineVisible && (
           <aside className="editor-outline-aside">
             <EditorOutline editor={editorInstance} scrollRoot={editorBodyRef.current} />
           </aside>
         )}
+      </div>
+
+      {/* 思维导图分栏拖拽手柄：6px 宽，col-resize；onMouseDown 进入拖拽态，
+          全局 mousemove 调宽度，mouseup 解绑并落库 */}
+      {mindMapOpen && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="拖动调整思维导图宽度"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            splitterDragRef.current = {
+              startX: e.clientX,
+              startWidth: mindMapWidth,
+              latest: mindMapWidth,
+            };
+            const handleMove = (ev: MouseEvent) => {
+              const ref = splitterDragRef.current;
+              if (!ref) return;
+              // 向左拖 → 导图变宽（鼠标 X 减小）；反之变窄
+              const delta = ref.startX - ev.clientX;
+              const next = Math.max(320, Math.min(1200, ref.startWidth + delta));
+              ref.latest = next;
+              setMindMapWidth(next);
+            };
+            const handleUp = () => {
+              window.removeEventListener("mousemove", handleMove);
+              window.removeEventListener("mouseup", handleUp);
+              const ref = splitterDragRef.current;
+              if (ref) {
+                localStorage.setItem("editor.mindMapWidth", String(ref.latest));
+                splitterDragRef.current = null;
+              }
+            };
+            window.addEventListener("mousemove", handleMove);
+            window.addEventListener("mouseup", handleUp);
+          }}
+          style={{
+            width: 6,
+            cursor: "col-resize",
+            background: "transparent",
+            flexShrink: 0,
+          }}
+          className="hover:bg-blue-500/30 active:bg-blue-500/50 transition-colors"
+        />
+      )}
+
+      {/* 思维导图分栏：仅 mindMapOpen 时挂载 */}
+      {mindMapOpen && (
+        <div
+          style={{
+            width: mindMapWidth,
+            flexShrink: 0,
+            minWidth: 320,
+            height: "100%",
+          }}
+        >
+          <MindMapView
+            open={mindMapOpen}
+            onClose={() => setMindMapOpen(false)}
+            markdown={content}
+            title={title}
+          />
+        </div>
+      )}
       </div>
 
       {/* PDF 原文件预览 */}
@@ -1694,14 +1791,6 @@ export default function NoteEditorPage() {
         open={aiDrawerOpen}
         onClose={() => setAiDrawerOpen(false)}
         pendingSelection={aiSelection}
-      />
-
-      {/* 思维导图（只读）：把当前笔记 markdown 标题层级渲染成 mindmap */}
-      <MindMapView
-        open={mindMapOpen}
-        onClose={() => setMindMapOpen(false)}
-        markdown={content}
-        title={title}
       />
 
       <VaultModal
