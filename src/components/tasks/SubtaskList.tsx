@@ -21,9 +21,14 @@ interface Props {
    * 父组件用此局部 patch 主任务的进度徽章，避免全量 reload 主列表造成闪烁。
    */
   onChanged?: (done: number, total: number) => void;
+  /**
+   * 紧凑模式：用在列表行内展开时——隐藏顶部"子任务 N/M"标题（行尾徽章已显示）、
+   * 隐藏空状态提示文案、子任务行更紧凑。Modal 内默认 false 保持原样。
+   */
+  compact?: boolean;
 }
 
-export function SubtaskList({ parentTaskId, onChanged }: Props) {
+export function SubtaskList({ parentTaskId, onChanged, compact = false }: Props) {
   const { message } = AntdApp.useApp();
   const { token } = antdTheme.useToken();
   const [items, setItems] = useState<Task[]>([]);
@@ -97,30 +102,34 @@ export function SubtaskList({ parentTaskId, onChanged }: Props) {
   const total = items.length;
 
   return (
-    <div className="flex flex-col gap-2">
-      <div
-        className="flex items-center gap-2"
-        style={{ fontSize: 11, color: token.colorTextSecondary }}
-      >
-        <span>子任务</span>
-        {total > 0 && (
-          <span style={{ color: token.colorTextTertiary }}>
-            {done}/{total} 已完成
-          </span>
-        )}
-      </div>
+    <div className={compact ? "flex flex-col gap-1" : "flex flex-col gap-2"}>
+      {!compact && (
+        <div
+          className="flex items-center gap-2"
+          style={{ fontSize: 11, color: token.colorTextSecondary }}
+        >
+          <span>子任务</span>
+          {total > 0 && (
+            <span style={{ color: token.colorTextTertiary }}>
+              {done}/{total} 已完成
+            </span>
+          )}
+        </div>
+      )}
 
       {loading ? (
-        <div className="flex justify-center py-2">
+        <div className="flex justify-center py-1">
           <Spin size="small" />
         </div>
       ) : items.length === 0 ? (
-        <div
-          className="text-[12px] py-1"
-          style={{ color: token.colorTextQuaternary }}
-        >
-          暂无子任务，添加几步把它拆细
-        </div>
+        compact ? null : (
+          <div
+            className="text-[12px] py-1"
+            style={{ color: token.colorTextQuaternary }}
+          >
+            暂无子任务，添加几步把它拆细
+          </div>
+        )
       ) : (
         <div className="flex flex-col gap-1">
           {items.map((t) => (

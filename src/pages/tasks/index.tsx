@@ -20,6 +20,7 @@ import {
   Sun,
   CalendarRange,
   ChevronRight,
+  ChevronDown,
   NotebookText,
   Folder as FolderIcon,
   Link as LinkIcon,
@@ -45,6 +46,7 @@ import type { Task, TaskPriority, TaskCategory } from "@/types";
 
 type ViewMode = "list" | "kanban" | "quadrant" | "calendar";
 import { CreateTaskModal } from "@/components/tasks/CreateTaskModal";
+import { SubtaskList } from "@/components/tasks/SubtaskList";
 import { KanbanView } from "@/components/tasks/KanbanView";
 import { QuadrantView } from "@/components/tasks/QuadrantView";
 import { CalendarView } from "@/components/tasks/CalendarView";
@@ -246,6 +248,10 @@ export default function TasksPage() {
   const categoryParam = searchParams.get("category");
 
   const [tasks, setTasks] = useState<Task[]>([]);
+  /** 局部更新单条任务字段（避免 reload 整列表造成闪烁），子任务勾选/增删后用 */
+  const patchTask = useCallback((id: number, patch: Partial<Task>) => {
+    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  }, []);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -642,6 +648,7 @@ export default function TasksPage() {
               onToggleSelect={toggleSelect}
               categoryMap={categoryMap}
               onUpdated={loadTasks}
+              onPatchTask={patchTask}
             />
           )}
           {grouped.today.length > 0 && (
@@ -660,6 +667,7 @@ export default function TasksPage() {
               onToggleSelect={toggleSelect}
               categoryMap={categoryMap}
               onUpdated={loadTasks}
+              onPatchTask={patchTask}
             />
           )}
           {grouped.upcoming.length > 0 && (
@@ -678,6 +686,7 @@ export default function TasksPage() {
               onToggleSelect={toggleSelect}
               categoryMap={categoryMap}
               onUpdated={loadTasks}
+              onPatchTask={patchTask}
             />
           )}
           {grouped.noDate.length > 0 && (
@@ -695,6 +704,7 @@ export default function TasksPage() {
               onToggleSelect={toggleSelect}
               categoryMap={categoryMap}
               onUpdated={loadTasks}
+              onPatchTask={patchTask}
             />
           )}
           {filter === "todo"
@@ -739,6 +749,7 @@ export default function TasksPage() {
                   onToggleSelect={toggleSelect}
                   categoryMap={categoryMap}
                   onUpdated={loadTasks}
+                  onPatchTask={patchTask}
                 />
               )
             : grouped.done.length > 0 && (
@@ -756,6 +767,7 @@ export default function TasksPage() {
                   onToggleSelect={toggleSelect}
                   categoryMap={categoryMap}
                   onUpdated={loadTasks}
+                  onPatchTask={patchTask}
                 />
               )}
         </div>
@@ -847,16 +859,10 @@ export default function TasksPage() {
           setEditing(null);
           loadTasks();
         }}
-        // 子任务变更：局部 patch 当前编辑任务的进度徽章（避免全量 reload 闪烁）
+        // 子任务变更：复用 patchTask 局部更新（避免全量 reload 闪烁）
         onSubtaskChanged={(done, total) => {
           if (!editing) return;
-          setTasks((prev) =>
-            prev.map((t) =>
-              t.id === editing.id
-                ? { ...t, subtask_done: done, subtask_total: total }
-                : t,
-            ),
-          );
+          patchTask(editing.id, { subtask_done: done, subtask_total: total });
         }}
       />
       {/* AI 规划 / 添加待办的三个 Modal 已封装进 NewTodoButton；本页面不再单独挂 */}
@@ -878,6 +884,9 @@ interface SectionProps {
   onOpenLink: (l: Task["links"][number]) => void;
   /** 右键菜单中"改优先级"等需要重拉列表的操作完成后回调，由父级触发 loadTasks */
   onUpdated?: () => void;
+  /** 局部更新单条 task 字段（不 reload 整列表） —— 子任务勾选/增删后由父级
+   * 用此 patch subtask_done/total，避免重拉造成列表闪烁 */
+  onPatchTask?: (id: number, patch: Partial<Task>) => void;
   /** 多选态相关；undefined 表示非多选态 */
   multiSelect?: boolean;
   selectedIds?: Set<number>;
@@ -900,6 +909,7 @@ function TaskSection({
   onEdit,
   onOpenLink,
   onUpdated,
+  onPatchTask,
   multiSelect,
   selectedIds,
   onToggleSelect,
@@ -909,6 +919,8 @@ function TaskSection({
   const { message } = AntdApp.useApp();
   // 右键菜单：每个 section 独立 ctx state；同一时刻只有一个 section 弹菜单不冲突
   const ctx = useContextMenu<Task>();
+  // 行内展开的 task id 集合（内存态，组件重挂载 / 切视图重置）
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(() => new Set());
 
   /** 把任务序列化成 markdown 列表项 */
   function toMarkdown(t: Task): string {
@@ -1048,6 +1060,21 @@ function TaskSection({
               e.preventDefault();
               ctx.open(e.nativeEvent, t);
             }}
+            expanded={expandedIds.has(t.id)}
+            onToggleExpand={() =>
+              setExpandedIds((prev) => {
+                const next = new Set(prev);
+                if (next.has(t.id)) next.delete(t.id);
+                else next.add(t.id);
+                return next;
+              })
+            }
+            onSubtaskChanged={(done, total) => {
+              onPatchTask?.(t.id, {
+                subtask_done: done,
+                subtask_total: total,
+              });
+            }}
           />
         ))}
       </div>
@@ -1080,6 +1107,12 @@ interface RowProps {
   contextActive?: boolean;
   /** 右键事件，由父级 TaskSection 注入 ctx.open */
   onContextMenu?: (e: React.MouseEvent) => void;
+  /** 是否展开行内子任务区（仅 subtask_total > 0 时有意义） */
+  expanded?: boolean;
+  /** 切换展开/折叠 */
+  onToggleExpand?: () => void;
+  /** 子任务变更回调：父级用来局部 patch 该 task 的 subtask_done/total */
+  onSubtaskChanged?: (done: number, total: number) => void;
 }
 
 function TaskRow({
@@ -1096,15 +1129,24 @@ function TaskRow({
   category,
   contextActive,
   onContextMenu,
+  expanded,
+  onToggleExpand,
+  onSubtaskChanged,
 }: RowProps) {
   const done = task.status === 1;
   const due = describeDueDate(task.due_date);
   const isSelected = !!selected;
+  const hasSubtasks = task.subtask_total > 0;
   return (
+    <>
     <div
       className="group flex items-start gap-3 px-4 py-3 transition"
       style={{
-        borderBottom: isLast ? "none" : `1px solid ${token.colorBorderSecondary}`,
+        // 展开时不画下边框，让展开区与本行视觉相连
+        borderBottom:
+          isLast || expanded
+            ? "none"
+            : `1px solid ${token.colorBorderSecondary}`,
         background:
           multiSelect && isSelected ? token.colorPrimaryBg : "transparent",
         cursor: multiSelect ? "pointer" : "default",
@@ -1117,6 +1159,28 @@ function TaskRow({
       }
       onContextMenu={onContextMenu}
     >
+      {/* 展开/折叠 ▶ ▼：仅有子任务时显示，多选态不显示（避免误操作） */}
+      {hasSubtasks && !multiSelect ? (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleExpand?.();
+          }}
+          className="mt-0.5 shrink-0 flex items-center justify-center cursor-pointer hover:bg-black/5 rounded transition"
+          style={{
+            width: 18,
+            height: 18,
+            color: token.colorTextTertiary,
+          }}
+          title={expanded ? "折叠子任务" : "展开子任务"}
+        >
+          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </button>
+      ) : (
+        // 占位保持对齐（非主任务的行不显示 ▶，但留 18px 空位让标题列对齐）
+        !multiSelect && <span className="shrink-0" style={{ width: 18 }} />
+      )}
+
       {/* 多选态：复选框；普通态：完成勾选 */}
       {multiSelect ? (
         <Checkbox
@@ -1306,5 +1370,24 @@ function TaskRow({
         </div>
       )}
     </div>
+    {/* 行内展开子任务区：紧贴行下方，缩进与 ▶ 对齐 */}
+    {expanded && hasSubtasks && (
+      <div
+        style={{
+          padding: "6px 16px 10px 56px",
+          borderBottom: isLast ? "none" : `1px solid ${token.colorBorderSecondary}`,
+          background: token.colorFillQuaternary,
+        }}
+        // 阻止冒泡到行级 onClick（多选态切勿误触）
+        onClick={(e) => e.stopPropagation()}
+      >
+        <SubtaskList
+          parentTaskId={task.id}
+          compact
+          onChanged={onSubtaskChanged}
+        />
+      </div>
+    )}
+    </>
   );
 }
