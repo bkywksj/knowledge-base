@@ -1773,6 +1773,20 @@ export function NotesPanel() {
                             setSelectedKey(noteKey(n.id));
                             navigate(`/notes/${n.id}`);
                           }}
+                          onContextMenu={(e) => {
+                            // 未分类下的笔记是手写 div（不在 antd Tree 里），需要
+                            // 自己挂 onContextMenu 触发同款菜单。复用 buildMenuItems
+                            // 的笔记叶子分支（isNoteKey 自动分派）
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setContextMenu({
+                              key: noteKey(n.id),
+                              name: n.title || "未命名",
+                              x: e.clientX,
+                              y: e.clientY,
+                              ts: Date.now(),
+                            });
+                          }}
                           title={displayTitle}
                         >
                           {emoji ? (
