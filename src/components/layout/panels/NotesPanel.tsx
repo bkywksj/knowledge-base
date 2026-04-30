@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, startTransition } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   Tree,
@@ -768,16 +768,19 @@ export function NotesPanel() {
             : (notesByFolder.get(targetFolderId) ?? []);
         const withoutDrag = siblings.filter((n) => n.id !== noteId);
         const newOrder = [note, ...withoutDrag];
-        // 乐观更新
-        if (targetFolderId == null) {
-          setUncategorizedNotes(newOrder);
-        } else {
-          setNotesByFolder((prev) => {
-            const next = new Map(prev);
-            next.set(targetFolderId!, newOrder);
-            return next;
-          });
-        }
+        // 乐观更新：startTransition 让 antd Tree 先完成 onDrop 内部清理 paint，
+        // 下一帧再 commit 新 treeData，消除"拖完瞬间"的闪烁
+        startTransition(() => {
+          if (targetFolderId == null) {
+            setUncategorizedNotes(newOrder);
+          } else {
+            setNotesByFolder((prev) => {
+              const next = new Map(prev);
+              next.set(targetFolderId!, newOrder);
+              return next;
+            });
+          }
+        });
         try {
           await noteApi.reorder(newOrder.map((n) => n.id));
           if (targetFolderId == null) {
@@ -821,16 +824,19 @@ export function NotesPanel() {
       const insertIdx = dropOffset > 0 ? dropIdx + 1 : dropIdx;
       const newOrder = [...withoutDrag];
       newOrder.splice(insertIdx, 0, note);
-      // 乐观更新：立刻把缓存换成 newOrder，让用户立即看到拖排结果（无后端往返延迟）
-      if (targetFolderId == null) {
-        setUncategorizedNotes(newOrder);
-      } else {
-        setNotesByFolder((prev) => {
-          const next = new Map(prev);
-          next.set(targetFolderId!, newOrder);
-          return next;
-        });
-      }
+      // 乐观更新：startTransition 让 antd Tree 先完成 onDrop 内部清理 paint，
+      // 下一帧再 commit 新 treeData，消除"拖完瞬间"的闪烁
+      startTransition(() => {
+        if (targetFolderId == null) {
+          setUncategorizedNotes(newOrder);
+        } else {
+          setNotesByFolder((prev) => {
+            const next = new Map(prev);
+            next.set(targetFolderId!, newOrder);
+            return next;
+          });
+        }
+      });
       try {
         await noteApi.reorder(newOrder.map((n) => n.id));
         useAppStore.getState().bumpNotesRefresh();
@@ -1405,7 +1411,11 @@ export function NotesPanel() {
     );
   }
 
-  const treeData = foldersToTreeData(folders, creatingUnderKey, notesByFolder, tabTitleByNoteId);
+  // useMemo：避免无关 state（如 contextMenu / fileDragOver）变化时重算整棵树
+  const treeData = useMemo(
+    () => foldersToTreeData(folders, creatingUnderKey, notesByFolder, tabTitleByNoteId),
+    [folders, creatingUnderKey, notesByFolder, tabTitleByNoteId],
+  );
 
   return (
     <div
