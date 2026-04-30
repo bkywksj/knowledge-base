@@ -50,7 +50,13 @@ interface Props {
   /** 新建时预设分类 ID；null 表示未分类 */
   presetCategoryId?: number | null;
   onClose: () => void;
+  /** 主任务"保存按钮"成功后触发（父组件通常会同时关闭 Modal） */
   onSaved: () => void;
+  /**
+   * 子任务变更（增/删/勾选）后触发——**不关闭** Modal，只让父组件刷新主列表
+   * 进度徽章。父组件通常传 loadTasks。不传 = 不刷新。
+   */
+  onSubtaskChanged?: () => void;
 }
 
 export function CreateTaskModal({
@@ -62,6 +68,7 @@ export function CreateTaskModal({
   presetCategoryId,
   onClose,
   onSaved,
+  onSubtaskChanged,
 }: Props) {
   const { message } = AntdApp.useApp();
   const { token } = antdTheme.useToken();
@@ -412,6 +419,9 @@ export function CreateTaskModal({
       onCancel={onClose}
       width={520}
       destroyOnHidden
+      // 编辑型 Modal 防误关：点遮罩不关闭（避免填到一半误点关 Modal 丢失编辑）；
+      // Esc 仍可关（桌面应用预期行为，配合"取消"按钮）
+      maskClosable={false}
       styles={{ body: { maxHeight: "65vh", overflowY: "auto", paddingRight: 12 } }}
       footer={
         <div className="flex items-center justify-between">
@@ -908,7 +918,10 @@ export function CreateTaskModal({
 
         {/* 子任务区——仅编辑现有"主任务"时显示（子任务不嵌套） */}
         {isEdit && editing && !editing.parent_task_id && (
-          <SubtaskList parentTaskId={editing.id} onChanged={onSaved} />
+          <SubtaskList
+            parentTaskId={editing.id}
+            onChanged={onSubtaskChanged}
+          />
         )}
       </div>
     </Modal>

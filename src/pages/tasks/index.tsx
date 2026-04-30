@@ -847,6 +847,8 @@ export default function TasksPage() {
           setEditing(null);
           loadTasks();
         }}
+        // 子任务变更只刷新主列表进度徽章，不关闭 Modal（用户还在编辑主任务）
+        onSubtaskChanged={loadTasks}
       />
       {/* AI 规划 / 添加待办的三个 Modal 已封装进 NewTodoButton；本页面不再单独挂 */}
     </div>
