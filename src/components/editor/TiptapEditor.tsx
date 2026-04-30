@@ -511,6 +511,60 @@ function fileUrlToPath(url: string): string {
  * 启发式：strip 掉所有 <img> 后看 body 是否还有实质内容（非空白文本 / 表格 / 列表等）。
  * 任何 strip 后仍有 textContent 或 <table>/<ul>/<ol>/<pre> 节点 → 视为富文本。
  */
+/**
+ * 把任意 src（http/https/data:/blob:）转成 File。
+ * file:// 走另一条通路（Rust imageApi.saveFromPath），不会落到这里。
+ */
+async function srcToImageFile(src: string, fallbackName: string): Promise<File> {
+  if (
+    !src.startsWith("http://") &&
+    !src.startsWith("https://") &&
+    !src.startsWith("data:") &&
+    !src.startsWith("blob:")
+  ) {
+    throw new Error(`unsupported scheme: ${src.slice(0, 30)}`);
+  }
+  const resp = await fetch(src);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const blob = await resp.blob();
+  if (!blob.type.startsWith("image/")) {
+    throw new Error(`not image: ${blob.type || "unknown"}`);
+  }
+  // 从 URL 末尾推断扩展名；推断失败用 fallback
+  let name = fallbackName;
+  if (src.startsWith("http")) {
+    try {
+      const path = new URL(src).pathname;
+      const ext = path.split(".").pop()?.toLowerCase();
+      if (ext && /^(png|jpg|jpeg|webp|gif|svg|bmp)$/.test(ext)) {
+        name = `pasted-${Date.now()}.${ext}`;
+      }
+    } catch {
+      /* keep fallback */
+    }
+  }
+  return new File([blob], name, { type: blob.type });
+}
+
+/**
+ * 把 `file:///C:/Users/.../Temp/abc.png` 解码成 Rust 能直接读的本地路径。
+ * Windows 上典型形态是 `file:///C:/...`（三个斜杠 + 盘符），URL encode 字符在
+ * 中文/空格路径里会出现，需要 decodeURIComponent。
+ */
+function fileUriToLocalPath(src: string): string {
+  if (!src.startsWith("file:")) {
+    throw new Error("not a file URI");
+  }
+  // file:/// 或 file:// 前缀都剥掉
+  let path = src.replace(/^file:\/{2,3}/, "");
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    /* 解码失败保持原样（多半是非法 URL，让 Rust 侧报具体错） */
+  }
+  return path;
+}
+
 function isImageOnlyHtml(html: string): boolean {
   if (!html.trim()) return false;
   try {
@@ -681,6 +735,83 @@ export function TiptapEditor({
       }
 
       editor.chain().focus().insertContent(nodes).run();
+    },
+    [noteId],
+  );
+
+  /**
+   * 把 HTML 里所有可访问的 &lt;img src&gt; 抓下来保存到本地，src 替换为 kb-asset://。
+   * 不可访问（file:// / 跨域 fetch 失败 / 非图片资源）的节点直接剥离，避免裂图。
+   *
+   * 用于「场景 B」图文混合粘贴：用户从浏览器 / 文档里复制带多张图的段落，
+   * 剪贴板 HTML 中的 &lt;img src=https://...&gt; 在 Tauri WebView 不能直接渲染（CSP /
+   * 防盗链 / 临时文件），必须先抓回字节存到 kb_assets 后再让 ProseMirror 解析。
+   */
+  const localizeHtmlImages = useCallback(
+    async (
+      html: string,
+    ): Promise<{ html: string; ok: number; failed: number; total: number }> => {
+      let effectiveNoteId = noteId;
+      if (!effectiveNoteId && ensureNoteIdRef.current) {
+        try {
+          effectiveNoteId = await ensureNoteIdRef.current();
+        } catch (e) {
+          throw new Error(`无法建档：${e}`);
+        }
+      }
+      if (!effectiveNoteId) {
+        throw new Error("请先保存笔记后再粘贴图文");
+      }
+
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const imgs = Array.from(doc.body.querySelectorAll("img"));
+      let ok = 0;
+      let failed = 0;
+      await Promise.all(
+        imgs.map(async (img, idx) => {
+          const src = img.getAttribute("src") ?? "";
+          if (!src || src.startsWith("kb-asset://")) {
+            // 已是本地协议，无需处理
+            return;
+          }
+          try {
+            let rel: string;
+            if (src.startsWith("file:")) {
+              // Office Word / 截图工具 / 资源管理器复制带图：HTML 里是
+              // file:///C:/Users/.../AppData/Local/Temp/xxx.png 这种本地临时
+              // 路径，前端 fetch 不到（WebView 安全策略），但 Rust 侧可以直接读盘。
+              const localPath = fileUriToLocalPath(src);
+              rel = await imageApi.saveFromPath(effectiveNoteId!, localPath);
+            } else {
+              // http / https / data: / blob: → fetch + base64 + save
+              const file = await srcToImageFile(
+                src,
+                `pasted-${Date.now()}-${idx}.png`,
+              );
+              const base64 = await fileToBase64(file);
+              rel = await imageApi.save(
+                effectiveNoteId!,
+                file.name,
+                base64,
+              );
+            }
+            img.setAttribute("src", toKbAsset(rel));
+            // 清理可能的尺寸属性，让图片自然渲染（避免远程 width/height 太奇怪）
+            img.removeAttribute("width");
+            img.removeAttribute("height");
+            img.removeAttribute("style");
+            ok++;
+          } catch (e) {
+            console.warn(
+              "[paste] localize img failed:",
+              { srcSample: src.slice(0, 120), error: String(e) },
+            );
+            img.remove();
+            failed++;
+          }
+        }),
+      );
+      return { html: doc.body.innerHTML, ok, failed, total: imgs.length };
     },
     [noteId],
   );
@@ -1059,6 +1190,31 @@ export function TiptapEditor({
           }
           // 场景 B：富文本 + 图片（Excel 表格等）→ 让 ProseMirror 走 HTML 路径
         }
+
+        // 场景 D：图文混合（HTML 含 <img>，但不属于 A/B/C）。
+        // 典型来源：浏览器复制带多张图的整段、Notion / 飞书 / 钉钉富文本片段。
+        // ProseMirror 默认 HTML 路径会保留远程 src，Tauri WebView 大概率拉不到 →
+        // 用户体验"图片消失"。这里异步抓远程图存本地后再插入。
+        if (html && /<img[^>]/i.test(html)) {
+          void (async () => {
+            try {
+              const { html: localized, ok, failed, total } =
+                await localizeHtmlImages(html);
+              editor.chain().focus().insertContent(localized).run();
+              if (failed > 0) {
+                message.warning(
+                  `粘贴完成：${ok}/${total} 张图已保存到本地，${failed} 张无法访问已移除`,
+                );
+              } else if (ok > 0) {
+                message.success(`已粘贴并保存 ${ok} 张图到本地`);
+              }
+            } catch (e) {
+              message.error(`粘贴处理失败：${e}`);
+            }
+          })();
+          return true;
+        }
+
         return false;
       },
       handleDrop: (_view, event) => {
