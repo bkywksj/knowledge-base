@@ -29,7 +29,8 @@ import {
 } from "@ant-design/icons";
 import { ExternalLink, Folder, Trash2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import Markdown from "react-markdown";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { homeDir, join } from "@tauri-apps/api/path";
 import { systemApi } from "@/lib/api";
@@ -87,6 +88,9 @@ export function MCPServerSection() {
   const [pinging, setPinging] = useState(false);
   const [pingResult, setPingResult] = useState<string | null>(null);
   const [claudeCodeTpl, setClaudeCodeTpl] = useState<ClaudeCodeTemplate | null>(null);
+  const [docOpen, setDocOpen] = useState(false);
+  const [docContent, setDocContent] = useState<string | null>(null);
+  const [docLoading, setDocLoading] = useState(false);
 
   useEffect(() => {
     void load();
@@ -162,6 +166,21 @@ export function MCPServerSection() {
       message.success(`已复制 ${label} 配置到剪贴板`);
     } catch (e) {
       message.error(`复制失败: ${e}`);
+    }
+  }
+
+  // 打开「详细文档」弹窗（首次点击时懒加载内容）
+  async function openDoc() {
+    setDocOpen(true);
+    if (docContent !== null) return; // 已加载过，直接复用
+    setDocLoading(true);
+    try {
+      const md = await invoke<string>("mcp_get_setup_doc");
+      setDocContent(md);
+    } catch (e) {
+      message.error(`加载文档失败: ${e}`);
+    } finally {
+      setDocLoading(false);
     }
   }
 
@@ -511,21 +530,39 @@ export function MCPServerSection() {
             dbPath={info.dbPath}
           />
 
-          {/* ─── 文档链接 ─────────────────────────────── */}
+          {/* ─── 文档（应用内弹窗，不跳浏览器） ─────────── */}
           <div className="mt-4 text-right">
             <Button
               type="link"
               size="small"
               icon={<ExternalLink size={12} />}
-              onClick={() =>
-                void openUrl(
-                  "https://gitee.com/bkywksj/knowledge-base/blob/master/docs/mcp-setup.md",
-                ).catch((e) => message.error(`打开文档失败: ${e}`))
-              }
+              onClick={() => void openDoc()}
             >
-              详细文档：docs/mcp-setup.md
+              查看详细文档
             </Button>
           </div>
+
+          <Modal
+            title="📖 MCP 接入完整指南（docs/mcp-setup.md）"
+            open={docOpen}
+            onCancel={() => setDocOpen(false)}
+            footer={null}
+            width={900}
+            destroyOnClose={false}
+          >
+            <div
+              style={{
+                maxHeight: "70vh",
+                overflow: "auto",
+                paddingRight: 8,
+              }}
+              className="kb-markdown-doc"
+            >
+              {docLoading && <Empty description="加载中..." />}
+              {!docLoading && docContent && <Markdown>{docContent}</Markdown>}
+              {!docLoading && !docContent && <Empty description="文档未加载" />}
+            </div>
+          </Modal>
         </>
       )}
     </Card>

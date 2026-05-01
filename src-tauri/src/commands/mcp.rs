@@ -25,6 +25,17 @@ use crate::state::AppState;
 /// 用来构造 sidecar binary 名字（与 scripts/build-mcp.mjs 的命名一致）
 const TARGET_TRIPLE: &str = env!("TAURI_ENV_TARGET_TRIPLE");
 
+/// 编译时把 docs/mcp-setup.md 内嵌进 binary，供前端「详细文档」弹窗用。
+/// 路径相对当前文件：src/commands/mcp.rs → ../../../docs/mcp-setup.md
+/// 文件不存在时编译期即失败（强约束，避免运行时 404）
+const MCP_SETUP_DOC: &str = include_str!("../../../docs/mcp-setup.md");
+
+/// 返回 docs/mcp-setup.md 的全文 markdown，前端在 Modal 里用 react-markdown 渲染
+#[tauri::command]
+pub fn mcp_get_setup_doc() -> &'static str {
+    MCP_SETUP_DOC
+}
+
 /// 设置页 "MCP 服务器" 卡片的运行时信息
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

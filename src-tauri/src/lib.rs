@@ -748,6 +748,7 @@ pub fn run() {
             commands::mcp::mcp_install_to_client,
             commands::mcp::mcp_uninstall_from_client,
             commands::mcp::mcp_check_install_status,
+            commands::mcp::mcp_get_setup_doc,
             // 系统模块
             commands::system::greet,
             commands::system::get_system_info,
