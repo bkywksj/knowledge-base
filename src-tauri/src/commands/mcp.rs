@@ -57,6 +57,101 @@ pub fn mcp_runtime_info(state: tauri::State<'_, AppState>) -> Result<McpRuntimeI
     })
 }
 
+/// 设置页 「Claude Code (CLI)」Tab 用：返回拼好的 CLAUDE.md 模板 + settings.json 片段
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeCodeTemplate {
+    /// CLAUDE.md 完整内容（行为指引），用户复制到项目根或 ~/.claude/CLAUDE.md
+    pub claude_md: String,
+    /// ~/.claude/settings.json 的 mcpServers 片段（只读模式），用户合并到自己的 settings.json
+    pub settings_snippet_readonly: String,
+    /// 同上但 args 加了 --writable，让 LLM 能改笔记
+    pub settings_snippet_writable: String,
+}
+
+/// 拼 Claude Code 集成需要的两份文本，sidecar 路径 / db 路径都填好
+#[tauri::command]
+pub fn mcp_get_claude_md_template(
+    state: tauri::State<'_, AppState>,
+) -> Result<ClaudeCodeTemplate, String> {
+    let prefix = if cfg!(debug_assertions) { "dev-" } else { "" };
+    let db_path = state.data_dir.join(format!("{}app.db", prefix));
+    let db_path_str = db_path.to_string_lossy().to_string();
+    let sidecar = locate_sidecar_binary()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "<请先 pnpm build:mcp 编译 sidecar>".to_string());
+
+    let claude_md = build_claude_md_template();
+    let settings_snippet_readonly = build_settings_snippet(&sidecar, &db_path_str, false);
+    let settings_snippet_writable = build_settings_snippet(&sidecar, &db_path_str, true);
+
+    Ok(ClaudeCodeTemplate {
+        claude_md,
+        settings_snippet_readonly,
+        settings_snippet_writable,
+    })
+}
+
+fn build_claude_md_template() -> String {
+    // 这里硬编码模板，避免读盘 / 拼接复杂度。后续如果需要可填变量再扩展
+    r#"# 知识库助手 (kb-mcp)
+
+本环境已接入用户的本地知识库（MCP server `knowledge-base`，由 [zhuawashi/knowledge_base] 桌面应用提供）。
+处理用户问题时遵循以下准则。
+
+## 可用工具
+
+**读工具（默认可用）**：
+- `search_notes(query, limit?)` — 全文搜索笔记
+- `get_note(id)` — 按 id 读笔记全文
+- `list_tags` — 所有标签 + 笔记数
+- `search_by_tag(tag, limit?)` — 按标签筛选
+- `get_backlinks(id)` — 反向链接（哪些笔记引用了它）
+- `list_daily_notes(days?, limit?)` — 最近 N 天日记
+- `list_tasks(status?, keyword?, limit?)` — 主任务列表
+- `get_prompt(id?, builtin_code?)` — Prompt 模板
+
+**写工具（需 `--writable` 启动开关，需用户授权）**：
+- `create_note(title, content, folder_id?)` — 创建新笔记
+- `update_note(id, title?, content?, folder_id?)` — 修改笔记
+- `add_tag_to_note(note_id, tag)` — 给笔记加标签
+
+## 行为准则
+
+1. **任何关于"我的笔记 / 想法 / 任务"的问题，先调 `search_notes` 搜索**，不要凭印象编造。
+2. `search_notes` 返回 snippet 后，按需调 `get_note(id)` 读全文。
+3. 用户说"帮我记下…"时，先确认 `--writable` 已启用，再调 `create_note`。
+4. 加密笔记的 content 自动脱敏（占位符），不要追问内容。
+5. 反链查询用 `get_backlinks(id)`，不是 `search_notes`。
+6. 创建新笔记前，先 `list_tags` 看现有标签，优先复用而不是制造新标签。
+7. 回答用中文，简洁准确。
+
+## 个人偏好
+
+- 默认回复语言：中文
+- 新笔记默认 `folder_id`：null（未分类）
+- 时间格式：`YYYY-MM-DD`
+
+> 上面的偏好可以按你的实际习惯改。
+"#.to_string()
+}
+
+fn build_settings_snippet(sidecar: &str, db: &str, writable: bool) -> String {
+    let mut args = vec!["--db-path".to_string(), db.to_string()];
+    if writable {
+        args.push("--writable".to_string());
+    }
+    let cfg = serde_json::json!({
+        "mcpServers": {
+            "knowledge-base": {
+                "command": sidecar,
+                "args": args,
+            }
+        }
+    });
+    serde_json::to_string_pretty(&cfg).unwrap_or_else(|_| "{}".to_string())
+}
+
 /// 找 kb-mcp binary：优先主 exe 同目录（externalBin 打包后位置 = cargo workspace target/<profile>/）
 /// dev 期主 exe 与 sidecar 都在 target/debug/，安装后 externalBin 也在主 exe 旁边
 fn locate_sidecar_binary() -> Option<PathBuf> {

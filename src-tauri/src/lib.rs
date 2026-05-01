@@ -737,6 +737,7 @@ pub fn run() {
             commands::mcp::mcp_internal_list_tools,
             commands::mcp::mcp_internal_call_tool,
             commands::mcp::mcp_runtime_info,
+            commands::mcp::mcp_get_claude_md_template,
             commands::mcp::mcp_list_servers,
             commands::mcp::mcp_create_server,
             commands::mcp::mcp_update_server,

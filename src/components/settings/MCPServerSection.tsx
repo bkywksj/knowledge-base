@@ -30,7 +30,16 @@ import {
 import { ExternalLink, Folder, Trash2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { homeDir, join } from "@tauri-apps/api/path";
+import { systemApi } from "@/lib/api";
 import type { McpServer, McpServerInput } from "@/types";
+
+interface ClaudeCodeTemplate {
+  claudeMd: string;
+  settingsSnippetReadonly: string;
+  settingsSnippetWritable: string;
+}
 
 // 用浏览器原生 clipboard，省一个 npm 依赖；webview 在 https / tauri:// 协议下都允许
 async function writeClipboard(text: string): Promise<void> {
@@ -69,6 +78,7 @@ export function MCPServerSection() {
   const [loading, setLoading] = useState(false);
   const [pinging, setPinging] = useState(false);
   const [pingResult, setPingResult] = useState<string | null>(null);
+  const [claudeCodeTpl, setClaudeCodeTpl] = useState<ClaudeCodeTemplate | null>(null);
 
   useEffect(() => {
     void load();
@@ -77,16 +87,46 @@ export function MCPServerSection() {
   async function load() {
     setLoading(true);
     try {
-      const [i, t] = await Promise.all([
+      const [i, t, tpl] = await Promise.all([
         invoke<McpRuntimeInfo>("mcp_runtime_info"),
         invoke<McpToolInfo[]>("mcp_internal_list_tools").catch(() => [] as McpToolInfo[]),
+        invoke<ClaudeCodeTemplate>("mcp_get_claude_md_template").catch(() => null),
       ]);
       setInfo(i);
       setTools(t);
+      setClaudeCodeTpl(tpl);
     } catch (e) {
       message.error(`加载 MCP 信息失败: ${e}`);
     } finally {
       setLoading(false);
+    }
+  }
+
+  // CLAUDE.md「另存为...」：弹文件对话框选目录
+  async function saveClaudeMdAs() {
+    if (!claudeCodeTpl) return;
+    try {
+      const path = await saveDialog({
+        defaultPath: "CLAUDE.md",
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      });
+      if (!path) return;
+      await systemApi.writeTextFile(path, claudeCodeTpl.claudeMd);
+      message.success(`已保存到 ${path}`);
+    } catch (e) {
+      message.error(`保存失败: ${e}`);
+    }
+  }
+
+  // 在文件管理器打开 ~/.claude/ 目录（不存在则提示用户先 mkdir）
+  async function openClaudeDir() {
+    try {
+      const dir = await join(await homeDir(), ".claude");
+      await revealItemInDir(dir);
+    } catch (e) {
+      message.error(
+        `打开 ~/.claude/ 失败（目录可能不存在，先跑一次 \`claude\` 命令初始化）: ${e}`,
+      );
     }
   }
 
@@ -326,6 +366,20 @@ export function MCPServerSection() {
                         onCopy={copyConfig}
                         hint="抄到 ~/.cursor/mcp.json"
                       />
+                    ),
+                  },
+                  {
+                    key: "claude-code",
+                    label: "Claude Code (CLI) ✨",
+                    children: claudeCodeTpl ? (
+                      <ClaudeCodeBlock
+                        tpl={claudeCodeTpl}
+                        onCopy={copyConfig}
+                        onSaveAs={() => void saveClaudeMdAs()}
+                        onOpenClaudeDir={() => void openClaudeDir()}
+                      />
+                    ) : (
+                      <Empty description="模板未加载" />
                     ),
                   },
                 ]}
@@ -698,6 +752,150 @@ function ConfigBlock({ json, label, hint, onCopy }: ConfigBlockProps) {
   return (
     <div>
       <Alert type="info" showIcon message={hint} className="mb-2" />
+      <pre
+        style={{
+          background: "var(--ant-color-fill-quaternary)",
+          padding: 12,
+          borderRadius: 6,
+          fontSize: 12,
+          maxHeight: 200,
+          overflow: "auto",
+          margin: 0,
+        }}
+      >
+        {json}
+      </pre>
+      <div className="mt-2 text-right">
+        <Button size="small" icon={<CopyOutlined />} onClick={() => onCopy(json, label)}>
+          复制 JSON
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Claude Code (CLI) Tab 块：CLAUDE.md + settings.json 片段 ──────────
+
+interface ClaudeCodeBlockProps {
+  tpl: ClaudeCodeTemplate;
+  onCopy: (text: string, label: string) => void;
+  onSaveAs: () => void;
+  onOpenClaudeDir: () => void;
+}
+
+function ClaudeCodeBlock({ tpl, onCopy, onSaveAs, onOpenClaudeDir }: ClaudeCodeBlockProps) {
+  return (
+    <div className="space-y-3">
+      <Alert
+        type="info"
+        showIcon
+        message="把这里的两段文本放到你的 Claude Code 配置里"
+        description={
+          <ol style={{ marginBottom: 0, paddingLeft: 20 }}>
+            <li>
+              <code>CLAUDE.md</code> 复制 / 另存为到某个项目根（或 <code>~/.claude/CLAUDE.md</code>），
+              告诉 Claude 怎么用知识库工具
+            </li>
+            <li>
+              <code>settings.json</code> 片段合并到 <code>~/.claude/settings.json</code>
+              （或项目级 <code>.claude/settings.json</code>），让 Claude 真有工具能力
+            </li>
+            <li>
+              在某个项目目录里跑 <code>claude</code>，对话里说「找一下我笔记里关于 X」试试
+            </li>
+          </ol>
+        }
+      />
+
+      {/* CLAUDE.md 块 */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <Text strong style={{ fontSize: 13 }}>
+            📄 CLAUDE.md（行为指引，纯文字）
+          </Text>
+          <Space size="small">
+            <Button
+              size="small"
+              icon={<CopyOutlined />}
+              onClick={() => onCopy(tpl.claudeMd, "CLAUDE.md")}
+            >
+              复制
+            </Button>
+            <Button size="small" onClick={onSaveAs}>
+              💾 另存为...
+            </Button>
+          </Space>
+        </div>
+        <pre
+          style={{
+            background: "var(--ant-color-fill-quaternary)",
+            padding: 12,
+            borderRadius: 6,
+            fontSize: 12,
+            maxHeight: 240,
+            overflow: "auto",
+            margin: 0,
+          }}
+        >
+          {tpl.claudeMd}
+        </pre>
+      </div>
+
+      {/* settings.json 片段（只读 / 可写两种） */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <Text strong style={{ fontSize: 13 }}>
+            ⚙️ settings.json 片段（MCP 能力）
+          </Text>
+          <Button size="small" onClick={onOpenClaudeDir}>
+            🗂 打开 ~/.claude/ 目录
+          </Button>
+        </div>
+        <Tabs
+          size="small"
+          items={[
+            {
+              key: "ro",
+              label: "只读模式（推荐）",
+              children: (
+                <SnippetBlock
+                  json={tpl.settingsSnippetReadonly}
+                  label="settings.json 只读"
+                  hint="LLM 只能搜不能改你的笔记。安全默认。"
+                  onCopy={onCopy}
+                />
+              ),
+            },
+            {
+              key: "rw",
+              label: "可写模式（高级）",
+              children: (
+                <SnippetBlock
+                  json={tpl.settingsSnippetWritable}
+                  label="settings.json 可写"
+                  hint="加 --writable 后 Claude 能 create_note / update_note / add_tag_to_note。慎用。"
+                  onCopy={onCopy}
+                />
+              ),
+            },
+          ]}
+        />
+      </div>
+    </div>
+  );
+}
+
+interface SnippetBlockProps {
+  json: string;
+  label: string;
+  hint: string;
+  onCopy: (text: string, label: string) => void;
+}
+
+function SnippetBlock({ json, label, hint, onCopy }: SnippetBlockProps) {
+  return (
+    <div>
+      <Alert type="warning" showIcon message={hint} className="mb-2" />
       <pre
         style={{
           background: "var(--ant-color-fill-quaternary)",
