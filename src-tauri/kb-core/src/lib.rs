@@ -166,6 +166,40 @@ struct AddTagArgs {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct CreateFolderArgs {
+    /// 文件夹名称（必填，前后空白会被 trim）
+    name: String,
+    /// 父文件夹 id；不传或 null 表示创建顶级文件夹
+    #[serde(default)]
+    parent_id: Option<i64>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct CreateNoteFromTemplateArgs {
+    /// 模板 id（从 list_templates 取）
+    template_id: i64,
+    /// 新笔记标题（不传则用模板 name + 当前日期）
+    #[serde(default)]
+    title: Option<String>,
+    /// 目标文件夹 id；不传则进未分类
+    #[serde(default)]
+    folder_id: Option<i64>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct ListTrashArgs {
+    /// 上限条数，默认 30，最大 100
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct RestoreNoteArgs {
+    /// 回收站里笔记的 id
+    id: i64,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct DeleteNoteArgs {
     /// 笔记 id
     id: i64,
@@ -319,6 +353,26 @@ struct TaskRow {
     completed_at: Option<String>,
     created_at: String,
     updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct TemplateInfo {
+    id: i64,
+    name: String,
+    description: String,
+    /// 内容预览（前 140 字符，纯文本剥 HTML）
+    preview: String,
+    created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct TrashItem {
+    id: i64,
+    title: String,
+    /// 摘要（去 HTML 标签后前 140 字符）
+    snippet: String,
+    /// 当初被软删的时间（updated_at 在 delete_note 时刷新过）
+    deleted_at: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -581,6 +635,43 @@ impl KbServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
+    // ─── list_templates：笔记模板库 ───────────────────────────
+    #[tool(description = "列出所有笔记模板（会议记录 / 读书笔记 / 周报 等内置 + 用户自建）。\
+                          配合 create_note_from_template 用来按模板建笔记。")]
+    fn list_templates(&self) -> Result<CallToolResult, McpError> {
+        let conn = self
+            .db
+            .conn
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("db lock: {e}"), None))?;
+        let templates = list_templates(&conn)
+            .map_err(|e| McpError::internal_error(format!("list_templates: {e}"), None))?;
+        let json = serde_json::to_string(&templates)
+            .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    // ─── list_trash：回收站列表 ────────────────────────────────
+    #[tool(description = "列出回收站里的笔记（is_deleted=1，按删除时间倒序）。\
+                          配合 restore_note_from_trash 还原。\
+                          隐藏 / 加密笔记不暴露。")]
+    fn list_trash(
+        &self,
+        Parameters(args): Parameters<ListTrashArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let limit = args.limit.unwrap_or(30).clamp(1, 100);
+        let conn = self
+            .db
+            .conn
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("db lock: {e}"), None))?;
+        let items = list_trash(&conn, limit)
+            .map_err(|e| McpError::internal_error(format!("list_trash: {e}"), None))?;
+        let json = serde_json::to_string(&items)
+            .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
     // ─── list_recent_notes：按更新时间最近的笔记 ──────────────
     #[tool(description = "列出最近更新的笔记（按 updated_at 降序），不限文件夹和标签。\
                           用于「我最近写了啥」这类无关键词查询。\
@@ -674,6 +765,91 @@ impl KbServer {
         }))
         .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    // ─── ✏️ 写工具：create_folder ────────────────────────────────
+    #[tool(description = "创建新文件夹。parent_id=null 表示顶级。\
+                          仅 --writable 模式可用。返回 {id, name}。")]
+    fn create_folder(
+        &self,
+        Parameters(args): Parameters<CreateFolderArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.ensure_writable()?;
+        let name = args.name.trim();
+        if name.is_empty() {
+            return Err(McpError::invalid_params(
+                "name 不能为空".to_string(),
+                None,
+            ));
+        }
+        let conn = self
+            .db
+            .conn
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("db lock: {e}"), None))?;
+        let id = create_folder(&conn, name, args.parent_id)
+            .map_err(|e| McpError::internal_error(format!("create_folder: {e}"), None))?;
+        let json = serde_json::to_string(&serde_json::json!({
+            "id": id,
+            "name": name,
+            "parent_id": args.parent_id,
+        }))
+        .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    // ─── ✏️ 写工具：create_note_from_template ───────────────────
+    #[tool(description = "按模板建笔记。title 不传则自动用「模板名 · YYYY-MM-DD」。\
+                          仅 --writable 模式可用。返回 {id, title}。")]
+    fn create_note_from_template(
+        &self,
+        Parameters(args): Parameters<CreateNoteFromTemplateArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.ensure_writable()?;
+        let conn = self
+            .db
+            .conn
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("db lock: {e}"), None))?;
+        let (id, title) = create_note_from_template(
+            &conn,
+            args.template_id,
+            args.title.as_deref(),
+            args.folder_id,
+        )
+        .map_err(|e| McpError::internal_error(format!("create_note_from_template: {e}"), None))?;
+        let json = serde_json::to_string(&serde_json::json!({
+            "id": id,
+            "title": title,
+        }))
+        .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    // ─── ✏️ 写工具：restore_note_from_trash ────────────────────
+    #[tool(description = "把回收站里的笔记还原（is_deleted: 1 → 0）。\
+                          仅 --writable 模式可用。")]
+    fn restore_note_from_trash(
+        &self,
+        Parameters(args): Parameters<RestoreNoteArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.ensure_writable()?;
+        let conn = self
+            .db
+            .conn
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("db lock: {e}"), None))?;
+        let affected = restore_note_from_trash(&conn, args.id)
+            .map_err(|e| McpError::internal_error(format!("restore: {e}"), None))?;
+        if affected == 0 {
+            return Err(McpError::invalid_params(
+                format!("笔记 {} 不在回收站", args.id),
+                None,
+            ));
+        }
+        Ok(CallToolResult::success(vec![Content::text(
+            format!("{{\"id\":{},\"restored\":true}}", args.id),
+        )]))
     }
 
     // ─── ✏️ 写工具：delete_note（软删到回收站） ─────────────────
@@ -934,9 +1110,10 @@ impl ServerHandler for KbServer {
                 "本 MCP server 暴露本地知识库（笔记 / 标签 / 双链 / 任务 / 日记 / Prompt / 文件夹）。\
                  读工具：search_notes / get_note / list_recent_notes / list_tags / search_by_tag / \
                  get_backlinks / list_daily_notes / list_tasks / get_prompt / \
-                 list_folders / list_notes_by_folder。\
+                 list_folders / list_notes_by_folder / list_templates / list_trash。\
                  写工具：create_note / update_note / delete_note / move_notes_batch / \
-                 add_tag_to_note / remove_tag_from_note / create_task / update_task（{}）。\
+                 add_tag_to_note / remove_tag_from_note / create_task / update_task / \
+                 create_folder / create_note_from_template / restore_note_from_trash（{}）。\
                  默认过滤回收站、隐藏、加密笔记，保护隐私。",
                 if self.writable { "已启用" } else { "当前禁用，启动加 --writable 开启" }
             ))
@@ -1302,6 +1479,58 @@ fn get_prompt(
     Ok(r)
 }
 
+/// 列出所有 note_templates（按 id 升序，内置在前）
+fn list_templates(conn: &Connection) -> Result<Vec<TemplateInfo>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, description, content, created_at
+         FROM note_templates ORDER BY id",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            let raw_content: String = row.get(3)?;
+            Ok(TemplateInfo {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                preview: {
+                    let plain = strip_tags(&raw_content);
+                    plain.chars().take(140).collect()
+                },
+                created_at: row.get(4)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// 列出回收站笔记（is_deleted=1，过滤加密/隐藏）
+fn list_trash(
+    conn: &Connection,
+    limit: usize,
+) -> Result<Vec<TrashItem>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title, substr(content, 1, 140), updated_at
+         FROM notes
+         WHERE is_deleted = 1
+           AND is_hidden = 0
+           AND is_encrypted = 0
+         ORDER BY updated_at DESC
+         LIMIT ?1",
+    )?;
+    let rows = stmt
+        .query_map(params![limit as i64], |row| {
+            let raw: String = row.get(2)?;
+            Ok(TrashItem {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                snippet: strip_tags(&raw),
+                deleted_at: row.get(3)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// 按 updated_at 降序列最近笔记（不限文件夹/标签）
 fn list_recent_notes(
     conn: &Connection,
@@ -1537,6 +1766,58 @@ fn move_notes_batch(
     }
     let bind_refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
     conn.execute(&sql, &*bind_refs)
+}
+
+/// 创建文件夹。返回新 id。sort_order 默认 0（按 name 排）。
+fn create_folder(
+    conn: &Connection,
+    name: &str,
+    parent_id: Option<i64>,
+) -> Result<i64, rusqlite::Error> {
+    conn.execute(
+        "INSERT INTO folders (name, parent_id, sort_order) VALUES (?1, ?2, 0)",
+        params![name, parent_id],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// 按模板创建笔记。title 不传则用「模板名 · YYYY-MM-DD」。
+/// 内部复用 create_note 的字段维护（title_normalized + content_hash）
+fn create_note_from_template(
+    conn: &Connection,
+    template_id: i64,
+    title: Option<&str>,
+    folder_id: Option<i64>,
+) -> Result<(i64, String), rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT name, content FROM note_templates WHERE id = ?1",
+    )?;
+    let (template_name, template_content): (String, String) =
+        stmt.query_row(params![template_id], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+
+    let final_title = match title {
+        Some(t) if !t.trim().is_empty() => t.trim().to_string(),
+        _ => {
+            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+            format!("{} · {}", template_name, today)
+        }
+    };
+
+    let id = create_note(conn, &final_title, &template_content, folder_id)?;
+    Ok((id, final_title))
+}
+
+/// 把回收站里的笔记还原（is_deleted: 1 → 0）。
+fn restore_note_from_trash(conn: &Connection, id: i64) -> Result<usize, rusqlite::Error> {
+    conn.execute(
+        "UPDATE notes
+         SET is_deleted = 0,
+             updated_at = datetime('now', 'localtime')
+         WHERE id = ?1 AND is_deleted = 1",
+        params![id],
+    )
 }
 
 /// 软删笔记（is_deleted=1，原数据保留，可在主应用回收站恢复）。

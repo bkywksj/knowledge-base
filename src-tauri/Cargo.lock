@@ -3038,6 +3038,7 @@ name = "kb-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "rmcp",
  "rusqlite",
  "serde",
