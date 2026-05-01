@@ -414,3 +414,152 @@ pub async fn mcp_external_call_tool(
     }
     Ok(out)
 }
+
+// ─── M5-5: 一键安装到外部客户端配置（自动 merge JSON） ────────────
+
+/// 一键安装的支持目标客户端
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InstallTarget {
+    ClaudeDesktop,
+    Cursor,
+}
+
+/// 一键安装结果
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallResult {
+    /// 实际写入的配置文件绝对路径
+    pub config_path: String,
+    /// 是否新建了文件（true=新建，false=合并到已有配置）
+    pub created_new: bool,
+    /// 是否覆盖了已有的同名 server 配置（提示用户）
+    pub overwritten: bool,
+}
+
+/// 一键把 knowledge-base sidecar 装到指定客户端的配置文件里。
+/// - 自动找配置文件路径（跨平台）
+/// - 文件不存在 → 新建
+/// - 文件存在 → 解析 JSON → merge mcpServers.knowledge-base → 写回（保留其它 server）
+/// - 已有同名 knowledge-base 配置 → 覆盖（标记 overwritten）
+#[tauri::command]
+pub fn mcp_install_to_client(
+    state: tauri::State<'_, AppState>,
+    target: InstallTarget,
+    writable: bool,
+) -> Result<InstallResult, String> {
+    let prefix = if cfg!(debug_assertions) { "dev-" } else { "" };
+    let db_path = state.data_dir.join(format!("{}app.db", prefix));
+    let db_path_str = db_path.to_string_lossy().to_string();
+    let sidecar = locate_sidecar_binary()
+        .ok_or_else(|| "找不到 kb-mcp binary，请先 pnpm build:mcp".to_string())?;
+    let sidecar_str = sidecar.to_string_lossy().to_string();
+
+    let config_path = match target {
+        InstallTarget::ClaudeDesktop => locate_claude_desktop_config()
+            .ok_or_else(|| "无法定位 Claude Desktop 配置目录".to_string())?,
+        InstallTarget::Cursor => locate_cursor_config()
+            .ok_or_else(|| "无法定位 Cursor 配置目录".to_string())?,
+    };
+
+    // 父目录不存在则创建
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("创建配置目录失败 {}: {}", parent.display(), e))?;
+    }
+
+    let (created_new, mut root) = if config_path.exists() {
+        let raw = std::fs::read_to_string(&config_path)
+            .map_err(|e| format!("读取 {} 失败: {}", config_path.display(), e))?;
+        // 空文件 / 非法 JSON 都按"新建"处理（保险）
+        let val = if raw.trim().is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}))
+        };
+        (false, val)
+    } else {
+        (true, serde_json::json!({}))
+    };
+
+    // 确保 root 是 object
+    if !root.is_object() {
+        root = serde_json::json!({});
+    }
+    let root_obj = root.as_object_mut().unwrap();
+
+    // 确保 mcpServers 是 object
+    let servers = root_obj
+        .entry("mcpServers".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if !servers.is_object() {
+        *servers = serde_json::json!({});
+    }
+    let servers_obj = servers.as_object_mut().unwrap();
+
+    // 检查是否覆盖已有
+    let overwritten = servers_obj.contains_key("knowledge-base");
+
+    // 拼新配置
+    let mut args = vec![
+        serde_json::Value::String("--db-path".to_string()),
+        serde_json::Value::String(db_path_str),
+    ];
+    if writable {
+        args.push(serde_json::Value::String("--writable".to_string()));
+    }
+    let kb_entry = serde_json::json!({
+        "command": sidecar_str,
+        "args": args,
+    });
+    servers_obj.insert("knowledge-base".to_string(), kb_entry);
+
+    // 写回，pretty print 2 空格
+    let pretty = serde_json::to_string_pretty(&root)
+        .map_err(|e| format!("序列化 JSON 失败: {e}"))?;
+    std::fs::write(&config_path, pretty)
+        .map_err(|e| format!("写入 {} 失败: {}", config_path.display(), e))?;
+
+    Ok(InstallResult {
+        config_path: config_path.to_string_lossy().into_owned(),
+        created_new,
+        overwritten,
+    })
+}
+
+// ─── 客户端配置路径定位 ─────────────────────────────────────────
+
+fn locate_claude_desktop_config() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let appdata = std::env::var("APPDATA").ok()?;
+        Some(PathBuf::from(appdata).join("Claude").join("claude_desktop_config.json"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").ok()?;
+        Some(
+            PathBuf::from(home)
+                .join("Library/Application Support/Claude/claude_desktop_config.json"),
+        )
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Claude Desktop 暂不支持 Linux，但留个兼容路径（用户自定义安装时用）
+        let home = std::env::var("HOME").ok()?;
+        Some(PathBuf::from(home).join(".config/Claude/claude_desktop_config.json"))
+    }
+}
+
+fn locate_cursor_config() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let userprofile = std::env::var("USERPROFILE").ok()?;
+        Some(PathBuf::from(userprofile).join(".cursor").join("mcp.json"))
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let home = std::env::var("HOME").ok()?;
+        Some(PathBuf::from(home).join(".cursor/mcp.json"))
+    }
+}

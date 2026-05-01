@@ -745,6 +745,7 @@ pub fn run() {
             commands::mcp::mcp_set_server_enabled,
             commands::mcp::mcp_external_list_tools,
             commands::mcp::mcp_external_call_tool,
+            commands::mcp::mcp_install_to_client,
             // 系统模块
             commands::system::greet,
             commands::system::get_system_info,
