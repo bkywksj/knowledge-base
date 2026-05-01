@@ -166,6 +166,28 @@ struct AddTagArgs {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct ListNotesByFolderArgs {
+    /// 文件夹 id；不传或 null 表示「未分类」（folder_id IS NULL）
+    #[serde(default)]
+    folder_id: Option<i64>,
+    /// 是否包含子文件夹下的笔记，默认 false（只取直接子项）
+    #[serde(default)]
+    include_descendants: Option<bool>,
+    /// 上限条数，默认 50，最大 200
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct MoveNotesBatchArgs {
+    /// 要移动的笔记 id 列表
+    ids: Vec<i64>,
+    /// 目标文件夹 id；不传或 null 表示移到「未分类」
+    #[serde(default)]
+    folder_id: Option<i64>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct GetPromptArgs {
     /// 提示词模板 id（与 builtin_code 二选一）
     #[serde(default)]
@@ -234,6 +256,16 @@ struct TaskRow {
     completed_at: Option<String>,
     created_at: String,
     updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct FolderInfo {
+    id: i64,
+    name: String,
+    /// 父文件夹 id；null = 顶级
+    parent_id: Option<i64>,
+    /// 该文件夹（不递归）下未删除笔记数
+    note_count: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -486,6 +518,80 @@ impl KbServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
+    // ─── list_folders：文件夹结构 ──────────────────────────────
+    #[tool(description = "列出所有文件夹（含层级 parent_id 和未删除笔记数）。\
+                          按 sort_order 排序。LLM 决定把笔记放哪个文件夹前先看这个。")]
+    fn list_folders(&self) -> Result<CallToolResult, McpError> {
+        let conn = self
+            .db
+            .conn
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("db lock: {e}"), None))?;
+        let folders = list_folders(&conn)
+            .map_err(|e| McpError::internal_error(format!("list_folders: {e}"), None))?;
+        let json = serde_json::to_string(&folders)
+            .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    // ─── list_notes_by_folder：按文件夹列笔记 ──────────────────
+    #[tool(description = "按文件夹 id 列笔记（folder_id=null 表示未分类）。\
+                          可选 include_descendants 递归子文件夹。\
+                          自动过滤回收站 / 隐藏 / 加密笔记。")]
+    fn list_notes_by_folder(
+        &self,
+        Parameters(args): Parameters<ListNotesByFolderArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let limit = args.limit.unwrap_or(50).clamp(1, 200);
+        let recurse = args.include_descendants.unwrap_or(false);
+        let conn = self
+            .db
+            .conn
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("db lock: {e}"), None))?;
+        let hits = list_notes_by_folder(&conn, args.folder_id, recurse, limit)
+            .map_err(|e| McpError::internal_error(format!("list_notes_by_folder: {e}"), None))?;
+        let json = serde_json::to_string(&hits)
+            .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    // ─── ✏️ 写工具：move_notes_batch ───────────────────────────
+    #[tool(description = "批量把多条笔记移动到目标文件夹（folder_id=null 移到未分类）。\
+                          只改 folder_id，不动 updated_at（避免大量笔记被冒泡到最近更新）。\
+                          仅 --writable 模式可用。返回受影响行数。")]
+    fn move_notes_batch(
+        &self,
+        Parameters(args): Parameters<MoveNotesBatchArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.ensure_writable()?;
+        if args.ids.is_empty() {
+            return Err(McpError::invalid_params(
+                "ids 不能为空".to_string(),
+                None,
+            ));
+        }
+        if args.ids.len() > 500 {
+            return Err(McpError::invalid_params(
+                "单次最多移动 500 条".to_string(),
+                None,
+            ));
+        }
+        let conn = self
+            .db
+            .conn
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("db lock: {e}"), None))?;
+        let affected = move_notes_batch(&conn, &args.ids, args.folder_id)
+            .map_err(|e| McpError::internal_error(format!("move_notes_batch: {e}"), None))?;
+        let json = serde_json::to_string(&serde_json::json!({
+            "affected": affected,
+            "target_folder_id": args.folder_id,
+        }))
+        .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
     // ─── ✏️ 写工具：create_note ─────────────────────────────────
     #[tool(description = "创建一条新笔记（仅 --writable 模式可用）。\
                           自动同步 title_normalized / content_hash / FTS5 索引。\
@@ -595,10 +701,11 @@ impl ServerHandler for KbServer {
             .with_server_info(Implementation::new("kb-mcp", env!("CARGO_PKG_VERSION")))
             .with_protocol_version(ProtocolVersion::V_2024_11_05)
             .with_instructions(format!(
-                "本 MCP server 暴露本地知识库（笔记 / 标签 / 双链 / 任务 / 日记 / Prompt 库）。\
+                "本 MCP server 暴露本地知识库（笔记 / 标签 / 双链 / 任务 / 日记 / Prompt / 文件夹）。\
                  读工具：search_notes / get_note / list_tags / search_by_tag / \
-                 get_backlinks / list_daily_notes / list_tasks / get_prompt。\
-                 写工具：create_note / update_note / add_tag_to_note（{}）。\
+                 get_backlinks / list_daily_notes / list_tasks / get_prompt / \
+                 list_folders / list_notes_by_folder。\
+                 写工具：create_note / update_note / add_tag_to_note / move_notes_batch（{}）。\
                  默认过滤回收站、隐藏、加密笔记，保护隐私。",
                 if self.writable { "已启用" } else { "当前禁用，启动加 --writable 开启" }
             ))
@@ -964,6 +1071,137 @@ fn get_prompt(
     Ok(r)
 }
 
+/// 列所有文件夹 + 直接子项笔记数（不递归）
+fn list_folders(conn: &Connection) -> Result<Vec<FolderInfo>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT f.id, f.name, f.parent_id,
+                (SELECT COUNT(*) FROM notes n
+                 WHERE n.folder_id = f.id
+                   AND n.is_deleted = 0
+                   AND n.is_hidden = 0
+                   AND n.is_encrypted = 0) AS note_count
+         FROM folders f
+         ORDER BY f.sort_order ASC, f.name ASC",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(FolderInfo {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                parent_id: row.get(2)?,
+                note_count: row.get(3)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// 按 folder_id 列笔记
+/// - folder_id=None → folder_id IS NULL（未分类）
+/// - folder_id=Some(x) + recurse=false → 直接子项
+/// - folder_id=Some(x) + recurse=true → 递归收集子文件夹的所有笔记
+fn list_notes_by_folder(
+    conn: &Connection,
+    folder_id: Option<i64>,
+    recurse: bool,
+    limit: usize,
+) -> Result<Vec<SearchHit>, rusqlite::Error> {
+    // 计算目标 folder id 集合
+    let folder_ids: Vec<i64> = match (folder_id, recurse) {
+        (None, _) => Vec::new(), // 走 folder_id IS NULL 分支
+        (Some(root), false) => vec![root],
+        (Some(root), true) => collect_descendant_folder_ids(conn, root)?,
+    };
+
+    let (sql, hits) = if folder_ids.is_empty() {
+        // 未分类
+        let sql = "SELECT n.id, n.title, substr(n.content, 1, 140), n.updated_at, n.folder_id
+                   FROM notes n
+                   WHERE n.folder_id IS NULL
+                     AND n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_encrypted = 0
+                   ORDER BY n.updated_at DESC
+                   LIMIT ?1";
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt
+            .query_map(params![limit as i64], map_note_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        (sql, rows)
+    } else {
+        // 指定 folder_id 集合
+        let placeholders = folder_ids
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT n.id, n.title, substr(n.content, 1, 140), n.updated_at, n.folder_id
+             FROM notes n
+             WHERE n.folder_id IN ({})
+               AND n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_encrypted = 0
+             ORDER BY n.updated_at DESC
+             LIMIT ?",
+            placeholders
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut binds: Vec<Box<dyn rusqlite::ToSql>> = folder_ids
+            .iter()
+            .map(|id| Box::new(*id) as Box<dyn rusqlite::ToSql>)
+            .collect();
+        binds.push(Box::new(limit as i64));
+        let bind_refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
+        let rows = stmt
+            .query_map(&*bind_refs, map_note_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        ("(dynamic)", rows)
+    };
+
+    let _ = sql; // suppress unused
+    Ok(hits)
+}
+
+fn map_note_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
+    let raw: String = row.get(2)?;
+    Ok(SearchHit {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        snippet: strip_tags(&raw),
+        updated_at: row.get(3)?,
+        folder_id: row.get(4)?,
+    })
+}
+
+/// 收集 root + 所有递归子文件夹 id（BFS）
+fn collect_descendant_folder_ids(
+    conn: &Connection,
+    root: i64,
+) -> Result<Vec<i64>, rusqlite::Error> {
+    let mut all = vec![root];
+    let mut frontier = vec![root];
+    while !frontier.is_empty() {
+        let placeholders = frontier.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT id FROM folders WHERE parent_id IN ({})",
+            placeholders
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let binds: Vec<Box<dyn rusqlite::ToSql>> = frontier
+            .iter()
+            .map(|id| Box::new(*id) as Box<dyn rusqlite::ToSql>)
+            .collect();
+        let bind_refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
+        let next: Vec<i64> = stmt
+            .query_map(&*bind_refs, |row| row.get::<_, i64>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        frontier = next.clone();
+        all.extend(next);
+        // 防御性截断，避免环（理论上 SQL 约束阻止环，但谨慎一些）
+        if all.len() > 10_000 {
+            break;
+        }
+    }
+    Ok(all)
+}
+
 // ─── 写操作（仅 writable 模式调用） ─────────────────────────────
 
 /// 创建笔记。同步维护 title_normalized + content_hash（FTS5 / word_count 由触发器自动）
@@ -1020,6 +1258,34 @@ fn update_note(
     );
     binds.push(Box::new(id));
 
+    let bind_refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
+    conn.execute(&sql, &*bind_refs)
+}
+
+/// 批量移动笔记到目标文件夹。只改 folder_id，**不刷新 updated_at**
+/// （避免大量笔记被冒泡到"最近更新"列表前面，与主应用 database/notes.rs 行为一致）。
+/// folder_id = None 表示移到未分类。
+fn move_notes_batch(
+    conn: &Connection,
+    ids: &[i64],
+    folder_id: Option<i64>,
+) -> Result<usize, rusqlite::Error> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "UPDATE notes SET folder_id = ?
+         WHERE id IN ({})
+           AND is_deleted = 0
+           AND is_encrypted = 0",
+        placeholders
+    );
+    let mut binds: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(ids.len() + 1);
+    binds.push(Box::new(folder_id));
+    for id in ids {
+        binds.push(Box::new(*id));
+    }
     let bind_refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
     conn.execute(&sql, &*bind_refs)
 }
