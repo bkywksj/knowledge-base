@@ -231,6 +231,9 @@ export function MicButton({
         icon={icon}
         loading={false /* 用自定义 spinner 图标，不让 antd 替换 icon */}
         disabled={disabled || isBusy}
+        // mousedown 默认会把焦点抢到按钮上 → Input 光标消失。preventDefault 阻断焦点转移，
+        // click 仍正常派发；用户在输入框内点麦克风时光标继续闪烁。
+        onMouseDown={(e) => e.preventDefault()}
         onClick={handleClick}
         className={className}
         aria-label="语音输入"
