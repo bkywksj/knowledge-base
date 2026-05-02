@@ -8,6 +8,7 @@ import {
   ExternalLink,
   FolderOpen,
   Hash,
+  MessageSquare,
 } from "lucide-react";
 import { revealItemInDir, openPath } from "@tauri-apps/plugin-opener";
 import { useContextMenu } from "@/hooks/useContextMenu";
@@ -37,7 +38,8 @@ type EditorMenuPayload =
   | { kind: "wiki"; title: string; el: HTMLElement }
   | { kind: "image"; src: string; el: HTMLElement }
   | { kind: "video"; src: string; el: HTMLElement }
-  | { kind: "file"; href: string; el: HTMLElement };
+  | { kind: "file"; href: string; el: HTMLElement }
+  | { kind: "annotation"; comment: string; el: HTMLElement };
 
 /** 把 kb-asset:// / file:// / 相对路径解析成系统绝对路径 */
 async function resolveAbsolute(urlOrSrc: string): Promise<string | null> {
@@ -103,6 +105,18 @@ export function useEditorContextMenu(editor: Editor | null) {
       if (!target) return;
 
       // 检测顺序：先具体后通用 —— wiki 装饰嵌在普通文本里，必须先查它
+      // 0. 批注 mark：点中已批注文字时弹"编辑/删除/复制批注"菜单
+      const annotEl = target.closest<HTMLElement>("span[data-comment]");
+      if (annotEl) {
+        const comment = annotEl.getAttribute("data-comment") ?? "";
+        e.preventDefault();
+        ctx.open(
+          { clientX: e.clientX, clientY: e.clientY },
+          { kind: "annotation", comment, el: annotEl },
+        );
+        return;
+      }
+
       // 1. wiki 链接装饰
       const wikiEl = target.closest<HTMLElement>("[data-wiki-link]");
       if (wikiEl) {
@@ -314,6 +328,63 @@ export function useEditorContextMenu(editor: Editor | null) {
       ];
     }
 
+    if (p.kind === "annotation") {
+      return [
+        {
+          key: "edit",
+          label: "编辑批注",
+          icon: <MessageSquare size={13} />,
+          onClick: () => {
+            ctx.close();
+            if (!editor) return;
+            // 把光标定位进 mark span，再广播 → AnnotationButton 监听到后弹 Modal
+            try {
+              const pos = editor.view.posAtDOM(p.el, 0);
+              if (pos < 0) return;
+              editor.chain().focus().setTextSelection(pos).run();
+            } catch {
+              /* 定位失败也无碍：Modal 自己取 isActive，会显示"添加" */
+            }
+            document.dispatchEvent(new CustomEvent("kb-annotation-shortcut"));
+          },
+        },
+        {
+          key: "copy",
+          label: "复制批注内容",
+          icon: <Copy size={13} />,
+          onClick: () => {
+            ctx.close();
+            copyText(p.comment, "已复制批注内容");
+          },
+        },
+        { type: "divider" },
+        {
+          key: "delete",
+          label: "删除批注",
+          icon: <Trash2 size={13} />,
+          danger: true,
+          onClick: () => {
+            ctx.close();
+            if (!editor) return;
+            try {
+              const pos = editor.view.posAtDOM(p.el, 0);
+              if (pos < 0) return;
+              // 先把光标放进 mark，再 extendMarkRange 扩到 mark 全范围，最后 unset
+              editor
+                .chain()
+                .focus()
+                .setTextSelection(pos)
+                .extendMarkRange("annotation")
+                .unsetMark("annotation")
+                .run();
+            } catch (err) {
+              message.error(`删除失败：${err}`);
+            }
+          },
+        },
+      ];
+    }
+
     // kind === "file"
     return [
       {
@@ -344,7 +415,7 @@ export function useEditorContextMenu(editor: Editor | null) {
         },
       },
     ];
-  }, [ctx, navigate, deleteNodeAtElement]);
+  }, [ctx, navigate, deleteNodeAtElement, editor]);
 
   return { ctx, menuItems };
 }
