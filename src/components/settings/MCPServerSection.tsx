@@ -407,6 +407,21 @@ export function MCPServerSection() {
                 size="small"
                 items={[
                   {
+                    key: "claude-code",
+                    label: "Claude Code (CLI) ✨",
+                    children: claudeCodeTpl ? (
+                      <ClaudeCodeBlock
+                        tpl={claudeCodeTpl}
+                        onCopy={copyConfig}
+                        onSaveAs={() => void saveClaudeMdAs()}
+                        onOpenClaudeDir={() => void openClaudeDir()}
+                        onInstall={handleInstall}
+                      />
+                    ) : (
+                      <Empty description="模板未加载" />
+                    ),
+                  },
+                  {
                     key: "claude-ro",
                     label: "Claude Desktop（只读）",
                     children: (
@@ -458,21 +473,6 @@ export function MCPServerSection() {
                         }}
                         hint="手动方式：抄到 ~/.cursor/mcp.json"
                       />
-                    ),
-                  },
-                  {
-                    key: "claude-code",
-                    label: "Claude Code (CLI) ✨",
-                    children: claudeCodeTpl ? (
-                      <ClaudeCodeBlock
-                        tpl={claudeCodeTpl}
-                        onCopy={copyConfig}
-                        onSaveAs={() => void saveClaudeMdAs()}
-                        onOpenClaudeDir={() => void openClaudeDir()}
-                        onInstall={handleInstall}
-                      />
-                    ) : (
-                      <Empty description="模板未加载" />
                     ),
                   },
                 ]}
@@ -920,7 +920,7 @@ interface ClaudeCodeBlockProps {
 
 function ClaudeCodeBlock({ tpl, onCopy, onSaveAs, onOpenClaudeDir, onInstall }: ClaudeCodeBlockProps) {
   return (
-    <div className="space-y-3">
+    <div className="space-y-5">
       <Alert
         type="info"
         showIcon
