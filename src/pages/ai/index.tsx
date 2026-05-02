@@ -160,7 +160,8 @@ export default function AiChatPage() {
   const [inputText, setInputText] = useState("");
   const [useRag, setUseRag] = useState(true);
   // T-004: Skills 框架开关。启用时 RAG 自动关（AI 自己调 search_notes）
-  const [useSkills, setUseSkills] = useState(false);
+  // 默认开 = 让"问知识库内容"开箱即用；关掉退回纯 RAG 模式（不调工具，只塞上下文）
+  const [useSkills, setUseSkills] = useState(true);
   const [streaming, setStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   // 附加笔记（A 方向）：当前对话的 attached_note_ids 对应的完整笔记对象
