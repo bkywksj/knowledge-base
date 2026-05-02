@@ -43,7 +43,9 @@ import { Checkbox } from "antd";
 import { UpdateModal } from "@/components/ui/UpdateModal";
 import { RecommendCards } from "@/components/ui/RecommendCards";
 import { SyncTabs } from "@/components/settings/SyncTabs";
+import { AsrSection } from "@/components/settings/AsrSection";
 import { DataDirSection } from "@/components/settings/DataDirSection";
+import { FeatureModulesSection } from "@/components/settings/FeatureModulesSection";
 import OrphanAssetsPanel from "@/components/settings/OrphanAssetsPanel";
 import { HiddenPinSection } from "@/components/hidden/HiddenPinSection";
 import { ShortcutsSection } from "@/components/settings/ShortcutsSection";
@@ -216,6 +218,7 @@ const MODEL_PRESETS: Record<string, { value: string; label: string }[]> = {
 const SETTINGS_NAV_ITEMS: { id: string; label: string }[] = [
   { id: "settings-update", label: "软件更新" },
   { id: "settings-startup", label: "启动设置" },
+  { id: "settings-features", label: "功能模块" },
   { id: "settings-hidden-pin", label: "隐藏笔记 PIN" },
   { id: "settings-shortcuts", label: "全局快捷键" },
   { id: "settings-editor", label: "编辑器外观" },
@@ -223,6 +226,7 @@ const SETTINGS_NAV_ITEMS: { id: string; label: string }[] = [
   { id: "settings-import", label: "导入笔记" },
   { id: "settings-export", label: "导出 Markdown" },
   { id: "settings-ai-models", label: "AI 模型" },
+  { id: "settings-asr", label: "语音识别" },
   { id: "settings-templates", label: "模板管理" },
   { id: "settings-data-dir", label: "数据目录" },
   { id: "settings-sync", label: "同步备份" },
@@ -1164,6 +1168,8 @@ export default function SettingsPage() {
         </div>
       </Card>
 
+      <FeatureModulesSection />
+
       <div id="settings-hidden-pin">
         <HiddenPinSection />
       </div>
@@ -1496,6 +1502,9 @@ export default function SettingsPage() {
           size="small"
         />
       </Card>
+
+      {/* 语音识别（ASR）：阿里云百炼 DashScope，通过抽象层支持未来扩展 */}
+      <AsrSection />
 
       {/* 模板管理 */}
       <Card

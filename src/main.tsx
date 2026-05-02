@@ -47,6 +47,8 @@ loadThemeFromStore().then(() => {
   useAppStore.getState().loadInstanceInfo();
   // 拉一次"全局新建笔记"的默认文件夹 / 标签偏好，便于第一次按 Ctrl+N 就能用
   useAppStore.getState().loadNoteDefaults();
+  // 拉一次"启用的侧栏视图"配置（用户在设置里勾选的功能模块开关）
+  void useAppStore.getState().loadEnabledViews();
 
   // 预热文件夹树：让 NotesPanel 第一次打开时直接命中缓存，避免"点笔记"时的等待
   // 用 requestIdleCallback 在浏览器空闲时跑，不和首屏渲染抢线程

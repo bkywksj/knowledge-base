@@ -12,6 +12,7 @@ import AboutPage from "@/pages/about";
 import GraphPage from "@/pages/graph";
 import AiChatPage from "@/pages/ai";
 import TasksPage from "@/pages/tasks";
+import CardsPage from "@/pages/cards";
 import PromptsPage from "@/pages/prompts";
 import HiddenPage from "@/pages/hidden";
 import MigrationSplash from "@/pages/migration-splash";
@@ -38,6 +39,7 @@ const router = createHashRouter([
       { path: "ai", element: <AiChatPage /> },
       { path: "prompts", element: <PromptsPage /> },
       { path: "tasks", element: <TasksPage /> },
+      { path: "cards", element: <CardsPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "about", element: <AboutPage /> },
     ],

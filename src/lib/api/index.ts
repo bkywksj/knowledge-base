@@ -6,6 +6,11 @@ import {
   isEnabled as autostartIsEnabled,
 } from "@tauri-apps/plugin-autostart";
 import type {
+  Card,
+  CreateCardInput,
+  ReviewCardInput,
+  CardReviewLog,
+  CardStats,
   AppConfig,
   SystemInfo,
   DashboardStats,
@@ -81,6 +86,10 @@ import type {
   WordExportResult,
   HtmlExportResult,
   ShortcutBinding,
+  AsrConfig,
+  TranscribeRequest,
+  TranscribeResult,
+  AsrTestResult,
 } from "@/types";
 
 /** 系统相关 API */
@@ -794,6 +803,31 @@ export const taskApi = {
     invoke<TaskSearchHit[]>("search_tasks", { query, limit }),
 };
 
+/**
+ * 语音识别 API（ASR）
+ *
+ * 当前仅接入阿里云百炼 DashScope（qwen3-asr-flash-filetrans / paraformer-v2）。
+ * 服务商通过 AsrProviderKind 抽象，后续可在不破坏调用方的前提下新增。
+ *
+ * 使用流程：
+ *   1. 用户在设置页保存配置（saveConfig + enabled=true）
+ *   2. 录音 UI 拿到 base64 后调 transcribeAudio
+ *   3. 后端走异步任务模式，单次短录音典型 2-5s 返回
+ */
+export const asrApi = {
+  /** 读取当前 ASR 配置（首次访问 = 默认值，apiKey 为空） */
+  getConfig: () => invoke<AsrConfig>("asr_get_config"),
+  /** 保存配置；启用时后端会强校验 apiKey 非空 */
+  saveConfig: (config: AsrConfig) =>
+    invoke<void>("asr_save_config", { config }),
+  /** 测试连通性（仅校验鉴权，不消耗识别用量） */
+  testConnection: (config: AsrConfig) =>
+    invoke<AsrTestResult>("asr_test_connection", { config }),
+  /** 把录音转为文字 */
+  transcribe: (request: TranscribeRequest) =>
+    invoke<TranscribeResult>("asr_transcribe_audio", { request }),
+};
+
 /** 待办分类 API（一级扁平分类） */
 export const taskCategoryApi = {
   list: () => invoke<TaskCategory[]>("list_task_categories"),
@@ -803,4 +837,25 @@ export const taskCategoryApi = {
     invoke<boolean>("update_task_category", { id, input }),
   /** 删除分类。任务的 category_id 会因 ON DELETE SET NULL 自动落到未分类 */
   delete: (id: number) => invoke<boolean>("delete_task_category", { id }),
+};
+
+/** 闪卡 + FSRS 复习 API */
+export const cardApi = {
+  create: (input: CreateCardInput) => invoke<Card>("create_card", { input }),
+  list: (deck?: string) => invoke<Card[]>("list_cards", { deck: deck ?? null }),
+  get: (id: number) => invoke<Card | null>("get_card", { id }),
+  /** 取今天到期 / 已过期 / 新卡的待复习队列 */
+  listDue: (limit?: number) =>
+    invoke<Card[]>("list_due_cards", { limit: limit ?? null }),
+  updateContent: (id: number, front: string, back: string) =>
+    invoke<void>("update_card_content", { id, front, back }),
+  delete: (id: number) => invoke<void>("delete_card", { id }),
+  /** 提交复习：前端 ts-fsrs 算好新状态后调这个 */
+  review: (input: ReviewCardInput) => invoke<void>("review_card", { input }),
+  stats: () => invoke<CardStats>("get_card_stats"),
+  listLogs: (cardId: number, limit?: number) =>
+    invoke<CardReviewLog[]>("list_card_review_logs", {
+      cardId,
+      limit: limit ?? null,
+    }),
 };

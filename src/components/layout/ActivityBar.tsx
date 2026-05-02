@@ -10,6 +10,7 @@ import {
   Calendar,
   Tags,
   CheckSquare,
+  Layers,
   GitBranch,
   Bot,
   Sparkles,
@@ -38,6 +39,11 @@ interface ActivityItem {
   route: string;
   label: string;
   icon: React.ReactNode;
+  /**
+   * 核心视图：永远显示，不受用户"功能模块"开关影响。
+   * 关闭笔记/搜索/回收站等核心入口会让应用变残废，所以不允许关。
+   */
+  core?: boolean;
 }
 
 /**
@@ -51,16 +57,17 @@ interface ActivityItem {
  */
 const MAIN_GROUPS: ActivityItem[][] = [
   // 概览
-  [{ view: "home", route: "/", label: "首页", icon: <Home size={18} /> }],
+  [{ view: "home", route: "/", label: "首页", icon: <Home size={18} />, core: true }],
   // 创作 / 工作流
   [
-    { view: "notes", route: "/notes", label: "笔记", icon: <NotebookText size={18} /> },
+    { view: "notes", route: "/notes", label: "笔记", icon: <NotebookText size={18} />, core: true },
     { view: "daily", route: "/daily", label: "每日笔记", icon: <Calendar size={18} /> },
     { view: "tasks", route: "/tasks", label: "待办", icon: <CheckSquare size={18} /> },
+    { view: "cards", route: "/cards", label: "卡片复习", icon: <Layers size={18} /> },
   ],
   // 检索 / 发现
   [
-    { view: "search", route: "/search", label: "搜索", icon: <Search size={18} /> },
+    { view: "search", route: "/search", label: "搜索", icon: <Search size={18} />, core: true },
     { view: "tags", route: "/tags", label: "标签", icon: <Tags size={18} /> },
     { view: "graph", route: "/graph", label: "知识图谱", icon: <GitBranch size={18} /> },
   ],
@@ -74,8 +81,8 @@ const MAIN_GROUPS: ActivityItem[][] = [
 /** 底部视图（放最下方，视觉上与主视图分组） */
 const BOTTOM_ITEMS: ActivityItem[] = [
   { view: "hidden", route: "/hidden", label: "隐藏笔记", icon: <EyeOff size={18} /> },
-  { view: "trash", route: "/trash", label: "回收站", icon: <Trash2 size={18} /> },
-  { view: "about", route: "/about", label: "关于", icon: <Info size={18} /> },
+  { view: "trash", route: "/trash", label: "回收站", icon: <Trash2 size={18} />, core: true },
+  { view: "about", route: "/about", label: "关于", icon: <Info size={18} />, core: true },
 ];
 
 /** 路由 → ActiveView 的反查映射（用于根据 URL 推导高亮态） */
@@ -85,6 +92,7 @@ const ROUTE_TO_VIEW: Array<[string, ActiveView]> = [
   ["/daily", "daily"],
   ["/tags", "tags"],
   ["/tasks", "tasks"],
+  ["/cards", "cards"],
   ["/graph", "graph"],
   ["/ai", "ai"],
   ["/prompts", "prompts"],
@@ -116,7 +124,12 @@ export function ActivityBar() {
   const urgentTodoCount = useAppStore((s) => s.urgentTodoCount);
   const refreshTaskStats = useAppStore((s) => s.refreshTaskStats);
   const isHiddenUnlocked = useAppStore((s) => s.isHiddenUnlocked);
+  const enabledViews = useAppStore((s) => s.enabledViews);
   const [unlockOpen, setUnlockOpen] = useState(false);
+
+  /** 是否显示某项：核心永远显示；可选项看用户是否在设置里启用 */
+  const isVisible = (item: ActivityItem) =>
+    item.core || enabledViews.has(item.view);
 
   // 启动时拉一次紧急任务数，让待办 Badge 在进应用时就显示正确数字
   // （之后由任务页/各操作主动调 refreshTaskStats 维持新鲜）
@@ -273,9 +286,9 @@ export function ActivityBar() {
         borderRight: `1px solid ${token.colorBorderSecondary}`,
       }}
     >
-      {MAIN_GROUPS.flat().map(renderItem)}
+      {MAIN_GROUPS.flat().filter(isVisible).map(renderItem)}
       <div style={{ flex: 1 }} />
-      {BOTTOM_ITEMS.map(renderItem)}
+      {BOTTOM_ITEMS.filter(isVisible).map(renderItem)}
       <HiddenPinUnlockModal
         open={unlockOpen}
         onSuccess={() => {

@@ -1075,3 +1075,126 @@ export interface McpServerInput {
   env?: Record<string, string>;
   enabled?: boolean;
 }
+
+// ─── 语音识别（ASR）─────────────────────────────
+
+/** ASR 服务商。当前只支持阿里云 DashScope；后续接入新厂商时在这里加值。 */
+export type AsrProviderKind = "dashscope";
+
+/**
+ * ASR 配置（与 Rust `AsrConfig` 对齐，camelCase 序列化）。
+ *
+ * 配置存到后端 `app_config` 表 `asr.*` KV，不走独立表。
+ * `apiKey` 明文保存（与 ai_models.api_key 风格一致）。
+ */
+export interface AsrConfig {
+  provider: AsrProviderKind;
+  apiKey: string;
+  /** 模型 ID，如 `qwen3-asr-flash-filetrans` / `paraformer-v2` */
+  model: string;
+  /** 区域："beijing"（默认）/ "singapore" */
+  region: string;
+  enabled: boolean;
+}
+
+/** 转录请求：把录音 base64 + MIME 提交给后端 */
+export interface TranscribeRequest {
+  /** 音频 base64（不含 data:xxx;base64, 前缀） */
+  audioBase64: string;
+  /** 音频 MIME，如 "audio/wav" / "audio/webm;codecs=opus" */
+  mime: string;
+  /** 语言提示（zh / en / auto），缺省让模型自动检测 */
+  language?: string;
+}
+
+/** 转录结果 */
+export interface TranscribeResult {
+  text: string;
+  latencyMs: number;
+  model: string;
+}
+
+/** 「测试连接」结果 */
+export interface AsrTestResult {
+  ok: boolean;
+  latencyMs: number;
+  /** 失败时的简短中文原因；成功时为 null */
+  message: string | null;
+}
+
+// ─── 闪卡 + FSRS 复习 ────────────────────────────────────────
+
+/**
+ * 闪卡。
+ *
+ * FSRS state：0=New, 1=Learning, 2=Review, 3=Relearning
+ *   与 ts-fsrs 的 State 枚举值一致；写入/读出都用整数。
+ *
+ * Rust 侧字段名用 snake_case，serde 默认不改名，所以这里 TS 也保持 snake_case
+ * （与 Note 等老类型风格一致）。
+ */
+export interface Card {
+  id: number;
+  note_id: number | null;
+  front: string;
+  back: string;
+  deck: string;
+
+  // FSRS 调度状态
+  due: string;
+  stability: number;
+  difficulty: number;
+  elapsed_days: number;
+  scheduled_days: number;
+  reps: number;
+  lapses: number;
+  state: number;
+  last_review: string | null;
+
+  is_deleted: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateCardInput {
+  front: string;
+  back: string;
+  deck?: string;
+  noteId?: number | null;
+}
+
+/** ts-fsrs 算好的新调度状态 + 用户评分，提交给后端 review_card */
+export interface ReviewCardInput {
+  cardId: number;
+  /** 1=Again, 2=Hard, 3=Good, 4=Easy（与 ts-fsrs Rating 枚举一致） */
+  rating: number;
+  state: number;
+  due: string;
+  stability: number;
+  difficulty: number;
+  elapsedDays: number;
+  lastElapsedDays: number;
+  scheduledDays: number;
+}
+
+export interface CardReviewLog {
+  id: number;
+  cardId: number;
+  rating: number;
+  state: number;
+  due: string;
+  stability: number;
+  difficulty: number;
+  elapsedDays: number;
+  lastElapsedDays: number;
+  scheduledDays: number;
+  review: string;
+}
+
+export interface CardStats {
+  dueToday: number;
+  learning: number;
+  review: number;
+  newCards: number;
+  total: number;
+}

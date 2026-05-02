@@ -30,6 +30,7 @@ export type ActiveView =
   | "daily"
   | "tags"
   | "tasks"
+  | "cards"
   | "graph"
   | "ai"
   | "prompts"
@@ -115,6 +116,15 @@ interface AppStore {
   alwaysOnTop: boolean;
   /** 当前活动视图（Activity Bar 模式）；与 URL 双向同步 */
   activeView: ActiveView;
+  /**
+   * 用户启用的可选侧栏视图集合（持久化到 app_config 的 enabled_views）。
+   *
+   * 核心视图（home/notes/search/trash/about）始终显示，不在此集合内。
+   * 此集合只跟踪可选项：daily / tasks / cards / tags / graph / ai / prompts / hidden。
+   *
+   * 默认值：除 cards 外全部启用（见 DEFAULT_ENABLED_VIEWS）。
+   */
+  enabledViews: Set<ActiveView>;
   /** SidePanel（Activity Bar 右侧主面板）宽度 */
   sidePanelWidth: number;
   /**
@@ -208,6 +218,10 @@ interface AppStore {
    * store 只负责保存状态，避免 navigate / URL 同步时误触发折叠。
    */
   setActiveView: (view: ActiveView) => void;
+  /** 切换某个可选视图启用/禁用，自动持久化到 app_config */
+  toggleEnabledView: (view: ActiveView) => void;
+  /** 启动期从 app_config 加载已保存的 enabled_views（无值时保留 default） */
+  loadEnabledViews: () => Promise<void>;
   /** 设置 SidePanel 宽度（自动 clamp 到 [MIN, MAX]） */
   setSidePanelWidth: (width: number) => void;
   /** 设置 SidePanel 可见性 */
@@ -279,6 +293,29 @@ interface AppStore {
   isHiddenUnlocked: () => boolean;
 }
 
+/**
+ * 所有"可选"侧栏视图（不含核心 home/notes/search/trash/about）。
+ * 改这个数组就同步改了"功能模块"开关清单 + ActivityBar 过滤标准。
+ */
+export const OPTIONAL_VIEWS: readonly ActiveView[] = [
+  "daily",
+  "tasks",
+  "cards",
+  "tags",
+  "graph",
+  "ai",
+  "prompts",
+  "hidden",
+] as const;
+
+/**
+ * 默认启用的可选视图集合：
+ * 除 cards（卡片复习，新加功能，默认关闭让老用户不被打扰）外全部启用。
+ */
+const DEFAULT_ENABLED_VIEWS: Set<ActiveView> = new Set(
+  OPTIONAL_VIEWS.filter((v) => v !== "cards"),
+);
+
 export const useAppStore = create<AppStore>((set, get) => ({
   lightTheme: "light-glass",
   darkTheme: "dark-starry",
@@ -292,6 +329,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   urgentTodoCount: 0,
   alwaysOnTop: false,
   activeView: "notes",
+  enabledViews: new Set(DEFAULT_ENABLED_VIEWS),
   sidePanelWidth: SIDE_PANEL_DEFAULT_WIDTH,
   sidePanelVisible: true,
   recentSearches: [],
@@ -341,6 +379,33 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
   setActiveView: (view) => set({ activeView: view }),
+  toggleEnabledView: (view) => {
+    const cur = get().enabledViews;
+    const next = new Set(cur);
+    if (next.has(view)) next.delete(view);
+    else next.add(view);
+    set({ enabledViews: next });
+    // 持久化（数组形式存 JSON）；失败静默：UI 已即时更新，下次启动可能丢失而已
+    void configApi
+      .set("enabled_views", JSON.stringify([...next]))
+      .catch((e) => console.warn("[settings] persist enabled_views failed:", e));
+  },
+  loadEnabledViews: async () => {
+    const raw = await getConfigOrNull("enabled_views");
+    if (!raw) return; // 无值 → 保留构造默认（除 cards 外全开）
+    try {
+      const list = JSON.parse(raw) as ActiveView[];
+      if (Array.isArray(list)) {
+        // 只保留仍在 OPTIONAL_VIEWS 内的，防止旧版本残留的脏数据
+        const valid = list.filter((v) =>
+          OPTIONAL_VIEWS.includes(v as ActiveView),
+        );
+        set({ enabledViews: new Set(valid) });
+      }
+    } catch (e) {
+      console.warn("[settings] parse enabled_views failed:", e);
+    }
+  },
   setSidePanelWidth: (width) =>
     set({
       sidePanelWidth: Math.max(
