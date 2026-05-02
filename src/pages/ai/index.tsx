@@ -158,9 +158,11 @@ export default function AiChatPage() {
   const [messages, setMessages] = useState<AiMessage[]>([]);
   const [models, setModels] = useState<AiModel[]>([]);
   const [inputText, setInputText] = useState("");
-  const [useRag, setUseRag] = useState(true);
-  // T-004: Skills 框架开关。启用时 RAG 自动关（AI 自己调 search_notes）
-  // 默认开 = 让"问知识库内容"开箱即用；关掉退回纯 RAG 模式（不调工具，只塞上下文）
+  // 智能模式：默认开启 = 让 LLM 自己调 search_notes / list_tags / get_today_tasks
+  // 等内置工具 + 所有外部 MCP 工具。关掉就是纯聊天（不接入任何知识库）。
+  //
+  // 设计上不再区分"RAG 模式 / Skills 模式"——RAG 本质就是预先调一次 search_notes，
+  // Skills 让 LLM 按需调，是 RAG 的超集。把选择权交给 LLM，用户只管开关。
   const [useSkills, setUseSkills] = useState(true);
   const [streaming, setStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
@@ -549,10 +551,13 @@ export default function AiChatPage() {
     );
 
     try {
+      // use_rag 永远传 false：智能模式下由 LLM 自己调 search_notes，
+      // 不再走自动预召回（避免 token 浪费 + 让 LLM 有判断空间）。
+      // 关掉智能模式时也不开 RAG，纯聊天体验最干净。
       await aiChatApi.sendMessage(
         activeConvId,
         text,
-        useRag,
+        false,
         useSkills,
         attachmentsPayload.length > 0 ? attachmentsPayload : undefined,
       );
@@ -564,7 +569,7 @@ export default function AiChatPage() {
       setStreamingSkillCalls([]);
       showAiError(e);
     }
-  }, [inputText, activeConvId, streaming, useRag, useSkills, pendingAttachments]);
+  }, [inputText, activeConvId, streaming, useSkills, pendingAttachments]);
 
   // handleSend 是 useCallback,闭包会随依赖变化重新生成；
   // pendingAutoSend 触发时需要拿最新的 handleSend,用 ref 桥接
@@ -926,20 +931,28 @@ export default function AiChatPage() {
                 </Tooltip>
               </div>
               <div className="flex items-center gap-3">
-                <Tooltip title={useSkills ? "启用 Skills 时，RAG 由 AI 自己调 search_notes 替代" : "启用 RAG：搜索相关笔记作为上下文"}>
-                  <div className="flex items-center gap-1.5" style={{ opacity: useSkills ? 0.4 : 1 }}>
-                    <BookOpen size={14} style={{ color: token.colorTextSecondary }} />
-                    <Switch
-                      size="small"
-                      checked={useRag && !useSkills}
-                      disabled={useSkills}
-                      onChange={setUseRag}
-                    />
-                  </div>
-                </Tooltip>
-                <Tooltip title="启用 Skills：AI 可调用 搜笔记 / 读笔记 / 列标签 等工具（仅 OpenAI 兼容模型）">
+                <Tooltip
+                  title={
+                    useSkills
+                      ? "智能模式（已开启）：AI 自动调用搜笔记 / 读笔记 / 列标签 / 今日待办 等内置工具，并接入「设置 → MCP 服务器」里所有外部 MCP 工具。关掉切换为纯聊天（不接入知识库）"
+                      : "智能模式（已关闭）：纯聊天，AI 不会读取你的笔记和外部工具"
+                  }
+                >
                   <div className="flex items-center gap-1.5">
-                    <Wrench size={14} style={{ color: token.colorTextSecondary }} />
+                    <Wrench
+                      size={14}
+                      style={{
+                        color: useSkills
+                          ? token.colorPrimary
+                          : token.colorTextSecondary,
+                      }}
+                    />
+                    <span
+                      className="text-xs"
+                      style={{ color: token.colorTextSecondary }}
+                    >
+                      智能模式
+                    </span>
                     <Switch
                       size="small"
                       checked={useSkills}
