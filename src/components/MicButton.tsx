@@ -22,6 +22,7 @@ import { Mic, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { asrApi } from "@/lib/api";
 import { useAudioLevel } from "@/hooks/useAudioLevel";
+import { useSilenceAutoStop } from "@/hooks/useSilenceAutoStop";
 
 type Status = "idle" | "recording" | "transcribing" | "disabled";
 
@@ -37,6 +38,20 @@ interface Props {
   /** 受控 disabled（外部因业务原因强制禁用） */
   disabled?: boolean;
   className?: string;
+  /**
+   * 末尾标点裁切：识别到的文本若以中英文标点收尾（如「文件夹一。」），
+   * 自动剥掉末尾连续的标点 + 空白。适合短标题类输入（文件夹名 / 标签名 /
+   * 任务标题等），让用户口语自然停顿带出的句号、感叹号不会污染名称。
+   */
+  stripTrailingPunctuation?: boolean;
+}
+
+/** 末尾标点 + 空白裁切（用于文件夹名 / 标签等不该带句尾标点的场景） */
+function trimTrailingPunctuation(text: string): string {
+  return text.replace(
+    /[\s。！？，、；：…．\.\?\!\,\;\:""''『』「」（）()【】\[\]]+$/g,
+    "",
+  );
 }
 
 export function MicButton({
@@ -46,6 +61,7 @@ export function MicButton({
   language,
   disabled,
   className,
+  stripTrailingPunctuation,
 }: Props) {
   const { message } = AntdApp.useApp();
   const navigate = useNavigate();
@@ -58,6 +74,8 @@ export function MicButton({
   // 用 state 触发 useAudioLevel 重建（ref 引用变化 hook 拿不到）
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
   const { level, bands } = useAudioLevel(activeStream, status === "recording", 3);
+  // VAD：检测到说话后连续静音 1.5s 自动停止（与 tauri-cc 同款阈值）
+  useSilenceAutoStop(level, status === "recording", () => stopRecording());
 
   // 启动时拉一次 ASR 配置；后续可以监听 store 变更，但配置改动通常要重启录音组件，先不做
   useEffect(() => {
@@ -137,7 +155,10 @@ export function MicButton({
         mime: blob.type || "audio/webm",
         language: language ?? "auto",
       });
-      const text = (result.text ?? "").trim();
+      let text = (result.text ?? "").trim();
+      if (stripTrailingPunctuation) {
+        text = trimTrailingPunctuation(text);
+      }
       if (!text) {
         message.warning("未识别到内容，请说话清晰一些");
       } else {
@@ -216,10 +237,11 @@ export function MicButton({
     <Mic size={14} />
   );
 
-  // 录音时按 level（0-1）放大 box-shadow，形成实时音量脉动效果
-  // 静音时 = 2px 红色细环；说话最响时 = 10px+ 渐变
+  // 录音时按 level（0-1）放大 box-shadow，形成实时音量脉动效果。
+  // 半径限制在 0-2px：放在 Input.suffix 这种被 overflow 切掉的紧凑容器里也安全。
+  // 录音时的主要视觉反馈靠按钮内 3 条 mini 波形柱 + 红色 danger 主题。
   const recordingShadow = isRecording
-    ? `0 0 0 ${2 + Math.round(level * 9)}px rgba(255, 77, 79, ${0.18 + level * 0.35})`
+    ? `0 0 0 ${Math.round(level * 2)}px rgba(255, 77, 79, ${0.25 + level * 0.4})`
     : undefined;
 
   return (

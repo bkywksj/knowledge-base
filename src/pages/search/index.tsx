@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Input, Typography, Empty, Spin, Segmented, theme as antdTheme } from "antd";
+import { Input, Button, Typography, Empty, Spin, Segmented, theme as antdTheme } from "antd";
 import {
   Search as SearchIcon,
   NotebookText,
@@ -112,15 +112,16 @@ export default function SearchPage() {
 
   return (
     <div className="max-w-4xl mx-auto">
-      {/* 搜索框 */}
-      <div className="mb-4">
-        <Input.Search
+      {/* 搜索框：与首页 / 笔记列表搜索同款（普通 Input + 独立搜索按钮） */}
+      <div className="mb-4 flex items-stretch gap-1.5" style={{ width: "100%" }}>
+        <Input
           size="large"
           placeholder="搜索笔记内容 / 待办标题…"
           prefix={<SearchIcon size={18} />}
           suffix={
             <MicButton
               size="small"
+              stripTrailingPunctuation
               onTranscribed={(text) =>
                 handleInputChange(query ? `${query} ${text}` : text)
               }
@@ -128,11 +129,17 @@ export default function SearchPage() {
           }
           value={query}
           onChange={(e) => handleInputChange(e.target.value)}
-          onSearch={(value) => handleInputChange(value)}
+          onPressEnter={() => handleInputChange(query)}
           allowClear
-          enterButton="搜索"
-          style={{ borderRadius: 8 }}
+          style={{ flex: 1, borderRadius: 8 }}
         />
+        <Button
+          size="large"
+          type="primary"
+          onClick={() => handleInputChange(query)}
+        >
+          搜索
+        </Button>
       </div>
 
       {/* 范围切换：仅在已搜索时显示，免得空状态有个孤零零的切换器 */}

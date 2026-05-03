@@ -565,6 +565,7 @@ export default function TasksPage() {
         suffix={
           <MicButton
             size="small"
+            stripTrailingPunctuation
             onTranscribed={(text) =>
               setKeyword((prev) => (prev ? `${prev} ${text}` : text))
             }

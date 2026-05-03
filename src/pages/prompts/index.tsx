@@ -452,9 +452,11 @@ export default function PromptsPage() {
             <Input
               placeholder="如：润色公众号文案"
               maxLength={40}
+              allowClear
               suffix={
                 <MicButton
                   size="small"
+                  stripTrailingPunctuation
                   onTranscribed={(text) => {
                     const cur: string = form.getFieldValue("title") || "";
                     form.setFieldValue("title", cur ? `${cur} ${text}` : text);
@@ -467,9 +469,11 @@ export default function PromptsPage() {
             <Input
               placeholder="一句话描述这个 Prompt 的用途"
               maxLength={80}
+              allowClear
               suffix={
                 <MicButton
                   size="small"
+                  stripTrailingPunctuation
                   onTranscribed={(text) => {
                     const cur: string = form.getFieldValue("description") || "";
                     form.setFieldValue(

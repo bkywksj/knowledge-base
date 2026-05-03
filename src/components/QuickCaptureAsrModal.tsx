@@ -18,6 +18,7 @@ import { Square, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { asrApi, taskApi, noteApi, aiPlanApi } from "@/lib/api";
 import { useAudioLevel } from "@/hooks/useAudioLevel";
+import { useSilenceAutoStop } from "@/hooks/useSilenceAutoStop";
 
 const { Text } = Typography;
 
@@ -51,6 +52,8 @@ export function QuickCaptureAsrModal({ open, onClose }: Props) {
   // 仅在 Modal 里通过更大的尺寸 / 间距来增加视觉重量
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
   const { level, bands } = useAudioLevel(activeStream, phase === "recording", 3);
+  // VAD：检测到说话后连续静音 1.5s 自动停止（与 tauri-cc 同款阈值）
+  useSilenceAutoStop(level, phase === "recording", () => stopRecording());
 
   // 打开 Modal → 拉配置 + 自动开始录音
   useEffect(() => {

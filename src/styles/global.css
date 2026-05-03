@@ -403,6 +403,43 @@ body,
   background: color-mix(in srgb, var(--ant-color-text, #000) 5%, transparent);
 }
 
+/* 大纲隐藏小眼睛：常态隐形，hover 整个大纲面板时淡入。
+   故意做的克制 —— 大纲是阅读辅助控件，不该常驻按钮抢视觉。 */
+.editor-outline__hide-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.12s ease, color 0.12s ease;
+}
+.editor-outline-aside:hover .editor-outline__hide-btn {
+  opacity: 1;
+}
+.editor-outline__hide-btn:hover {
+  background: color-mix(in srgb, var(--ant-color-text, #000) 8%, transparent);
+  color: var(--ant-color-text) !important;
+}
+
+/* 大纲左侧拖拽分隔条：6px 宽，col-resize；hover/active 显蓝条提示 */
+.editor-outline-splitter {
+  align-self: stretch;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+.editor-outline-splitter:hover,
+.editor-outline-splitter[data-dragging="true"] {
+  background: color-mix(in srgb, var(--ant-color-primary, #1677ff) 30%, transparent);
+}
+
 .editor-title .ant-input {
   font-size: 28px !important;
   font-weight: 700 !important;

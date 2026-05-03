@@ -447,17 +447,10 @@ export function CreateTaskModal({
         {/* 标题 */}
         <div>
           <div
-            className="text-[11px] mb-1 flex items-center justify-between"
+            className="text-[11px] mb-1"
             style={{ color: token.colorTextSecondary }}
           >
-            <span>
-              标题 <span style={{ color: token.colorError }}>*</span>
-            </span>
-            <MicButton
-              onTranscribed={(text) =>
-                setTitle((prev) => (prev ? `${prev} ${text}` : text))
-              }
-            />
+            标题 <span style={{ color: token.colorError }}>*</span>
           </div>
           <Input
             autoFocus
@@ -466,6 +459,15 @@ export function CreateTaskModal({
             onChange={(e) => setTitle(e.target.value)}
             onPressEnter={handleSave}
             style={{ fontSize: 15 }}
+            allowClear
+            suffix={
+              <MicButton
+                stripTrailingPunctuation
+                onTranscribed={(text) =>
+                  setTitle((prev) => (prev ? `${prev} ${text}` : text))
+                }
+              />
+            }
           />
         </div>
 

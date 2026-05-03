@@ -358,6 +358,7 @@ export function PlanFromGoalModal({ open, onClose, onSaved }: Props) {
                           你的目标 <span style={{ color: token.colorError }}>*</span>
                         </span>
                         <MicButton
+                          stripTrailingPunctuation
                           onTranscribed={(text) =>
                             setGoal((prev) => (prev ? `${prev} ${text}` : text))
                           }

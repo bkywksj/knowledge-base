@@ -155,26 +155,29 @@ impl Database {
     }
 
     pub fn folder_has_children(&self, id: i64) -> Result<bool, AppError> {
+        let (sub, active) = self.folder_children_count(id)?;
+        Ok(sub > 0 || active > 0)
+    }
+
+    /// 详细版：返回 `(子文件夹数, 未在回收站的笔记数)`，
+    /// 让 service 层给具体错误（"还有 2 个子文件夹"/"还有 3 篇笔记（含隐藏 / 加密 / 仍存在数据库的）"）。
+    /// 隐藏笔记 / 加密笔记在 UI 默认看不到，但 is_deleted=0 仍算"占用"——这里完整计数避免用户困惑。
+    pub fn folder_children_count(&self, id: i64) -> Result<(i64, i64), AppError> {
         let conn = self
             .conn
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
-
         let sub_folders: i64 = conn.query_row(
             "SELECT COUNT(*) FROM folders WHERE parent_id = ?1",
             params![id],
             |row| row.get(0),
         )?;
-        if sub_folders > 0 {
-            return Ok(true);
-        }
-
         let active_notes: i64 = conn.query_row(
             "SELECT COUNT(*) FROM notes WHERE folder_id = ?1 AND is_deleted = 0",
             params![id],
             |row| row.get(0),
         )?;
-        Ok(active_notes > 0)
+        Ok((sub_folders, active_notes))
     }
 
     /// 批量设置文件夹 sort_order（按给定顺序赋值 0..N-1）

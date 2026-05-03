@@ -23,7 +23,6 @@ import {
   Trash2,
   Plus,
   FolderOpen,
-  Folder as FolderIcon,
   FileText,
   ChevronsDownUp,
   LayoutTemplate,
@@ -31,11 +30,13 @@ import {
   Copy,
   Pin,
   PinOff,
+  Inbox,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderFilled } from "@ant-design/icons";
 import type { DataNode } from "antd/es/tree";
 import { useAppStore } from "@/store";
+import { MicButton } from "@/components/MicButton";
 import { useTabsStore } from "@/store/tabs";
 import { folderApi, importApi, noteApi, trashApi } from "@/lib/api";
 import type { Folder, Note, ScannedFile } from "@/types";
@@ -66,6 +67,9 @@ const NEW_NODE_PREFIX = "__new_under_";
 
 /** 笔记叶节点 key 前缀（与文件夹 id 区分） */
 const NOTE_KEY_PREFIX = "note:";
+
+/** 「未分类」虚拟根节点 key（folder_id IS NULL 的笔记挂在这里） */
+const UNCATEGORIZED_KEY = "__uncategorized__";
 
 /** 单个文件夹直属笔记的展示上限（超过引导用户去主区） */
 const NOTES_PER_FOLDER_LIMIT = 100;
@@ -140,6 +144,9 @@ function foldersToTreeData(
     return {
       key: String(f.id),
       title: f.name,
+      // 显式 isLeaf:false：children 为 undefined 时 antd Tree 会推断成叶子，
+      // 拖拽落在叶子上会被当成"同级排序"，无法 drop-into 折叠的空文件夹。
+      isLeaf: false,
       children: children.length ? children : undefined,
       data: { isNote: false },
     };
@@ -314,10 +321,13 @@ export function NotesPanel() {
   const collapsedFolderKeys = useAppStore((s) => s.notesCollapsedFolderKeys);
   const allFolderKeys = useMemo(() => collectAllKeys(folders), [folders]);
   const expandedKeys = useMemo<React.Key[]>(() => {
-    if (allFolderKeys.length === 0) return [];
     const collapsed = new Set(collapsedFolderKeys);
-    return allFolderKeys.filter((k) => !collapsed.has(k));
-  }, [allFolderKeys, collapsedFolderKeys]);
+    const folderExpanded: React.Key[] = allFolderKeys.filter(
+      (k) => !collapsed.has(k),
+    );
+    if (uncategorizedExpanded) folderExpanded.push(UNCATEGORIZED_KEY);
+    return folderExpanded;
+  }, [allFolderKeys, collapsedFolderKeys, uncategorizedExpanded]);
 
   // 首次进入（含老版本升级后第一次打开）：把全部文件夹默认折叠。
   // 之后由用户操作驱动，flag 持久化后不再重置。
@@ -480,10 +490,23 @@ export function NotesPanel() {
    */
   function handleExpand(keys: React.Key[]) {
     const expandedFolderSet = new Set<string>();
+    let nextUncatExpanded = false;
     for (const k of keys) {
       const s = String(k);
+      if (s === UNCATEGORIZED_KEY) {
+        nextUncatExpanded = true;
+        continue;
+      }
       if (s.startsWith(NEW_NODE_PREFIX) || isNoteKey(s)) continue;
       if (Number.isFinite(Number(s))) expandedFolderSet.add(s);
+    }
+
+    // 同步未分类节点的展开态到 store（持久化跨视图保留）
+    if (nextUncatExpanded !== uncategorizedExpanded) {
+      setUncategorizedExpanded(nextUncatExpanded);
+      if (nextUncatExpanded && uncategorizedNotes.length === 0) {
+        void loadUncategorizedNotes();
+      }
     }
 
     const prevSet = new Set(expandedKeys.map(String));
@@ -739,6 +762,9 @@ export function NotesPanel() {
         dropNoteId = noteIdFromKey(dropKey);
         const dropNote = findNoteById(dropNoteId);
         targetFolderId = dropNote ? dropNote.folder_id : note.folder_id;
+      } else if (dropKey === UNCATEGORIZED_KEY) {
+        // 拖到「未分类」虚拟根 → 目标 = null（folder_id IS NULL）
+        targetFolderId = null;
       } else {
         const dropFolderId = Number(dropKey);
         if (!Number.isFinite(dropFolderId)) return;
@@ -901,18 +927,35 @@ export function NotesPanel() {
 
   // ─── 单击/双击 ─────────────────────────────
 
-  /** 在 notesByFolder 缓存里按 id 查找笔记（跨所有已加载文件夹） */
+  /** 在 notesByFolder 缓存 + 未分类列表 里按 id 查找笔记 */
   function findNoteById(id: number): Note | null {
     for (const list of notesByFolder.values()) {
       const found = list.find((n) => n.id === id);
       if (found) return found;
     }
-    return null;
+    return uncategorizedNotes.find((n) => n.id === id) ?? null;
   }
 
   function handleTitleClick(key: string) {
     if (key.startsWith(NEW_NODE_PREFIX)) return;
     if (editingKey === key) return;
+
+    // 「未分类」虚拟根节点：点击 = 切换展开 + 跳转 /notes?folder=uncategorized
+    if (key === UNCATEGORIZED_KEY) {
+      const cur = uncategorizedExpanded;
+      setUncategorizedExpanded(!cur);
+      if (!cur && uncategorizedNotes.length === 0) {
+        void loadUncategorizedNotes();
+      }
+      if (selectedKey === UNCATEGORIZED_KEY) {
+        setSelectedKey(null);
+        navigate("/notes");
+      } else {
+        setSelectedKey(UNCATEGORIZED_KEY);
+        navigate("/notes?folder=uncategorized");
+      }
+      return;
+    }
 
     // 笔记叶节点：单击打开编辑器；300ms 内同节点二次点击 → 进入重命名
     if (isNoteKey(key)) {
@@ -1315,11 +1358,21 @@ export function NotesPanel() {
           }}
           onBlur={submitCreateChild}
           autoFocus
+          allowClear
           style={{ width: "100%", minWidth: 0 }}
           onClick={(e) => e.stopPropagation()}
           // 阻止 mousedown 冒泡到 Tree node：在输入框拖选文本时不让 HTML5 drag 启动
           onMouseDown={(e) => e.stopPropagation()}
           draggable={false}
+          suffix={
+            <MicButton
+              size="small"
+              stripTrailingPunctuation
+              onTranscribed={(text) =>
+                setNewChildName((prev) => (prev ? `${prev} ${text}` : text))
+              }
+            />
+          }
         />
       );
     }
@@ -1388,6 +1441,30 @@ export function NotesPanel() {
       );
     }
 
+    // 「未分类」虚拟根：用 Inbox 图标 + 次要色，与普通文件夹的实心 Folder 主色区分
+    if (key === UNCATEGORIZED_KEY) {
+      return (
+        <span
+          className="flex items-center gap-1.5 w-full"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleTitleClick(key);
+          }}
+          title={name}
+          style={ctxStyle}
+        >
+          <Inbox
+            size={14}
+            strokeWidth={2}
+            style={{ flexShrink: 0, color: token.colorTextSecondary }}
+          />
+          <span className="truncate" style={{ color: token.colorTextSecondary }}>
+            {display}
+          </span>
+        </span>
+      );
+    }
+
     // 文件夹：emoji 优先；否则用 hash 配色的填充文件夹图标
     return (
       <span
@@ -1412,10 +1489,37 @@ export function NotesPanel() {
   }
 
   // useMemo：避免无关 state（如 contextMenu / fileDragOver）变化时重算整棵树
-  const treeData = useMemo(
-    () => foldersToTreeData(folders, creatingUnderKey, notesByFolder, tabTitleByNoteId),
-    [folders, creatingUnderKey, notesByFolder, tabTitleByNoteId],
-  );
+  const treeData = useMemo(() => {
+    const folderTree = foldersToTreeData(
+      folders,
+      creatingUnderKey,
+      notesByFolder,
+      tabTitleByNoteId,
+    );
+    // 末尾追加"未分类"虚拟根节点：folder_id IS NULL 的笔记直接挂在这里。
+    // 这样未分类笔记也能参与 antd Tree 的拖拽（拖到任意文件夹会触发 handleDrop
+    // 跨 folder 移动逻辑），不需要单独写一套 HTML5 drag 系统。
+    const uncatTitle =
+      uncategorizedNotes.length > 0
+        ? `未分类 ${uncategorizedNotes.length}`
+        : "未分类";
+    const uncatChildren: EnrichedNode[] = uncategorizedNotes
+      .slice(0, NOTES_PER_FOLDER_LIMIT)
+      .map((n) => ({
+        key: noteKey(n.id),
+        title: tabTitleByNoteId.get(n.id) || n.title || "未命名",
+        isLeaf: true,
+        data: { isNote: true, note: n },
+      }));
+    folderTree.push({
+      key: UNCATEGORIZED_KEY,
+      title: uncatTitle,
+      isLeaf: false,
+      children: uncatChildren.length ? uncatChildren : undefined,
+      data: { isNote: false },
+    });
+    return folderTree;
+  }, [folders, creatingUnderKey, notesByFolder, tabTitleByNoteId, uncategorizedNotes]);
 
   return (
     <div
@@ -1572,7 +1676,17 @@ export function NotesPanel() {
                 }}
                 onBlur={submitCreateRoot}
                 autoFocus
+                allowClear
                 style={{ marginBottom: 4 }}
+                suffix={
+                  <MicButton
+                    size="small"
+                    stripTrailingPunctuation
+                    onTranscribed={(text) =>
+                      setNewRootName((prev) => (prev ? `${prev} ${text}` : text))
+                    }
+                  />
+                }
               />
             )}
             {initialLoading && treeData.length === 0 ? (
@@ -1600,7 +1714,35 @@ export function NotesPanel() {
                   },
                 }}
                 onDrop={handleDrop}
-                selectedKeys={selectedKey ? [selectedKey] : []}
+                onDragEnter={({ node }) => {
+                  // 拖拽 hover 到折叠文件夹时自动展开，避免用户拖到一半还要先点开。
+                  // 仅对真实文件夹节点生效；笔记叶子 / 新建占位 / 未分类逻辑各自独立处理。
+                  const k = String(node.key);
+                  if (k.startsWith(NEW_NODE_PREFIX) || isNoteKey(k)) return;
+                  if (k === UNCATEGORIZED_KEY) {
+                    if (!uncategorizedExpanded) {
+                      setUncategorizedExpanded(true);
+                      if (uncategorizedNotes.length === 0) {
+                        void loadUncategorizedNotes();
+                      }
+                    }
+                    return;
+                  }
+                  const id = Number(k);
+                  if (!Number.isFinite(id)) return;
+                  const collapsed = collapsedFolderKeys.includes(k);
+                  if (collapsed) {
+                    useAppStore.getState().setNotesFolderCollapsed(k, false);
+                    if (!notesByFolder.has(id)) void loadNotesForFolder(id);
+                  }
+                }}
+                selectedKeys={
+                  isUncategorizedActive
+                    ? [UNCATEGORIZED_KEY]
+                    : selectedKey
+                      ? [selectedKey]
+                      : []
+                }
                 expandedKeys={expandedKeys}
                 onExpand={handleExpand}
                 titleRender={renderTitle}
@@ -1654,168 +1796,6 @@ export function NotesPanel() {
                 </div>
               )
             )}
-            {/* 常驻虚拟"未分类"文件夹：folder_id IS NULL 的笔记归在这里。
-                · 点 chevron 展开 → 直接看到所有未分类笔记的扁平列表
-                · 点标题文字 → 跳到 /notes?folder=uncategorized 看完整列表
-                这样从 NotesPanel 顶部"+ 新建笔记"建出来的笔记（默认 null folder）
-                能立刻在侧边栏看到，不用切到主区。 */}
-            <div style={{ marginTop: 4 }}>
-              <div
-                className="select-none flex items-center gap-1"
-                style={{
-                  padding: "4px 10px",
-                  borderRadius: 4,
-                  fontSize: 13,
-                  color: isUncategorizedActive
-                    ? token.colorPrimary
-                    : token.colorTextSecondary,
-                  background: isUncategorizedActive
-                    ? token.colorPrimaryBg
-                    : "transparent",
-                  transition: "background-color .12s",
-                }}
-                onMouseEnter={(e) => {
-                  if (!isUncategorizedActive) {
-                    e.currentTarget.style.background = token.colorFillTertiary;
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!isUncategorizedActive) {
-                    e.currentTarget.style.background = "transparent";
-                  }
-                }}
-              >
-                <span
-                  className="cursor-pointer flex items-center"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setUncategorizedExpanded(!uncategorizedExpanded);
-                  }}
-                  style={{ width: 14, height: 14, color: token.colorTextTertiary }}
-                  title={uncategorizedExpanded ? "收起" : "展开"}
-                >
-                  {uncategorizedExpanded ? (
-                    <ChevronDown size={11} strokeWidth={2.2} />
-                  ) : (
-                    <ChevronRight size={11} strokeWidth={2.2} />
-                  )}
-                </span>
-                <span
-                  className="cursor-pointer flex items-center gap-2 flex-1 min-w-0"
-                  onClick={() => {
-                    // 与文件夹一致：点标题 = 切换展开/折叠 + 跳主区
-                    setUncategorizedExpanded(!uncategorizedExpanded);
-                    navigate("/notes?folder=uncategorized");
-                  }}
-                >
-                  <FolderIcon size={13} style={{ opacity: 0.6, flexShrink: 0 }} />
-                  <span className="truncate">未分类</span>
-                  {uncategorizedNotes.length > 0 && (
-                    <span
-                      style={{
-                        fontSize: 11,
-                        color: token.colorTextQuaternary,
-                        flexShrink: 0,
-                      }}
-                    >
-                      {uncategorizedNotes.length}
-                    </span>
-                  )}
-                </span>
-              </div>
-              {uncategorizedExpanded && (
-                <div style={{ paddingLeft: 22 }}>
-                  {uncategorizedNotes.length === 0 ? (
-                    <div
-                      style={{
-                        padding: "4px 10px",
-                        fontSize: 12,
-                        color: token.colorTextQuaternary,
-                      }}
-                    >
-                      暂无未分类笔记
-                    </div>
-                  ) : (
-                    uncategorizedNotes.map((n) => {
-                      const displayTitle =
-                        tabTitleByNoteId.get(n.id) || n.title || "未命名";
-                      const { emoji, rest } = parseEmojiPrefix(displayTitle);
-                      const display = rest || displayTitle;
-                      const noteSelected = selectedKey === noteKey(n.id);
-                      return (
-                        <div
-                          key={n.id}
-                          className="cursor-pointer select-none flex items-center gap-1.5"
-                          style={{
-                            padding: "3px 10px",
-                            borderRadius: 4,
-                            fontSize: 13,
-                            color: noteSelected
-                              ? token.colorPrimary
-                              : token.colorText,
-                            background: noteSelected
-                              ? token.colorPrimaryBg
-                              : "transparent",
-                            transition: "background-color .12s",
-                          }}
-                          onMouseEnter={(e) => {
-                            if (!noteSelected) {
-                              e.currentTarget.style.background =
-                                token.colorFillTertiary;
-                            }
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!noteSelected) {
-                              e.currentTarget.style.background = "transparent";
-                            }
-                          }}
-                          onClick={() => {
-                            setSelectedKey(noteKey(n.id));
-                            navigate(`/notes/${n.id}`);
-                          }}
-                          onContextMenu={(e) => {
-                            // 未分类下的笔记是手写 div（不在 antd Tree 里），需要
-                            // 自己挂 onContextMenu 触发同款菜单。复用 buildMenuItems
-                            // 的笔记叶子分支（isNoteKey 自动分派）
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setContextMenu({
-                              key: noteKey(n.id),
-                              name: n.title || "未命名",
-                              x: e.clientX,
-                              y: e.clientY,
-                              ts: Date.now(),
-                            });
-                          }}
-                          title={displayTitle}
-                        >
-                          {emoji ? (
-                            <span
-                              style={{
-                                fontSize: 14,
-                                flexShrink: 0,
-                                lineHeight: 1,
-                              }}
-                            >
-                              {emoji}
-                            </span>
-                          ) : (
-                            <FileText
-                              size={13}
-                              style={{
-                                flexShrink: 0,
-                                color: token.colorTextTertiary,
-                              }}
-                            />
-                          )}
-                          <span className="truncate">{display}</span>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              )}
-            </div>
           </div>
         )}
       </div>

@@ -168,19 +168,9 @@ export function DraftNoteModal({ open, onClose, onSaved }: DraftNoteModalProps) 
                 fontSize: 13,
                 color: token.colorTextSecondary,
                 marginBottom: 6,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
               }}
             >
-              <span>
-                主题 <span style={{ color: token.colorError }}>*</span>
-              </span>
-              <MicButton
-                onTranscribed={(text) =>
-                  setTopic((prev) => (prev ? `${prev} ${text}` : text))
-                }
-              />
+              主题 <span style={{ color: token.colorError }}>*</span>
             </div>
             <Input
               value={topic}
@@ -189,6 +179,14 @@ export function DraftNoteModal({ open, onClose, onSaved }: DraftNoteModalProps) 
               maxLength={80}
               showCount
               allowClear
+              suffix={
+                <MicButton
+                  stripTrailingPunctuation
+                  onTranscribed={(text) =>
+                    setTopic((prev) => (prev ? `${prev} ${text}` : text))
+                  }
+                />
+              }
             />
           </div>
 

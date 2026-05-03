@@ -25,12 +25,26 @@ impl FolderService {
     }
 
     /// 删除文件夹
-    /// 当文件夹含有子文件夹或未回收的笔记时拒绝删除
+    /// 当文件夹含有子文件夹或未回收的笔记时拒绝删除。
+    /// 注：隐藏笔记 / 加密笔记 UI 默认不显示，但 is_deleted=0 仍占用文件夹 ——
+    /// 错误信息显式给出数量，方便用户判断是不是有"看不见的"笔记拦着。
     pub fn delete(db: &Database, id: i64) -> Result<(), AppError> {
-        if db.folder_has_children(id)? {
-            return Err(AppError::InvalidInput(
-                "该文件夹下还有子文件夹或笔记，请先清空后再删除".into(),
-            ));
+        let (sub_folders, active_notes) = db.folder_children_count(id)?;
+        if sub_folders > 0 || active_notes > 0 {
+            let mut parts = Vec::new();
+            if sub_folders > 0 {
+                parts.push(format!("{} 个子文件夹", sub_folders));
+            }
+            if active_notes > 0 {
+                parts.push(format!(
+                    "{} 篇笔记（含隐藏 / 加密 / 已打开但未保存的）",
+                    active_notes
+                ));
+            }
+            return Err(AppError::InvalidInput(format!(
+                "该文件夹下还有 {}，请先清空后再删除",
+                parts.join(" 和 ")
+            )));
         }
         let deleted = db.delete_folder(id)?;
         if !deleted {

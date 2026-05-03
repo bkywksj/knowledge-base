@@ -422,6 +422,8 @@ function FolderChangeCell({
     try {
       await noteApi.moveToFolder(noteId, folderId);
       useAppStore.getState().bumpFoldersRefresh();
+      // 同时刷新侧边栏 NotesPanel 的「未分类」/ 目标文件夹笔记列表
+      useAppStore.getState().bumpNotesRefresh();
       onChanged();
       setOpen(false);
     } catch (e) {
@@ -1258,14 +1260,20 @@ export default function NoteListPage() {
         </Space>
       </div>
 
-      {/* 搜索栏 */}
-      <Space.Compact className="mb-2 flex-shrink-0" style={{ width: "100%" }}>
+      {/* 搜索栏：mic 在 Input 的 suffix 内（与首页搜索一致）；右侧 Input 和「搜索」
+          按钮之间留 6px 间距，避免 Compact 紧贴模式让 suffix 显示拥挤。 */}
+      <div
+        className="mb-2 flex-shrink-0 flex items-stretch gap-1.5"
+        style={{ width: "100%" }}
+      >
         <Input
+          size="large"
           placeholder="搜索笔记标题..."
-          prefix={<Search size={14} />}
+          prefix={<Search size={16} />}
           suffix={
             <MicButton
               size="small"
+              stripTrailingPunctuation
               onTranscribed={(text) =>
                 setKeyword((prev) => (prev ? `${prev} ${text}` : text))
               }
@@ -1275,11 +1283,12 @@ export default function NoteListPage() {
           onChange={(e) => setKeyword(e.target.value)}
           onPressEnter={handleSearch}
           allowClear
+          style={{ flex: 1 }}
         />
-        <Button type="primary" onClick={handleSearch}>
+        <Button size="large" type="primary" onClick={handleSearch}>
           搜索
         </Button>
-      </Space.Compact>
+      </div>
 
       {/* 批量工具条：仅列表视图 + 有选中时显示 */}
       {viewMode === "list" && selectedIds.length > 0 && (

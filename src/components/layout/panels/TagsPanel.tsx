@@ -312,6 +312,7 @@ export function TagsPanel() {
           suffix={
             <MicButton
               size="small"
+              stripTrailingPunctuation
               onTranscribed={(text) =>
                 setFilter((prev) => (prev ? `${prev} ${text}` : text))
               }

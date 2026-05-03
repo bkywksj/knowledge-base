@@ -19,6 +19,7 @@ import {
   Save,
   Sparkles,
 } from "lucide-react";
+import { CloseCircleFilled } from "@ant-design/icons";
 import { dailyApi, noteApi } from "@/lib/api";
 import { MicButton } from "@/components/MicButton";
 import { TiptapEditor } from "@/components/editor";
@@ -380,24 +381,59 @@ export default function DailyPage() {
             </div>
           ) : (
             <>
-              {/* 标题 + 旁挂 MicButton（mic 用兄弟元素而非 suffix，避免 antd
-                  .ant-input-affix-wrapper 包裹导致标题浮起白底大框） */}
+              {/* 标题：用 position:relative 父级 + 绝对定位 mic / clear 模拟 suffix。
+                  不直接用 antd Input.suffix / allowClear——两者都会包一层
+                  .ant-input-affix-wrapper 把 borderless 大标题撑成白底大框。 */}
               <div
-                className="flex items-center gap-1"
-                style={{ marginBottom: 12 }}
+                style={{ position: "relative", marginBottom: 12 }}
               >
                 <Input
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   placeholder="日记标题"
                   variant="borderless"
-                  className="editor-title flex-1"
+                  className="editor-title"
+                  style={{ paddingRight: 64 }}
                 />
-                <MicButton
-                  onTranscribed={(text) =>
-                    setTitle((prev) => (prev ? `${prev} ${text}` : text))
-                  }
-                />
+                <div
+                  style={{
+                    position: "absolute",
+                    right: 4,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  {title && (
+                    // 与 antd allowClear 视觉一致：CloseCircleFilled 灰色实心圆 ×，hover 加深
+                    <CloseCircleFilled
+                      onClick={() => setTitle("")}
+                      title="清空"
+                      style={{
+                        cursor: "pointer",
+                        fontSize: 14,
+                        color: "rgba(0, 0, 0, 0.25)",
+                        transition: "color 0.2s",
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as unknown as HTMLElement).style.color =
+                          "rgba(0, 0, 0, 0.45)";
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as unknown as HTMLElement).style.color =
+                          "rgba(0, 0, 0, 0.25)";
+                      }}
+                    />
+                  )}
+                  <MicButton
+                    stripTrailingPunctuation
+                    onTranscribed={(text) =>
+                      setTitle((prev) => (prev ? `${prev} ${text}` : text))
+                    }
+                  />
+                </div>
               </div>
 
               {/* 内容编辑区 */}

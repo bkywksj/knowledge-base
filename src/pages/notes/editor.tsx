@@ -21,6 +21,7 @@ import {
   theme as antdTheme,
 } from "antd";
 import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, ChevronDown, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, MessageSquare, ListTree, Network, ExternalLink } from "lucide-react";
+import { CloseCircleFilled } from "@ant-design/icons";
 import { useAppStore } from "@/store";
 import { useTabsStore } from "@/store/tabs";
 import { noteApi, tagApi, folderApi, linkApi, exportApi, sourceFileApi, vaultApi, sourceWritebackApi } from "@/lib/api";
@@ -616,6 +617,14 @@ export default function NoteEditorPage() {
   });
   // latest 字段：handleMove 写入最新宽度，handleUp 关闭时读出落库（避免闭包陷阱）
   const splitterDragRef = useRef<{ startX: number; startWidth: number; latest: number } | null>(null);
+
+  /** 右侧大纲宽度（像素，持久化到 localStorage） */
+  const [outlineWidth, setOutlineWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem("editor.outlineWidth"));
+    return Number.isFinite(saved) && saved >= 160 ? saved : 200;
+  });
+  const outlineDragRef = useRef<{ startX: number; startWidth: number; latest: number } | null>(null);
+  const [outlineDragging, setOutlineDragging] = useState(false);
 
   // 标签状态
   const [noteTags, setNoteTags] = useState<Tag[]>([]);
@@ -1362,6 +1371,10 @@ export default function NoteEditorPage() {
     try {
       await noteApi.moveToFolder(noteId, folderId);
       setNote((prev) => (prev ? { ...prev, folder_id: folderId } : prev));
+      // 通知侧边栏 NotesPanel 重拉「未分类」+「目标文件夹」笔记列表，
+      // 否则在编辑器里改完目录，左侧侧边栏对应位置不会出现这条笔记
+      useAppStore.getState().bumpNotesRefresh();
+      useAppStore.getState().bumpFoldersRefresh();
       message.success("已移动");
     } catch (e) {
       message.error(String(e));
@@ -1622,24 +1635,67 @@ export default function NoteEditorPage() {
         className="editor-body"
         ref={editorBodyRef}
         data-outline={effectiveOutlineVisible ? "on" : undefined}
-        style={{ flex: 1, minWidth: 0 }}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          ...(effectiveOutlineVisible && {
+            // 覆盖 CSS 里固定的 200px：1fr | 6px 分隔 | 自适应宽度的大纲列
+            gridTemplateColumns: `minmax(0, 1fr) 6px ${outlineWidth}px`,
+          }),
+        }}
       >
         <div className="editor-content-area">
-          {/* 标题 + 旁挂 MicButton（mic 用兄弟元素而非 suffix，避免 antd
-              .ant-input-affix-wrapper 包裹导致标题浮起白底大框） */}
-          <div className="flex items-center gap-1">
+          {/* 标题：用 position:relative 父级 + 绝对定位 mic / clear 模拟 suffix。
+              不直接用 antd Input.suffix / allowClear——两者都会包一层
+              .ant-input-affix-wrapper 把 borderless 大标题撑成白底大框。 */}
+          <div style={{ position: "relative" }}>
             <Input
               value={title}
               onChange={(e) => handleTitleChange(e.target.value)}
               placeholder="笔记标题"
               variant="borderless"
-              className="editor-title flex-1"
+              className="editor-title"
+              style={{ paddingRight: 64 }}
             />
-            <MicButton
-              onTranscribed={(text) =>
-                handleTitleChange(title ? `${title} ${text}` : text)
-              }
-            />
+            <div
+              style={{
+                position: "absolute",
+                right: 4,
+                top: "50%",
+                transform: "translateY(-50%)",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              {title && (
+                // 与 antd allowClear 视觉一致：CloseCircleFilled 灰色实心圆 ×，hover 加深
+                <CloseCircleFilled
+                  onClick={() => handleTitleChange("")}
+                  title="清空"
+                  style={{
+                    cursor: "pointer",
+                    fontSize: 14,
+                    color: "rgba(0, 0, 0, 0.25)",
+                    transition: "color 0.2s",
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as unknown as HTMLElement).style.color =
+                      "rgba(0, 0, 0, 0.45)";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as unknown as HTMLElement).style.color =
+                      "rgba(0, 0, 0, 0.25)";
+                  }}
+                />
+              )}
+              <MicButton
+                stripTrailingPunctuation
+                onTranscribed={(text) =>
+                  handleTitleChange(title ? `${title} ${text}` : text)
+                }
+              />
+            </div>
           </div>
 
           {/* 文件夹 + 标签元数据 */}
@@ -1681,10 +1737,56 @@ export default function NoteEditorPage() {
           />
         </div>
 
+        {/* 大纲左侧拖拽分隔条：6px 宽，col-resize；与思维导图分隔条同模式：
+            mousedown 进入拖拽态 → 全局 mousemove 调宽 → mouseup 解绑落库 */}
+        {effectiveOutlineVisible && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="拖动调整大纲宽度"
+            className="editor-outline-splitter"
+            data-dragging={outlineDragging || undefined}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              outlineDragRef.current = {
+                startX: e.clientX,
+                startWidth: outlineWidth,
+                latest: outlineWidth,
+              };
+              setOutlineDragging(true);
+              const handleMove = (ev: MouseEvent) => {
+                const ref = outlineDragRef.current;
+                if (!ref) return;
+                // 鼠标向左 → 大纲变宽（X 减小）
+                const delta = ref.startX - ev.clientX;
+                const next = Math.max(160, Math.min(480, ref.startWidth + delta));
+                ref.latest = next;
+                setOutlineWidth(next);
+              };
+              const handleUp = () => {
+                window.removeEventListener("mousemove", handleMove);
+                window.removeEventListener("mouseup", handleUp);
+                const ref = outlineDragRef.current;
+                if (ref) {
+                  localStorage.setItem("editor.outlineWidth", String(ref.latest));
+                  outlineDragRef.current = null;
+                }
+                setOutlineDragging(false);
+              };
+              window.addEventListener("mousemove", handleMove);
+              window.addEventListener("mouseup", handleUp);
+            }}
+          />
+        )}
+
         {/* 右侧大纲面板：sticky 跟随滚动；用户偏好关闭 / 思维导图打开 时自隐 */}
         {effectiveOutlineVisible && (
           <aside className="editor-outline-aside">
-            <EditorOutline editor={editorInstance} scrollRoot={editorBodyRef.current} />
+            <EditorOutline
+              editor={editorInstance}
+              scrollRoot={editorBodyRef.current}
+              onHide={toggleOutline}
+            />
           </aside>
         )}
       </div>

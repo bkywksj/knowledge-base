@@ -181,8 +181,10 @@ export function SubtaskList({ parentTaskId, onChanged, compact = false }: Props)
         onPressEnter={handleAdd}
         placeholder="+ 新增子任务（回车确认）"
         prefix={<Plus size={12} style={{ color: token.colorTextTertiary }} />}
+        allowClear
         suffix={
           <MicButton
+            stripTrailingPunctuation
             onTranscribed={(text) =>
               setDraft((prev) => (prev ? `${prev} ${text}` : text))
             }

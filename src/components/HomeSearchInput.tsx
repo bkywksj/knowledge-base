@@ -96,6 +96,7 @@ export function HomeSearchInput({
         suffix={
           <MicButton
             size="small"
+            stripTrailingPunctuation
             onTranscribed={(text) =>
               onChange(value ? `${value} ${text}` : text)
             }

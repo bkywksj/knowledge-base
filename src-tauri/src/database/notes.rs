@@ -452,7 +452,7 @@ impl Database {
         let offset = (page.saturating_sub(1)) * page_size;
         let select_sql = format!(
             "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted,
-                    word_count, created_at, updated_at, source_file_path, source_file_type
+                    word_count, created_at, updated_at, source_file_path, source_file_type, sort_order
              FROM notes
              WHERE is_deleted = 0 AND is_hidden = 1{}
              ORDER BY updated_at DESC

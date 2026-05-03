@@ -29,12 +29,12 @@ import {
   XCircle,
   Loader2,
   Paperclip,
-  FileSpreadsheet,
   Save,
   X,
   Copy,
   Quote,
 } from "lucide-react";
+import { CloseCircleFilled } from "@ant-design/icons";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -1123,35 +1123,69 @@ export default function AiChatPage() {
               <div className="flex gap-2 items-end">
                 <Tooltip title="附加笔记到本对话上下文（整对话共享）">
                   <Button
-                    icon={<Paperclip size={16} />}
+                    icon={<BookOpen size={16} />}
                     onClick={() => setAttachOpen(true)}
                     disabled={streaming}
                   />
                 </Tooltip>
                 <Tooltip title="附加文件作为本次提问的上下文（支持 Excel / PDF / Markdown / TXT 等，可多选）">
                   <Button
-                    icon={<FileSpreadsheet size={16} />}
+                    icon={<Paperclip size={16} />}
                     loading={attachingFile}
                     onClick={handleAddAttachment}
                     disabled={streaming}
                   />
                 </Tooltip>
-                <TextArea
-                  value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="输入问题… (Enter 发送，Shift+Enter 换行)"
-                  autoSize={{ minRows: 1, maxRows: 4 }}
-                  disabled={streaming}
-                  className="flex-1"
-                />
-                <MicButton
-                  size="middle"
-                  disabled={streaming}
-                  onTranscribed={(text) =>
-                    setInputText((prev) => (prev ? `${prev} ${text}` : text))
-                  }
-                />
+                {/* TextArea 包一层 relative，mic + clear 绝对定位浮在右下角，
+                    与各处带边框输入框「× 在 mic 左侧」的视觉规则一致。 */}
+                <div style={{ position: "relative", flex: 1 }}>
+                  <TextArea
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="输入问题… (Enter 发送，Shift+Enter 换行)"
+                    autoSize={{ minRows: 1, maxRows: 4 }}
+                    disabled={streaming}
+                    style={{ paddingRight: 64 }}
+                  />
+                  <div
+                    style={{
+                      position: "absolute",
+                      right: 8,
+                      bottom: 6,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    {inputText && !streaming && (
+                      <CloseCircleFilled
+                        onClick={() => setInputText("")}
+                        title="清空"
+                        style={{
+                          cursor: "pointer",
+                          fontSize: 14,
+                          color: "rgba(0, 0, 0, 0.25)",
+                          transition: "color 0.2s",
+                        }}
+                        onMouseEnter={(e) => {
+                          (e.currentTarget as unknown as HTMLElement).style.color =
+                            "rgba(0, 0, 0, 0.45)";
+                        }}
+                        onMouseLeave={(e) => {
+                          (e.currentTarget as unknown as HTMLElement).style.color =
+                            "rgba(0, 0, 0, 0.25)";
+                        }}
+                      />
+                    )}
+                    <MicButton
+                      disabled={streaming}
+                      onTranscribed={(text) =>
+                        setInputText((prev) => (prev ? `${prev} ${text}` : text))
+                      }
+                    />
+                  </div>
+                </div>
                 {streaming ? (
                   <Button
                     danger

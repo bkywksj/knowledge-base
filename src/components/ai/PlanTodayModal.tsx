@@ -254,6 +254,7 @@ export function PlanTodayModal({ open, onClose, onSaved }: PlanTodayModalProps) 
             >
               <span>今日目标（可选）</span>
               <MicButton
+                stripTrailingPunctuation
                 onTranscribed={(text) =>
                   setGoal((prev) => (prev ? `${prev} ${text}` : text))
                 }
