@@ -20,9 +20,11 @@ import { useEffect, useRef, useState } from "react";
 import { Button, Tooltip, App as AntdApp } from "antd";
 import { Mic, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { emit } from "@tauri-apps/api/event";
 import { asrApi } from "@/lib/api";
 import { useAudioLevel } from "@/hooks/useAudioLevel";
 import { useSilenceAutoStop } from "@/hooks/useSilenceAutoStop";
+import { useAsrStore } from "@/store/asr";
 
 type Status = "idle" | "recording" | "transcribing" | "disabled";
 
@@ -76,6 +78,15 @@ export function MicButton({
   const { level, bands } = useAudioLevel(activeStream, status === "recording", 3);
   // VAD：检测到说话后连续静音 1.5s 自动停止（与 tauri-cc 同款阈值）
   useSilenceAutoStop(level, status === "recording", () => stopRecording());
+
+  // 全局快捷键控制器（AsrToggleController）写入的录音状态：
+  // 让本组件在自己未被点击但全局快捷键已触发录音时镜像变红，所有麦克风入口状态一致。
+  // 注意：自身正在录音（status === "recording"）时优先用本地状态，避免与全局争夺渲染。
+  const globalAsrPhase = useAsrStore((s) => s.globalAsrPhase);
+  const globalAsrLevel = useAsrStore((s) => s.globalAsrLevel);
+  const isMirrored = status === "idle" && globalAsrPhase !== "idle";
+  const isMirrorRecording = status === "idle" && globalAsrPhase === "recording";
+  const isMirrorTranscribing = status === "idle" && globalAsrPhase === "transcribing";
 
   // 启动时拉一次 ASR 配置；后续可以监听 store 变更，但配置改动通常要重启录音组件，先不做
   useEffect(() => {
@@ -172,6 +183,15 @@ export function MicButton({
   }
 
   function handleClick() {
+    // 镜像状态下点击：把停止信号路由给全局控制器，避免本组件去抢被占用的麦克风
+    if (isMirrorRecording) {
+      void emit("asr:toggle");
+      return;
+    }
+    if (isMirrorTranscribing) {
+      // 转写中，按钮已 disabled，正常走不到这里；冗余保护
+      return;
+    }
     if (!enabled) {
       message.warning({
         content: (
@@ -195,12 +215,17 @@ export function MicButton({
     // transcribing / disabled 状态下按钮已 disabled，不会进 onClick
   }
 
-  const isRecording = status === "recording";
-  const isBusy = status === "transcribing";
+  // 自身真在录音 vs 镜像别处的录音：合并成一个"看起来像录音"的标志驱动 UI
+  const isRecording = status === "recording" || isMirrorRecording;
+  const isBusy = status === "transcribing" || isMirrorTranscribing;
+  // 镜像态下用全局 level（所有 MicButton 同步脉动）；自身录音用本地 level
+  const effectiveLevel = isMirrorRecording ? globalAsrLevel : level;
   const effectiveTooltip =
     tooltip ??
     (isRecording
-      ? "再次点击结束录音"
+      ? isMirrored
+        ? "全局语音识别中，点击停止"
+        : "再次点击结束录音"
       : isBusy
       ? "正在识别…"
       : enabled
@@ -210,7 +235,8 @@ export function MicButton({
   const icon = isBusy ? (
     <Loader2 size={14} className="animate-spin" />
   ) : isRecording ? (
-    // 录音中：3 条 mini 柱跟麦克风分频段实时跳动；点击仍触发 stopRecording
+    // 录音中：3 条 mini 柱跟麦克风分频段实时跳动；点击触发 stop（自身或全局）
+    // 镜像态下用 effectiveLevel 给 3 条柱同频脉动（拿不到本地 bands）
     <span
       style={{
         display: "inline-flex",
@@ -220,7 +246,7 @@ export function MicButton({
       }}
       aria-label="正在录音"
     >
-      {bands.map((v, i) => (
+      {(isMirrorRecording ? [effectiveLevel, effectiveLevel, effectiveLevel] : bands).map((v, i) => (
         <span
           key={i}
           style={{
@@ -241,7 +267,7 @@ export function MicButton({
   // 半径限制在 0-2px：放在 Input.suffix 这种被 overflow 切掉的紧凑容器里也安全。
   // 录音时的主要视觉反馈靠按钮内 3 条 mini 波形柱 + 红色 danger 主题。
   const recordingShadow = isRecording
-    ? `0 0 0 ${Math.round(level * 2)}px rgba(255, 77, 79, ${0.25 + level * 0.4})`
+    ? `0 0 0 ${Math.round(effectiveLevel * 2)}px rgba(255, 77, 79, ${0.25 + effectiveLevel * 0.4})`
     : undefined;
 
   return (
