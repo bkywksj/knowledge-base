@@ -40,6 +40,7 @@ import { MicButton } from "@/components/MicButton";
 import { NoteAiDrawer } from "@/components/ai/NoteAiDrawer";
 import { MindMapView } from "@/components/notes/MindMapView";
 import type { Note, Tag, Folder, NoteLink } from "@/types";
+import { accelToKeys, findShortcut } from "@/lib/shortcuts/registry";
 
 const { Text } = Typography;
 
@@ -647,6 +648,9 @@ function DesktopNoteEditorPage() {
   // 反向链接状态
   const [backlinks, setBacklinks] = useState<NoteLink[]>([]);
 
+  // 导出菜单受控状态：让 Ctrl+Shift+E 可以唤起这个 Dropdown
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+
   // 大纲：editor 实例（来自 TiptapEditor 的 onEditorReady 回调）+ 滚动容器 ref
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [editorInstance, setEditorInstance] = useState<any | null>(null);
@@ -683,6 +687,17 @@ function DesktopNoteEditorPage() {
   }, [editorInstance]);
   const outlineVisible = useAppStore((s) => s.outlineVisible);
   const toggleOutline = useAppStore((s) => s.toggleOutline);
+  const autoSaveEnabled = useAppStore((s) => s.autoSaveEnabled);
+  const autoSaveDelay = useAppStore((s) => s.autoSaveDelay);
+  /**
+   * 最近一次"自动保存"完成的时间戳（毫秒）。
+   * 仅自动保存（debounce 触发的 silent save）写入；手动保存按钮 / Ctrl+S 不写，
+   * 因为手动保存已有 toast 反馈，无需顶部"已自动保存 N 秒前"的二次提示。
+   * 切笔记 / 卸载组件后重置，避免显示上一篇笔记的时间戳。
+   */
+  const [lastAutoSavedAt, setLastAutoSavedAt] = useState<number | null>(null);
+  /** 自动保存触发的"保存中"瞬时标记（区别于手动保存的 saving，只用于顶部提示文案） */
+  const [autoSaving, setAutoSaving] = useState(false);
   /**
    * 思维导图打开时自动暂时隐藏大纲——三栏（编辑器+大纲+导图）会挤压编辑可读宽度。
    * 不动用户在 store 里的偏好；mindMapOpen 切回 false 后大纲自动恢复。
@@ -1105,11 +1120,55 @@ function DesktopNoteEditorPage() {
   // Ctrl+S / Cmd+S 保存：用 ref 避免 useEffect 每次渲染都 re-subscribe
   const saveRef = useRef<() => void>(() => {});
   saveRef.current = handleSave;
+
+  // 自动保存：开关开启时，dirty 后停止输入达 autoSaveDelay 毫秒触发一次静默保存。
+  // - 闭包陷阱用 ref 隔离：依赖只放触发条件（dirty / autoSaveEnabled / 防抖键），
+  //   handleSave 自身在 ref 里；否则每次 setNote/setDraft 都会重置 timer 永远不触发。
+  // - 防抖键 = title + content 摘要长度，用户每打一个字 effect 重跑，timer 重置。
+  // - 切笔记 / 卸载时清掉 timer 并重置 lastAutoSavedAt，避免新笔记复用旧时间戳。
+  const autoSaveTriggerRef = useRef<() => Promise<void>>(async () => {});
+  autoSaveTriggerRef.current = async () => {
+    setAutoSaving(true);
+    try {
+      await handleSave(true);
+      setLastAutoSavedAt(Date.now());
+    } finally {
+      setAutoSaving(false);
+    }
+  };
+  useEffect(() => {
+    if (!autoSaveEnabled) return;
+    if (!dirty) return;
+    if (!title.trim()) return;
+    const timer = setTimeout(() => {
+      void autoSaveTriggerRef.current();
+    }, autoSaveDelay);
+    return () => clearTimeout(timer);
+  }, [autoSaveEnabled, autoSaveDelay, dirty, title, content]);
+
+  // 切换到不同笔记时，清掉上一篇笔记的"已自动保存"时间戳，避免视觉残留
+  useEffect(() => {
+    setLastAutoSavedAt(null);
+    setAutoSaving(false);
+  }, [noteId]);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
         e.preventDefault();
         saveRef.current();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Ctrl+Shift+E / Cmd+Shift+E 唤起导出菜单（toggle，再按一次关闭）
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        setExportMenuOpen((v) => !v);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -1537,7 +1596,25 @@ function DesktopNoteEditorPage() {
               更新于 {relativeTime(note.updated_at)}
             </Text>
           )}
-          {dirty && <Text type="warning">未保存</Text>}
+          {/*
+            * 保存状态提示：优先级 自动保存中 > 未保存 > 已自动保存。
+            * - 自动保存关闭：只在 dirty 时显示"未保存"（沿用旧行为）。
+            * - 自动保存开启：dirty 时显示"未保存"等防抖触发；保存中显示"自动保存中..."；
+            *   保存完成显示"已自动保存 {相对时间}"，让用户知道软件刚帮他存过。
+            */}
+          {autoSaving ? (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              自动保存中…
+            </Text>
+          ) : dirty ? (
+            <Text type="warning" style={{ fontSize: 12 }}>
+              未保存
+            </Text>
+          ) : autoSaveEnabled && lastAutoSavedAt ? (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              已自动保存 {relativeTime(new Date(lastAutoSavedAt).toISOString())}
+            </Text>
+          ) : null}
         </Space>
         <Space align="center">
           <Tooltip title={focusMode ? "退出专注模式 (Esc)" : "专注模式 (F11)"}>
@@ -1704,39 +1781,50 @@ function DesktopNoteEditorPage() {
               </Tooltip>
             )
           )}
-          {/* T-020 导出按钮：默认导出 Markdown；右侧下拉可选 Word / HTML */}
-          <Space.Compact>
-            <Tooltip title="导出为 Markdown">
-              <Button
-                icon={<Share size={16} />}
-                onClick={handleExportNote}
-              />
-            </Tooltip>
-            <Dropdown
-              trigger={["click"]}
-              menu={{
-                items: [
-                  {
-                    key: "md",
-                    label: "导出为 Markdown",
-                    onClick: () => void handleExportNote(),
-                  },
-                  {
-                    key: "docx",
-                    label: "导出为 Word (.docx)",
-                    onClick: () => void handleExportWord(),
-                  },
-                  {
-                    key: "html",
-                    label: "导出为 HTML (单文件)",
-                    onClick: () => void handleExportHtml(),
-                  },
-                ],
-              }}
-            >
-              <Button icon={<ChevronDown size={14} />} title="更多导出格式" />
-            </Dropdown>
-          </Space.Compact>
+          {/* T-020 导出按钮：默认导出 Markdown；右侧下拉可选 Word / HTML（Ctrl+Shift+E 唤起菜单） */}
+          {(() => {
+            const exportAccel = accelToKeys(
+              findShortcut("editor.exportMenu")?.defaultAccel ?? "CommandOrControl+Shift+E",
+            ).join("+");
+            return (
+              <Space.Compact>
+                <Tooltip title="导出为 Markdown">
+                  <Button
+                    icon={<Share size={16} />}
+                    onClick={handleExportNote}
+                  />
+                </Tooltip>
+                <Dropdown
+                  trigger={["click"]}
+                  open={exportMenuOpen}
+                  onOpenChange={setExportMenuOpen}
+                  menu={{
+                    items: [
+                      {
+                        key: "md",
+                        label: "导出为 Markdown",
+                        onClick: () => void handleExportNote(),
+                      },
+                      {
+                        key: "docx",
+                        label: "导出为 Word (.docx)",
+                        onClick: () => void handleExportWord(),
+                      },
+                      {
+                        key: "html",
+                        label: "导出为 HTML (单文件)",
+                        onClick: () => void handleExportHtml(),
+                      },
+                    ],
+                  }}
+                >
+                  <Tooltip title={`更多导出格式 (${exportAccel})`}>
+                    <Button icon={<ChevronDown size={14} />} />
+                  </Tooltip>
+                </Dropdown>
+              </Space.Compact>
+            );
+          })()}
           <Tooltip title="问 AI">
             <Button
               icon={<MessageSquare size={16} />}

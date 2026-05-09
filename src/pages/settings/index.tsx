@@ -37,6 +37,7 @@ import {
   EDITOR_FONT_SIZE_OPTIONS,
   EDITOR_LINE_HEIGHT_OPTIONS,
   UI_SCALE_OPTIONS,
+  AUTO_SAVE_DELAY_OPTIONS,
   suggestUiScale,
   type EditorFontFamily,
 } from "@/store";
@@ -228,6 +229,7 @@ const SETTINGS_NAV_ITEMS: { id: string; label: string }[] = [
   { id: "settings-hidden-pin", label: "隐藏笔记 PIN" },
   { id: "settings-shortcuts", label: "全局快捷键" },
   { id: "settings-editor", label: "编辑器外观" },
+  { id: "settings-autosave", label: "自动保存" },
   { id: "settings-task-reminder", label: "待办提醒" },
   { id: "settings-import", label: "导入笔记" },
   { id: "settings-export", label: "导出 Markdown" },
@@ -474,6 +476,12 @@ function DesktopSettingsPage() {
 
   const autoHideActivityBar = useAppStore((s) => s.autoHideActivityBar);
   const setAutoHideActivityBar = useAppStore((s) => s.setAutoHideActivityBar);
+
+  // 笔记自动保存偏好
+  const autoSaveEnabled = useAppStore((s) => s.autoSaveEnabled);
+  const autoSaveDelay = useAppStore((s) => s.autoSaveDelay);
+  const setAutoSaveEnabled = useAppStore((s) => s.setAutoSaveEnabled);
+  const setAutoSaveDelay = useAppStore((s) => s.setAutoSaveDelay);
 
   // 订阅全局 foldersRefreshTick：Sidebar 修改文件夹后自动刷新设置页的文件夹选项
   // 走 idle defer：从笔记页切到设置页瞬间，路由 commit + 编辑器 destroy 已经吃掉一帧时间，
@@ -1381,6 +1389,51 @@ function DesktopSettingsPage() {
               恢复默认
             </Button>
           </div>
+        </div>
+      </Card>
+
+      <Card
+        id="settings-autosave"
+        title={
+          <span className="flex items-center gap-2">
+            <Zap size={16} />
+            自动保存
+          </span>
+        }
+      >
+        <div className="flex items-center justify-between py-1">
+          <div>
+            <div>编辑笔记时自动保存</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              开启后，停止输入达到下方延迟时长会静默保存（不弹提示），无需手动点保存按钮。
+              编辑器顶部会显示"自动保存中…/已自动保存 X 分钟前"。
+            </Text>
+          </div>
+          <Switch
+            checked={autoSaveEnabled}
+            onChange={setAutoSaveEnabled}
+          />
+        </div>
+        <div
+          className="flex items-center justify-between py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div>
+            <div>自动保存延迟</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              停止输入多久后触发保存。延迟越短越接近"实时"，越长越省 IO。
+            </Text>
+          </div>
+          <Select
+            value={autoSaveDelay}
+            onChange={setAutoSaveDelay}
+            disabled={!autoSaveEnabled}
+            style={{ width: 140 }}
+            options={AUTO_SAVE_DELAY_OPTIONS.map((ms) => ({
+              value: ms,
+              label: `${(ms / 1000).toFixed(ms % 1000 === 0 ? 0 : 1)} 秒${ms === 1500 ? "（默认）" : ""}`,
+            }))}
+          />
         </div>
       </Card>
 

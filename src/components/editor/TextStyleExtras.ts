@@ -193,15 +193,34 @@ export const Indent = Extension.create({
         },
     };
   },
-  // Tab / Shift-Tab：列表内由 ListItem 的 sinkListItem / liftListItem 优先处理
-  // （StarterKit 中 ListItem 的 keymap 注册在前，先 return true 即停止链式传播）；
-  // 段落/标题里冒泡到这里 → 调 indent / outdent。命令成功 → return true 停止默认
-  // Tab 行为（避免焦点跳出编辑器）；命令失败（已到 maxLevel / 已到 0）→ return false
-  // 让事件继续传播。
+  // Tab / Shift-Tab：扩展加载顺序里 Indent 在 StarterKit 之后，addKeyboardShortcuts
+  // 后注册的会覆盖先注册的；如果直接走 indent()，列表里按 Tab 只会给 listItem 内
+  // 的 paragraph 加 padding-left，而不会 sink 嵌套层级。所以这里先嗅探光标是否在
+  // listItem / taskItem 里：是 → 走 sinkListItem / liftListItem；否 → fallback 到
+  // 段落 / 标题的 indent / outdent。
   addKeyboardShortcuts() {
+    const inListItem = (typeName: "listItem" | "taskItem"): boolean => {
+      const { $from } = this.editor.state.selection;
+      for (let d = $from.depth; d > 0; d--) {
+        if ($from.node(d).type.name === typeName) return true;
+      }
+      return false;
+    };
     return {
-      Tab: () => this.editor.commands.indent(),
-      "Shift-Tab": () => this.editor.commands.outdent(),
+      Tab: () => {
+        if (inListItem("listItem"))
+          return this.editor.commands.sinkListItem("listItem");
+        if (inListItem("taskItem"))
+          return this.editor.commands.sinkListItem("taskItem");
+        return this.editor.commands.indent();
+      },
+      "Shift-Tab": () => {
+        if (inListItem("listItem"))
+          return this.editor.commands.liftListItem("listItem");
+        if (inListItem("taskItem"))
+          return this.editor.commands.liftListItem("taskItem");
+        return this.editor.commands.outdent();
+      },
     };
   },
 });

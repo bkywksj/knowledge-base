@@ -93,6 +93,9 @@ export const SHORTCUTS: ShortcutDef[] = [
   { id: "editor.selectAll", scope: "editor", defaultAccel: "CommandOrControl+A", group: "编辑器 - 操作", desc: "全选" },
   { id: "editor.indent", scope: "editor", defaultAccel: "Tab", group: "编辑器 - 操作", desc: "增加缩进" },
   { id: "editor.outdent", scope: "editor", defaultAccel: "Shift+Tab", group: "编辑器 - 操作", desc: "减少缩进" },
+  { id: "editor.find", scope: "editor", defaultAccel: "CommandOrControl+F", group: "编辑器 - 操作", desc: "查找" },
+  { id: "editor.replace", scope: "editor", defaultAccel: "CommandOrControl+H", group: "编辑器 - 操作", desc: "查找并替换" },
+  { id: "editor.exportMenu", scope: "editor", defaultAccel: "CommandOrControl+Shift+E", group: "编辑器 - 操作", desc: "打开导出菜单（Markdown / Word / HTML）" },
 ];
 
 const IS_MAC = typeof navigator !== "undefined" && /Mac OS X|Macintosh/.test(navigator.userAgent);
