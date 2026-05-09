@@ -513,6 +513,34 @@ pub fn run() {
             // 仅桌面端：移动端 WebviewWindow 不提供 show/hide（系统管理可见性）
             #[cfg(desktop)]
             if let Some(window) = app.get_webview_window("main") {
+                // 启动尺寸智能化：按主显示器逻辑分辨率重设窗口大小。
+                // 规则：永不比 conf.json 默认 1330×830 更小（floor），按屏宽 70% 计算，
+                //       同时不超出屏幕 95%、最高 1700×1050（cap）。
+                //
+                // 验证：
+                // - 1080p 100%      (logical 1920×1080): 1344×832  ≈ 默认
+                // - 27" 2K 150% Win (logical 1707×960):  1330×830  = 默认（floor 兜底，避免变窄）
+                // - 27" 2K 125% Win (logical 2048×1152): 1434×887  适度放大
+                // - 27" 2K 100%     (logical 2560×1440): 1700×1050 上限
+                // - 旧本 1366×768  (logical 1366×768):  1297×729  屏幕 95%（屏幕本身比默认还小时退让）
+                //
+                // 取不到 monitor 时静默回落到 conf.json 默认尺寸。
+                if let Ok(Some(monitor)) = window.primary_monitor() {
+                    let phys = monitor.size();
+                    let scale = monitor.scale_factor().max(0.1);
+                    let logical_w = phys.width as f64 / scale;
+                    let logical_h = phys.height as f64 / scale;
+                    let target_w = (logical_w * 0.70)
+                        .max(1330.0)
+                        .min(logical_w * 0.95)
+                        .min(1700.0);
+                    let target_h = (logical_h * 0.77)
+                        .max(830.0)
+                        .min(logical_h * 0.95)
+                        .min(1050.0);
+                    let _ = window.set_size(tauri::LogicalSize::new(target_w, target_h));
+                    let _ = window.center();
+                }
                 let _ = window.show();
             }
 
@@ -832,6 +860,8 @@ pub fn run() {
             commands::mcp::mcp_uninstall_from_client,
             commands::mcp::mcp_check_install_status,
             commands::mcp::mcp_get_setup_doc,
+            commands::mcp::mcp_get_ai_writable,
+            commands::mcp::mcp_set_ai_writable,
             // 系统模块
             commands::system::greet,
             commands::system::get_system_info,
