@@ -70,6 +70,8 @@ loadThemeFromStore().then(() => {
   void useAppStore.getState().loadMobileDashboardItems();
   // 拉一次移动端底部 Tab 配置
   void useAppStore.getState().loadMobileTabKeys();
+  // 拉一次内置 MCP 的"允许 AI 修改"开关，让设置页/AI 问答页 UI 与后端真相对齐
+  void useAppStore.getState().loadAiWritable();
 
   // 预热文件夹树：让 NotesPanel 第一次打开时直接命中缓存，避免"点笔记"时的等待
   // 用 requestIdleCallback 在浏览器空闲时跑，不和首屏渲染抢线程

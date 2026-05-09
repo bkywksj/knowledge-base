@@ -88,6 +88,14 @@ export const EDITOR_FONT_STACKS: Record<EditorFontFamily, string> = {
 export const EDITOR_FONT_SIZE_OPTIONS = [12, 13, 14, 15, 16, 18, 20, 22] as const;
 export const EDITOR_LINE_HEIGHT_OPTIONS = [1.4, 1.5, 1.6, 1.8, 2.0] as const;
 
+/**
+ * 笔记自动保存防抖延迟选项（毫秒）。
+ * 用户停止输入达到该时长后，触发一次静默保存（silent=true，不弹 toast）。
+ * 1000ms 偏激进，5000ms 偏保守；默认 1500ms 接近 OneNote / Notion 的体感。
+ */
+export const AUTO_SAVE_DELAY_OPTIONS = [1000, 1500, 3000, 5000] as const;
+export const AUTO_SAVE_DELAY_DEFAULT = 1500;
+
 export const EDITOR_FONT_DEFAULTS = {
   family: "system" as EditorFontFamily,
   size: 15,
@@ -205,6 +213,15 @@ interface AppStore {
   /** 用户是否已经手动改过 uiScale（持久化）。
    *  false 时首启允许 suggestUiScale 自动推荐覆盖；true 则始终尊重用户选择。 */
   uiScaleUserSet: boolean;
+  /**
+   * 笔记自动保存开关（持久化）。
+   * 开启后：编辑器内容变更后，停止输入 autoSaveDelay 毫秒触发静默保存，
+   * 用户无需手动点保存按钮（OneNote / Notion 体感）。
+   * 默认关闭，保留传统"必须手动保存"行为。
+   */
+  autoSaveEnabled: boolean;
+  /** 自动保存防抖延迟（毫秒，持久化） */
+  autoSaveDelay: number;
   /** 笔记编辑页：右侧大纲面板是否显示（持久化）。标题数 < 2 时由组件自动隐藏，与此独立 */
   outlineVisible: boolean;
   /**
@@ -251,6 +268,16 @@ interface AppStore {
   instanceInfo: SystemInfo | null;
   /** 启动时拉一次后端 system_info；失败静默（标识不是关键路径） */
   loadInstanceInfo: () => Promise<void>;
+  /**
+   * 内置 in-memory MCP 是否允许 AI 调用写工具（create/update/delete/move 等 11 个）。
+   * 默认 true（兼容旧版）。关闭后 AI 问答页里 LLM 调写工具会被后端拦截，返回友好错误。
+   * 持久化在 app_config（key="ai_writable"），与外部 sidecar 的 --writable 互不影响。
+   */
+  aiWritable: boolean;
+  /** 启动时从后端读取最新 ai_writable 标志（失败静默，保留默认 true） */
+  loadAiWritable: () => Promise<void>;
+  /** 切换 ai_writable：先写后端 + 再更 store（保证后端为真相源，刷新立即生效） */
+  setAiWritable: (enabled: boolean) => Promise<void>;
   /** 获取当前生效的主题 */
   activeTheme: () => ThemeMode;
   /** 切换亮/暗分类 */
@@ -325,6 +352,10 @@ interface AppStore {
   setUiScale: (scale: number) => void;
   /** 重置 uiScale 为 suggestUiScale() 推荐值（一键回归"自动"） */
   resetUiScale: () => void;
+  /** 切换/设置笔记自动保存开关 */
+  setAutoSaveEnabled: (on: boolean) => void;
+  /** 设置自动保存防抖延迟（毫秒，会 clamp 到 [500, 30000]） */
+  setAutoSaveDelay: (ms: number) => void;
   /** 切换大纲面板可见性（persist） */
   toggleOutline: () => void;
   /** 设置大纲面板可见性（persist） */
@@ -453,6 +484,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   editorLineHeight: EDITOR_FONT_DEFAULTS.lineHeight,
   uiScale: UI_SCALE_DEFAULT,
   uiScaleUserSet: false,
+  autoSaveEnabled: false,
+  autoSaveDelay: AUTO_SAVE_DELAY_DEFAULT,
   outlineVisible: true,
   notesCollapsedFolderKeys: [],
   notesUncategorizedExpanded: false,
@@ -468,6 +501,29 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set({ instanceInfo: info });
     } catch {
       // 静默：实例徽章不是关键路径，拉失败就不显示
+    }
+  },
+  aiWritable: true,
+  loadAiWritable: async () => {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const v = await invoke<boolean>("mcp_get_ai_writable");
+      set({ aiWritable: v });
+    } catch {
+      // 启动早期或后端不可用 → 保持默认 true
+    }
+  },
+  setAiWritable: async (enabled) => {
+    const prev = get().aiWritable;
+    // 乐观更新让 Switch 不卡顿；失败回滚
+    set({ aiWritable: enabled });
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("mcp_set_ai_writable", { enabled });
+    } catch (e) {
+      console.warn("[ai_writable] persist failed:", e);
+      set({ aiWritable: prev });
+      throw e;
     }
   },
   activeTheme: () => {
@@ -653,6 +709,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
   resetUiScale: () => {
     set({ uiScale: suggestUiScale(), uiScaleUserSet: false });
+  },
+  setAutoSaveEnabled: (on) => set({ autoSaveEnabled: !!on }),
+  setAutoSaveDelay: (ms) => {
+    const clamped = Math.max(500, Math.min(30000, Math.round(Number(ms) || AUTO_SAVE_DELAY_DEFAULT)));
+    set({ autoSaveDelay: clamped });
   },
   toggleOutline: () => set((s) => ({ outlineVisible: !s.outlineVisible })),
   setOutlineVisible: (visible) => set({ outlineVisible: visible }),
@@ -894,6 +955,16 @@ export async function loadThemeFromStore() {
       useAppStore.getState().setOutlineVisible(ov);
     }
 
+    // 恢复自动保存偏好（默认关闭，老用户升级后行为不变）
+    const ase = await store.get<boolean>("autoSaveEnabled");
+    if (typeof ase === "boolean") {
+      useAppStore.getState().setAutoSaveEnabled(ase);
+    }
+    const asd = await store.get<number>("autoSaveDelay");
+    if (typeof asd === "number" && Number.isFinite(asd)) {
+      useAppStore.getState().setAutoSaveDelay(asd);
+    }
+
     // 恢复 NotesPanel 折叠偏好
     const nck = await store.get<string[]>("notesCollapsedFolderKeys");
     if (Array.isArray(nck)) {
@@ -951,6 +1022,8 @@ export async function saveThemeToStore() {
       editorLineHeight,
       uiScale,
       uiScaleUserSet,
+      autoSaveEnabled,
+      autoSaveDelay,
       outlineVisible,
       notesCollapsedFolderKeys,
       notesUncategorizedExpanded,
@@ -972,6 +1045,8 @@ export async function saveThemeToStore() {
     await store.set("editorLineHeight", editorLineHeight);
     await store.set("uiScale", uiScale);
     await store.set("uiScaleUserSet", uiScaleUserSet);
+    await store.set("autoSaveEnabled", autoSaveEnabled);
+    await store.set("autoSaveDelay", autoSaveDelay);
     await store.set("outlineVisible", outlineVisible);
     await store.set("notesCollapsedFolderKeys", notesCollapsedFolderKeys);
     await store.set("notesUncategorizedExpanded", notesUncategorizedExpanded);
@@ -993,7 +1068,7 @@ useAppStore.subscribe((state) => {
   // notesHeadingFolded 摘要：用 entries 数 + 总 anchor 数 简化对比，避免每次 stringify 大对象
   const headingFoldEntries = Object.entries(state.notesHeadingFolded);
   const headingFoldKey = `${headingFoldEntries.length}:${headingFoldEntries.reduce((acc, [, v]) => acc + v.length, 0)}:${headingFoldEntries.map(([k, v]) => `${k}=${v.join(",")}`).join("|")}`;
-  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.autoHideActivityBar}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.uiScale}|${state.uiScaleUserSet}|${state.outlineVisible}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesShowOnlyFolders}|${state.notesFoldersInitialCollapseDone}|${headingFoldKey}`;
+  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.autoHideActivityBar}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.uiScale}|${state.uiScaleUserSet}|${state.autoSaveEnabled}|${state.autoSaveDelay}|${state.outlineVisible}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesShowOnlyFolders}|${state.notesFoldersInitialCollapseDone}|${headingFoldKey}`;
   if (key !== _prevPersistKey) {
     _prevPersistKey = key;
     saveThemeToStore();

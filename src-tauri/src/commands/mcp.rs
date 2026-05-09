@@ -25,6 +25,38 @@ use crate::state::AppState;
 /// 用来构造 sidecar binary 名字（与 scripts/build-mcp.mjs 的命名一致）
 const TARGET_TRIPLE: &str = env!("TAURI_ENV_TARGET_TRIPLE");
 
+/// app_config 里持久化"AI 是否允许写"的 key。默认值缺失视为 true，
+/// 兼容老版本——升级前 in-memory MCP 永远 writable，不能升级后突然把用户的 AI 锁死。
+const AI_WRITABLE_KEY: &str = "ai_writable";
+
+/// kb-core 11 个写工具的精确名单。命中即在 in-memory MCP 入口处拦截。
+/// 不用前缀匹配是怕将来加只读但前缀冲突的工具（如 add_search_filter）误伤。
+const KB_WRITE_TOOLS: &[&str] = &[
+    "create_note",
+    "create_note_from_template",
+    "create_folder",
+    "create_task",
+    "update_note",
+    "update_task",
+    "delete_note",
+    "restore_note_from_trash",
+    "move_notes_batch",
+    "add_tag_to_note",
+    "remove_tag_from_note",
+];
+
+fn is_kb_write_tool(name: &str) -> bool {
+    KB_WRITE_TOOLS.contains(&name)
+}
+
+/// 读 app_config 里的 ai_writable 标志，缺失/解析失败按 true 处理（向后兼容）
+fn read_ai_writable(state: &AppState) -> bool {
+    match state.db.get_config(AI_WRITABLE_KEY) {
+        Ok(Some(v)) => v != "0",
+        _ => true,
+    }
+}
+
 /// 编译时把 docs/mcp-setup.md 内嵌进 binary，供前端「详细文档」弹窗用。
 /// 路径相对当前文件：src/commands/mcp.rs → ../../../docs/mcp-setup.md
 /// 文件不存在时编译期即失败（强约束，避免运行时 404）
@@ -340,6 +372,16 @@ pub async fn mcp_internal_call_tool(
     name: String,
     arguments: Option<JsonValue>,
 ) -> Result<String, String> {
+    // 写工具拦截：用户在设置页/AI 问答页关掉了"允许 AI 修改"时，写工具一律拒掉
+    // 不去重启 KbServer（成本高），而是在 in-memory client 调用前网关拦截
+    if is_kb_write_tool(&name) && !read_ai_writable(&state) {
+        return Err(format!(
+            "AI 写权限已关闭。要让 AI 修改你的知识库，请到 设置 → MCP 服务器 \
+             或 AI 问答页顶部 打开「允许 AI 修改我的知识库」开关。\
+             被拦截的工具：{name}"
+        ));
+    }
+
     let client = state
         .mcp_internal
         .as_ref()
@@ -380,6 +422,26 @@ pub async fn mcp_internal_call_tool(
         return Err(format!("工具返回错误: {out}"));
     }
     Ok(out)
+}
+
+// ─── 内置 in-memory MCP 写权限开关（前端控制） ──────────────────
+
+/// 读当前 in-memory MCP 是否允许 AI 调用写工具。默认 true（兼容旧版）
+#[tauri::command]
+pub fn mcp_get_ai_writable(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    Ok(read_ai_writable(&state))
+}
+
+/// 切换内置 in-memory MCP 的 AI 写权限。立即生效（下一次 call_tool 会读最新值）
+#[tauri::command]
+pub fn mcp_set_ai_writable(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    state
+        .db
+        .set_config(AI_WRITABLE_KEY, if enabled { "1" } else { "0" })
+        .map_err(|e| e.to_string())
 }
 
 // ─── M5-2: 外部 MCP server CRUD + 调用代理 ─────────────────────

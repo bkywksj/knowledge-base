@@ -39,6 +39,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useNavigate, useLocation } from "react-router-dom";
 import { aiChatApi, aiModelApi, noteApi, aiAttachmentApi } from "@/lib/api";
+import { useAppStore } from "@/store";
 import type {
   AiConversation,
   AiMessage,
@@ -165,6 +166,10 @@ function DesktopAiChatPage() {
   // 设计上不再区分"RAG 模式 / Skills 模式"——RAG 本质就是预先调一次 search_notes，
   // Skills 让 LLM 按需调，是 RAG 的超集。把选择权交给 LLM，用户只管开关。
   const [useSkills, setUseSkills] = useState(true);
+  // AI 写权限：默认 true（保留旧 UX）。关掉后内置 MCP 的 11 个写工具会在 Rust 侧被拦截。
+  // 真相在 app_config.ai_writable，启动时已 loadAiWritable() 同步过。
+  const aiWritable = useAppStore((s) => s.aiWritable);
+  const setAiWritable = useAppStore((s) => s.setAiWritable);
   const [streaming, setStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   // 附加笔记（A 方向）：当前对话的 attached_note_ids 对应的完整笔记对象
@@ -958,6 +963,43 @@ function DesktopAiChatPage() {
                       size="small"
                       checked={useSkills}
                       onChange={setUseSkills}
+                    />
+                  </div>
+                </Tooltip>
+                {/* AI 写权限：控制内置 MCP 写工具（create/update/delete 等 11 个）是否可被 AI 调用 */}
+                <Tooltip
+                  title={
+                    aiWritable
+                      ? "AI 写权限（已开启）：AI 可以创建/修改/删除你的笔记、文件夹、标签、任务。关掉变只读，AI 仍可读取，但所有写操作会被后端拦截。"
+                      : "AI 写权限（已关闭，只读）：AI 只能读取知识库，不能修改任何内容。打开后 AI 才能帮你建笔记、改任务、加标签等。"
+                  }
+                >
+                  <div className="flex items-center gap-1.5">
+                    <Edit3
+                      size={14}
+                      style={{
+                        color: aiWritable
+                          ? token.colorPrimary
+                          : token.colorTextSecondary,
+                      }}
+                    />
+                    <span
+                      className="text-xs"
+                      style={{ color: token.colorTextSecondary }}
+                    >
+                      AI 写权限
+                    </span>
+                    <Switch
+                      size="small"
+                      checked={aiWritable}
+                      onChange={async (v) => {
+                        try {
+                          await setAiWritable(v);
+                          message.success(v ? "已允许 AI 修改知识库" : "已切换为只读，AI 写操作将被拦截");
+                        } catch (e) {
+                          message.error(`切换失败：${e}`);
+                        }
+                      }}
                     />
                   </div>
                 </Tooltip>

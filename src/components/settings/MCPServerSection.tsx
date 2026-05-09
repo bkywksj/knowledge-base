@@ -34,6 +34,7 @@ import Markdown from "react-markdown";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { homeDir, join } from "@tauri-apps/api/path";
 import { systemApi } from "@/lib/api";
+import { useAppStore } from "@/store";
 import type { McpServer, McpServerInput } from "@/types";
 
 interface ClaudeCodeTemplate {
@@ -91,6 +92,8 @@ export function MCPServerSection() {
   const [docOpen, setDocOpen] = useState(false);
   const [docContent, setDocContent] = useState<string | null>(null);
   const [docLoading, setDocLoading] = useState(false);
+  const aiWritable = useAppStore((s) => s.aiWritable);
+  const setAiWritable = useAppStore((s) => s.setAiWritable);
 
   useEffect(() => {
     void load();
@@ -302,6 +305,45 @@ export function MCPServerSection() {
         <Empty description="未加载到 MCP 信息" />
       ) : (
         <>
+          {/* ─── 内置 MCP · AI 写权限开关 ─────────────────── */}
+          <Alert
+            type={aiWritable ? "warning" : "info"}
+            showIcon
+            className="mb-4"
+            message={
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <span>
+                  <Text strong>允许 AI 修改我的知识库</Text>
+                  <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                    （内置 AI 问答页用的 MCP server）
+                  </Text>
+                </span>
+                <Switch
+                  checked={aiWritable}
+                  onChange={async (v) => {
+                    try {
+                      await setAiWritable(v);
+                      message.success(
+                        v
+                          ? "已允许 AI 创建/修改/删除你的笔记"
+                          : "已切回只读，AI 只能搜索不能改",
+                      );
+                    } catch (e) {
+                      message.error(`切换失败：${e}`);
+                    }
+                  }}
+                  checkedChildren="可写"
+                  unCheckedChildren="只读"
+                />
+              </div>
+            }
+            description={
+              aiWritable
+                ? "开启后，AI 可调用 create_note / update_note / delete_note / move_notes_batch / add_tag_to_note 等 11 个写工具。批量删除/移动前请让 AI 先列计划再确认。"
+                : "关闭后，AI 调用任何写工具都会被后端拦截并返回友好错误，相当于安全只读模式。"
+            }
+          />
+
           {/* ─── 状态行 ─────────────────────────────── */}
           <div className="mb-4 flex items-center gap-4 flex-wrap">
             <Tag
