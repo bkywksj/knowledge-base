@@ -25,8 +25,18 @@ function App() {
   const lightTheme = useAppStore((s) => s.lightTheme);
   const darkTheme = useAppStore((s) => s.darkTheme);
   const uiScale = useAppStore((s) => s.uiScale);
+  // 主题覆盖：开关启用 + customAccent 时，把 antd 的 colorPrimary 同步到自定义色，
+  // 让 Button/Switch/Tabs 等内置组件的主色与 CSS 变量一致（仅靠 --kb-primary 不够，
+  // antd 组件用的是 ConfigProvider token，不读 CSS 变量）。
+  const themeOverridesEnabled = useAppStore((s) => s.themeOverridesEnabled);
+  const customAccent = useAppStore((s) => s.customAccent);
   const activeTheme = themeCategory === "light" ? lightTheme : darkTheme;
-  const baseTokens = getAntdTokens(activeTheme);
+  const baseTokens = {
+    ...getAntdTokens(activeTheme),
+    ...(themeOverridesEnabled && customAccent
+      ? { colorPrimary: customAccent }
+      : {}),
+  };
   // 全局界面缩放：把 antd 的 fontSize / controlHeight / padding 等关键 token
   // 按 uiScale 倍率联动。1.0 时与 antd 默认完全一致；< 1 紧凑、> 1 放大。
   // 自定义 CSS 通过 :root --ui-scale 由 store 同步（见 applyUiScale）。

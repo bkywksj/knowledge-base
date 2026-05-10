@@ -448,6 +448,63 @@
   background: var(--kb-scrollbar-hover) !important;
 }
 
+/* ═══════════════════════════════════════════════════════════
+   主题自定义 — 全屏背景图 + 可读性遮罩
+   ───────────────────────────────────────────────────────────
+   由 store.applyThemeOverrides() 在 body 上加 .has-custom-bg
+   并写入 --kb-custom-bg-image / --kb-custom-bg-dim。
+   覆盖各主题原 body 渐变；遮罩用 currentColor 为 #000 的 ::before 层，
+   配合主题分类用不同色（暗主题→黑、亮主题→白）。
+   ═══════════════════════════════════════════════════════════ */
+body.has-custom-bg {
+  background-image: var(--kb-custom-bg-image) !important;
+  background-size: var(--kb-custom-bg-size, cover) !important;
+  background-position: var(--kb-custom-bg-position, center center) !important;
+  background-attachment: fixed !important;
+  background-repeat: var(--kb-custom-bg-repeat, no-repeat) !important;
+  position: relative;
+}
+
+/* 暗主题：用黑色叠 + 可选 backdrop-filter 模糊 */
+[data-theme-category="dark"] body.has-custom-bg::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, var(--kb-custom-bg-dim, 0));
+  backdrop-filter: blur(var(--kb-custom-bg-blur, 0px));
+  -webkit-backdrop-filter: blur(var(--kb-custom-bg-blur, 0px));
+  pointer-events: none;
+  z-index: 0;
+}
+/* 亮主题：用白色叠 + 可选 backdrop-filter 模糊 */
+[data-theme-category="light"] body.has-custom-bg::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: rgba(255, 255, 255, var(--kb-custom-bg-dim, 0));
+  backdrop-filter: blur(var(--kb-custom-bg-blur, 0px));
+  -webkit-backdrop-filter: blur(var(--kb-custom-bg-blur, 0px));
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* 启用自定义背景时，让 #root 透明，避免主题预设的纯色/渐变把图遮住。
+   ⚠️ body 自身用的是 background shorthand 不能再 reset，否则会把 background-image 一并清掉；
+   只对 body 重置 background-color，保留 background-image。 */
+body.has-custom-bg {
+  background-color: transparent !important;
+}
+body.has-custom-bg #root {
+  background: transparent !important;
+}
+
+/* Layout 三层在自定义背景下统一透明，让面板/卡片自身的 --kb-bg-* 浮在背景图上 */
+body.has-custom-bg .ant-layout,
+body.has-custom-bg .ant-layout-content {
+  background: transparent !important;
+}
+/* Sider 仍保留主题色，作为侧栏的"实色基底"，避免侧栏图标全部漂在背景图上读不出 */
+
 /* 暗色主题通用 — 编辑器 */
 [data-theme-category="dark"] .toolbar-btn-active {
   color: var(--kb-text-primary) !important;

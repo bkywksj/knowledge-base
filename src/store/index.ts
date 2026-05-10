@@ -262,6 +262,42 @@ interface AppStore {
    */
   notesFoldersInitialCollapseDone: boolean;
   /**
+   * 主题自定义总开关（持久化）。
+   * 关闭时所有 customAccent / customBgImage / customBgDim 都不生效，等同回到原始 4 套主题。
+   */
+  themeOverridesEnabled: boolean;
+  /**
+   * 自定义强调色（持久化，hex 形如 "#6366f1"）。
+   * 启用时同时覆盖 :root 上的 --kb-primary（CSS 用）+ antd ConfigProvider colorPrimary（组件用）。
+   * null = 跟随当前主题预设。
+   */
+  customAccent: string | null;
+  /**
+   * 自定义全屏背景图（持久化）。
+   * 存原始本地路径（来自 dialog.open）；运行时用 convertFileSrc 转 webview 可访问的 asset URL，
+   * 仅 themeOverridesEnabled=true 时生效。null = 不启用背景图。
+   */
+  customBgImage: string | null;
+  /**
+   * 背景图遮罩不透明度（持久化，0..1）。
+   * 在背景图之上叠一层黑色（暗色主题）/白色（亮色主题）半透明，让文字保留对比度可读性。
+   */
+  customBgDim: number;
+  /**
+   * 背景图模糊半径（持久化，0..30，单位 px）。
+   * 通过遮罩层 backdrop-filter: blur() 实现，对背景图本身做高斯模糊，
+   * 不影响 #root 内容的清晰度。
+   */
+  customBgBlur: number;
+  /**
+   * 背景图适配模式（持久化）。
+   * - cover: 拉伸填满窗口（默认，会裁剪）
+   * - contain: 完整显示，可能留白
+   * - center: 原始尺寸居中
+   * - repeat: 平铺
+   */
+  customBgFit: "cover" | "contain" | "center" | "repeat";
+  /**
    * 当前进程的系统信息（含多开实例编号 + 数据目录）。
    * null = 启动时还没拉到；UI 据此渲染实例徽章
    */
@@ -278,6 +314,20 @@ interface AppStore {
   loadAiWritable: () => Promise<void>;
   /** 切换 ai_writable：先写后端 + 再更 store（保证后端为真相源，刷新立即生效） */
   setAiWritable: (enabled: boolean) => Promise<void>;
+  /** 切换主题自定义总开关（持久化） */
+  setThemeOverridesEnabled: (on: boolean) => void;
+  /** 设置/清除自定义强调色（hex 或 null） */
+  setCustomAccent: (hex: string | null) => void;
+  /** 设置/清除自定义背景图（原始本地路径或 null） */
+  setCustomBgImage: (path: string | null) => void;
+  /** 设置背景图遮罩不透明度（自动 clamp 到 [0, 1]） */
+  setCustomBgDim: (dim: number) => void;
+  /** 设置背景图模糊半径（自动 clamp 到 [0, 30] px） */
+  setCustomBgBlur: (px: number) => void;
+  /** 设置背景图适配模式 */
+  setCustomBgFit: (fit: "cover" | "contain" | "center" | "repeat") => void;
+  /** 一键重置所有主题自定义项（开关关 + 强调色清 + 背景清 + 遮罩归零 + 模糊归零 + 适配回 cover） */
+  resetThemeOverrides: () => void;
   /** 获取当前生效的主题 */
   activeTheme: () => ThemeMode;
   /** 切换亮/暗分类 */
@@ -494,6 +544,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   defaultFolderId: null,
   defaultTagIds: [],
   notesHeadingFolded: {},
+  themeOverridesEnabled: false,
+  customAccent: null,
+  customBgImage: null,
+  customBgDim: 0,
+  customBgBlur: 0,
+  customBgFit: "cover",
   instanceInfo: null,
   loadInstanceInfo: async () => {
     try {
@@ -526,6 +582,27 @@ export const useAppStore = create<AppStore>((set, get) => ({
       throw e;
     }
   },
+  setThemeOverridesEnabled: (on) => set({ themeOverridesEnabled: on }),
+  setCustomAccent: (hex) => set({ customAccent: hex }),
+  setCustomBgImage: (path) => set({ customBgImage: path }),
+  setCustomBgDim: (dim) => {
+    const clamped = Math.max(0, Math.min(1, dim));
+    set({ customBgDim: clamped });
+  },
+  setCustomBgBlur: (px) => {
+    const clamped = Math.max(0, Math.min(30, px));
+    set({ customBgBlur: clamped });
+  },
+  setCustomBgFit: (fit) => set({ customBgFit: fit }),
+  resetThemeOverrides: () =>
+    set({
+      themeOverridesEnabled: false,
+      customAccent: null,
+      customBgImage: null,
+      customBgDim: 0,
+      customBgBlur: 0,
+      customBgFit: "cover",
+    }),
   activeTheme: () => {
     const s = get();
     return s.themeCategory === "light" ? s.lightTheme : s.darkTheme;
@@ -883,6 +960,137 @@ export function applyUiScale(scale: number) {
   root.style.setProperty("--ui-scale", String(scale));
 }
 
+/**
+ * hex(#rrggbb) → "r,g,b" 字符串，方便在 rgba(...) 里拼。
+ * 只接受 #rrggbb / #rgb 两种短写；解析失败回退到空串（调用方会 removeProperty）。
+ */
+function hexToRgbTuple(hex: string): string {
+  const m = hex.replace("#", "").trim();
+  let r: number, g: number, b: number;
+  if (m.length === 3) {
+    r = parseInt(m[0] + m[0], 16);
+    g = parseInt(m[1] + m[1], 16);
+    b = parseInt(m[2] + m[2], 16);
+  } else if (m.length === 6) {
+    r = parseInt(m.slice(0, 2), 16);
+    g = parseInt(m.slice(2, 4), 16);
+    b = parseInt(m.slice(4, 6), 16);
+  } else {
+    return "";
+  }
+  if ([r, g, b].some((v) => Number.isNaN(v))) return "";
+  return `${r},${g},${b}`;
+}
+
+/**
+ * 把用户的主题自定义项（强调色 / 背景图 / 遮罩）应用到 :root + body。
+ *
+ * 行为：
+ * - themeOverridesEnabled=false 时清除所有覆盖，回到 themes.css 的预设
+ * - customAccent: 直接 inline 覆盖 --kb-primary（inline 比 [data-theme] 选择器优先级高）
+ *   同时给出 --kb-primary-light 的 rgba 14% 派生值，配合现有 hover/active 高亮
+ * - customBgImage: 通过 convertFileSrc 转 webview 可访问 URL 后注入 body
+ *   背景图存在时给 body 加 .has-custom-bg，由 global.css 接管 background-* 一组样式
+ * - customBgDim: 注入 --kb-custom-bg-dim 用于 ::before 遮罩透明度
+ */
+export async function applyThemeOverrides(state: {
+  themeOverridesEnabled: boolean;
+  customAccent: string | null;
+  customBgImage: string | null;
+  customBgDim: number;
+  customBgBlur: number;
+  customBgFit: "cover" | "contain" | "center" | "repeat";
+}) {
+  const root = document.documentElement;
+  const body = document.body;
+
+  // ─── 强调色 ───
+  if (state.themeOverridesEnabled && state.customAccent) {
+    const tuple = hexToRgbTuple(state.customAccent);
+    if (tuple) {
+      root.style.setProperty("--kb-primary", state.customAccent);
+      root.style.setProperty("--kb-primary-light", `rgba(${tuple},0.14)`);
+    } else {
+      root.style.removeProperty("--kb-primary");
+      root.style.removeProperty("--kb-primary-light");
+    }
+  } else {
+    root.style.removeProperty("--kb-primary");
+    root.style.removeProperty("--kb-primary-light");
+  }
+
+  // ─── 背景图（异步：convertFileSrc 是同步函数但插件在 webview 启动后才 ready） ───
+  // 加 path_exists 校验：用户切换 dev/prod 实例、或者文件被外部删掉时，store 里旧路径
+  // 仍残留，convertFileSrc 转出来的 asset URL 加载会静默失败；主动清空 customBgImage
+  // 让用户重新选图，避免"开关打开但图始终不显示"的诡异状态
+  if (state.themeOverridesEnabled && state.customBgImage) {
+    try {
+      const { convertFileSrc, invoke } = await import("@tauri-apps/api/core");
+      const exists = await invoke<boolean>("path_exists", {
+        path: state.customBgImage,
+      });
+      if (!exists) {
+        console.warn(
+          "[theme] bg image missing, clearing store path:",
+          state.customBgImage,
+        );
+        body.classList.remove("has-custom-bg");
+        body.style.removeProperty("--kb-custom-bg-image");
+        useAppStore.getState().setCustomBgImage(null);
+      } else {
+        const url = convertFileSrc(state.customBgImage);
+        // CSS url() 里转义双引号，避免路径含双引号时把 url() 切断
+        const safe = url.replace(/"/g, '\\"');
+        body.style.setProperty("--kb-custom-bg-image", `url("${safe}")`);
+        body.classList.add("has-custom-bg");
+      }
+    } catch (e) {
+      console.warn("[theme] bg image apply failed:", e);
+      body.classList.remove("has-custom-bg");
+      body.style.removeProperty("--kb-custom-bg-image");
+    }
+  } else {
+    body.classList.remove("has-custom-bg");
+    body.style.removeProperty("--kb-custom-bg-image");
+  }
+
+  // ─── 遮罩不透明度（始终写，因为 .has-custom-bg::before 需要） ───
+  root.style.setProperty(
+    "--kb-custom-bg-dim",
+    String(state.themeOverridesEnabled ? state.customBgDim : 0),
+  );
+
+  // ─── 模糊半径（注入 px 字符串供 backdrop-filter 用） ───
+  root.style.setProperty(
+    "--kb-custom-bg-blur",
+    `${state.themeOverridesEnabled ? state.customBgBlur : 0}px`,
+  );
+
+  // ─── 适配模式：把 4 种模式翻译成 3 个 background-* CSS 变量 ───
+  const fit = state.themeOverridesEnabled ? state.customBgFit : "cover";
+  let bgSize = "cover";
+  let bgRepeat = "no-repeat";
+  let bgPosition = "center center";
+  switch (fit) {
+    case "contain":
+      bgSize = "contain";
+      break;
+    case "center":
+      bgSize = "auto";
+      break;
+    case "repeat":
+      bgSize = "auto";
+      bgRepeat = "repeat";
+      break;
+    case "cover":
+    default:
+      break;
+  }
+  root.style.setProperty("--kb-custom-bg-size", bgSize);
+  root.style.setProperty("--kb-custom-bg-repeat", bgRepeat);
+  root.style.setProperty("--kb-custom-bg-position", bgPosition);
+}
+
 /** 从 tauri-plugin-store 恢复持久化的偏好（主题 + 窗口置顶） */
 export async function loadThemeFromStore() {
   try {
@@ -995,6 +1203,32 @@ export async function loadThemeFromStore() {
       }
       useAppStore.setState({ notesHeadingFolded: cleaned });
     }
+
+    // 恢复主题自定义偏好
+    const toe = await store.get<boolean>("themeOverridesEnabled");
+    if (typeof toe === "boolean") {
+      useAppStore.setState({ themeOverridesEnabled: toe });
+    }
+    const ca = await store.get<string | null>("customAccent");
+    if (typeof ca === "string" || ca === null) {
+      useAppStore.setState({ customAccent: ca });
+    }
+    const cbi = await store.get<string | null>("customBgImage");
+    if (typeof cbi === "string" || cbi === null) {
+      useAppStore.setState({ customBgImage: cbi });
+    }
+    const cbd = await store.get<number>("customBgDim");
+    if (typeof cbd === "number" && Number.isFinite(cbd)) {
+      useAppStore.getState().setCustomBgDim(cbd);
+    }
+    const cbb = await store.get<number>("customBgBlur");
+    if (typeof cbb === "number" && Number.isFinite(cbb)) {
+      useAppStore.getState().setCustomBgBlur(cbb);
+    }
+    const cbf = await store.get<string>("customBgFit");
+    if (cbf === "cover" || cbf === "contain" || cbf === "center" || cbf === "repeat") {
+      useAppStore.getState().setCustomBgFit(cbf);
+    }
   } catch {
     // 首次启动时 store 可能不存在
   } finally {
@@ -1002,6 +1236,7 @@ export async function loadThemeFromStore() {
     // 同步到 CSS 变量，确保首次渲染就用对字体而不是闪一下默认再切。
     applyEditorTypography(useAppStore.getState());
     applyUiScale(useAppStore.getState().uiScale);
+    void applyThemeOverrides(useAppStore.getState());
   }
 }
 
@@ -1030,6 +1265,12 @@ export async function saveThemeToStore() {
       notesShowOnlyFolders,
       notesFoldersInitialCollapseDone,
       notesHeadingFolded,
+      themeOverridesEnabled,
+      customAccent,
+      customBgImage,
+      customBgDim,
+      customBgBlur,
+      customBgFit,
     } = useAppStore.getState();
     const store = await Store.load(STORE_FILE);
     await store.set("lightTheme", lightTheme);
@@ -1056,6 +1297,12 @@ export async function saveThemeToStore() {
       notesFoldersInitialCollapseDone,
     );
     await store.set("notesHeadingFolded", notesHeadingFolded);
+    await store.set("themeOverridesEnabled", themeOverridesEnabled);
+    await store.set("customAccent", customAccent);
+    await store.set("customBgImage", customBgImage);
+    await store.set("customBgDim", customBgDim);
+    await store.set("customBgBlur", customBgBlur);
+    await store.set("customBgFit", customBgFit);
     await store.save();
   } catch {
     // 静默失败
@@ -1068,7 +1315,7 @@ useAppStore.subscribe((state) => {
   // notesHeadingFolded 摘要：用 entries 数 + 总 anchor 数 简化对比，避免每次 stringify 大对象
   const headingFoldEntries = Object.entries(state.notesHeadingFolded);
   const headingFoldKey = `${headingFoldEntries.length}:${headingFoldEntries.reduce((acc, [, v]) => acc + v.length, 0)}:${headingFoldEntries.map(([k, v]) => `${k}=${v.join(",")}`).join("|")}`;
-  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.autoHideActivityBar}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.uiScale}|${state.uiScaleUserSet}|${state.autoSaveEnabled}|${state.autoSaveDelay}|${state.outlineVisible}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesShowOnlyFolders}|${state.notesFoldersInitialCollapseDone}|${headingFoldKey}`;
+  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.autoHideActivityBar}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.uiScale}|${state.uiScaleUserSet}|${state.autoSaveEnabled}|${state.autoSaveDelay}|${state.outlineVisible}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesShowOnlyFolders}|${state.notesFoldersInitialCollapseDone}|${headingFoldKey}|${state.themeOverridesEnabled}|${state.customAccent ?? ""}|${state.customBgImage ?? ""}|${state.customBgDim}|${state.customBgBlur}|${state.customBgFit}`;
   if (key !== _prevPersistKey) {
     _prevPersistKey = key;
     saveThemeToStore();
@@ -1091,5 +1338,15 @@ useAppStore.subscribe((state) => {
   if (state.uiScale !== _prevUiScale) {
     _prevUiScale = state.uiScale;
     applyUiScale(state.uiScale);
+  }
+});
+
+// 主题覆盖变化时实时把 --kb-primary / 背景图 / 遮罩同步到 DOM
+let _prevThemeOverrideKey = "";
+useAppStore.subscribe((state) => {
+  const key = `${state.themeOverridesEnabled}|${state.customAccent ?? ""}|${state.customBgImage ?? ""}|${state.customBgDim}|${state.customBgBlur}|${state.customBgFit}`;
+  if (key !== _prevThemeOverrideKey) {
+    _prevThemeOverrideKey = key;
+    void applyThemeOverrides(state);
   }
 });

@@ -18,9 +18,12 @@ import {
   List,
   Switch,
   Radio,
+  Slider,
+  ColorPicker,
 } from "antd";
 import { SyncOutlined, PlusOutlined, CheckCircleFilled, CheckCircleOutlined } from "@ant-design/icons";
-import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate, Power, ExternalLink, Type, Zap, Share2, Download, PanelLeft } from "lucide-react";
+import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate, Power, ExternalLink, Type, Zap, Share2, Download, PanelLeft, Palette, Image as ImageIcon } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import dayjs, { type Dayjs } from "dayjs";
 import { TimePicker } from "antd";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -228,6 +231,7 @@ const SETTINGS_NAV_ITEMS: { id: string; label: string }[] = [
   { id: "settings-features", label: "功能模块" },
   { id: "settings-hidden-pin", label: "隐藏笔记 PIN" },
   { id: "settings-shortcuts", label: "全局快捷键" },
+  { id: "settings-appearance", label: "外观自定义" },
   { id: "settings-editor", label: "编辑器外观" },
   { id: "settings-autosave", label: "自动保存" },
   { id: "settings-task-reminder", label: "待办提醒" },
@@ -473,6 +477,54 @@ function DesktopSettingsPage() {
   const setUiScale = useAppStore((s) => s.setUiScale);
   const resetUiScale = useAppStore((s) => s.resetUiScale);
   const recommendedScale = useMemo(() => suggestUiScale(), []);
+
+  // 主题自定义（强调色 / 背景图 / 遮罩）
+  const themeOverridesEnabled = useAppStore((s) => s.themeOverridesEnabled);
+  const customAccent = useAppStore((s) => s.customAccent);
+  const customBgImage = useAppStore((s) => s.customBgImage);
+  const customBgDim = useAppStore((s) => s.customBgDim);
+  const customBgBlur = useAppStore((s) => s.customBgBlur);
+  const customBgFit = useAppStore((s) => s.customBgFit);
+  const setThemeOverridesEnabled = useAppStore((s) => s.setThemeOverridesEnabled);
+  const setCustomAccent = useAppStore((s) => s.setCustomAccent);
+  const setCustomBgImage = useAppStore((s) => s.setCustomBgImage);
+  const setCustomBgDim = useAppStore((s) => s.setCustomBgDim);
+  const setCustomBgBlur = useAppStore((s) => s.setCustomBgBlur);
+  const setCustomBgFit = useAppStore((s) => s.setCustomBgFit);
+  const resetThemeOverrides = useAppStore((s) => s.resetThemeOverrides);
+  const [bgPicking, setBgPicking] = useState(false);
+  async function pickThemeBg() {
+    if (bgPicking) return;
+    setBgPicking(true);
+    try {
+      const picked = await open({
+        multiple: false,
+        directory: false,
+        filters: [
+          { name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp"] },
+        ],
+      });
+      if (typeof picked !== "string") return; // 用户取消
+      // 走 Rust 把图片复制到 app_data_dir，避免 asset 协议 scope 限制
+      const target = await invoke<string>("copy_theme_bg", { srcPath: picked });
+      setCustomBgImage(target);
+      // 用户主动选了图但未启用总开关，自动开一下，避免"选了没看见"
+      if (!themeOverridesEnabled) setThemeOverridesEnabled(true);
+      message.success("背景图已应用");
+    } catch (e) {
+      message.error(`背景图设置失败：${e}`);
+    } finally {
+      setBgPicking(false);
+    }
+  }
+  async function clearThemeBg() {
+    try {
+      await invoke("clear_theme_bg");
+    } catch {
+      // 文件不在也无所谓
+    }
+    setCustomBgImage(null);
+  }
 
   const autoHideActivityBar = useAppStore((s) => s.autoHideActivityBar);
   const setAutoHideActivityBar = useAppStore((s) => s.setAutoHideActivityBar);
@@ -1273,6 +1325,266 @@ function DesktopSettingsPage() {
               value: s,
               label: `${Math.round(s * 100)}%${s === 1.0 ? "（默认）" : ""}`,
             }))}
+          />
+        </div>
+      </Card>
+
+      <Card
+        id="settings-appearance"
+        title={
+          <span className="flex items-center gap-2">
+            <Palette size={16} />
+            外观自定义
+          </span>
+        }
+        extra={
+          <Button
+            size="small"
+            type="link"
+            onClick={resetThemeOverrides}
+            disabled={
+              !themeOverridesEnabled &&
+              !customAccent &&
+              !customBgImage &&
+              customBgDim === 0 &&
+              customBgBlur === 0 &&
+              customBgFit === "cover"
+            }
+          >
+            重置
+          </Button>
+        }
+        style={{ marginBottom: 16 }}
+      >
+        <div className="flex items-center justify-between py-1">
+          <div>
+            <div>启用自定义</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              关闭后回到当前主题预设；下方调整不会丢失，只是暂时不生效。
+            </Text>
+          </div>
+          <Switch
+            checked={themeOverridesEnabled}
+            onChange={setThemeOverridesEnabled}
+          />
+        </div>
+
+        <div
+          className="py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <div>强调色</div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                覆盖按钮 / 选中态 / 链接等主色；同时同步到 antd 组件主题。
+              </Text>
+            </div>
+            <Space>
+              <ColorPicker
+                value={customAccent ?? undefined}
+                onChange={(c) => setCustomAccent(c.toHexString())}
+                disabled={!themeOverridesEnabled}
+                showText
+                presets={[
+                  {
+                    label: "推荐",
+                    colors: [
+                      "#6366f1",
+                      "#8b5cf6",
+                      "#ec4899",
+                      "#f43f5e",
+                      "#f97316",
+                      "#f59e0b",
+                      "#10b981",
+                      "#14b8a6",
+                      "#0ea5e9",
+                      "#3b82f6",
+                    ],
+                  },
+                ]}
+              />
+              <Button
+                size="small"
+                type="text"
+                onClick={() => setCustomAccent(null)}
+                disabled={!customAccent}
+              >
+                清除
+              </Button>
+            </Space>
+          </div>
+          {/* 一键色板：8 个常用色，省去打开 ColorPicker 翻 hex 的步骤 */}
+          <div
+            className="flex items-center gap-2 mt-2"
+            style={{ flexWrap: "wrap" }}
+          >
+            <Text type="secondary" style={{ fontSize: 12, marginRight: 4 }}>
+              快速色板
+            </Text>
+            {[
+              { name: "经典蓝", color: "#1677ff" },
+              { name: "玫瑰", color: "#ec4899" },
+              { name: "紫罗兰", color: "#8b5cf6" },
+              { name: "海洋", color: "#0ea5e9" },
+              { name: "森林", color: "#10b981" },
+              { name: "橙日", color: "#f97316" },
+              { name: "桃粉", color: "#fb7185" },
+              { name: "灰岩", color: "#64748b" },
+            ].map((p) => {
+              const active =
+                customAccent?.toLowerCase() === p.color.toLowerCase();
+              return (
+                <button
+                  key={p.color}
+                  type="button"
+                  title={p.name}
+                  onClick={() => {
+                    setCustomAccent(p.color);
+                    if (!themeOverridesEnabled) setThemeOverridesEnabled(true);
+                  }}
+                  disabled={!themeOverridesEnabled}
+                  style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: "50%",
+                    background: p.color,
+                    border: active
+                      ? "2px solid var(--kb-text-primary, #000)"
+                      : "1px solid rgba(0,0,0,0.15)",
+                    cursor: themeOverridesEnabled ? "pointer" : "not-allowed",
+                    opacity: themeOverridesEnabled ? 1 : 0.4,
+                    padding: 0,
+                  }}
+                />
+              );
+            })}
+          </div>
+        </div>
+
+        <div
+          className="py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <ImageIcon size={14} />
+                背景图
+              </div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                选择本地图片作为应用背景；图片会被复制到应用数据目录持久保存。
+              </Text>
+            </div>
+            <Space>
+              <Button
+                size="small"
+                onClick={pickThemeBg}
+                loading={bgPicking}
+                disabled={!themeOverridesEnabled}
+              >
+                {customBgImage ? "更换" : "选择图片"}
+              </Button>
+              <Button
+                size="small"
+                type="text"
+                onClick={clearThemeBg}
+                disabled={!customBgImage}
+              >
+                清除
+              </Button>
+            </Space>
+          </div>
+          {customBgImage && (
+            <Text
+              type="secondary"
+              style={{
+                fontSize: 12,
+                display: "block",
+                marginTop: 6,
+                wordBreak: "break-all",
+              }}
+            >
+              当前：{customBgImage}
+            </Text>
+          )}
+        </div>
+
+        <div
+          className="py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div className="flex items-center justify-between mb-1">
+            <div>
+              <div>背景遮罩</div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                在背景图上叠半透明色（暗主题黑、亮主题白），保证文字对比度。
+              </Text>
+            </div>
+            <Text style={{ fontSize: 12 }}>
+              {Math.round(customBgDim * 100)}%
+            </Text>
+          </div>
+          <Slider
+            min={0}
+            max={1}
+            step={0.05}
+            value={customBgDim}
+            onChange={setCustomBgDim}
+            disabled={!themeOverridesEnabled || !customBgImage}
+            tooltip={{
+              formatter: (v) => `${Math.round((v ?? 0) * 100)}%`,
+            }}
+          />
+        </div>
+
+        <div
+          className="py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <div>背景适配</div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                控制背景图的缩放/排布方式。
+              </Text>
+            </div>
+            <Select
+              value={customBgFit}
+              onChange={setCustomBgFit}
+              disabled={!themeOverridesEnabled || !customBgImage}
+              style={{ width: 140 }}
+              options={[
+                { label: "覆盖（裁切）", value: "cover" },
+                { label: "包含（留白）", value: "contain" },
+                { label: "原始大小", value: "center" },
+                { label: "平铺", value: "repeat" },
+              ]}
+            />
+          </div>
+        </div>
+
+        <div
+          className="py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div className="flex items-center justify-between mb-1">
+            <div>
+              <div>背景模糊</div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                高斯模糊背景图，让前景内容更突出（0 = 关闭）。
+              </Text>
+            </div>
+            <Text style={{ fontSize: 12 }}>{customBgBlur}px</Text>
+          </div>
+          <Slider
+            min={0}
+            max={30}
+            step={1}
+            value={customBgBlur}
+            onChange={setCustomBgBlur}
+            disabled={!themeOverridesEnabled || !customBgImage}
+            tooltip={{ formatter: (v) => `${v ?? 0}px` }}
           />
         </div>
       </Card>

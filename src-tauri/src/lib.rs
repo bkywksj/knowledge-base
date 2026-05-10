@@ -871,6 +871,9 @@ pub fn run() {
             commands::system::set_multi_instance_enabled,
             commands::system::write_text_file,
             commands::system::resolve_asset_absolute_path,
+            commands::system::copy_theme_bg,
+            commands::system::clear_theme_bg,
+            commands::system::path_exists,
             // 配置模块
             commands::config::get_all_config,
             commands::config::get_config,
