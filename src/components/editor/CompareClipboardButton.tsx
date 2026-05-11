@@ -1,5 +1,5 @@
 /**
- * 编辑器工具栏「与剪贴板对比」按钮（类似 IDEA 的 Compare with Clipboard）。
+ * 编辑器工具栏「与剪贴板对比」按钮。
  *
  * 难点：剪贴板里通常是**渲染后/纯文本**（你从别处复制的），而笔记侧本身是 **markdown 源码**，两边粒度不一样
  * 几乎每行都判成差异。处理：打开时先猜剪贴板像不像 markdown，决定笔记侧给"markdown 源码"还是"纯文本"；
@@ -55,7 +55,6 @@ export function CompareClipboardButton({ editor }: Props) {
       </Tooltip>
       {open && (
         <DiffMergeModal
-          key={mode}
           open={open}
           onClose={() => setOpen(false)}
           left={left}
