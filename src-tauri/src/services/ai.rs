@@ -1181,6 +1181,13 @@ impl AiService {
     ) -> Result<String, AppError> {
         let url = format!("{}/api/chat", model.api_url.trim_end_matches('/'));
         let client = build_ollama_client(&model.api_url);
+        log::info!(
+            "[Ollama] POST {} model={} msgs={} (proxied={})",
+            url,
+            model.model_id,
+            messages.len(),
+            !ollama_url_bypasses_proxy(&model.api_url)
+        );
 
         let response = match client
             .post(&url)
@@ -1196,6 +1203,7 @@ impl AiService {
             Err(e) => {
                 // Bug B: 请求没发出去（连接失败 / read_timeout）也要让前端收到 ai:error，
                 // 否则只靠 command reject 不够显眼，用户只见 UI"一直停止"
+                log::warn!("[Ollama] 请求发送失败: {} ({})", e, url);
                 let msg = format_ollama_send_error(&e, &url);
                 emit_ai_error(app, conversation_id, &msg);
                 return Err(AppError::Custom(msg));
@@ -1205,6 +1213,11 @@ impl AiService {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
+            log::warn!(
+                "[Ollama] 非 200 响应: {} body={:?}",
+                status,
+                body.chars().take(500).collect::<String>()
+            );
             let msg = format!("Ollama 返回错误 {}: {}", status, body);
             emit_ai_error(app, conversation_id, &msg);
             return Err(AppError::Custom(msg));
@@ -1487,10 +1500,19 @@ impl AiService {
             let (content, mut tool_calls) = match content {
                 Ok(c) => (c, tool_calls.unwrap_or_default()),
                 Err(e) => {
+                    log::warn!("[skills] round={} 失败: {}", round, e);
                     let _ = db.delete_ai_message(user_msg.id);
                     return Err(e);
                 }
             };
+            log::info!(
+                "[skills] round={} allow_tools={} provider={} → content_len={} tool_calls={}",
+                round,
+                allow_tools,
+                model.provider,
+                content.chars().count(),
+                tool_calls.len()
+            );
 
             // 取消信号：上面 stream 函数已经 emit ai:done "cancelled"，直接返回
             if *cancel_rx.borrow() {
@@ -1599,6 +1621,11 @@ impl AiService {
         } else {
             Some(serde_json::to_string(&all_skill_calls).unwrap_or_default())
         };
+        log::info!(
+            "[skills] 结束: final_content_len={} skill_calls={}",
+            final_content.chars().count(),
+            all_skill_calls.len()
+        );
         db.add_ai_message_full(
             conversation_id,
             "assistant",
@@ -1797,6 +1824,14 @@ impl AiService {
         if !tools.is_empty() {
             request_body["tools"] = json!(tools);
         }
+        log::info!(
+            "[Ollama/tools] POST {} model={} tools={} msgs={} (proxied={})",
+            url,
+            model.model_id,
+            tools.len(),
+            messages.len(),
+            !ollama_url_bypasses_proxy(&model.api_url)
+        );
 
         // 发请求；遇到 Ollama "模型不支持 tools" 的 400 时去掉 tools 字段重试一次，
         // 让「智能模式 + 纯文本 Ollama 模型（llama3 / gemma2 / phi3 等不支持 function calling）」
@@ -1831,6 +1866,11 @@ impl AiService {
                 }
                 continue;
             }
+            log::warn!(
+                "[Ollama/tools] 非 200 响应: {} body={:?}",
+                status,
+                body.chars().take(500).collect::<String>()
+            );
             let msg = format!("Ollama 返回错误 {}: {}", status, body);
             emit_ai_error(app, conversation_id, &msg);
             return (Err(AppError::Custom(msg)), None);
@@ -1886,6 +1926,12 @@ impl AiService {
             handle_ollama_stream_line(app, conversation_id, line, &mut content, &mut tool_calls_final);
         }
 
+        log::info!(
+            "[Ollama/tools] 流结束: content_len={} tool_calls={} (tools_sent={})",
+            content.chars().count(),
+            tool_calls_final.len(),
+            request_body.get("tools").is_some()
+        );
         (Ok(content), Some(tool_calls_final))
     }
 }
@@ -1979,7 +2025,16 @@ fn handle_ollama_stream_line(
     }
     let data: Value = match serde_json::from_str(line) {
         Ok(v) => v,
-        Err(_) => return,
+        Err(e) => {
+            // 正常情况下 Ollama 每行都是完整 JSON；解析失败往往意味着上游（含代理）把
+            // NDJSON 重新切了块、或返回了非 JSON 的错误页（如代理的 405/HTML）。打日志方便排查。
+            log::warn!(
+                "[Ollama] 跳过无法解析的流行: {} | line={:?}",
+                e,
+                line.chars().take(160).collect::<String>()
+            );
+            return;
+        }
     };
 
     if let Some(c) = data["message"]["content"].as_str() {
