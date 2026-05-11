@@ -1748,3 +1748,13 @@ body,
   background: rgba(255, 234, 0, 0.18);
   border-bottom-color: rgba(253, 230, 75, 0.7);
 }
+
+/* ── CodeMirror MergeView（DiffMergeModal：对比/合并弹窗）──
+ * MergeView 默认按内容撑高；外层容器已给固定高度，让内部各层填满并各自滚动。 */
+.cm-mergeView,
+.cm-mergeViewEditors {
+  height: 100%;
+}
+.cm-mergeViewEditor {
+  min-height: 0;
+}
