@@ -19,15 +19,18 @@ Tauri Desktop App 的 Git 工作流与版本管理技能，规范分支命名、
 
 ---
 
-## 🔴 双远端架构（knowledge_base 项目）
+## 🔴 多远端架构（knowledge_base 项目）
 
-本项目有三个远端（`git remote -v`）：
+本项目有四个远端（`git remote -v`）：
 
 | remote | 角色 | 定位 |
 |--------|------|------|
 | **`origin`** | **Gitee (`gitee.com/bkywksj/knowledge-base`)** | 国内主仓 |
-| **`github`** | **GitHub (`github.com/bkywksj/knowledge-base`)** | CI 构建源 + 海外开源镜像 |
+| **`github`** | **GitHub (`github.com/bkywksj/knowledge-base`)** | 主 CI 构建源 + 海外开源镜像 |
+| **`github2`** | **GitHub (`git@github.com:allebamala/knowledge-base.git`，SSH)** | 备用 CI（`bkywksj` 的 Actions 配额耗尽时切到这里跑）— 私有仓库，跟 `tauri-cc` 的 `github2` 同套路（用 `~/.gh_token_allebamala` 那个账号；本机 SSH key 已绑 allebamala） |
 | `upstream` | 原 tauri 框架模板 | 极少用，仅在同步模板时拉取 |
+
+> github2 的 GitHub Actions Secrets 已配好同样的 `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`（与主 `github` 一致），切过去跑 Android 签名构建不用重配。
 
 ### 历史已对齐（v1.3.0 起）
 
@@ -41,23 +44,24 @@ v1.3.0 发布时（2026-04-26）已经把 GitHub 历史 force-sync 到 Gitee，*
 
 ### 「日常 commit」— 用户说"提交推送"时
 
-**默认两端都推**（两端历史已统一，没有任何冲突风险）：
+**默认推 origin + github**（两端历史已统一，没有任何冲突风险）；`github2` 是备用镜像，平时可不推，需要切备用 CI / 发版前再 `git push github2 master` 同步一次：
 
 ```bash
 git push origin master       # Gitee 主仓
-git push github master       # GitHub（CI 触发源 + 海外镜像）
+git push github master       # GitHub 主（CI 触发源 + 海外镜像）
+# git push github2 master    # GitHub 备用（按需，配额耗尽切过去前同步）
 ```
 
 如果用户只说"推 Gitee"，按字面只推 origin。
 
 ### 「发布版本」— 调 /release 时
 
-走下方"发布流程"章节；tag 同时推两端，CI 会从 GitHub 端打 tag 触发构建。
+走下方"发布流程"章节；tag 推 `github`（CI 从这边触发），需要时也推 `github2`。
 
 ### ⛔ 注意事项
 
 1. **不要在 master 上直接 force push**（除非你像 v1.3.0 那种明确做"两端历史合并"，且已备份）
-2. 推送前 fetch 双端确认本地是最新的，避免覆盖另一端有但本地没有的 commit
+2. 推送前 fetch 各端确认本地是最新的，避免覆盖另一端有但本地没有的 commit
 
 ---
 
