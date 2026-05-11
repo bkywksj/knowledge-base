@@ -52,6 +52,130 @@ function renderIcon(name: string | null, size: number): React.ReactNode {
 }
 
 /**
+ * 修复 R-016：AI 写作处理选区时丢图片。
+ *
+ * 旧实现 `editor.state.doc.textBetween(from, to, " ")` 只取纯文本，所有
+ * `image / video / embedVideo` 这类 block 节点会在 step 1 就被丢弃，AI 看不到，
+ * 替换阶段 `deleteRange + insertContentAt(纯文本)` 又把原选区里的节点删了，
+ * 导致图片永久丢失。
+ *
+ * 修复策略：物理隔离，不依赖模型守规矩。
+ *   1. 扫描选区时，遇到媒体节点把 `node.toJSON()` 存档，文本里塞 [IMG_N] 占位符。
+ *   2. 占位符随选区文字一起喂给 AI；模型保留就按原位回填，模型吞掉就追加末尾兜底。
+ *   3. 替换/追加阶段按占位符切分 result，分段交替插入 text 与 nodeJSON。
+ */
+const MEDIA_NODE_TYPES = new Set(["image", "video", "embedVideo"]);
+// 占位符设计：
+// - 必须人类/模型都能识别为"占位符"（用大写英文 + 下划线 + 数字，不是常见词汇）
+// - 必须在最终结果中容易精确切分（前后加方括号，配合正则 \[IMG_\d+\]）
+// - 不能是零宽字符：测试中部分模型会"清理空白"把零宽吞掉，可见 token 反而更稳
+const PLACEHOLDER_PREFIX = "[IMG_";
+const PLACEHOLDER_SUFFIX = "]";
+const PLACEHOLDER_REGEX = /\[IMG_(\d+)\]/g;
+
+interface MediaNodeSnapshot {
+  index: number;
+  nodeJSON: unknown;
+}
+
+interface SelectionPayload {
+  /** 含 [IMG_N] 占位符的纯文本，喂给 AI */
+  text: string;
+  /** 按 index 顺序存放的媒体节点快照 */
+  mediaNodes: MediaNodeSnapshot[];
+}
+
+/**
+ * 扫描选区，把媒体节点替换为占位符。
+ * 遵循 ProseMirror nodesBetween 语义：parent 内的 inline 节点逐个回调。
+ * 性能：O(n)，n = 选区内节点数；不会克隆全文档。
+ */
+function extractSelectionWithMedia(
+  editor: Editor,
+  from: number,
+  to: number,
+): SelectionPayload {
+  const mediaNodes: MediaNodeSnapshot[] = [];
+  let text = "";
+  let lastBlockEnd = -1;
+
+  editor.state.doc.nodesBetween(from, to, (node, pos) => {
+    // 媒体节点：替换为占位符，不再下钻
+    if (MEDIA_NODE_TYPES.has(node.type.name)) {
+      const idx = mediaNodes.length;
+      mediaNodes.push({ index: idx, nodeJSON: node.toJSON() });
+      text += `${PLACEHOLDER_PREFIX}${idx}${PLACEHOLDER_SUFFIX}`;
+      return false;
+    }
+    // 文本节点：按选区裁剪后拼接
+    if (node.isText && node.text) {
+      const nodeFrom = Math.max(pos, from);
+      const nodeTo = Math.min(pos + node.nodeSize, to);
+      if (nodeTo > nodeFrom) {
+        text += node.text.slice(nodeFrom - pos, nodeTo - pos);
+      }
+      return false;
+    }
+    // block 节点（段落/标题/列表项等）边界：补一个换行，跟 textBetween(" ") 行为接近
+    // 但用 \n 而不是空格，让 AI 看到段落结构
+    if (node.isBlock && pos >= from && pos !== lastBlockEnd) {
+      if (text.length > 0 && !text.endsWith("\n")) {
+        text += "\n";
+      }
+      lastBlockEnd = pos + node.nodeSize;
+    }
+    return true;
+  });
+
+  return { text, mediaNodes };
+}
+
+interface ResultSegment {
+  type: "text" | "node";
+  value: string;
+  nodeJSON?: unknown;
+}
+
+/**
+ * 解析 AI 返回结果，按 [IMG_N] 占位符切分。
+ *
+ * 兜底规则（按优先级）：
+ *   1. 占位符按出现顺序对应到 mediaNodes[N]，N 越界则丢弃占位符
+ *   2. 同一图片占位符在 result 中重复出现 → 第一次插入节点，后续保留为字面文字
+ *      （不复制节点，避免 ProseMirror 节点 id 冲突）
+ *   3. 全部占位符被 AI 删掉 → 调用方在 applyResult 里把剩余节点追加到末尾
+ *
+ * @returns segments + 已使用的 media index 集合
+ */
+function parseResultWithPlaceholders(
+  result: string,
+  mediaNodes: MediaNodeSnapshot[],
+): { segments: ResultSegment[]; usedIndices: Set<number> } {
+  const segments: ResultSegment[] = [];
+  const usedIndices = new Set<number>();
+  let lastIndex = 0;
+  PLACEHOLDER_REGEX.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = PLACEHOLDER_REGEX.exec(result)) !== null) {
+    const before = result.slice(lastIndex, match.index);
+    if (before) segments.push({ type: "text", value: before });
+    const idx = Number(match[1]);
+    const media = mediaNodes[idx];
+    if (media && !usedIndices.has(idx)) {
+      segments.push({ type: "node", value: match[0], nodeJSON: media.nodeJSON });
+      usedIndices.add(idx);
+    } else {
+      // 越界或重复出现：保留为文字，避免静默丢内容
+      segments.push({ type: "text", value: match[0] });
+    }
+    lastIndex = match.index + match[0].length;
+  }
+  const tail = result.slice(lastIndex);
+  if (tail) segments.push({ type: "text", value: tail });
+  return { segments, usedIndices };
+}
+
+/**
  * 伪选区 Plugin：在 AI 菜单弹出（流式中 / 结果区显示 / 自定义 Popover 打开）时，
  * 给当前选区位置加一个 inline class，靠 CSS 渲染高亮。
  *
@@ -111,6 +235,8 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
   const suggestSeqRef = useRef(0); // 选区/Popover 切换时丢弃过期请求
   // 当前用户选区范围：用于 fake-selection 装饰；selectionUpdate 时同步更新
   const selectionRangeRef = useRef<{ from: number; to: number } | null>(null);
+  // R-016：选区采集时存档的图片/视频节点；replace/append 阶段按占位符回填，避免丢图
+  const mediaNodesRef = useRef<MediaNodeSnapshot[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
   const unlistenRefs = useRef<UnlistenFn[]>([]);
   // 最近一次 mouseup 的坐标（拖选完毕时记下来，让 AI 菜单贴在鼠标附近而不是
@@ -351,8 +477,16 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
     setActivePrompt(display);
     await cleanup();
 
-    // 获取选区周围的上下文（与旧版本一致：各取 300 字符）
+    // R-016：用 extractSelectionWithMedia 替代 textBetween，把图片节点变成 [IMG_N] 占位符。
+    // selectedText state 此时仍是 selectionUpdate 里算的纯文本（用于显示长度判定/Popover 上下文），
+    // 这里要重新提取一份"含占位符"的 payload 喂给 AI，并把节点存档供 applyResult 回填。
     const { from, to } = editor.state.selection;
+    const payload = extractSelectionWithMedia(editor, from, to);
+    mediaNodesRef.current = payload.mediaNodes;
+    const promptSelectedText = payload.text;
+
+    // 上下文继续用 textBetween 即可（300 字符上下文里出现媒体节点的概率很低，
+    // 且 AI 看到上下文中有 [IMG_N] 反而可能误以为要回写图片，得不偿失）
     const fullText = editor.state.doc.textBetween(
       0,
       editor.state.doc.content.size,
@@ -378,7 +512,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
     unlistenRefs.current = [tokenUnlisten, doneUnlisten, errorUnlisten];
 
     try {
-      await aiWriteApi.assist(action, selectedText, context);
+      await aiWriteApi.assist(action, promptSelectedText, context);
     } catch (e) {
       setStreaming(false);
       setResult(`错误: ${e}`);
@@ -441,27 +575,76 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
    * - append：在选区末尾追加（续写）
    * - popup：只展示不插入；用户确实想插入会手动选"替换"/"追加"
    * - replace（默认）：删选区再插入
+   *
+   * R-016：选区里如果有 image/video 节点，runAssist 已把它们存档到 mediaNodesRef 并
+   * 在喂给 AI 的文本中标记 [IMG_N] 占位符。这里按占位符切分 result，分段交替插入
+   * text 和 nodeJSON，保证图片不丢。
    */
   function applyResult(mode: PromptOutputMode) {
     if (!result) return;
     const { from, to } = editor.state.selection;
-    if (mode === "append") {
-      editor.chain().focus().insertContentAt(to, result).run();
+    const mediaNodes = mediaNodesRef.current;
+
+    // 无媒体节点：走旧的快速路径，避免无谓的解析开销
+    if (mediaNodes.length === 0) {
+      if (mode === "append") {
+        editor.chain().focus().insertContentAt(to, result).run();
+      } else {
+        editor
+          .chain()
+          .focus()
+          .deleteRange({ from, to })
+          .insertContentAt(from, result)
+          .run();
+      }
     } else {
-      // replace：popup 也会走到这里（用户手动点"替换"），一视同仁
-      editor
-        .chain()
-        .focus()
-        .deleteRange({ from, to })
-        .insertContentAt(from, result)
-        .run();
+      const { segments, usedIndices } = parseResultWithPlaceholders(
+        result,
+        mediaNodes,
+      );
+      // 兜底：AI 完全或部分丢弃了占位符，把没用上的图片追加到结果末尾
+      const orphanNodes = mediaNodes.filter((m) => !usedIndices.has(m.index));
+
+      // ProseMirror chain 要按"先删再插"的顺序；插入位置随 chain 自动右移，
+      // 这里收集成 contentArray 一次性 insertContent，让 PM 内部计算位置
+      const contentArray: unknown[] = [];
+      for (const seg of segments) {
+        if (seg.type === "text") {
+          if (seg.value) contentArray.push(seg.value);
+        } else {
+          contentArray.push(seg.nodeJSON);
+        }
+      }
+      for (const orphan of orphanNodes) {
+        // 孤儿节点前补换行，避免和上一段文字粘在一起
+        contentArray.push("\n");
+        contentArray.push(orphan.nodeJSON);
+      }
+
+      if (mode === "append") {
+        editor
+          .chain()
+          .focus()
+          .insertContentAt(to, contentArray as never)
+          .run();
+      } else {
+        editor
+          .chain()
+          .focus()
+          .deleteRange({ from, to })
+          .insertContentAt(from, contentArray as never)
+          .run();
+      }
     }
+
+    mediaNodesRef.current = [];
     setVisible(false);
     setResult("");
     setActivePrompt(null);
   }
 
   function handleDiscard() {
+    mediaNodesRef.current = [];
     setResult("");
     setVisible(false);
     setActivePrompt(null);
