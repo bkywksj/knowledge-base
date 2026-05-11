@@ -6,14 +6,17 @@
  */
 import type { Editor } from "@tiptap/react";
 
-/** 清理 tiptap-markdown 序列化里的空段落 HTML 兜底，并把连续空行压成一个 */
+/**
+ * 把 tiptap-markdown 序列化里"空段落的 HTML 兜底"（`<p></p>` / `<p><br></p>`）替换成**空行本身**——
+ * 让空行就显示成空行，而不是一行 `<p><br></p>` 文本。
+ *
+ * 注意：**不**压缩连续空行、**不** trim 首尾——用户需要在 diff 里看到这些空行。
+ */
 export function tidyNoteMarkdown(md: string): string {
   return md
-    .replace(/<p>\s*(?:<br\s*\/?>\s*)?<\/p>/gi, "") // 去掉 <p></p> / <p><br></p>
     .replace(/\r\n/g, "\n")
-    .replace(/[ \t]+\n/g, "\n") // 行尾空白
-    .replace(/\n{3,}/g, "\n\n") // 多个连续空行 → 一个
-    .trim();
+    .replace(/<p>\s*(?:<br\s*\/?>\s*)?<\/p>/gi, "") // <p><br></p> → 这一行变空行（外围的 \n\n 还在）
+    .replace(/[ \t]+\n/g, "\n"); // 顺手去掉行尾空白
 }
 
 /** 取当前编辑器内容的 markdown（已 tidy）；无 markdown storage 时退回纯文本 */
