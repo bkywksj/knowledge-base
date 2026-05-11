@@ -486,6 +486,16 @@ export function SyncV1Section() {
     }
   }
 
+  // 后台同步：立即返回，不阻塞界面；完成/失败由 sync_v1:auto-triggered 事件弹 toast
+  async function handleBackgroundSync(id: number) {
+    try {
+      await syncV1Api.triggerBackgroundSync(id);
+      message.info("已在后台开始同步（先拉后推），完成后会提示；这期间可以继续干别的");
+    } catch (e) {
+      message.error(`启动后台同步失败: ${e}`);
+    }
+  }
+
   return (
     <div>
       <Alert
@@ -609,7 +619,7 @@ export function SyncV1Section() {
           },
           {
             title: "操作",
-            width: 360,
+            width: 460,
             render: (_, b) => {
               const busy = busyBackendId === b.id;
               return (
@@ -643,6 +653,16 @@ export function SyncV1Section() {
                       onClick={() => handlePull(b.id)}
                     >
                       拉取
+                    </Button>
+                  </Tooltip>
+                  <Tooltip title="后台同步（先拉后推）：点了立刻返回，同步在后台跑、不阻塞界面，完成后弹提示">
+                    <Button
+                      size="small"
+                      icon={<RefreshCcw size={13} />}
+                      disabled={busy}
+                      onClick={() => handleBackgroundSync(b.id)}
+                    >
+                      后台同步
                     </Button>
                   </Tooltip>
                   {b.kind === "webdav" && (

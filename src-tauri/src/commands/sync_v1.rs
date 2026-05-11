@@ -156,6 +156,23 @@ pub fn sync_v1_pull(
     .map_err(|e| e.to_string())
 }
 
+/// 后台同步：立即返回，同步（先拉后推）在后台 tokio task 里跑，完成/失败通过 `sync_v1:auto-triggered` 事件回报。
+#[tauri::command]
+pub fn sync_v1_trigger_background_sync(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    id: i64,
+) -> Result<(), String> {
+    // 先校验 backend 存在，免得在后台静默 noop
+    state
+        .db
+        .get_sync_backend(id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("backend {} 不存在", id))?;
+    crate::services::sync_v1_scheduler::trigger_background_sync(&app, id);
+    Ok(())
+}
+
 /// 拿当前本地 manifest（调试 / UI 状态展示用）
 #[tauri::command]
 pub fn sync_v1_get_local_manifest(

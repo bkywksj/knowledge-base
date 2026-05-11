@@ -937,6 +937,7 @@ pub fn run() {
             commands::sync_v1::sync_v1_read_remote_manifest,
             commands::sync_v1::sync_v1_push,
             commands::sync_v1::sync_v1_pull,
+            commands::sync_v1::sync_v1_trigger_background_sync,
             commands::sync_v1::sync_v1_get_local_manifest,
             commands::sync_v1::sync_v1_rebuild_attachment_index,
             commands::sync_v1::sync_v1_gc_attachments,

@@ -84,6 +84,17 @@ fn is_due(backend: &SyncBackend, now: &NaiveDateTime) -> bool {
     }
 }
 
+/// 手动触发一次"后台同步"：立即返回，同步在 tokio task 里跑（先 pull 再 push），
+/// 完成 / 失败都通过 `sync_v1:auto-triggered` 事件回报前端（SyncV1Section 已监听弹 toast）。
+///
+/// 给设置页"后台同步"按钮用 —— 点了不阻塞界面，可以继续干别的。
+pub fn trigger_background_sync(app: &AppHandle, backend_id: i64) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        run_backend_sync(&app, backend_id).await;
+    });
+}
+
 /// 跑一次 backend 双向同步（先 pull 再 push，模仿 git pull && git push）
 ///
 /// push/pull 是同步阻塞函数（webdav reqwest blocking），必须 spawn_blocking

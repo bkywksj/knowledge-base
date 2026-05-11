@@ -795,6 +795,9 @@ export const syncV1Api = {
     invoke<SyncManifestV1 | null>("sync_v1_read_remote_manifest", { id }),
   push: (id: number) => invoke<SyncPushResult>("sync_v1_push", { id }),
   pull: (id: number) => invoke<SyncPullResult>("sync_v1_pull", { id }),
+  /** 后台同步：立即返回，先拉后推在后台跑，完成/失败通过 sync_v1:auto-triggered 事件回报 */
+  triggerBackgroundSync: (id: number) =>
+    invoke<void>("sync_v1_trigger_background_sync", { id }),
   getLocalManifest: () =>
     invoke<SyncManifestV1>("sync_v1_get_local_manifest"),
   /// T-S024: 重建附件索引（扫描所有笔记 content 中的本地资产引用 → upsert 到 note_attachments）
