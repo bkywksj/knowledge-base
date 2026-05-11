@@ -10,6 +10,7 @@
 //! V1 阶段刻意**不动**老 `services/sync.rs`（V0 整库 ZIP）—— 老用户继续兼容；
 //! 用户在设置里选 V1 后才走这里。
 
+pub mod attachment_scan;
 pub mod backend;
 pub mod backend_local;
 // rust-s3 0.34 强引入 openssl，移动端编译失败；S3 backend 仅桌面端启用

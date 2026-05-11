@@ -277,13 +277,17 @@
 
 #### T-S021 · 资产引用扫描器
 
-- **状态**：`pending`
+- **状态**：`completed` · 完成日期：2026-05-11
 - **价值**：⭐⭐⭐⭐⭐  成本：中（0.5 天）
 - **依赖**：T-S020
 - **子任务**：
-  - [ ] services/sync_v1/attachment_scan.rs::scan_note_attachments：正则匹配 markdown 引用 + wiki 嵌入
-  - [ ] 计算 sha256 + size + mime
-  - [ ] upsert 到 note_attachments
+  - [x] `services/sync_v1/attachment_scan.rs::extract_local_refs`：3 个 regex 静态实例（md image / md link / wiki embed），URL decode + 路径过滤
+  - [x] `looks_like_local_asset`：拒绝 http(s) / asset 协议 / 绝对路径 / `..` 穿越；只接受已知前缀（kb_assets/、pdfs/、sources/ + dev- 变体）
+  - [x] `try_resolve`：按相对路径读文件计算 sha256 + size + mime（按扩展名推断）
+  - [x] `scan_note(db, data_dir, note_id, content)`：单笔记扫描 + upsert，文件不存在跳过
+  - [x] `scan_all_active_notes`：全库扫描入口（设置页"重建附件索引"用）
+  - [x] 12 个单测：5 种引用模式 / 4 种过滤规则 / 去重 / dev 前缀 / mime 推断 / 端到端 hash 稳定性 / 文件缺失跳过
+  - [x] 全 lib 186 个单测通过
 
 #### T-S022 · manifest 加 `attachments` 字段
 
