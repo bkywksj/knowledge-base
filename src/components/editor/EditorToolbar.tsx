@@ -50,6 +50,7 @@ import { MicButton } from "@/components/MicButton";
 import { insertVideoTimestamp } from "./VideoTimestamp";
 import { EmojiPicker } from "./EmojiPicker";
 import { AnnotationButton } from "./AnnotationButton";
+import { CompareClipboardButton } from "./CompareClipboardButton";
 import { parseEmbedUrl, SUPPORTED_PROVIDERS } from "./embedVideoProviders";
 import { useFormatPainter } from "./useFormatPainter";
 
@@ -494,6 +495,12 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
             }
           />
         ),
+      },
+      {
+        // 与剪贴板对比：有选区→对比选中文本（可一键替换）；无选区→对比整篇笔记（只读）
+        icon: null,
+        title: "对比剪贴板",
+        customRender: () => <CompareClipboardButton editor={editor} />,
       },
     ],
     // 颜色 / 字号 / 行高
