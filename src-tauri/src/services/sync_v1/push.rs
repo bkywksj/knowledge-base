@@ -90,6 +90,7 @@ pub fn push<R: Runtime, E: Emitter<R>>(
         entries: vec![],
         hash_algo: Some(SyncManifestV1::HASH_ALGO_V2.into()),
         vault: None,
+        attachments: vec![],
     });
 
     let diff = manifest::diff_manifests(&local, &remote);
@@ -309,6 +310,7 @@ pub fn push<R: Runtime, E: Emitter<R>>(
             entries: vec![],
             hash_algo: Some(SyncManifestV1::HASH_ALGO_V2.into()),
             vault: None,
+            attachments: vec![],
         },
         Err(e) => {
             result

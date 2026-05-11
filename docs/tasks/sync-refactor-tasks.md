@@ -291,12 +291,16 @@
 
 #### T-S022 · manifest 加 `attachments` 字段
 
-- **状态**：`pending`
+- **状态**：`completed` · 完成日期：2026-05-11
 - **价值**：⭐⭐⭐⭐  成本：低（30 min）
 - **依赖**：T-S020
 - **子任务**：
-  - [ ] SyncManifestV1.attachments: Vec<AttachmentEntry> 顶层字段
-  - [ ] compute_local_manifest 时填充
+  - [x] `models/mod.rs` 加 `AttachmentEntry { hash, size, mime, ext }` 结构
+  - [x] `SyncManifestV1.attachments: Vec<AttachmentEntry>`，serde default + skip_if_empty
+  - [x] `compute_local_manifest` 调 `list_all_unique_attachments` 填充，按 path 推断 ext
+  - [x] `merge_manifests` 合并 attachments（outer-join，本地+远端独有都保留）
+  - [x] 3 个新单测：填充 / 旧客户端反序列化兼容 / merge outer-join
+  - [x] 全 lib 189 个单测通过
 
 #### T-S023 · backend trait 附件 IO
 

@@ -1300,6 +1300,27 @@ pub struct ManifestEntry {
     pub encrypted: bool,
 }
 
+/// V1 同步 manifest 顶层的附件清单条目（T-S022 sidecar CAS 附件同步）
+///
+/// 描述远端 CAS 布局中存在的一个附件文件，对应远端路径 `attachments/<aa>/<bb>/<hash>.<ext>`。
+/// 客户端拉到 manifest 后据此算"哪些 hash 是本地缺失的"，下载补齐。
+///
+/// 字段语义：
+/// - `hash`：sha256 hex（决定远端文件名 + 是否要传/下载）
+/// - `size`：原始字节数，用于进度展示
+/// - `mime`：可选 MIME，UI 显示用
+/// - `ext`：可选小写扩展名（如 "png" / "pdf"），用于拼远端 `<hash>.<ext>` 文件名让人类可读
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentEntry {
+    pub hash: String,
+    pub size: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ext: Option<String>,
+}
+
 /// V1 同步顶层携带的 vault 元数据（T-S014 端到端加密同步）
 ///
 /// 多端共享同一密码 + 同一 salt → 派生出同一把 vault key，从而能解密同步过来的密文。
@@ -1337,6 +1358,10 @@ pub struct SyncManifestV1 {
     /// 字段缺失（旧客户端 / 远端未启用 vault）→ 加密笔记不参与同步
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vault: Option<VaultMeta>,
+    /// T-S022：sidecar CAS 附件清单。远端 `attachments/<aa>/<bb>/<hash>.<ext>` 存在哪些文件，
+    /// 拉端据此算差集决定要下载哪些。空 Vec 时不序列化（旧客户端无字段也兼容）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentEntry>,
 }
 
 impl SyncManifestV1 {

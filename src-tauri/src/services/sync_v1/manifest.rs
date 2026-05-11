@@ -180,6 +180,30 @@ pub fn compute_local_manifest(
     // T-S014：附带本机 vault meta（如已设置），让其他端首次同步时能拉到 salt+verifier
     let vault_meta = crate::services::vault::VaultService::read_meta(db).unwrap_or(None);
 
+    // T-S022：附件清单（unique hashes from note_attachments）
+    // 失败仅 warn 不阻塞 manifest 生成；附件同步会在后续步骤识别"远端没有这些 hash"
+    let attachments: Vec<crate::models::AttachmentEntry> = match db.list_all_unique_attachments() {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|row| {
+                let ext = std::path::Path::new(&row.local_rel_path)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|s| s.to_ascii_lowercase());
+                crate::models::AttachmentEntry {
+                    hash: row.sha256_hex,
+                    size: row.size,
+                    mime: row.mime,
+                    ext,
+                }
+            })
+            .collect(),
+        Err(e) => {
+            log::warn!("[manifest] 读取 note_attachments 失败 ({}), attachments 留空", e);
+            Vec::new()
+        }
+    };
+
     Ok(SyncManifestV1 {
         manifest_version: SyncManifestV1::VERSION,
         app_version: app_version.to_string(),
@@ -188,6 +212,7 @@ pub fn compute_local_manifest(
         entries,
         hash_algo: Some(SyncManifestV1::HASH_ALGO_V2.into()),
         vault: vault_meta,
+        attachments,
     })
 }
 
@@ -273,6 +298,21 @@ pub fn merge_manifests(local: &SyncManifestV1, remote: &SyncManifestV1) -> SyncM
     }
     merged.sort_by(|a, b| a.stable_id.cmp(&b.stable_id));
 
+    // T-S022：附件清单合并（与笔记 entry 合并规则同——以 hash 为键 outer-join）。
+    // 本地附件清单全部保留 + 远端独有的 hash 也保留。
+    // 防止两端各上传过一些附件时，新写出的 manifest 漏掉对方的 hash → 拉端找不到引用。
+    let mut local_attachment_hashes: std::collections::HashSet<&str> =
+        local.attachments.iter().map(|a| a.hash.as_str()).collect();
+    let mut merged_attachments: Vec<crate::models::AttachmentEntry> =
+        local.attachments.clone();
+    for ra in &remote.attachments {
+        if local_attachment_hashes.insert(ra.hash.as_str()) {
+            merged_attachments.push(ra.clone());
+        }
+    }
+    // 稳定排序方便 manifest 文本 diff 友好
+    merged_attachments.sort_by(|a, b| a.hash.cmp(&b.hash));
+
     SyncManifestV1 {
         manifest_version: local.manifest_version,
         app_version: local.app_version.clone(),
@@ -283,6 +323,7 @@ pub fn merge_manifests(local: &SyncManifestV1, remote: &SyncManifestV1) -> SyncM
         // T-S014：vault meta 用本地的（本机视角是权威；首次同步时远端独有的 meta 已被
         // 上层 pull 流程在 read_manifest 时单独 import 写入本机 app_config）
         vault: local.vault.clone(),
+        attachments: merged_attachments,
     }
 }
 
@@ -400,6 +441,7 @@ mod tests {
             entries,
             hash_algo: Some(SyncManifestV1::HASH_ALGO_V2.into()),
             vault: None,
+            attachments: vec![],
         }
     }
 
@@ -847,8 +889,127 @@ mod tests {
             entries: vec![],
             hash_algo: None,
             vault: None,
+            attachments: vec![],
         };
         let json = serde_json::to_string(&m).unwrap();
         assert!(!json.contains("hashAlgo"), "None 时不应输出该字段; got = {}", json);
+        assert!(
+            !json.contains("attachments"),
+            "空 attachments 不应输出字段; got = {}",
+            json
+        );
+    }
+
+    /// T-S022：compute_local_manifest 填充 attachments
+    #[test]
+    fn compute_local_manifest_fills_attachments_from_note_attachments() {
+        use crate::models::NoteInput;
+        let db = Database::init(":memory:").unwrap();
+        let n = db
+            .create_note(&NoteInput {
+                title: "笔记".into(),
+                content: "x".into(),
+                folder_id: None,
+            })
+            .unwrap();
+
+        // 直接 upsert 几条附件引用（不走 attachment_scan，单元解耦）
+        db.upsert_attachment_ref(
+            n.id,
+            "kb_assets/images/a.png",
+            "hash_a",
+            100,
+            Some("image/png"),
+        )
+        .unwrap();
+        db.upsert_attachment_ref(
+            n.id,
+            "pdfs/b.pdf",
+            "hash_b",
+            2000,
+            Some("application/pdf"),
+        )
+        .unwrap();
+        // 同 hash 不同 path 应去重
+        db.upsert_attachment_ref(
+            n.id,
+            "kb_assets/images/dup.png",
+            "hash_a",
+            100,
+            Some("image/png"),
+        )
+        .unwrap();
+
+        let m = compute_local_manifest(&db, "test", "host").unwrap();
+        assert_eq!(m.attachments.len(), 2, "去重后应 2 个唯一 hash");
+
+        let hashes: std::collections::HashSet<&str> =
+            m.attachments.iter().map(|a| a.hash.as_str()).collect();
+        assert!(hashes.contains("hash_a"));
+        assert!(hashes.contains("hash_b"));
+
+        // ext 从 path 推断
+        let a = m.attachments.iter().find(|a| a.hash == "hash_a").unwrap();
+        assert_eq!(a.ext.as_deref(), Some("png"));
+        let b = m.attachments.iter().find(|a| a.hash == "hash_b").unwrap();
+        assert_eq!(b.ext.as_deref(), Some("pdf"));
+        assert_eq!(b.size, 2000);
+    }
+
+    /// T-S022：旧客户端无 attachments 字段也能反序列化（默认空 Vec）
+    #[test]
+    fn old_manifest_without_attachments_deserializes_to_empty() {
+        let old = r#"{
+            "manifestVersion": 1,
+            "appVersion": "1.0",
+            "device": "old",
+            "generatedAt": "2026-01-01 00:00:00",
+            "entries": []
+        }"#;
+        let m: SyncManifestV1 = serde_json::from_str(old).unwrap();
+        assert!(m.attachments.is_empty());
+    }
+
+    /// T-S022：merge_manifests 合并 attachments（outer-join 保留双方）
+    #[test]
+    fn merge_attachments_outer_join() {
+        let mut local = manifest(vec![]);
+        local.attachments = vec![
+            crate::models::AttachmentEntry {
+                hash: "common".into(),
+                size: 100,
+                mime: None,
+                ext: None,
+            },
+            crate::models::AttachmentEntry {
+                hash: "local_only".into(),
+                size: 200,
+                mime: None,
+                ext: None,
+            },
+        ];
+        let mut remote = manifest(vec![]);
+        remote.attachments = vec![
+            crate::models::AttachmentEntry {
+                hash: "common".into(),
+                size: 100,
+                mime: None,
+                ext: None,
+            },
+            crate::models::AttachmentEntry {
+                hash: "remote_only".into(),
+                size: 300,
+                mime: None,
+                ext: None,
+            },
+        ];
+
+        let merged = merge_manifests(&local, &remote);
+        assert_eq!(merged.attachments.len(), 3, "common + local_only + remote_only");
+        let hashes: std::collections::HashSet<&str> =
+            merged.attachments.iter().map(|a| a.hash.as_str()).collect();
+        assert!(hashes.contains("common"));
+        assert!(hashes.contains("local_only"));
+        assert!(hashes.contains("remote_only"));
     }
 }

@@ -158,6 +158,7 @@ mod tests {
             }],
             hash_algo: Some(SyncManifestV1::HASH_ALGO_V2.into()),
             vault: None,
+            attachments: vec![],
         };
         backend.write_manifest(&m).unwrap();
         let got = backend.read_manifest().unwrap().expect("应能读回 manifest");
