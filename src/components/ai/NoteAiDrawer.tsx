@@ -86,12 +86,12 @@ export function NoteAiDrawer({
     if (!open) return;
     let mounted = true;
     (async () => {
-      const tokenUn = await listen<{ conversationId: number; token: string }>(
+      const tokenUn = await listen<{ conversationId: number; content: string }>(
         "ai:token",
         (e) => {
           if (!mounted) return;
           if (conv && e.payload.conversationId === conv.id) {
-            setStreamingText((prev) => prev + e.payload.token);
+            setStreamingText((prev) => prev + e.payload.content);
           }
         },
       );

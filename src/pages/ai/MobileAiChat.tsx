@@ -48,6 +48,11 @@ export function MobileAiChat() {
   const [addModelOpen, setAddModelOpen] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // convId 的 ref 镜像 —— 给 mount-once 的 ai:* 事件 handler 用，避免路由参数变化后闭包陷阱
+  const convIdRef = useRef(convId);
+  useEffect(() => {
+    convIdRef.current = convId;
+  }, [convId]);
 
   // 自动滚到底
   function scrollToBottom() {
@@ -85,23 +90,34 @@ export function MobileAiChat() {
     let unlistens: UnlistenFn[] = [];
     let cancelled = false;
     (async () => {
-      const tokenU = await listen<string>("ai:token", (e) => {
-        setStreamingText((prev) => {
-          const next = prev + e.payload;
-          scrollToBottom();
-          return next;
-        });
-      });
-      const doneU = await listen("ai:done", async () => {
+      // ai:token / ai:error payload 带 conversationId（后端改造）；按当前路由的会话过滤，
+      // 避免别的会话（如桌面端）的流式 token 串到这里。
+      const tokenU = await listen<{ conversationId: number; content: string }>(
+        "ai:token",
+        (e) => {
+          if (e.payload.conversationId !== convIdRef.current) return;
+          setStreamingText((prev) => {
+            const next = prev + e.payload.content;
+            scrollToBottom();
+            return next;
+          });
+        },
+      );
+      const doneU = await listen<number>("ai:done", async (e) => {
+        if (e.payload !== convIdRef.current) return;
         setStreaming(false);
         setStreamingText("");
         await loadAll();
       });
-      const errU = await listen<string>("ai:error", (e) => {
-        setStreaming(false);
-        setStreamingText("");
-        message.error(`AI 错误: ${e.payload}`);
-      });
+      const errU = await listen<{ conversationId: number; error: string }>(
+        "ai:error",
+        (e) => {
+          if (e.payload.conversationId !== convIdRef.current) return;
+          setStreaming(false);
+          setStreamingText("");
+          message.error(`AI 错误: ${e.payload.error}`);
+        },
+      );
       if (cancelled) {
         tokenU();
         doneU();

@@ -170,7 +170,12 @@ function DesktopAiChatPage() {
   // 真相在 app_config.ai_writable，启动时已 loadAiWritable() 同步过。
   const aiWritable = useAppStore((s) => s.aiWritable);
   const setAiWritable = useAppStore((s) => s.setAiWritable);
-  const [streaming, setStreaming] = useState(false);
+  // 当前正在流式生成的会话 ID（null = 没有进行中的流）。
+  // 用它而不是单纯的 boolean，是为了支持「会话 A 流式中途切到会话 B」：
+  // - 后端的 ai:token / ai:error 事件现在带 conversationId，前端按 activeConvId 过滤，
+  //   A 后续吐的 token 不会再贴到 B 上（多会话串台 Bug）
+  // - "停止"按钮 / 流式气泡 / 输入框禁用只对「正在被查看的那个会话」生效
+  const [streamingConvId, setStreamingConvId] = useState<number | null>(null);
   const [streamingText, setStreamingText] = useState("");
   // 附加笔记（A 方向）：当前对话的 attached_note_ids 对应的完整笔记对象
   const [attachedNotes, setAttachedNotes] = useState<Note[]>([]);
@@ -228,8 +233,14 @@ function DesktopAiChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   // 跟踪组件挂载状态（防 setState on unmounted）
   const mountedRef = useRef(true);
-  // activeConvId 的 ref 镜像 —— 给 ai:done handler 用，避免 mount-once useEffect 闭包陷阱
+  // activeConvId 的 ref 镜像 —— 给 mount-once 的 ai:* 事件 handler 用，避免闭包陷阱
   const activeConvIdRef = useRef<number | null>(null);
+  // streamingConvId 的 ref 镜像 —— 同上，handler 里靠它判断事件属不属于当前流
+  const streamingConvIdRef = useRef<number | null>(null);
+
+  // 「正在被查看的会话是否在流式生成」：流式状态绑到具体会话，切到别的会话就视为没在流。
+  // 输入框禁用 / "停止"按钮 / 流式气泡都用这个 derived 值，不再用全局 boolean。
+  const streaming = streamingConvId !== null && streamingConvId === activeConvId;
 
   // 初始化
   useEffect(() => {
@@ -255,25 +266,44 @@ function DesktopAiChatPage() {
     let cancelled = false;
 
     (async () => {
-      const tokenUnlisten = await listen<string>("ai:token", (event) => {
-        setStreamingText((prev) => prev + event.payload);
-      });
-      const doneUnlisten = await listen("ai:done", async () => {
-        setStreaming(false);
-        const conv = activeConvIdRef.current;
-        if (conv) {
-          await loadMessages(conv);
-          await loadConversations();
+      // ai:token / ai:error 现在 payload 带 conversationId（后端改造），按"当前正在查看的会话"过滤：
+      // 会话 A 流式还没完就切到 / 新建会话 B 时，A 后续吐的 token 不能再贴到 B 上（多会话串台 Bug）。
+      const tokenUnlisten = await listen<{ conversationId: number; content: string }>(
+        "ai:token",
+        (event) => {
+          if (event.payload.conversationId !== activeConvIdRef.current) return;
+          setStreamingText((prev) => prev + event.payload.content);
+        },
+      );
+      const doneUnlisten = await listen<number>("ai:done", async (event) => {
+        const cid = event.payload;
+        // 不管哪个会话结束都刷一下侧边栏（标题可能自动改了 / updated_at 变了导致排序变）
+        await loadConversations();
+        // 只在"结束的会话正是当前查看的会话"时重拉消息列表；其它会话切回去时自然会 loadMessages
+        if (cid === activeConvIdRef.current) {
+          await loadMessages(cid);
         }
-        setStreamingText("");
-        setStreamingSkillCalls([]);
+        // 结束的会话正是当前流式的会话 → 清掉流式状态
+        if (cid === streamingConvIdRef.current) {
+          streamingConvIdRef.current = null;
+          setStreamingConvId(null);
+          setStreamingText("");
+          setStreamingSkillCalls([]);
+        }
       });
-      const errorUnlisten = await listen<string>("ai:error", (event) => {
-        setStreaming(false);
-        // P1: 不清空 streamingText / streamingSkillCalls：保留已累积内容和工具调用结果，
-        // 让用户看到部分输出（之前清空会让"工具调完正文又消失"的体验）
-        message.error(`AI 错误: ${event.payload}`);
-      });
+      const errorUnlisten = await listen<{ conversationId: number; error: string }>(
+        "ai:error",
+        (event) => {
+          // 只处理"当前流式会话"的错误：清掉流式状态 + 提示用户
+          if (event.payload.conversationId === streamingConvIdRef.current) {
+            streamingConvIdRef.current = null;
+            setStreamingConvId(null);
+            // 不清空 streamingText / streamingSkillCalls：保留已累积内容（虽然气泡随 streaming 收起，
+            // 但 done 没来、catch 也没触发的极端情况下还能留点痕迹）
+            message.error(`AI 错误: ${event.payload.error}`);
+          }
+        },
+      );
       // tool_call 事件可能多次触发（running → ok/error），按 id upsert
       const toolCallUnlisten = await listen<SkillCall>(
         "ai:tool_call",
@@ -311,10 +341,13 @@ function DesktopAiChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 同步 activeConvId 到 ref，给 ai:done handler 用
+  // 同步 activeConvId / streamingConvId 到 ref，给 mount-once 的 ai:* handler 用
   useEffect(() => {
     activeConvIdRef.current = activeConvId;
   }, [activeConvId]);
+  useEffect(() => {
+    streamingConvIdRef.current = streamingConvId;
+  }, [streamingConvId]);
 
   // 待发送的自动 prompt（首页"问 AI"入口跳过来时携带）
   // 等 activeConvId 切到目标对话后再触发 handleSend(prompt)
@@ -531,7 +564,9 @@ function DesktopAiChatPage() {
     const text = raw.trim();
     if (!text || !activeConvId || streaming) return;
     if (!textOverride) setInputText("");
-    setStreaming(true);
+    // 直接同步 ref：紧接着可能就有 ai:token 事件进来，得让 handler 立刻知道当前流式会话是谁
+    streamingConvIdRef.current = activeConvId;
+    setStreamingConvId(activeConvId);
     setStreamingText("");
     setStreamingSkillCalls([]);
 
@@ -570,9 +605,14 @@ function DesktopAiChatPage() {
       // 发送成功后清空附件（失败时保留，让用户重试）
       setPendingAttachments([]);
     } catch (e) {
-      setStreaming(false);
-      setStreamingText("");
-      setStreamingSkillCalls([]);
+      // 兜底：command reject 时（通常 ai:error 已经先到了，但保险）清掉流式状态。
+      // 仅当"当前流式会话还是我这次发起的那个"才清，避免误伤期间又开始的另一个会话的流。
+      if (streamingConvIdRef.current === activeConvId) {
+        streamingConvIdRef.current = null;
+        setStreamingConvId(null);
+        setStreamingText("");
+        setStreamingSkillCalls([]);
+      }
       showAiError(e);
     }
   }, [inputText, activeConvId, streaming, useSkills, pendingAttachments]);

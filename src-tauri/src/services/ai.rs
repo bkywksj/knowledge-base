@@ -155,6 +155,25 @@ fn format_openai_api_error(status: reqwest::StatusCode, body: &str) -> String {
     }
 }
 
+/// 发 `ai:token` 事件，payload `{ conversationId, content }`。
+///
+/// 带上会话 ID 是为了让前端能按会话过滤：会话 A 流式回答还没结束时，用户切到 / 新建
+/// 会话 B 发消息，A 后续吐出的 token 不能再贴到 B 的流式气泡上（多会话串台）。
+fn emit_ai_token(app: &AppHandle, conversation_id: i64, content: &str) {
+    let _ = app.emit(
+        "ai:token",
+        json!({ "conversationId": conversation_id, "content": content }),
+    );
+}
+
+/// 发 `ai:error` 事件，payload `{ conversationId, error }`。同 `emit_ai_token`，带会话 ID。
+fn emit_ai_error(app: &AppHandle, conversation_id: i64, error: &str) {
+    let _ = app.emit(
+        "ai:error",
+        json!({ "conversationId": conversation_id, "error": error }),
+    );
+}
+
 /// 从用户首条消息生成会话标题：去首尾空白、压缩换行、截断至 24 个字符。
 ///
 /// 超过限制时追加省略号；空串返回空串（调用方据此跳过重命名）。
@@ -986,11 +1005,21 @@ impl AiService {
             );
 
             let result = match model.provider.as_str() {
-                "ollama" => Self::stream_ollama(&app, &model, &messages, cancel_rx.clone()).await,
+                "ollama" => {
+                    Self::stream_ollama(&app, conversation_id, &model, &messages, cancel_rx.clone())
+                        .await
+                }
                 // T-012: 默认走 OpenAI 兼容协议（OpenAI / Claude 代理 / DeepSeek / 智谱 /
                 // Minimax / SiliconFlow / LM Studio / 用户自定义 baseUrl）
                 _ => {
-                    Self::stream_openai_compatible(&app, &model, &messages, cancel_rx.clone()).await
+                    Self::stream_openai_compatible(
+                        &app,
+                        conversation_id,
+                        &model,
+                        &messages,
+                        cancel_rx.clone(),
+                    )
+                    .await
                 }
             };
 
@@ -1110,6 +1139,7 @@ impl AiService {
     /// Ollama 流式请求
     async fn stream_ollama(
         app: &AppHandle,
+        conversation_id: i64,
         model: &AiModel,
         messages: &[Value],
         mut cancel_rx: watch::Receiver<bool>,
@@ -1117,7 +1147,7 @@ impl AiService {
         let url = format!("{}/api/chat", model.api_url.trim_end_matches('/'));
         let client = build_ollama_client();
 
-        let response = client
+        let response = match client
             .post(&url)
             .json(&json!({
                 "model": model.model_id,
@@ -1126,15 +1156,23 @@ impl AiService {
             }))
             .send()
             .await
-            .map_err(|e| AppError::Custom(format_ollama_send_error(&e, &url)))?;
+        {
+            Ok(r) => r,
+            Err(e) => {
+                // Bug B: 请求没发出去（连接失败 / read_timeout）也要让前端收到 ai:error，
+                // 否则只靠 command reject 不够显眼，用户只见 UI"一直停止"
+                let msg = format_ollama_send_error(&e, &url);
+                emit_ai_error(app, conversation_id, &msg);
+                return Err(AppError::Custom(msg));
+            }
+        };
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(AppError::Custom(format!(
-                "Ollama 返回错误 {}: {}",
-                status, body
-            )));
+            let msg = format!("Ollama 返回错误 {}: {}", status, body);
+            emit_ai_error(app, conversation_id, &msg);
+            return Err(AppError::Custom(msg));
         }
 
         let mut stream = response.bytes_stream();
@@ -1151,7 +1189,7 @@ impl AiService {
                                 if let Ok(data) = serde_json::from_str::<Value>(line) {
                                     if let Some(content) = data["message"]["content"].as_str() {
                                         full_response.push_str(content);
-                                        let _ = app.emit("ai:token", content);
+                                        emit_ai_token(app, conversation_id, content);
                                     }
                                     if data["done"].as_bool() == Some(true) {
                                         return Ok(full_response);
@@ -1160,7 +1198,7 @@ impl AiService {
                             }
                         }
                         Some(Err(e)) => {
-                            let _ = app.emit("ai:error", e.to_string());
+                            emit_ai_error(app, conversation_id, &e.to_string());
                             return Err(AppError::Custom(format!("流读取错误: {}", e)));
                         }
                         None => break,
@@ -1168,7 +1206,7 @@ impl AiService {
                 }
                 _ = cancel_rx.changed() => {
                     if *cancel_rx.borrow() {
-                        let _ = app.emit("ai:done", "cancelled");
+                        let _ = app.emit("ai:done", conversation_id);
                         return Ok(full_response);
                     }
                 }
@@ -1181,6 +1219,7 @@ impl AiService {
     /// OpenAI 兼容 API 流式请求（也支持 Claude 通过兼容接口）
     async fn stream_openai_compatible(
         app: &AppHandle,
+        conversation_id: i64,
         model: &AiModel,
         messages: &[Value],
         mut cancel_rx: watch::Receiver<bool>,
@@ -1203,15 +1242,21 @@ impl AiService {
             }
         }
 
-        let response = request
-            .send()
-            .await
-            .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
+        let response = match request.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = format!("API 请求失败: {}", e);
+                emit_ai_error(app, conversation_id, &msg);
+                return Err(AppError::Custom(msg));
+            }
+        };
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(AppError::Custom(format_openai_api_error(status, &body)));
+            let msg = format_openai_api_error(status, &body);
+            emit_ai_error(app, conversation_id, &msg);
+            return Err(AppError::Custom(msg));
         }
 
         let mut stream = response.bytes_stream();
@@ -1238,14 +1283,14 @@ impl AiService {
                                             data["choices"][0]["delta"]["content"].as_str()
                                         {
                                             full_response.push_str(content);
-                                            let _ = app.emit("ai:token", content);
+                                            emit_ai_token(app, conversation_id, content);
                                         }
                                     }
                                 }
                             }
                         }
                         Some(Err(e)) => {
-                            let _ = app.emit("ai:error", e.to_string());
+                            emit_ai_error(app, conversation_id, &e.to_string());
                             return Err(AppError::Custom(format!("流读取错误: {}", e)));
                         }
                         None => break,
@@ -1253,7 +1298,7 @@ impl AiService {
                 }
                 _ = cancel_rx.changed() => {
                     if *cancel_rx.borrow() {
-                        let _ = app.emit("ai:done", "cancelled");
+                        let _ = app.emit("ai:done", conversation_id);
                         return Ok(full_response);
                     }
                 }
@@ -1385,6 +1430,7 @@ impl AiService {
             let (content, tool_calls) = if is_ollama {
                 Self::stream_ollama_with_tools(
                     &app,
+                    conversation_id,
                     &model,
                     req_messages.as_ref(),
                     tools_arg,
@@ -1394,6 +1440,7 @@ impl AiService {
             } else {
                 Self::stream_openai_with_tools(
                     &app,
+                    conversation_id,
                     &model,
                     req_messages.as_ref(),
                     tools_arg,
@@ -1543,9 +1590,10 @@ impl AiService {
     /// - `tool_calls` 按 `index` 聚合每个工具调用（OpenAI 流式 tool_calls 按分片返回
     ///   name/arguments，必须按 index 累加到完整 JSON 才能 dispatch）
     ///
-    /// 被取消时：发 `ai:done` 带 "cancelled" 并返回当前累积内容（tool_calls 清空）。
+    /// 被取消时：发 `ai:done`（带会话 ID）并返回当前累积内容（tool_calls 清空）。
     async fn stream_openai_with_tools(
         app: &AppHandle,
+        conversation_id: i64,
         model: &AiModel,
         messages: &[Value],
         tools: &[Value],
@@ -1577,16 +1625,17 @@ impl AiService {
         let response = match request.send().await {
             Ok(r) => r,
             Err(e) => {
-                return (Err(AppError::Custom(format!("API 请求失败: {}", e))), None);
+                let msg = format!("API 请求失败: {}", e);
+                emit_ai_error(app, conversation_id, &msg);
+                return (Err(AppError::Custom(msg)), None);
             }
         };
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return (
-                Err(AppError::Custom(format_openai_api_error(status, &body))),
-                None,
-            );
+            let msg = format_openai_api_error(status, &body);
+            emit_ai_error(app, conversation_id, &msg);
+            return (Err(AppError::Custom(msg)), None);
         }
 
         let mut stream = response.bytes_stream();
@@ -1615,6 +1664,7 @@ impl AiService {
                                 let line = line.trim_end_matches(&['\r', '\n'][..]);
                                 handle_openai_stream_line(
                                     app,
+                                    conversation_id,
                                     line,
                                     &mut content,
                                     &mut reasoning_content,
@@ -1624,7 +1674,7 @@ impl AiService {
                             }
                         }
                         Some(Err(e)) => {
-                            let _ = app.emit("ai:error", e.to_string());
+                            emit_ai_error(app, conversation_id, &e.to_string());
                             return (Err(AppError::Custom(format!("流读取错误: {}", e))), None);
                         }
                         None => break,
@@ -1632,7 +1682,7 @@ impl AiService {
                 }
                 _ = cancel_rx.changed() => {
                     if *cancel_rx.borrow() {
-                        let _ = app.emit("ai:done", "cancelled");
+                        let _ = app.emit("ai:done", conversation_id);
                         return (Ok(content), Some(Vec::new()));
                     }
                 }
@@ -1645,6 +1695,7 @@ impl AiService {
             let line = line.trim_end_matches(&['\r', '\n'][..]);
             handle_openai_stream_line(
                 app,
+                conversation_id,
                 line,
                 &mut content,
                 &mut reasoning_content,
@@ -1657,7 +1708,7 @@ impl AiService {
         // （前端流式过程中已经收到 ai:reasoning，这里只补一次 ai:token 让 UI 文本不为空）
         if content.trim().is_empty() && !reasoning_content.trim().is_empty() {
             content.push_str(&reasoning_content);
-            let _ = app.emit("ai:token", &reasoning_content);
+            emit_ai_token(app, conversation_id, &reasoning_content);
         }
 
         // P0: finish_reason 异常处理。length / content_filter 视为错误抛出，
@@ -1665,7 +1716,7 @@ impl AiService {
         if let Some(reason) = &finish_reason {
             if reason != "stop" && reason != "tool_calls" {
                 let msg = format!("AI 异常终止 (finish_reason={})", reason);
-                let _ = app.emit("ai:error", &msg);
+                emit_ai_error(app, conversation_id, &msg);
                 return (Err(AppError::Custom(msg)), None);
             }
         }
@@ -1694,6 +1745,7 @@ impl AiService {
     /// gemma2 / phi3 不支持）。Ollama 服务版本需 ≥ 0.3。
     async fn stream_ollama_with_tools(
         app: &AppHandle,
+        conversation_id: i64,
         model: &AiModel,
         messages: &[Value],
         tools: &[Value],
@@ -1711,26 +1763,43 @@ impl AiService {
             request_body["tools"] = json!(tools);
         }
 
-        let response = match client.post(&url).json(&request_body).send().await {
-            Ok(r) => r,
-            Err(e) => {
-                return (
-                    Err(AppError::Custom(format_ollama_send_error(&e, &url))),
-                    None,
-                );
+        // 发请求；遇到 Ollama "模型不支持 tools" 的 400 时去掉 tools 字段重试一次，
+        // 让「智能模式 + 纯文本 Ollama 模型（llama3 / gemma2 / phi3 等不支持 function calling）」
+        // 优雅降级成纯对话，而不是整条请求挂掉、前端一直转圈（Bug B）。
+        // 失败的早返回路径都补发 ai:error，保证错误一定能冒到前端 UI。
+        let response = loop {
+            let resp = match client.post(&url).json(&request_body).send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    let msg = format_ollama_send_error(&e, &url);
+                    emit_ai_error(app, conversation_id, &msg);
+                    return (Err(AppError::Custom(msg)), None);
+                }
+            };
+            if resp.status().is_success() {
+                break resp;
             }
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            // 仅当 ① 状态 400 ② body 含 "does not support tools" ③ 本次请求确实带了 tools
+            // 三者都满足才降级重试。去掉 tools 后即便再 400 也不会再命中条件 ③，不会死循环。
+            let can_degrade = status == reqwest::StatusCode::BAD_REQUEST
+                && body.contains("does not support tools")
+                && request_body.get("tools").is_some();
+            if can_degrade {
+                log::warn!(
+                    "Ollama 模型 {} 不支持 function calling，去掉 tools 降级为纯对话重试",
+                    model.model_id
+                );
+                if let Some(obj) = request_body.as_object_mut() {
+                    obj.remove("tools");
+                }
+                continue;
+            }
+            let msg = format!("Ollama 返回错误 {}: {}", status, body);
+            emit_ai_error(app, conversation_id, &msg);
+            return (Err(AppError::Custom(msg)), None);
         };
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return (
-                Err(AppError::Custom(format!(
-                    "Ollama 返回错误 {}: {}",
-                    status, body
-                ))),
-                None,
-            );
-        }
 
         let mut stream = response.bytes_stream();
         let mut content = String::new();
@@ -1752,6 +1821,7 @@ impl AiService {
                                 let line = line.trim_end_matches(&['\r', '\n'][..]);
                                 handle_ollama_stream_line(
                                     app,
+                                    conversation_id,
                                     line,
                                     &mut content,
                                     &mut tool_calls_final,
@@ -1759,7 +1829,7 @@ impl AiService {
                             }
                         }
                         Some(Err(e)) => {
-                            let _ = app.emit("ai:error", e.to_string());
+                            emit_ai_error(app, conversation_id, &e.to_string());
                             return (Err(AppError::Custom(format!("流读取错误: {}", e))), None);
                         }
                         None => break,
@@ -1767,7 +1837,7 @@ impl AiService {
                 }
                 _ = cancel_rx.changed() => {
                     if *cancel_rx.borrow() {
-                        let _ = app.emit("ai:done", "cancelled");
+                        let _ = app.emit("ai:done", conversation_id);
                         return (Ok(content), Some(Vec::new()));
                     }
                 }
@@ -1778,7 +1848,7 @@ impl AiService {
         if !buffer.is_empty() {
             let line = String::from_utf8_lossy(&buffer);
             let line = line.trim_end_matches(&['\r', '\n'][..]);
-            handle_ollama_stream_line(app, line, &mut content, &mut tool_calls_final);
+            handle_ollama_stream_line(app, conversation_id, line, &mut content, &mut tool_calls_final);
         }
 
         (Ok(content), Some(tool_calls_final))
@@ -1791,6 +1861,7 @@ impl AiService {
 /// 两处都要调用，避免重复。
 fn handle_openai_stream_line(
     app: &AppHandle,
+    conversation_id: i64,
     line: &str,
     content: &mut String,
     reasoning_content: &mut String,
@@ -1816,7 +1887,7 @@ fn handle_openai_stream_line(
     let delta = &choice["delta"];
     if let Some(c) = delta["content"].as_str() {
         content.push_str(c);
-        let _ = app.emit("ai:token", c);
+        emit_ai_token(app, conversation_id, c);
     }
     // reasoning 模型（deepseek-r1 / qwq / o1）的"思考过程"，独立事件让前端可选展示
     if let Some(r) = delta["reasoning_content"].as_str() {
@@ -1863,6 +1934,7 @@ struct ToolCallAccum {
 ///    以便和 OpenAI 分支共用外层 dispatch 逻辑（skills::dispatch_with_mcp 接收 &str）
 fn handle_ollama_stream_line(
     app: &AppHandle,
+    conversation_id: i64,
     line: &str,
     content: &mut String,
     tool_calls_final: &mut Vec<ToolCallAccum>,
@@ -1878,7 +1950,7 @@ fn handle_ollama_stream_line(
     if let Some(c) = data["message"]["content"].as_str() {
         if !c.is_empty() {
             content.push_str(c);
-            let _ = app.emit("ai:token", c);
+            emit_ai_token(app, conversation_id, c);
         }
     }
 
