@@ -7,12 +7,15 @@
  *
  * 保存：onSave 提供时右下角出现「保存更改」，回调拿到两侧编辑后的最终文本，由调用方决定怎么写回。
  *
- * 实现要点：
- *  1. MergeView 是命令式 DOM 库，需要一个已挂载且**有固定高度**的容器 —— 用 callback ref 在 div 真正挂进
- *     DOM 那一刻创建（避免 antd Modal 内容异步挂载导致 useEffect 里 ref 还是 null、整片空白）。
- *  2. CodeMirror 的 MergeView 不自动同步两侧滚动 —— 这里手动监听两个 .cm-scroller 的 scroll，按比例镜像
- *     scrollTop（带防抖锁防回环），并提供「同步滚动」开关。
- *  3. 两侧文本先把 \r\n 归一成 \n，否则一边带 \r、一边不带会被判成"整篇每行都变了"。
+ * 踩过的坑（按 https://github.com/codemirror/merge + discuss.codemirror.net 上的讨论）：
+ *  1. **不能换行**（不要 `EditorView.lineWrapping`）—— MergeView 用像素级 block spacer 把对齐行放到同一 Y，
+ *     一旦某侧长行换行成多行、另一侧没换，两侧就错位（"左右内容效果不一致"）。IDEA 也是不换行 + 横向滚。
+ *  2. **antd Modal 开场有 scale 动画**，CM 在动画里量到的是被缩放的尺寸 → 渲染区域不对 → "内容显示不全"。
+ *     Modal `afterOpenChange(true)` 之后再 `view.requestMeasure()` 强制重新量一遍。
+ *  3. **MergeView 自带内部滚动同步**且没配置项可关 —— 关掉「同步滚动」开关时反向抵消（鼠标在哪栏滚哪栏）。
+ *  4. 两侧文本先把 `\r\n` 归一成 `\n`，否则一边带 `\r`、一边不带会被判成"整篇每行都变了"。
+ *  5. MergeView 是命令式 DOM 库，要在 div **真正挂进 DOM** 后再 new —— 用 callback ref（不要 useEffect，
+ *     antd Modal 内容是异步挂载的，useEffect 跑时 ref 还是 null → 整片空白）。
  */
 import { useCallback, useRef, useState } from "react";
 import { Alert, Button, Modal, Space, Switch } from "antd";
@@ -41,10 +44,10 @@ interface Props {
 
 const normalizeEol = (s: string) => s.replace(/\r\n/g, "\n");
 
-// CM 主题：让编辑器填满（高度由外层 host div 固定）
+// CM 主题：填满外层固定高度的 host；不换行 → 横向滚（保证两侧行对齐）
 const fillTheme = EditorView.theme({
   "&": { height: "100%" },
-  ".cm-scroller": { overflow: "auto" },
+  ".cm-scroller": { overflow: "auto", fontFamily: "inherit", fontSize: "13px" },
 });
 const darkTheme = EditorView.theme(
   {
@@ -75,7 +78,6 @@ const lightTheme = EditorView.theme({
 function sideExtensions(editable: boolean, dark: boolean) {
   return [
     lineNumbers(),
-    EditorView.lineWrapping,
     markdown(),
     fillTheme,
     dark ? darkTheme : lightTheme,
@@ -85,12 +87,11 @@ function sideExtensions(editable: boolean, dark: boolean) {
 }
 
 /**
- * 管理两侧 `.cm-scroller` 的联动：
- *  - `enabledRef.current === true`（同步）：哪侧滚就把另一侧镜像到同一 scrollTop（MergeView 用 spacer
- *    把对齐行放在同一 Y，所以直接复制 scrollTop 就是行对齐的）。
- *  - `enabledRef.current === false`（不同步）：CodeMirror 的 MergeView **自带内部滚动同步**，关不掉，
- *    所以这里反向抵消它 —— 鼠标在哪一栏就让哪一栏自由滚，把另一栏钉回它自己的位置。
- *
+ * 两侧 `.cm-scroller` 的滚动联动：
+ *  - `syncRef.current === true`（同步）：哪侧滚就把另一侧镜像到同一 scrollTop/scrollLeft（MergeView 用
+ *    spacer 把对齐行放在同一 Y，直接复制即行对齐）。
+ *  - `syncRef.current === false`（不同步）：MergeView 内部那套滚动同步关不掉，这里反向抵消 —— 鼠标 hover
+ *    哪一栏就让那栏自由滚，把另一栏钉回原位。
  * 用 `suppressUntil` 时间窗忽略"我们自己改 scrollTop 触发的 scroll 事件"，避免来回弹。
  */
 function linkScrollers(a: HTMLElement, b: HTMLElement, syncRef: React.MutableRefObject<boolean>) {
@@ -114,21 +115,20 @@ function linkScrollers(a: HTMLElement, b: HTMLElement, syncRef: React.MutableRef
   const handle = (self: HTMLElement, other: HTMLElement) => () => {
     if (now() < suppressUntil) return;
     if (syncRef.current) {
-      // 同步：自己 → 对面（CM 已用 spacer 对齐，直接复制）
       suppressUntil = now() + 50;
       other.scrollTop = self.scrollTop;
+      other.scrollLeft = self.scrollLeft;
       savedTop.set(self, self.scrollTop);
       savedTop.set(other, other.scrollTop);
       return;
     }
-    // 不同步：
     if (hovered === self || hovered == null) {
-      // 这是用户在 self 上滚 → 记住 self 的新位置，把 other 钉回去（抵消 CM 内部同步）
+      // 用户在 self 上滚 → 记 self 的新位置，把 other 钉回去（抵消 MergeView 内部同步）
       savedTop.set(self, self.scrollTop);
       suppressUntil = now() + 50;
       other.scrollTop = savedTop.get(other) ?? 0;
     } else {
-      // 鼠标不在 self 上却滚了 → 是 CM 同步过来的副作用，撤销
+      // 鼠标不在 self 上却滚了 → 是内部同步的副作用，撤销
       suppressUntil = now() + 50;
       self.scrollTop = savedTop.get(self) ?? 0;
     }
@@ -159,6 +159,11 @@ export function DiffMergeModal({ open, onClose, left, right, onSave, saveHint }:
   const syncScrollRef = useRef(true);
   syncScrollRef.current = syncScroll;
 
+  const remeasure = () => {
+    mvRef.current?.a.requestMeasure();
+    mvRef.current?.b.requestMeasure();
+  };
+
   const teardown = () => {
     unlinkRef.current?.();
     unlinkRef.current = null;
@@ -166,7 +171,7 @@ export function DiffMergeModal({ open, onClose, left, right, onSave, saveHint }:
     mvRef.current = null;
   };
 
-  // div 挂载 → 创建 MergeView + 装滚动同步；卸载（destroyOnClose）→ 全部销毁
+  // div 挂载 → 创建 MergeView + 装滚动联动 + 重新量尺寸；卸载（destroyOnClose）→ 全部销毁
   const setHostEl = useCallback((el: HTMLDivElement | null) => {
     teardown();
     if (!el) return;
@@ -179,13 +184,15 @@ export function DiffMergeModal({ open, onClose, left, right, onSave, saveHint }:
       revertControls: "a-to-b", // 中缝 ▶：把左(a)的变更块覆盖到右(b)。右侧 = 最终结果。
       highlightChanges: true,
       gutter: true,
-      collapseUnchanged: { margin: 3, minSize: 6 },
     });
     mvRef.current = mv;
-    // 等一帧让 DOM 布局完成再装滚动监听
+    // 双 rAF：等 Modal 布局/动画稳定后，装滚动监听 + 强制 CM 重量尺寸（不然内容显示不全）
     requestAnimationFrame(() => {
-      if (mvRef.current !== mv) return;
-      unlinkRef.current = linkScrollers(mv.a.scrollDOM, mv.b.scrollDOM, syncScrollRef);
+      requestAnimationFrame(() => {
+        if (mvRef.current !== mv) return;
+        unlinkRef.current = linkScrollers(mv.a.scrollDOM, mv.b.scrollDOM, syncScrollRef);
+        remeasure();
+      });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -210,6 +217,10 @@ export function DiffMergeModal({ open, onClose, left, right, onSave, saveHint }:
       open={open}
       onCancel={onClose}
       destroyOnClose
+      // Modal 开场 scale 动画结束后再让 CM 重新量一遍尺寸 —— 否则内容渲染区域不对
+      afterOpenChange={(o) => {
+        if (o) requestAnimationFrame(remeasure);
+      }}
       title={`${left.label}  ↔  ${right.label}`}
       width="92vw"
       style={{ top: 16, maxWidth: 1400 }}
@@ -238,7 +249,7 @@ export function DiffMergeModal({ open, onClose, left, right, onSave, saveHint }:
         <span>
           左 = {left.label}
           {left.editable ? "" : "（只读）"}，右 = {right.label}
-          {right.editable ? "" : "（只读）"}。中缝 ▶ 把左侧变更块覆盖到右侧；两栏均可直接编辑。
+          {right.editable ? "" : "（只读）"}。中缝 ▶ 把左侧变更块覆盖到右侧；两栏均可直接编辑（行不换行，可横向滚）。
         </span>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
           <span>同步滚动</span>
