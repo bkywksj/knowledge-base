@@ -42,6 +42,7 @@ import {
   ChevronDown,
   ExternalLink,
   Copy,
+  GitCompare,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ColumnsType } from "antd/es/table";
@@ -76,6 +77,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { NewNoteButton } from "@/components/NewNoteButton";
 import { createBlankAndOpen } from "@/lib/noteCreator";
 import { startAiChatWithNotes } from "@/lib/aiAttach";
+import { NoteComparePicker } from "@/components/editor/NoteComparePicker";
 // AntD 已有 Tag 组件同名，这里给类型起个别名避免冲突
 import type { Note, PageResult, Folder, Tag as NoteTag } from "@/types";
 
@@ -555,6 +557,8 @@ function DesktopNoteListPage() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   /** 批量移动 Popover 的开关 */
   const [batchMoveOpen, setBatchMoveOpen] = useState(false);
+  /** 「对比所选」入口：打开时填第一篇 id（第二篇在选择器里再确认）；null = 未打开 */
+  const [compareFirstId, setCompareFirstId] = useState<number | null>(null);
 
   const folderId = searchParams.get("folder");
 
@@ -1391,6 +1395,17 @@ function DesktopNoteListPage() {
               <Button size="small" icon={<ChevronDown size={12} />} title="更多导出格式" />
             </Dropdown>
           </Space.Compact>
+          {selectedIds.length === 2 && (
+            <Tooltip title="并排对比这两篇笔记（打开后从下拉框确认第二篇），可逐块合并、各自保存">
+              <Button
+                size="small"
+                icon={<GitCompare size={14} />}
+                onClick={() => setCompareFirstId(selectedIds[0])}
+              >
+                对比
+              </Button>
+            </Tooltip>
+          )}
           <Button
             size="small"
             icon={<Bot size={14} />}
@@ -1831,6 +1846,12 @@ function DesktopNoteListPage() {
           autoFocus
         />
       </Modal>
+
+      {/* 「对比所选两篇」合并视图（在选择器里确认第二篇） */}
+      <NoteComparePicker
+        firstNoteId={compareFirstId}
+        onClose={() => setCompareFirstId(null)}
+      />
     </div>
   );
 }
