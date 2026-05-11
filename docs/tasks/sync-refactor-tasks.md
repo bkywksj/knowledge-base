@@ -304,12 +304,17 @@
 
 #### T-S023 · backend trait 附件 IO
 
-- **状态**：`pending`
+- **状态**：`completed` · 完成日期：2026-05-11
 - **价值**：⭐⭐⭐⭐⭐  成本：中（0.5 天）
 - **依赖**：T-S020
 - **子任务**：
-  - [ ] trait put_attachment / get_attachment / has_attachment 三方法去 dead_code 并实现
-  - [ ] backend_local / backend_webdav / backend_s3 各自实现
+  - [x] `backend.rs::cas_path(hash)` 辅助函数：`attachments/<aa>/<bb>/<hash>` 分桶布局（256×256 子目录，对 FAT/Nextcloud 友好）
+  - [x] trait 三方法去 dead_code：`put_attachment` / `get_attachment` / `has_attachment`（必需实现）
+  - [x] `backend_local.rs`：原子写 + 路径检查
+  - [x] `backend_webdav.rs`：upload_bytes / download_bytes_optional（标 TODO 后续优化为 HEAD）
+  - [x] `backend_s3.rs`：put/get_object + **head_object**（HEAD 不传 body，已优化）
+  - [x] 单测 2 个：CAS 往返 put/has/get 字节一致 + cas_path 分桶形状
+  - [x] 全 lib 191 个单测通过
 
 #### T-S024 · push/pull 集成附件同步
 

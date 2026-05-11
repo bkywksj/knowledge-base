@@ -48,6 +48,29 @@ pub const MANIFEST_FILENAME: &str = "manifest.json";
 #[allow(dead_code)]
 pub const NOTES_DIR: &str = "notes";
 
+/// T-S023：附件在远端的 CAS 路径布局
+///
+/// 远端路径 = `attachments/<aa>/<bb>/<hash>`（不带扩展名，纯 CAS）
+/// - `<aa>` = hash 前 2 位（256 个一级桶）
+/// - `<bb>` = hash 第 3-4 位（256 个二级桶 / 一级桶）
+/// - `<hash>` = 完整 sha256 hex
+///
+/// 不带扩展名：hash 是文件内容的唯一标识，扩展名是元数据（manifest entry.ext 携带）。
+/// 防止单目录文件过多：分桶后单目录约 (n / 65536) 个文件，对 FAT/exFAT/Nextcloud 都友好。
+pub fn cas_path(hash: &str) -> String {
+    if hash.len() < 4 {
+        // 防御性兜底：异常短的 hash 仍能落到一个固定目录（不应进入这分支）
+        format!("attachments/_/_/{}", hash)
+    } else {
+        format!(
+            "attachments/{}/{}/{}",
+            &hash[..2],
+            &hash[2..4],
+            hash
+        )
+    }
+}
+
 /// 远端字节级 IO 抽象
 pub trait SyncBackendImpl {
     /// backend 类型名（仅用于日志 / 错误信息）
@@ -72,22 +95,20 @@ pub trait SyncBackendImpl {
     /// 删除远端笔记（T-S012 起被 push tombstone 流程调用）
     fn delete_note(&self, path: &str) -> Result<(), AppError>;
 
-    /// 上传附件（按 hash 路径，CAS）；返回 Ok(()) 即可
-    /// v1 阶段先不做附件同步；预留接口
-    #[allow(dead_code)]
-    fn put_attachment(&self, _hash: &str, _bytes: &[u8]) -> Result<(), AppError> {
-        Err(AppError::Custom(
-            "attachment 同步暂未实现（v1 留给后续阶段）".into(),
-        ))
-    }
+    /// T-S023：上传附件（按 hash 路径，CAS 布局）
+    ///
+    /// 路径 = `attachments/<aa>/<bb>/<hash>`（见 [`cas_path`]）。
+    /// 上传同样 hash 视为幂等：内容相同 → 写入或覆盖都无所谓。
+    fn put_attachment(&self, hash: &str, bytes: &[u8]) -> Result<(), AppError>;
 
-    /// 下载附件
-    #[allow(dead_code)]
-    fn get_attachment(&self, _hash: &str) -> Result<Option<Vec<u8>>, AppError> {
-        Err(AppError::Custom(
-            "attachment 同步暂未实现（v1 留给后续阶段）".into(),
-        ))
-    }
+    /// T-S023：下载附件；不存在返回 Ok(None)
+    fn get_attachment(&self, hash: &str) -> Result<Option<Vec<u8>>, AppError>;
+
+    /// T-S023：检查远端是否已有该 hash 的附件
+    ///
+    /// 用于 push 前的差集计算（避免重复上传）。性能关键：尽量用 HEAD/HeadObject 等
+    /// 不传输数据的探测方式。
+    fn has_attachment(&self, hash: &str) -> Result<bool, AppError>;
 }
 
 /// 从 sync_backends.config_json 解析为 BackendAuth

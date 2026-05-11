@@ -193,4 +193,63 @@ impl SyncBackendImpl for S3Backend {
             Ok(())
         })
     }
+
+    fn put_attachment(&self, hash: &str, bytes: &[u8]) -> Result<(), AppError> {
+        let key = self.key(&super::backend::cas_path(hash));
+        let body = bytes.to_vec();
+        let bucket = &self.bucket;
+        block_on(async move {
+            bucket
+                .put_object_with_content_type(&key, &body, "application/octet-stream")
+                .await
+                .map_err(|e| AppError::Custom(format!("S3 上传附件失败 {}: {}", key, e)))?;
+            Ok(())
+        })
+    }
+
+    fn get_attachment(&self, hash: &str) -> Result<Option<Vec<u8>>, AppError> {
+        let key = self.key(&super::backend::cas_path(hash));
+        let bucket = &self.bucket;
+        let resp = block_on(async move { bucket.get_object(&key).await });
+        match resp {
+            Ok(r) => {
+                if r.status_code() == 404 {
+                    return Ok(None);
+                }
+                if r.status_code() < 200 || r.status_code() >= 300 {
+                    return Err(AppError::Custom(format!(
+                        "S3 读附件失败 ({})",
+                        r.status_code()
+                    )));
+                }
+                Ok(Some(r.bytes().to_vec()))
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("404") || msg.to_lowercase().contains("not found") {
+                    return Ok(None);
+                }
+                Err(AppError::Custom(format!("S3 读附件失败: {}", e)))
+            }
+        }
+    }
+
+    fn has_attachment(&self, hash: &str) -> Result<bool, AppError> {
+        let key = self.key(&super::backend::cas_path(hash));
+        let bucket = &self.bucket;
+        // S3 HeadObject 是轻量探测，不返回 body
+        let resp = block_on(async move { bucket.head_object(&key).await });
+        match resp {
+            Ok((_, status)) if status >= 200 && status < 300 => Ok(true),
+            Ok((_, 404)) => Ok(false),
+            Ok((_, status)) => Err(AppError::Custom(format!("S3 HEAD 失败 ({})", status))),
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("404") || msg.to_lowercase().contains("not found") {
+                    return Ok(false);
+                }
+                Err(AppError::Custom(format!("S3 HEAD 失败: {}", e)))
+            }
+        }
+    }
 }

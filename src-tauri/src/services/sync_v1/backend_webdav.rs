@@ -66,4 +66,22 @@ impl SyncBackendImpl for WebdavBackend {
     fn delete_note(&self, path: &str) -> Result<(), AppError> {
         block_on(self.client.delete_file(path))
     }
+
+    fn put_attachment(&self, hash: &str, bytes: &[u8]) -> Result<(), AppError> {
+        let path = super::backend::cas_path(hash);
+        block_on(self.client.upload_bytes(&path, bytes.to_vec()))
+    }
+
+    fn get_attachment(&self, hash: &str) -> Result<Option<Vec<u8>>, AppError> {
+        let path = super::backend::cas_path(hash);
+        block_on(self.client.download_bytes_optional(&path))
+    }
+
+    fn has_attachment(&self, hash: &str) -> Result<bool, AppError> {
+        // TODO 性能优化：用 HEAD 请求探测，不传输 body
+        // 当前用 download_bytes_optional 是正确但浪费带宽（附件可能 MB 级）
+        let path = super::backend::cas_path(hash);
+        let exists = block_on(self.client.download_bytes_optional(&path))?.is_some();
+        Ok(exists)
+    }
 }

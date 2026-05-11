@@ -124,6 +124,27 @@ impl SyncBackendImpl for LocalPathBackend {
         }
         Ok(())
     }
+
+    fn put_attachment(&self, hash: &str, bytes: &[u8]) -> Result<(), AppError> {
+        let rel = super::backend::cas_path(hash);
+        let p = self.resolve(&rel);
+        // 幂等：相同 hash 重复上传无副作用（覆盖即可）
+        Self::atomic_write(&p, bytes)
+    }
+
+    fn get_attachment(&self, hash: &str) -> Result<Option<Vec<u8>>, AppError> {
+        let rel = super::backend::cas_path(hash);
+        let p = self.resolve(&rel);
+        if !p.exists() {
+            return Ok(None);
+        }
+        Ok(Some(fs::read(&p)?))
+    }
+
+    fn has_attachment(&self, hash: &str) -> Result<bool, AppError> {
+        let rel = super::backend::cas_path(hash);
+        Ok(self.resolve(&rel).exists())
+    }
 }
 
 #[cfg(test)]
@@ -179,5 +200,58 @@ mod tests {
         assert!(backend.get_note("notes/1.md").unwrap().is_none());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// T-S023：附件 CAS 路径布局往返 put/get/has
+    #[test]
+    fn local_backend_attachment_cas_roundtrip() {
+        let dir = std::env::temp_dir().join(format!(
+            "kb-sync-attach-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let backend = LocalPathBackend::new(dir.to_str().unwrap());
+        backend.test_connection().unwrap();
+
+        let hash = "abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab";
+        let bytes: Vec<u8> = vec![1, 2, 3, 4, 0xff];
+
+        // has = false before put
+        assert!(!backend.has_attachment(hash).unwrap());
+        assert!(backend.get_attachment(hash).unwrap().is_none());
+
+        // put then check
+        backend.put_attachment(hash, &bytes).unwrap();
+        assert!(backend.has_attachment(hash).unwrap());
+
+        // CAS 路径形状：attachments/ab/cd/<full hash>
+        let expected_rel = format!("attachments/ab/cd/{}", hash);
+        let abs = dir.join(&expected_rel);
+        assert!(abs.exists(), "应落到 CAS 分桶路径; got = {}", abs.display());
+
+        // get 内容字节级一致
+        let got = backend.get_attachment(hash).unwrap().expect("应能拿到");
+        assert_eq!(got, bytes);
+
+        // 幂等：同 hash 重复 put 不报错
+        backend.put_attachment(hash, &bytes).unwrap();
+        assert_eq!(backend.get_attachment(hash).unwrap().unwrap(), bytes);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// T-S023：cas_path 路径分桶正确性
+    #[test]
+    fn cas_path_layout() {
+        use super::super::backend::cas_path;
+        assert_eq!(
+            cas_path("abcdef1234"),
+            "attachments/ab/cd/abcdef1234"
+        );
+        // 短 hash 防御性兜底
+        assert_eq!(cas_path("xy"), "attachments/_/_/xy");
+        assert_eq!(cas_path(""), "attachments/_/_/");
     }
 }
