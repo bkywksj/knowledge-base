@@ -349,7 +349,7 @@
   - [x] `backend.rs` trait 加 `list_attachment_hashes()` 方法 + 默认空实现
   - [x] `backend_local.rs`：walkdir `attachments/`，过滤 `_` 开头文件
   - [x] `backend_s3.rs`：`bucket.list(prefix=attachments/)`，取 key 最后一段
-  - [x] `backend_webdav.rs`：暂用默认空实现（递归 PROPFIND 待后续，WebDAV GC 当前 no-op）
+  - [x] `backend_webdav.rs`：✅ 已补完 —— PROPFIND `Depth:infinity` 递归列举 + `hrefs_to_attachment_hashes` 纯函数解析（403 不支持 infinity 时降级 no-op）
   - [x] `services/sync_v1/attachment_gc.rs`：`gc_attachments(db, backend) -> GcResult`
     - 远端 hash 清单 - 远端 manifest 引用 hash = 孤儿（用远端 manifest 保守，避免本地索引不全误删）
     - 远端无 manifest 时直接放弃 GC（不删不标记）

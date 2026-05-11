@@ -126,4 +126,76 @@ impl SyncBackendImpl for WebdavBackend {
         let exists = block_on(self.client.download_bytes_optional(&path))?.is_some();
         Ok(exists)
     }
+
+    /// T-S025: 用 PROPFIND Depth:infinity 递归列 attachments/ 下所有附件文件名（即 hash）
+    ///
+    /// 大多数 WebDAV 服务器（坚果云 / Nextcloud / Cloudreve）支持 infinity；少数（Apache mod_dav
+    /// 默认配置）禁用 → 收到 403 时降级返回空（GC 对这类服务器 no-op，不报错）。
+    fn list_attachment_hashes(&self) -> Result<Vec<String>, AppError> {
+        let hrefs = match block_on(self.client.list_hrefs_under("attachments", "infinity")) {
+            Ok(h) => h,
+            Err(e) => {
+                log::warn!(
+                    "[sync_v1] WebDAV PROPFIND attachments/ (infinity) 失败 ({}), GC 跳过该 backend",
+                    e
+                );
+                return Ok(vec![]);
+            }
+        };
+        Ok(hrefs_to_attachment_hashes(&hrefs))
+    }
+}
+
+/// 从 PROPFIND href 列表提取附件 hash（纯函数，便于单测）
+///
+/// 规则：跳过目录（href 以 `/` 结尾）、跳过 `_` 开头的特殊文件、跳过 manifest.json；
+/// 取每个 href 路径的最后一段作为 hash；结果排序去重。
+fn hrefs_to_attachment_hashes(hrefs: &[String]) -> Vec<String> {
+    let mut hashes: Vec<String> = hrefs
+        .iter()
+        .filter(|h| !h.ends_with('/'))
+        .filter_map(|h| h.rsplit('/').next())
+        .filter(|n| !n.is_empty() && !n.starts_with('_') && *n != "manifest.json")
+        .map(|n| n.to_string())
+        .collect();
+    hashes.sort();
+    hashes.dedup();
+    hashes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hrefs_to_attachment_hashes_filters_dirs_and_specials() {
+        let hrefs = vec![
+            "/dav/folder/attachments/".to_string(),                  // 目录自身
+            "/dav/folder/attachments/aa/".to_string(),               // 子目录
+            "/dav/folder/attachments/aa/bb/".to_string(),            // 子目录
+            "/dav/folder/attachments/aa/bb/hash_one".to_string(),    // 文件 ✓
+            "/dav/folder/attachments/cc/dd/hash_two".to_string(),    // 文件 ✓
+            "/dav/folder/attachments/_gc_marks.json".to_string(),    // 特殊文件，跳过
+            "/dav/folder/manifest.json".to_string(),                 // manifest，跳过
+            "".to_string(),                                          // 空，跳过
+        ];
+        let hashes = hrefs_to_attachment_hashes(&hrefs);
+        assert_eq!(hashes, vec!["hash_one".to_string(), "hash_two".to_string()]);
+    }
+
+    #[test]
+    fn hrefs_to_attachment_hashes_dedup_sorted() {
+        let hrefs = vec![
+            "/x/attachments/bb/cc/zzz".to_string(),
+            "/x/attachments/aa/bb/aaa".to_string(),
+            "/x/attachments/aa/bb/aaa".to_string(), // 重复
+        ];
+        let hashes = hrefs_to_attachment_hashes(&hrefs);
+        assert_eq!(hashes, vec!["aaa".to_string(), "zzz".to_string()]);
+    }
+
+    #[test]
+    fn hrefs_to_attachment_hashes_empty_input() {
+        assert!(hrefs_to_attachment_hashes(&[]).is_empty());
+    }
 }
