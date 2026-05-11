@@ -2,6 +2,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- 扫码导入配置：WebView getUserMedia 调摄像头需要在 manifest 声明 CAMERA，
+         否则 RustWebChromeClient.onPermissionRequest 里 launch 的运行时权限会被系统直接拒绝（不弹框） -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- 语音录入 / 语音识别：getUserMedia 录音需要 RECORD_AUDIO（同上，需在 manifest 声明才能运行时申请） -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- 没摄像头的设备也允许安装（required=false） -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
