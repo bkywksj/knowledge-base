@@ -1750,19 +1750,11 @@ body,
 }
 
 /* ── CodeMirror MergeView（DiffMergeModal：对比/合并弹窗）──
- * MergeView 默认按内容撑高；外层 host div 给了固定高度，这里让内部各层一路填满，
- * 真正出滚动条的是每侧的 .cm-scroller（DiffMergeModal 里再做两侧 scrollTop 同步）。 */
-.cm-mergeView,
-.cm-mergeViewEditors {
-  height: 100%;
-  min-height: 0;
-}
-.cm-mergeViewEditor {
-  min-height: 0;
-  height: 100%;
-}
-.cm-mergeView .cm-editor {
-  height: 100%;
+ * MergeView 自带 baseTheme 强制内部 .cm-editor / .cm-scroller 为 height:auto + overflow-y:visible，
+ * 即两侧编辑器长到内容全高、自己不滚；整块由外层 host div（DiffMergeModal 里设了 overflow:auto）统一滚。
+ * 所以这里不要再给 .cm-mergeView* 设 height，会跟它打架、把内容裁掉。 */
+.cm-mergeView {
+  width: 100%;
 }
 
 /* ── 侧边栏 / 锚点导航 / 卡片标题：禁止鼠标拖选文本（纯导航 & 标题区，拖选只会显得乱） ── */
