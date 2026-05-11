@@ -171,6 +171,8 @@ export function SyncV1Section() {
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<BackendFormState>(EMPTY_FORM);
   const [busyBackendId, setBusyBackendId] = useState<number | null>(null);
+  // 正在跑的操作：用于让"只有当前操作的按钮转圈、其余只灰掉"
+  const [busyOp, setBusyOp] = useState<"test" | "push" | "pull" | null>(null);
   const [progress, setProgress] = useState<SyncV1ProgressEvent | null>(null);
   const [shareEnv, setShareEnv] = useState<Envelope | null>(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -421,6 +423,7 @@ export function SyncV1Section() {
 
   async function handleTest(id: number) {
     setBusyBackendId(id);
+    setBusyOp("test");
     try {
       await syncV1Api.testConnection(id);
       message.success("连接正常");
@@ -428,11 +431,13 @@ export function SyncV1Section() {
       message.error(`连接失败: ${e}`);
     } finally {
       setBusyBackendId(null);
+      setBusyOp(null);
     }
   }
 
   async function handlePush(id: number) {
     setBusyBackendId(id);
+    setBusyOp("push");
     setProgress(null);
     try {
       const r = await syncV1Api.push(id);
@@ -447,12 +452,14 @@ export function SyncV1Section() {
       message.error(`推送失败: ${e}`);
     } finally {
       setBusyBackendId(null);
+      setBusyOp(null);
       setProgress(null);
     }
   }
 
   async function handlePull(id: number) {
     setBusyBackendId(id);
+    setBusyOp("pull");
     setProgress(null);
     try {
       const r = await syncV1Api.pull(id);
@@ -474,6 +481,7 @@ export function SyncV1Section() {
       message.error(`拉取失败: ${e}`);
     } finally {
       setBusyBackendId(null);
+      setBusyOp(null);
       setProgress(null);
     }
   }
@@ -610,7 +618,8 @@ export function SyncV1Section() {
                     <Button
                       size="small"
                       icon={<Plug size={13} />}
-                      loading={busy}
+                      loading={busy && busyOp === "test"}
+                      disabled={busy && busyOp !== "test"}
                       onClick={() => handleTest(b.id)}
                     />
                   </Tooltip>
@@ -618,7 +627,8 @@ export function SyncV1Section() {
                     <Button
                       size="small"
                       icon={<CloudUpload size={13} />}
-                      loading={busy}
+                      loading={busy && busyOp === "push"}
+                      disabled={busy && busyOp !== "push"}
                       onClick={() => handlePush(b.id)}
                     >
                       推送
@@ -628,7 +638,8 @@ export function SyncV1Section() {
                     <Button
                       size="small"
                       icon={<CloudDownload size={13} />}
-                      loading={busy}
+                      loading={busy && busyOp === "pull"}
+                      disabled={busy && busyOp !== "pull"}
                       onClick={() => handlePull(b.id)}
                     >
                       拉取
@@ -639,6 +650,7 @@ export function SyncV1Section() {
                       <Button
                         size="small"
                         icon={<Share2 size={13} />}
+                        disabled={busy}
                         onClick={() => setShareEnv(exportWebDavBackend(b))}
                       />
                     </Tooltip>
@@ -647,6 +659,7 @@ export function SyncV1Section() {
                     <Button
                       size="small"
                       icon={<Pencil size={13} />}
+                      disabled={busy}
                       onClick={() => openEditModal(b)}
                     />
                   </Tooltip>
@@ -654,8 +667,9 @@ export function SyncV1Section() {
                     title="确认删除此同步源？"
                     description="只清掉同步源配置和远端状态记录，不会动你的笔记"
                     onConfirm={() => handleDelete(b.id)}
+                    disabled={busy}
                   >
-                    <Button size="small" danger icon={<Trash2 size={13} />} />
+                    <Button size="small" danger icon={<Trash2 size={13} />} disabled={busy} />
                   </Popconfirm>
                 </Space>
               );
