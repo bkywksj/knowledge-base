@@ -17,3 +17,6 @@ key.properties
 
 /.tauri
 /tauri.settings.gradle
+# Android release 签名密钥（绝不提交）
+*.jks
+kb-release.jks

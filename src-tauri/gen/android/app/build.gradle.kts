@@ -13,6 +13,17 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// Release 签名：从 gen/android/key.properties 读 keystore 信息（该文件 + *.jks 已 .gitignore）。
+//   本地/CI 存在 key.properties → release APK/AAB 用 kb-release.jks 签名（更新时签名一致）
+//   不存在 → release 走默认（不签名）；debug 不受影响（仍用 SDK debug keystore）
+// storeFile 路径相对于本 app 模块目录（gen/android/app/）→ ../kb-release.jks = gen/android/kb-release.jks
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use { load(it) }
+    }
+}
+
 android {
     compileSdk = 36
     namespace = "com.agilefr.kb"
@@ -23,6 +34,16 @@ android {
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        create("release") {
+            if (keystorePropertiesFile.exists()) {
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -37,6 +58,10 @@ android {
             }
         }
         getByName("release") {
+            // 只有 key.properties 存在时才挂签名配置，否则 assembleRelease 会因缺 storeFile 报错
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
