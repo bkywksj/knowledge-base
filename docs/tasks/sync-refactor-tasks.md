@@ -385,13 +385,19 @@
 
 #### T-S040 · UI 文案与功能区分
 
-- **状态**：`pending`
+- **状态**：`completed` · 完成日期：2026-05-11
 - **价值**：⭐⭐⭐  成本：低（2 小时）
-- **依赖**：Phase 3 完成（CAS 跑稳后才能让 V1 接管日常）
+- **依赖**：Phase 3 完成（已 ✅）
 - **子任务**：
-  - [ ] `SyncTabs.tsx`：V0 tab 改名"快照归档（灾备/迁移）"，V1 tab 改名"多端实时同步（推荐）"
-  - [ ] V0 自动同步选项移除（仅手动触发）
-  - [ ] 文案说明两者关系：日常协同走 V1+CAS，整库快照走 V0
+  - [x] `SyncTabs.tsx`：
+    - 标签改名：V1 → "多端实时同步" + 蓝色"推荐"Tag；V0 → "快照归档"
+    - 顶部关系说明文案重写：突出 V1 是日常推荐用法（增量 + 去重 + 加密）；V0 是灾备/迁移
+  - [x] `SyncSection.tsx`（V0）：Card title 改"快照归档"；顶部 Alert 加描述说明，引导日常协作改用 V1
+  - [x] `SyncV1Section.tsx`（V1）：顶部加 success Alert 说明能力 + 强调"首次启用前先点重建附件索引"
+  - [x] `syncV1Api` 加 `rebuildAttachmentIndex()` 调用 `sync_v1_rebuild_attachment_index` Command
+  - [x] V1 同步源列表上方加"重建附件索引"按钮（loading 状态 + tooltip 说明）
+  - [x] **未做**：移除 V0 自动同步开关（保留兼容老用户，加文案引导即可）
+- **验证**：TypeScript `npx tsc --noEmit` 0 错误；Rust `cargo check` 0 警告
 
 ---
 
@@ -451,6 +457,10 @@ Phase X (按需)        ──────► 端到端加密 / 冲突合并 UI
 - **Phase 3**：✅ 核心闭环完成（T-S020~T-S024）—— 2026-05-11
   - 收益：sidecar CAS 附件同步落地，push 按 hash 去重上传，pull 写入 sync_in/，
     新 Command 重建附件索引；T-S025 GC 列为可选项延后
-- **Phase 4-5**：⏸ 排队中（并发上传、V0 退化为"快照归档"）
+- **Phase 4**：✅ 完成（T-S030 + T-S031）—— 2026-05-11
+  - 收益：WebDAV 并发上传，trait `batch_put_notes` 抽象；T-S032 S3/Local 标记为可选（默认串行够用）
+- **Phase 5**：✅ 完成（T-S040）—— 2026-05-11
+  - 收益：UI 文案区分"多端实时同步（推荐）"vs"快照归档"，V1 引导用户先重建附件索引
 
-下次开始任务时，从 **Phase 4 / T-S030 (batch_put_notes trait)** 开始：先评估 + 给方案 + 等确认。
+🎉 **同步功能重构正式收官**。剩余 T-S025/T-S032/T-S050/T-S051 为可选增强项，
+不影响核心多端同步可用性，按需开启新任务即可。

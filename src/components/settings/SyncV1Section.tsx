@@ -171,6 +171,20 @@ export function SyncV1Section() {
   const [progress, setProgress] = useState<SyncV1ProgressEvent | null>(null);
   const [shareEnv, setShareEnv] = useState<Envelope | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [rebuildingIndex, setRebuildingIndex] = useState(false);
+
+  // T-S024: 重建附件索引 —— 扫描所有笔记 content 中的本地资产引用并 upsert 到 note_attachments
+  async function handleRebuildAttachmentIndex() {
+    setRebuildingIndex(true);
+    try {
+      const n = await syncV1Api.rebuildAttachmentIndex();
+      message.success(`附件索引重建完成：登记 ${n} 条引用`);
+    } catch (e) {
+      message.error(`重建附件索引失败：${e}`);
+    } finally {
+      setRebuildingIndex(false);
+    }
+  }
 
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
@@ -410,6 +424,22 @@ export function SyncV1Section() {
 
   return (
     <div>
+      <Alert
+        type="success"
+        showIcon
+        message="多端实时同步（推荐用法）"
+        description={
+          <span style={{ fontSize: 12 }}>
+            单笔记粒度的增量同步：多端共用 UUID（不会重复创建笔记）、删除会同步到其它端、
+            附件按内容 hash 去重上传、加密笔记跨端可见。
+            <br />
+            <b>首次启用同步前</b>，请先点下方<b>「重建附件索引」</b>，让本机笔记里引用的图片/PDF
+            等附件被登记进同步范围。
+          </span>
+        }
+        style={{ marginBottom: 12 }}
+      />
+
       <div className="flex items-center justify-between mb-3">
         <span
           className="flex items-center gap-2"
@@ -419,6 +449,15 @@ export function SyncV1Section() {
           已配置的同步源：每个同步源独立维护推送 / 拉取状态
         </span>
         <Space size={4}>
+          <Tooltip title="扫描所有笔记的图片/PDF/source 引用并登记到附件同步索引。首次启用同步前、或批量导入笔记后请按一次。">
+            <Button
+              size="small"
+              loading={rebuildingIndex}
+              onClick={handleRebuildAttachmentIndex}
+            >
+              重建附件索引
+            </Button>
+          </Tooltip>
           <Tooltip title="从 JSON / 二维码导入同步源">
             <Button
               size="small"

@@ -422,11 +422,19 @@ export function SyncSection() {
   }
 
   return (
-    <Card title="同步" size="small">
+    <Card title="快照归档" size="small">
       <Alert
         type="info"
         showIcon
-        message="将笔记、图片、PDF、Word 等数据同步到 WebDAV 云盘（如坚果云），或导出为 ZIP 文件"
+        message="整库 ZIP 快照"
+        description={
+          <span style={{ fontSize: 12 }}>
+            把笔记、图片、PDF、Word 等全部数据打包成 ZIP，推到 WebDAV 云盘或导出本地文件。
+            <br />
+            适合<b>灾备/迁移/版本回退</b>；
+            <b>日常多端协作建议改用「多端实时同步」标签页</b>（增量同步 + 附件去重 + 删除可同步）。
+          </span>
+        }
         style={{ marginBottom: 16 }}
       />
 

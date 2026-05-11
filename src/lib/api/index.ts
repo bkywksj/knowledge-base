@@ -550,6 +550,10 @@ export const exportApi = {
   /** T-020 导出单条笔记为 HTML（单文件，图片内嵌 base64） */
   exportSingleToHtml: (id: number, targetPath: string) =>
     invoke<HtmlExportResult>("export_single_note_to_html", { id, targetPath }),
+  /** R-005 渲染笔记为 HTML 字符串（不写文件），供前端 iframe 打印为 PDF。
+   *  返回的 HTML 与 exportSingleToHtml 同构：图片已 inline 为 base64，自包含。 */
+  renderHtmlForPdf: (id: number) =>
+    invoke<string>("render_note_html_for_pdf", { id }),
 };
 
 /** 附件 API（PDF/Office/ZIP/音视频等非图片非文本文件）
@@ -777,6 +781,10 @@ export const syncV1Api = {
   pull: (id: number) => invoke<SyncPullResult>("sync_v1_pull", { id }),
   getLocalManifest: () =>
     invoke<SyncManifestV1>("sync_v1_get_local_manifest"),
+  /// T-S024: 重建附件索引（扫描所有笔记 content 中的本地资产引用 → upsert 到 note_attachments）
+  /// 返回成功 upsert 的引用数（不存在的文件被跳过且不计入）
+  rebuildAttachmentIndex: () =>
+    invoke<number>("sync_v1_rebuild_attachment_index"),
 };
 
 /**
