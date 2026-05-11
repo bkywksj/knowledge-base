@@ -58,6 +58,48 @@ impl SyncBackendImpl for WebdavBackend {
         block_on(self.client.upload_bytes(path, content.as_bytes().to_vec()))
     }
 
+    /// T-S031: 并发批量上传（Semaphore=8）
+    ///
+    /// 单 PUT 走 100-300ms RTT，串行 5000 条 ≈ 8-25 分钟；
+    /// 8 路并发理论上 ≈ 1-3 分钟（瓶颈转到服务器带宽或 keep-alive 连接数）。
+    ///
+    /// 复用 reqwest 全局 client（HTTP/1.1 keep-alive 池），不会因为并发新建多个 TCP/TLS。
+    fn batch_put_notes(&self, items: &[(String, String)]) -> Vec<Result<(), AppError>> {
+        if items.is_empty() {
+            return vec![];
+        }
+        use std::sync::Arc;
+        use tokio::sync::Semaphore;
+
+        let sem = Arc::new(Semaphore::new(8));
+        let owned: Vec<(String, String)> = items.to_vec();
+
+        block_on(async move {
+            let mut handles = Vec::with_capacity(owned.len());
+            for (path, content) in owned {
+                let client = self.client.clone();
+                let sem = Arc::clone(&sem);
+                handles.push(tokio::spawn(async move {
+                    let _permit = match sem.acquire_owned().await {
+                        Ok(p) => p,
+                        Err(_) => {
+                            return Err(AppError::Custom("Semaphore 已关闭".into()))
+                        }
+                    };
+                    client.upload_bytes(&path, content.into_bytes()).await
+                }));
+            }
+            let mut out = Vec::with_capacity(handles.len());
+            for h in handles {
+                out.push(match h.await {
+                    Ok(r) => r,
+                    Err(e) => Err(AppError::Custom(format!("并发上传任务 panic: {}", e))),
+                });
+            }
+            out
+        })
+    }
+
     fn get_note(&self, path: &str) -> Result<Option<String>, AppError> {
         let bytes_opt = block_on(self.client.download_bytes_optional(path))?;
         Ok(bytes_opt.map(|b| String::from_utf8_lossy(&b).into_owned()))

@@ -13,6 +13,11 @@ use tokio_util::io::ReaderStream;
 
 use crate::error::AppError;
 
+/// WebDAV 客户端
+///
+/// `Clone` 派生：方便 sync_v1 并发上传时给每个 tokio task 拷贝一份（T-S031）。
+/// 字段都廉价克隆：`client` 是 `&'static`（Copy），其余两个 String（Clone）。
+#[derive(Clone)]
 pub struct WebDavClient {
     client: &'static Client,
     base_url: String,

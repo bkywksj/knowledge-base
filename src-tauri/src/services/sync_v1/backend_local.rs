@@ -254,4 +254,40 @@ mod tests {
         assert_eq!(cas_path("xy"), "attachments/_/_/xy");
         assert_eq!(cas_path(""), "attachments/_/_/");
     }
+
+    /// T-S030：trait 默认 batch_put_notes 实现（串行调 put_note，本地 backend 没 override）
+    #[test]
+    fn batch_put_notes_default_serial_works() {
+        let dir = std::env::temp_dir().join(format!(
+            "kb-sync-batch-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let backend = LocalPathBackend::new(dir.to_str().unwrap());
+        backend.test_connection().unwrap();
+
+        let items: Vec<(String, String)> = vec![
+            ("notes/a.md".into(), "# A\nbody a".into()),
+            ("notes/b.md".into(), "# B\nbody b".into()),
+            ("notes/c.md".into(), "# C\nbody c".into()),
+        ];
+
+        let results = backend.batch_put_notes(&items);
+        assert_eq!(results.len(), 3, "结果数与入参一一对应");
+        assert!(results.iter().all(|r| r.is_ok()), "全部应成功: {:?}", results);
+
+        // 验证三条都能读回
+        for (path, body) in &items {
+            let got = backend.get_note(path).unwrap().expect("应能读回");
+            assert_eq!(&got, body);
+        }
+
+        // 空数组
+        let empty = backend.batch_put_notes(&[]);
+        assert!(empty.is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

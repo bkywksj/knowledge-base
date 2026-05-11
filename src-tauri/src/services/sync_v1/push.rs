@@ -146,26 +146,33 @@ pub fn push<R: Runtime, E: Emitter<R>>(
         map
     };
 
+    // T-S012：tombstone 删除走原串行（数量少 + delete_note 不在 batch trait 中）
+    // T-S030/T-S031：非 tombstone 笔记收集后用 batch_put_notes 一次性并发上传
+    struct PendingUpload {
+        note_id: i64,
+        remote_path: String,
+        body: String,
+        content_hash: String,
+        updated_at: String,
+        title: String,
+    }
+    let mut pending: Vec<PendingUpload> = Vec::new();
+
     let total_to_push = diff.to_push.len();
     for (idx, entry) in diff.to_push.iter().enumerate() {
-        let _ = emitter.emit(
-            event_name,
-            ProgressEvent {
-                backend_id,
-                phase: "upload".into(),
-                current: idx + 1,
-                total: total_to_push,
-                message: if entry.tombstone {
-                    format!("删除远端 {}", entry.title)
-                } else {
-                    format!("上传 {}", entry.title)
-                },
-            },
-        );
-
         // T-S012：tombstone entry 走删除分支
         if entry.tombstone {
-            // 软删笔记的本地 id：用 get_note_id_by_stable_uuid（含已软删，因为 SQL 没限 is_deleted）
+            let _ = emitter.emit(
+                event_name,
+                ProgressEvent {
+                    backend_id,
+                    phase: "upload".into(),
+                    current: idx + 1,
+                    total: total_to_push,
+                    message: format!("删除远端 {}", entry.title),
+                },
+            );
+
             let local_id = match db.get_note_id_by_stable_uuid(&entry.stable_id)? {
                 Some(id) => id,
                 None => {
@@ -176,15 +183,12 @@ pub fn push<R: Runtime, E: Emitter<R>>(
                     continue;
                 }
             };
-            // 远端 state 已知 tombstone → 跳过（幂等）
             if let Some(state) = state_map.get(&local_id) {
                 if state.tombstone {
                     result.skipped += 1;
                     continue;
                 }
             }
-            // 试图删远端 .md；失败仅 warn（可能远端本就没此文件 / 网络抖动）
-            // 无论成功失败都更新 sync_remote_state，让 manifest 也带 tombstone:true 后扩散
             match backend.delete_note(&entry.remote_path) {
                 Ok(_) => {}
                 Err(e) => log::warn!(
@@ -210,9 +214,7 @@ pub fn push<R: Runtime, E: Emitter<R>>(
             continue;
         }
 
-        // 先从 HashMap 拿本地 note_id + content（key 是 stable_uuid）
-        // T-S014：加密笔记的 local_notes content 是占位字符串而非真正内容，
-        // 实际上传的密文走单独路径（按 stable_uuid 查 encrypted_blob）
+        // 非 tombstone：收集到 pending 队列，后面统一 batch 上传
         let (note_id, title, content, updated_at) = match local_notes.get(&entry.stable_id) {
             Some(v) => v.clone(),
             None => {
@@ -224,8 +226,7 @@ pub fn push<R: Runtime, E: Emitter<R>>(
             }
         };
 
-        // 跳过：sync_remote_state 已记录同 hash（说明本机其它进程刚推过；幂等）
-        // state_map 按本地 note_id 索引，所以前面必须先拿到 note_id
+        // 跳过：sync_remote_state 已记录同 hash（幂等）
         if let Some(state) = state_map.get(&note_id) {
             if state.last_synced_hash == entry.content_hash && !state.tombstone {
                 result.skipped += 1;
@@ -258,27 +259,67 @@ pub fn push<R: Runtime, E: Emitter<R>>(
             format_note_md(&title, &content)
         };
 
-        match backend.put_note(&entry.remote_path, &body_to_upload) {
-            Ok(_) => {
-                if let Err(e) = db.upsert_remote_state(
+        pending.push(PendingUpload {
+            note_id,
+            remote_path: entry.remote_path.clone(),
+            body: body_to_upload,
+            content_hash: entry.content_hash.clone(),
+            updated_at,
+            title: entry.title.clone(),
+        });
+    }
+
+    // T-S031：批量并发上传（backend 可 override，WebDAV 用 Semaphore=8 并发）
+    if !pending.is_empty() {
+        let _ = emitter.emit(
+            event_name,
+            ProgressEvent {
+                backend_id,
+                phase: "upload-batch".into(),
+                current: 0,
+                total: pending.len(),
+                message: format!("批量上传 {} 条笔记…", pending.len()),
+            },
+        );
+
+        let batch_items: Vec<(String, String)> = pending
+            .iter()
+            .map(|p| (p.remote_path.clone(), p.body.clone()))
+            .collect();
+        let batch_results = backend.batch_put_notes(&batch_items);
+
+        // 按结果迭代：更新 state + 发 per-item 完成事件（粒度回到 per-note）
+        for (i, (p, r)) in pending.iter().zip(batch_results.into_iter()).enumerate() {
+            let _ = emitter.emit(
+                event_name,
+                ProgressEvent {
                     backend_id,
-                    note_id,
-                    &entry.remote_path,
-                    &entry.content_hash,
-                    &updated_at,
-                    false,
-                ) {
-                    result.errors.push(format!(
-                        "upsert sync_remote_state 失败 (note {}): {}",
-                        note_id, e
-                    ));
+                    phase: "upload".into(),
+                    current: i + 1,
+                    total: pending.len(),
+                    message: format!("已传 {}", p.title),
+                },
+            );
+            match r {
+                Ok(_) => {
+                    if let Err(e) = db.upsert_remote_state(
+                        backend_id,
+                        p.note_id,
+                        &p.remote_path,
+                        &p.content_hash,
+                        &p.updated_at,
+                        false,
+                    ) {
+                        result.errors.push(format!(
+                            "upsert sync_remote_state 失败 (note {}): {}",
+                            p.note_id, e
+                        ));
+                    }
+                    result.uploaded += 1;
                 }
-                result.uploaded += 1;
-            }
-            Err(e) => {
-                result
-                    .errors
-                    .push(format!("上传失败 {}: {}", entry.title, e));
+                Err(e) => {
+                    result.errors.push(format!("上传失败 {}: {}", p.title, e));
+                }
             }
         }
     }

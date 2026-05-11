@@ -347,28 +347,26 @@
 ---
 ### Phase 4 · 并发提速（1-2 天）
 
-#### T-S030 · trait 加 `batch_put_notes` 默认实现
+#### T-S030 + T-S031 · trait `batch_put_notes` + WebDAV 并发实现
 
-- **状态**：`pending`
-- **价值**：⭐⭐⭐  成本：低（半天）
-- **依赖**：无（与 Phase 2/3 独立）
-- **子任务**：
-  - [ ] trait 加 `fn batch_put_notes(&self, items: Vec<(String, String)>) -> Vec<Result<()>>`
-  - [ ] 默认实现：串行调 `put_note`（保持向后兼容）
-  - [ ] `push.rs` 改用 `batch_put_notes`
-
----
-
-#### T-S031 · WebDAV backend 并发上传（Semaphore=8）
-
-- **状态**：`pending`
+- **状态**：`completed` · 完成日期：2026-05-11
 - **价值**：⭐⭐⭐⭐⭐  成本：中（1 天）
-- **依赖**：T-S030
+- **依赖**：无（与 Phase 2/3 独立）
+- **方案合并**：T-S030 单做（trait 默认仍串行）无收益，与 T-S031 一并实施
 - **子任务**：
-  - [ ] `backend_webdav.rs::batch_put_notes` override：用 `tokio::spawn` + `Arc<Semaphore>(8)`
-  - [ ] 复用一个 reqwest::Client（HTTP/1.1 keep-alive）
-  - [ ] 实测：5000 笔记 push 时间 8 分钟 → 1 分钟级
-  - [ ] 失败重试（指数退避 3 次）
+  - [x] `backend.rs::SyncBackendImpl` 加 `batch_put_notes(items)` 方法 + 默认串行实现
+  - [x] `WebDavClient` 加 `#[derive(Clone)]`（reqwest client 是 `&'static`，廉价克隆）
+  - [x] `backend_webdav.rs::batch_put_notes` override：`tokio::spawn` + `Arc<Semaphore>(8)` 并发
+  - [x] `push.rs` 重构：tombstone 走原串行，非 tombstone 先收集 `Vec<PendingUpload>` 再 `batch_put_notes` 一次，按结果迭代更新 state + 发 per-item 完成事件
+  - [x] 新进度 phase: `"upload-batch"`（批次开始时发，告知"正在并发上传 N 条"）
+  - [x] 单测 1 个：trait 默认 `batch_put_notes` 串行能跑通（Local backend 不 override）
+  - [x] 全 lib 192 个单测通过；编译零警告
+- **预期收益**（实测需真实 WebDAV 服务器验证）：
+  - 5000 笔记 串行 PUT 8-25 分钟 → 8 路并发 1-3 分钟
+  - 复用全局 reqwest HTTP/1.1 keep-alive 池，不重建 TCP/TLS
+- **未做的优化**（留给后续）：
+  - 失败指数退避重试（当前失败一次就记 errors）
+  - Local/S3 backend override batch（默认串行已经够快，磁盘 IO 不是瓶颈）
 
 ---
 

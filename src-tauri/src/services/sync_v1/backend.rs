@@ -89,6 +89,19 @@ pub trait SyncBackendImpl {
     /// 上传一条笔记的 .md 文本到远端 `path`（path 是相对 vault 根的 posix 路径）
     fn put_note(&self, path: &str, content: &str) -> Result<(), AppError>;
 
+    /// T-S030: 批量上传笔记 `.md` 文本（默认实现 = 串行调 put_note）
+    ///
+    /// 返回值与入参一一对应，第 i 个结果对应第 i 个 item。
+    ///
+    /// 性能 backend 可 override（如 WebDAV/S3 用并发上传）。默认实现保持串行
+    /// 行为兼容；T-S031 起 WebdavBackend 自带 Semaphore(8) 并发实现。
+    fn batch_put_notes(&self, items: &[(String, String)]) -> Vec<Result<(), AppError>> {
+        items
+            .iter()
+            .map(|(path, content)| self.put_note(path, content))
+            .collect()
+    }
+
     /// 下载一条笔记的 .md 文本；不存在返回 Ok(None)
     fn get_note(&self, path: &str) -> Result<Option<String>, AppError>;
 
