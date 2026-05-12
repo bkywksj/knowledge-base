@@ -287,12 +287,23 @@ body,
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* 窄窗口下按钮太多放不下时，让右侧按钮组整体折到第二行，而不是把左侧
+     "更新于 X / 保存状态" 挤成竖排乱码（每个汉字单独一行）。 */
+  flex-wrap: wrap;
+  row-gap: 4px;
   /* 左右 32px：editor-page 的 margin:-24px 把 topbar 横向扩到 Content padding 外，
      这里需多给 24px 抵消，再留 8px 让"返回 / 删除"按钮不贴边 */
   padding: 8px 32px;
   border-bottom: 1px solid var(--ant-color-border, #d9d9d9);
   background: var(--ant-color-bg-container, #fff);
   flex-shrink: 0;
+}
+/* 左侧"返回 / 更新于 / 保存状态"组：永不被压缩，文字不折行 */
+.editor-topbar > .ant-space:first-child {
+  flex-shrink: 0;
+}
+.editor-topbar > .ant-space:first-child .ant-typography {
+  white-space: nowrap;
 }
 
 .editor-body {
@@ -534,9 +545,10 @@ body,
 .tiptap-toolbar {
   display: flex;
   align-items: center;
+  /* 全量显示所有分组：放不下就自由换行成多行，不折叠、不横向滚动。 */
   flex-wrap: wrap;
-  row-gap: 4px;
   column-gap: 1px;
+  row-gap: 4px;
   padding: 6px 14px;
   border-bottom: 1px solid var(--ant-color-border-secondary, #f0f0f0);
   /* 与正文同色 + 轻磨砂，消除灰色底的突兀感 */
@@ -546,6 +558,10 @@ body,
   position: sticky;
   top: 0;
   z-index: 10;
+}
+/* flex 子项（按钮分组 span / divider）不参与收缩，保持原始尺寸 */
+.tiptap-toolbar > * {
+  flex: 0 0 auto;
 }
 
 /* 编辑器页面内的 toolbar 全宽吸顶 */
@@ -937,6 +953,42 @@ body,
   height: auto;
   border-radius: 6px;
   margin: 0.5em 0;
+}
+/* ── tiptap-extension-resize-image 的图片在窄列/窄内容区里横向溢出的修复 ──
+   实测 DOM（图片在分栏的某一列里）：
+     <div style="display:flex" contenteditable="false" draggable="true">          NodeView 外壳
+       └ <div style="position: relative; ...; width: 1200px;">                    ← 目标宽度写这层（容器）
+           ├ <img width="1200" style="width: 1200px;">                            ← 主图，自带 inline width
+           ├ <div style="position: absolute; ...; width: 100px; ...">…</div>      ← 选中态的对齐工具条（别动它）
+           └ <div style="position: absolute; width: 9px; ...">×4</div>            ← 选中态的 4 个缩放手柄（别动它）
+
+   关键点：
+   1) 用 [contenteditable="false"][draggable="true"] 作锚点（ProseMirror NodeView 通用签名），
+      不依赖 .tiptap 这种可能对不上的根类名。
+   2) 只钳「容器」—— 它的特征是 position: relative + 显式 width；用 [style*="position: relative"]
+      把那两个 position: absolute 的浮层（工具条/手柄）排除掉，免得误伤。
+   3) 容器：max-width:100%（永不超出父级）+ min-width:0（它是 display:flex 的 flex item，
+      默认 min-width:auto≈图片原宽 1200px 会顶住不收缩，必须改 0）。
+   4) 主图：width:100%，永远只填满"已被钳过"的容器，不再自报 1200px。小图同理（容器 300px → 图 300px）。 */
+[contenteditable="false"][draggable="true"] div[style*="position: relative"][style*="width"],
+.tiptap div[style*="position: relative"][style*="width"],
+.ProseMirror div[style*="position: relative"][style*="width"] {
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box;
+}
+[contenteditable="false"][draggable="true"] div[style*="position: relative"][style*="width"] > img,
+.tiptap div[style*="position: relative"][style*="width"] > img,
+.ProseMirror div[style*="position: relative"][style*="width"] > img {
+  display: block;
+  width: 100% !important;
+  height: auto !important;
+}
+/* 普通 img / figure：不超出即可 */
+.tiptap img, .ProseMirror img, .tiptap-content img,
+.tiptap figure, .ProseMirror figure, .tiptap-content figure {
+  max-width: 100% !important;
+  height: auto;
 }
 
 /* 图片 resize 暗色 — 见 themes.css */
@@ -1589,6 +1641,158 @@ body,
 .tiptap-toggle[data-open="false"] [data-toggle-content] {
   display: none;
 }
+
+/* ─── Columns 分栏布局（2–5 列并排） ───────────────────────────────
+   编辑器里 columns 节点的真实 DOM 层级（@tiptap/react NodeView 会多包好几层）：
+     <div class="react-renderer node-columns">              ← columns 节点的 PM dom
+       <div class="tiptap-columns-block">                   ← NodeViewWrapper（外框+顶栏）
+         <div class="tiptap-columns-bar">…</div>
+         <div class="tiptap-columns-row" data-node-view-content style="white-space:pre-wrap">  ← NodeViewContent 外壳
+           <div data-node-view-content-react style="white-space:inherit">                       ← ★ 真正的"行容器"，flex 打这里
+             <div class="react-renderer node-column">…</div>    ← ★ 每一列的 PM dom = flex item（不是 .tiptap-column！）
+               <div class="tiptap-column">…</div>               ←   NodeViewWrapper（边框/×按钮）
+   ↑ 之前 bug：把 flex:1 / min-width:0 打在 .tiptap-column 上，但它不是 flex item（外面还套着 .react-renderer.node-column），
+     列没法按比例收缩 → 列里塞个宽图片就把整列撑爆 → 整个分栏块横向溢出。
+   ↓ 正解：行容器([data-node-view-content-react]) 设 flex；它的【直接子元素】（= .react-renderer.node-column）才是 flex item，
+     给它们 flex:1 1 0% + min-width:0，列宽就纯按"行宽/列数"算，跟内容无关，宽图片也撑不破。 */
+.tiptap-columns,
+.tiptap-columns-row > [data-node-view-content-react],
+.tiptap-columns-row > div {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 16px;
+  align-items: flex-start;
+  width: 100%;
+}
+/* 行容器的直接子元素（每一列的 PM dom = .react-renderer.node-column）才是真正的 flex item */
+.tiptap-columns-row > [data-node-view-content-react] > *,
+.tiptap-columns-row > div > *,
+.tiptap-columns > .tiptap-column {
+  flex: 1 1 0% !important;
+  min-width: 0 !important;
+  box-sizing: border-box;
+}
+.tiptap-columns { margin: 12px 0; }
+.tiptap-columns-block {
+  margin: 14px 0;
+  border: 1px solid var(--ant-color-border-secondary, #f0f0f0);
+  border-radius: 8px;
+  padding: 4px 8px 8px;
+  box-sizing: border-box;
+}
+.tiptap-columns-row { white-space: normal; }
+
+/* 顶部常驻操作栏：左标识 + 右按钮（加列 / 删除整块） */
+.tiptap-columns-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 22px;
+  margin-bottom: 4px;
+  user-select: none;
+}
+.tiptap-columns-bar-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ant-color-text-quaternary, #bbb);
+}
+.tiptap-columns-bar-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+.tiptap-columns-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--ant-color-text-tertiary, #999);
+}
+.tiptap-columns-btn:hover {
+  background: var(--ant-color-fill-tertiary, rgba(0, 0, 0, 0.06));
+  color: var(--ant-color-text-secondary, #666);
+}
+.tiptap-columns-btn-danger:hover {
+  background: color-mix(in srgb, #ff4d4f 14%, transparent);
+  color: #ff4d4f;
+}
+[data-theme-category="dark"] .tiptap-columns-block {
+  border-color: color-mix(in srgb, var(--ant-color-text, #fff) 12%, transparent);
+}
+
+.tiptap-column {
+  /* flex-basis:0 + grow:1 = 各列等宽，不被内容撑开；min-width:0 允许收缩到内容以下 */
+  flex: 1 1 0%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  position: relative;
+  /* 编辑时给一条淡边框，空列也能看见落点；导出 HTML 自带 class 但无此样式无妨 */
+  border: 1px dashed var(--ant-color-border-secondary, #f0f0f0);
+  border-radius: 6px;
+  padding: 6px 10px;
+  transition: border-color 0.15s;
+}
+
+/* 每列右上角「×」删除此列：平时隐藏，hover 该列时淡入 */
+.tiptap-column-del {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: var(--ant-color-bg-elevated, #fff);
+  box-shadow: 0 0 0 1px var(--ant-color-border-secondary, #f0f0f0);
+  color: var(--ant-color-text-tertiary, #999);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+  z-index: 1;
+}
+.tiptap-column:hover > .tiptap-column-del {
+  opacity: 1;
+  pointer-events: auto;
+}
+.tiptap-column-del:hover {
+  background: color-mix(in srgb, #ff4d4f 14%, transparent);
+  color: #ff4d4f;
+}
+.tiptap-column:hover,
+.tiptap-column:focus-within {
+  border-color: var(--ant-color-border, #d9d9d9);
+}
+/* 列内首尾块去掉外边距（NodeView 下真正的段落在 [data-node-view-content-react] 里） */
+.tiptap-column > :first-child,
+.tiptap-column [data-node-view-content-react] > :first-child { margin-top: 0; }
+.tiptap-column > :last-child,
+.tiptap-column [data-node-view-content-react] > :last-child { margin-bottom: 0; }
+/* 列内图片自适应列宽 */
+.tiptap-column img,
+.tiptap-column .tiptap-image-resize,
+.tiptap-column figure { max-width: 100%; }
+
+[data-theme-category="dark"] .tiptap-column {
+  border-color: color-mix(in srgb, var(--ant-color-text, #fff) 12%, transparent);
+}
+[data-theme-category="dark"] .tiptap-column:hover,
+[data-theme-category="dark"] .tiptap-column:focus-within {
+  border-color: color-mix(in srgb, var(--ant-color-text, #fff) 24%, transparent);
+}
+
 
 /* ─── Emoji 选择器分类条 + 网格 ──────────────────── */
 .emoji-cat-bar {

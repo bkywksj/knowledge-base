@@ -26,6 +26,9 @@ import {
   ImagePlus,
   Film,
   Globe,
+  Columns2,
+  Columns3,
+  Columns4,
   type LucideIcon,
 } from "lucide-react";
 import { imageApi, videoApi } from "@/lib/api";
@@ -88,7 +91,7 @@ const BASIC_SLASH_ITEMS: SlashCommandItem[] = [
     group: "基础块",
     icon: Heading1,
     keywords: ["一级标题", "标题", "h1", "heading", "title", "bt", "yjbt"],
-    shortcut: "Ctrl+Alt+1",
+    shortcut: "Ctrl+1",
     command: ({ editor, range }) => {
       editor.chain().focus().deleteRange(range).setHeading({ level: 1 }).run();
     },
@@ -99,7 +102,7 @@ const BASIC_SLASH_ITEMS: SlashCommandItem[] = [
     group: "基础块",
     icon: Heading2,
     keywords: ["二级标题", "h2", "heading", "bt", "ejbt"],
-    shortcut: "Ctrl+Alt+2",
+    shortcut: "Ctrl+2",
     command: ({ editor, range }) => {
       editor.chain().focus().deleteRange(range).setHeading({ level: 2 }).run();
     },
@@ -110,7 +113,7 @@ const BASIC_SLASH_ITEMS: SlashCommandItem[] = [
     group: "基础块",
     icon: Heading3,
     keywords: ["三级标题", "h3", "heading", "bt", "sjbt"],
-    shortcut: "Ctrl+Alt+3",
+    shortcut: "Ctrl+3",
     command: ({ editor, range }) => {
       editor.chain().focus().deleteRange(range).setHeading({ level: 3 }).run();
     },
@@ -121,7 +124,7 @@ const BASIC_SLASH_ITEMS: SlashCommandItem[] = [
     group: "基础块",
     icon: Heading4,
     keywords: ["四级标题", "h4", "heading", "bt", "sjbt"],
-    shortcut: "Ctrl+Alt+4",
+    shortcut: "Ctrl+4",
     command: ({ editor, range }) => {
       editor.chain().focus().deleteRange(range).setHeading({ level: 4 }).run();
     },
@@ -256,6 +259,41 @@ const BASIC_SLASH_ITEMS: SlashCommandItem[] = [
     keywords: ["危险", "danger", "callout", "error", "wx"],
     command: ({ editor, range }) => {
       editor.chain().focus().deleteRange(range).toggleCallout("danger").run();
+    },
+  },
+
+  // ─── 分栏 ───
+  {
+    key: "columns-2",
+    title: "两栏",
+    subtitle: "并排 2 列，如左图右文",
+    group: "分栏",
+    icon: Columns2,
+    keywords: ["分栏", "两栏", "2栏", "并排", "columns", "column", "fl", "llfl"],
+    command: ({ editor, range }) => {
+      editor.chain().focus().deleteRange(range).setColumns(2).run();
+    },
+  },
+  {
+    key: "columns-3",
+    title: "三栏",
+    subtitle: "并排 3 列",
+    group: "分栏",
+    icon: Columns3,
+    keywords: ["分栏", "三栏", "3栏", "并排", "columns", "column", "fl", "snfl"],
+    command: ({ editor, range }) => {
+      editor.chain().focus().deleteRange(range).setColumns(3).run();
+    },
+  },
+  {
+    key: "columns-4",
+    title: "四栏",
+    subtitle: "并排 4 列",
+    group: "分栏",
+    icon: Columns4,
+    keywords: ["分栏", "四栏", "4栏", "并排", "columns", "column", "fl", "snfl"],
+    command: ({ editor, range }) => {
+      editor.chain().focus().deleteRange(range).setColumns(4).run();
     },
   },
 

@@ -202,6 +202,7 @@ import { EmbedVideo } from "./EmbedVideoNode";
 import { AllowFileLink } from "./AllowFileLink";
 import { Callout } from "./Callout";
 import { Toggle, ToggleSummary, ToggleContent } from "./Toggle";
+import { Columns, Column } from "./Columns";
 import "tippy.js/dist/tippy.css";
 
 const lowlight = createLowlight(common);
@@ -888,6 +889,111 @@ export function TiptapEditor({
   );
 
   /**
+   * 把当前文档里所有 src 为 http(s):// 的远程图片抓回本地（kb_assets），src 改写为 kb-asset://。
+   *
+   * 场景：用户粘贴**纯文本 Markdown** `![](https://...)` —— tiptap-markdown 的
+   * transformPastedText 会先把它转成 `<img src=远程URL>` 再交给 ProseMirror，于是文档里
+   * 出现一个 src 还是远程地址的 imageResize 节点。Tauri WebView 因 CSP / 图床防盗链基本
+   * 加载不了 → 破图，而且笔记存盘后 markdown 里仍是远程链接（链接失效就彻底没了）。
+   * 这里在粘贴后扫一遍，远程图统一抓回本地保存，再把节点 src 换成 kb-asset://。
+   *
+   * editor 走参数传入（editorProps 每次 render 经 setOptions 刷新，闭包里的 editor 是最新的）。
+   */
+  const localizeRemoteImagesInEditor = useCallback(
+    async (editor: ReturnType<typeof useEditor>) => {
+      if (!editor || editor.isDestroyed) return;
+      const remoteSrcs = new Set<string>();
+      editor.state.doc.descendants((node) => {
+        const src = node.attrs?.src;
+        if (
+          node.type.name === "imageResize" &&
+          typeof src === "string" &&
+          /^https?:\/\//i.test(src)
+        ) {
+          remoteSrcs.add(src);
+        }
+      });
+      if (remoteSrcs.size === 0) return;
+
+      let effectiveNoteId = noteIdRef.current;
+      if (!effectiveNoteId && ensureNoteIdRef.current) {
+        try {
+          effectiveNoteId = await ensureNoteIdRef.current();
+        } catch (e) {
+          message.error(`无法建档保存图片：${e}`);
+          return;
+        }
+      }
+      if (!effectiveNoteId) {
+        message.warning("请先保存笔记后再粘贴带图片的内容");
+        return;
+      }
+
+      const hide = message.loading(`正在保存 ${remoteSrcs.size} 张图片到本地…`, 0);
+      const map = new Map<string, string>();
+      let failed = 0;
+      await Promise.all(
+        Array.from(remoteSrcs).map(async (src, idx) => {
+          try {
+            // 优先 Rust reqwest：绕开 WebView 的 Origin/Referer/CORS，防盗链图床基本只有这条路能成
+            const rel = await imageApi.downloadFromUrl(effectiveNoteId!, src);
+            map.set(src, toKbAsset(rel));
+          } catch (rustErr) {
+            try {
+              const file = await srcToImageFile(src, `pasted-${Date.now()}-${idx}.png`);
+              const base64 = await fileToBase64(file);
+              const rel = await imageApi.save(effectiveNoteId!, file.name, base64);
+              map.set(src, toKbAsset(rel));
+            } catch (e2) {
+              failed += 1;
+              console.warn("[paste-md] 远程图本地化失败:", {
+                srcSample: src.slice(0, 120),
+                error: String(e2),
+                rustError: String(rustErr),
+              });
+            }
+          }
+        }),
+      );
+      hide();
+
+      if (map.size === 0) {
+        message.warning(
+          `${remoteSrcs.size} 张图片都无法下载（防盗链 / 网络问题），已保留原始链接`,
+        );
+        return;
+      }
+      if (editor.isDestroyed) return; // 下载期间笔记被切走
+
+      // 一次 transaction 把所有命中的远程 src 换成本地 kb-asset://（按 src 值匹配，无需 position 数学）
+      const tr = editor.state.tr;
+      let changed = 0;
+      editor.state.doc.descendants((node, pos) => {
+        const src = node.attrs?.src;
+        if (
+          node.type.name === "imageResize" &&
+          typeof src === "string" &&
+          map.has(src)
+        ) {
+          tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: map.get(src) });
+          changed += 1;
+        }
+      });
+      if (changed > 0) {
+        editor.view.dispatch(tr);
+        if (failed > 0) {
+          message.warning(
+            `已保存 ${map.size} 张图到本地，${failed} 张无法下载（保留原链接）`,
+          );
+        } else {
+          message.success(`已保存 ${map.size} 张图片到本地`);
+        }
+      }
+    },
+    [],
+  );
+
+  /**
    * 处理粘贴/拖入的视频：Uint8Array 走 binary IPC 直传后端落盘，
    * 返回 asset URL 后插入自定义 Video 节点（内联 <video controls preload="metadata">）。
    *
@@ -1166,6 +1272,8 @@ export function TiptapEditor({
       Toggle,
       ToggleSummary,
       ToggleContent,
+      Columns,
+      Column,
       WikiLinkDecoration.configure({
         onClick: (title: string) => wikiClickRef.current?.(title),
       }),
@@ -1301,6 +1409,18 @@ export function TiptapEditor({
             }
           })();
           return true;
+        }
+
+        // 场景 E：纯文本 Markdown 里带远程图片 `![](http...)`。tiptap-markdown 会把它
+        // 转成 <img src=远程URL> 再交给 ProseMirror → 文档里出现 src 仍是远程地址的图片节点，
+        // Tauri WebView 加载不了（CSP / 防盗链）→ 破图且不落本地。这里不拦截（仍走默认插入），
+        // 下一拍把这些远程图抓回本地、改写 src 为 kb-asset://。
+        const plainText = dt?.getData("text/plain") ?? "";
+        if (/!\[[^\]]*\]\(\s*https?:\/\//i.test(plainText)) {
+          setTimeout(() => {
+            void localizeRemoteImagesInEditor(editor);
+          }, 0);
+          // 注意：不 return，继续走 ProseMirror 默认逻辑把 markdown 解析插入
         }
 
         return false;

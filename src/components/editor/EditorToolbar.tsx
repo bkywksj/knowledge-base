@@ -6,7 +6,6 @@ import {
   Bold,
   Italic,
   Underline,
-  Strikethrough,
   Highlighter,
   Code,
   Superscript as SuperscriptIcon,
@@ -39,7 +38,9 @@ import {
   AlignCenter,
   AlignRight,
   Rows3,
+  Columns2,
   Columns3,
+  Columns4,
   Trash2,
   ChevronDown,
 } from "lucide-react";
@@ -401,13 +402,13 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
             placement="bottomLeft"
             menu={{
               items: [
-                { key: "p",  label: <span>正文</span> },
-                { key: "h1", label: <span style={{ fontSize: 18, fontWeight: 700 }}>H1 一级标题</span> },
-                { key: "h2", label: <span style={{ fontSize: 16, fontWeight: 700 }}>H2 二级标题</span> },
-                { key: "h3", label: <span style={{ fontSize: 15, fontWeight: 600 }}>H3 三级标题</span> },
-                { key: "h4", label: <span style={{ fontSize: 14, fontWeight: 600 }}>H4 四级标题</span> },
-                { key: "h5", label: <span style={{ fontSize: 13 }}>H5 五级标题</span> },
-                { key: "h6", label: <span style={{ fontSize: 13 }}>H6 六级标题</span> },
+                { key: "p",  label: <span>正文</span>, extra: <span className="text-xs opacity-50">Ctrl 0</span> },
+                { key: "h1", label: <span style={{ fontSize: 18, fontWeight: 700 }}>H1 一级标题</span>, extra: <span className="text-xs opacity-50">Ctrl 1</span> },
+                { key: "h2", label: <span style={{ fontSize: 16, fontWeight: 700 }}>H2 二级标题</span>, extra: <span className="text-xs opacity-50">Ctrl 2</span> },
+                { key: "h3", label: <span style={{ fontSize: 15, fontWeight: 600 }}>H3 三级标题</span>, extra: <span className="text-xs opacity-50">Ctrl 3</span> },
+                { key: "h4", label: <span style={{ fontSize: 14, fontWeight: 600 }}>H4 四级标题</span>, extra: <span className="text-xs opacity-50">Ctrl 4</span> },
+                { key: "h5", label: <span style={{ fontSize: 13 }}>H5 五级标题</span>, extra: <span className="text-xs opacity-50">Ctrl 5</span> },
+                { key: "h6", label: <span style={{ fontSize: 13 }}>H6 六级标题</span>, extra: <span className="text-xs opacity-50">Ctrl 6</span> },
               ],
               onClick: ({ key }) => applyBlockType(editor, key as BlockType),
               selectedKeys: [getCurrentBlockType(editor)],
@@ -448,7 +449,20 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
         isActive: () => editor.isActive("underline"),
       },
       {
-        icon: <Strikethrough size={15} />,
+        // 删除线：lucide 的 Strikethrough 在 15px 下笔画糊成一团、辨识度差，
+        // 改成带 line-through 的文字「S」，跟左边 B / I / U 三个字母按钮成套（Notion / 语雀同款）
+        icon: (
+          <span
+            style={{
+              fontSize: 14,
+              fontWeight: 600,
+              lineHeight: 1,
+              textDecoration: "line-through",
+            }}
+          >
+            S
+          </span>
+        ),
         title: "删除线",
         action: () => editor.chain().focus().toggleStrike().run(),
         isActive: () => editor.isActive("strike"),
@@ -713,6 +727,42 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
         icon: <ChevronsUpDown size={15} />,
         title: "折叠块",
         action: () => editor.chain().focus().setToggle().run(),
+      },
+      {
+        icon: (
+          <span className="inline-flex items-center gap-0.5">
+            <Columns2 size={15} />
+            <ChevronDown size={11} style={{ opacity: 0.6 }} />
+          </span>
+        ),
+        title: "分栏布局（左图右文等）",
+        isActive: () => editor.isActive("columns"),
+        dropdownItems: [
+          {
+            key: "columns-2",
+            icon: <Columns2 size={14} />,
+            label: "两栏",
+            onClick: () => editor.chain().focus().setColumns(2).run(),
+          },
+          {
+            key: "columns-3",
+            icon: <Columns3 size={14} />,
+            label: "三栏",
+            onClick: () => editor.chain().focus().setColumns(3).run(),
+          },
+          {
+            key: "columns-4",
+            icon: <Columns4 size={14} />,
+            label: "四栏",
+            onClick: () => editor.chain().focus().setColumns(4).run(),
+          },
+          {
+            key: "columns-5",
+            icon: <Columns4 size={14} />,
+            label: "五栏",
+            onClick: () => editor.chain().focus().setColumns(5).run(),
+          },
+        ],
       },
       {
         icon: null,
@@ -986,62 +1036,61 @@ export function EditorToolbar({ editor, noteId, ensureNoteId }: ToolbarProps) {
     e.preventDefault();
   }
 
+  // ── 单个工具项渲染（普通按钮 / 下拉按钮 / 自定义控件） ──
+  const renderItem = (item: ToolItem, ii: number) => {
+    if (item.customRender) {
+      return (
+        <span key={ii} className="inline-flex items-center">
+          {item.customRender()}
+        </span>
+      );
+    }
+    const btn = (
+      <Button
+        type="text"
+        size="small"
+        icon={item.icon}
+        onClick={item.dropdownItems ? undefined : item.action}
+        className={item.isActive?.() ? "toolbar-btn-active" : ""}
+        style={{
+          // 带 dropdownItems 双图标按钮宽 40，普通单图标 26 紧凑
+          minWidth: item.dropdownItems ? 40 : 26,
+          height: 26,
+          padding: item.dropdownItems ? "0 4px" : 0,
+        }}
+      />
+    );
+    if (item.dropdownItems) {
+      return (
+        <Tooltip key={ii} title={item.title} mouseEnterDelay={0.5}>
+          <Dropdown menu={{ items: item.dropdownItems }} trigger={["click"]} placement="bottomLeft">
+            {btn}
+          </Dropdown>
+        </Tooltip>
+      );
+    }
+    return (
+      <Tooltip key={ii} title={item.title} mouseEnterDelay={0.5}>
+        {btn}
+      </Tooltip>
+    );
+  };
+  const renderGroup = (group: ToolItem[], gi: number, leadingDivider: boolean) => (
+    <span key={gi} data-tb-group className="inline-flex items-center">
+      {leadingDivider && (
+        <Divider
+          orientation="vertical"
+          style={{ height: 18, margin: "0 1px", borderColor: "var(--ant-color-border-secondary, #f0f0f0)" }}
+        />
+      )}
+      {group.map((item, ii) => renderItem(item, ii))}
+    </span>
+  );
+
   return (
     <>
       <div className="tiptap-toolbar" onMouseDown={handleToolbarMouseDown}>
-        {groups.map((group, gi) => (
-          <span key={gi} className="inline-flex items-center">
-            {gi > 0 && (
-              <Divider orientation="vertical" style={{ height: 18, margin: "0 1px", borderColor: "var(--ant-color-border-secondary, #f0f0f0)" }} />
-            )}
-            {group.map((item, ii) => {
-              if (item.customRender) {
-                return (
-                  <span key={ii} className="inline-flex items-center">
-                    {item.customRender()}
-                  </span>
-                );
-              }
-              const btn = (
-                <Button
-                  type="text"
-                  size="small"
-                  icon={item.icon}
-                  onClick={item.dropdownItems ? undefined : item.action}
-                  className={item.isActive?.() ? "toolbar-btn-active" : ""}
-                  style={{
-                    // 带 dropdownItems 双图标按钮宽 40，普通单图标 26 紧凑
-                    minWidth: item.dropdownItems ? 40 : 26,
-                    height: 26,
-                    padding: item.dropdownItems ? "0 4px" : 0,
-                  }}
-                />
-              );
-              if (item.dropdownItems) {
-                return (
-                  <Tooltip
-                    key={ii}
-                    title={item.title}
-                    mouseEnterDelay={0.5}
-                  >
-                    <Dropdown
-                      menu={{ items: item.dropdownItems }}
-                      trigger={["click"]}
-                      placement="bottomLeft"
-                    >
-                      {btn}
-                    </Dropdown>
-                  </Tooltip>
-                );
-              }
-              return (
-                <Tooltip key={ii} title={item.title} mouseEnterDelay={0.5}>
-                  {btn}
-                </Tooltip>
-              );
-            })}
-          </span>
-        ))}
+        {groups.map((group, gi) => renderGroup(group, gi, gi > 0))}
       </div>
 
       <Modal
