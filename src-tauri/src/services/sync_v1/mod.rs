@@ -15,6 +15,7 @@ pub mod attachment_scan;
 pub mod backend;
 pub mod backend_local;
 pub mod conflicts;
+pub mod lock;
 // rust-s3 0.34 强引入 openssl，移动端编译失败；S3 backend 仅桌面端启用
 // 移动端按 T-M014 暂只支持 local + webdav backend
 #[cfg(desktop)]

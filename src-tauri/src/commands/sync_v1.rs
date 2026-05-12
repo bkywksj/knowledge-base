@@ -94,6 +94,12 @@ pub fn sync_v1_push(
     app: tauri::AppHandle,
     id: i64,
 ) -> Result<SyncPushResult, String> {
+    // 同步互斥：同一 backend 同时只跑一个 pull/push，防并发互踩（见 services::sync_v1::lock）
+    let _sync_guard = state
+        .sync_v1_gate
+        .try_acquire(id)
+        .ok_or_else(|| "该同步源正在同步中，请等当前同步结束再试".to_string())?;
+
     let cfg = state
         .db
         .get_sync_backend(id)
@@ -125,6 +131,12 @@ pub fn sync_v1_pull(
     app: tauri::AppHandle,
     id: i64,
 ) -> Result<SyncPullResult, String> {
+    // 同步互斥：同一 backend 同时只跑一个 pull/push，防并发互踩（见 services::sync_v1::lock）
+    let _sync_guard = state
+        .sync_v1_gate
+        .try_acquire(id)
+        .ok_or_else(|| "该同步源正在同步中，请等当前同步结束再试".to_string())?;
+
     let cfg = state
         .db
         .get_sync_backend(id)
@@ -169,6 +181,11 @@ pub fn sync_v1_trigger_background_sync(
         .get_sync_backend(id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("backend {} 不存在", id))?;
+    // 已经在同步中 → 当作"已经在跑了"，不再 spawn 重复 task（用户连点按钮 / 调度器撞上来时）
+    if state.sync_v1_gate.is_busy(id) {
+        log::info!("[sync_v1] backend #{} 已在同步中，忽略本次后台同步触发", id);
+        return Ok(());
+    }
     crate::services::sync_v1_scheduler::trigger_background_sync(&app, id);
     Ok(())
 }

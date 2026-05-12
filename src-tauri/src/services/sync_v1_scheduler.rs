@@ -100,6 +100,21 @@ pub fn trigger_background_sync(app: &AppHandle, backend_id: i64) {
 /// push/pull 是同步阻塞函数（webdav reqwest blocking），必须 spawn_blocking
 /// 包起来避免阻塞 tokio worker。结果通过 `sync_v1:auto-triggered` 事件回报前端。
 async fn run_backend_sync(app: &AppHandle, backend_id: i64) {
+    // 同步互斥：拿不到锁说明已有一次同步（手动 / 上一轮调度）在跑 → 本次直接跳过，等下个周期
+    let _sync_guard = {
+        let state = app.state::<AppState>();
+        match state.sync_v1_gate.try_acquire(backend_id) {
+            Some(g) => g,
+            None => {
+                log::info!(
+                    "[sync-v1-scheduler] backend #{} 已在同步中，跳过本次（等下个周期）",
+                    backend_id
+                );
+                return;
+            }
+        }
+    };
+
     // 先 pull
     let pull_app = app.clone();
     let pull_outcome: Result<String, String> =

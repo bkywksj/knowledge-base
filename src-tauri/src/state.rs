@@ -25,6 +25,9 @@ pub struct AppState {
     pub ai_cancel: Mutex<std::collections::HashMap<i64, watch::Sender<bool>>>,
     /// 自动同步调度器唤醒信号：配置变更时 notify_one 重载
     pub sync_scheduler_notify: Arc<Notify>,
+    /// V1 多端同步互斥闸门：同一 backend 同时只允许一个 pull/push/双向同步在跑，
+    /// 防止并发 pull 互撞 `idx_notes_stable_uuid` UNIQUE、并发 push 互相覆盖远端 manifest
+    pub sync_v1_gate: crate::services::sync_v1::lock::SyncGate,
     /// 待办提醒调度器唤醒信号：用户增/改/删/snooze 任务时 notify_one，
     /// 调度器立刻重新计算"下一个最早提醒时刻"并重 sleep。
     /// 这样实现的精度 ~毫秒，且空闲时零 DB 查询（只在事件驱动 + 5min 兜底唤醒时扫）。
@@ -59,6 +62,7 @@ impl AppState {
             instance_id,
             ai_cancel: Mutex::new(std::collections::HashMap::new()),
             sync_scheduler_notify: Arc::new(Notify::new()),
+            sync_v1_gate: crate::services::sync_v1::lock::SyncGate::new(),
             reminder_notify: Arc::new(Notify::new()),
             pending_open_md_path: Mutex::new(None),
             vault: RwLock::new(VaultState::default()),
