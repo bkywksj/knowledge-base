@@ -145,6 +145,9 @@ git push origin main
 
 ### 步骤 5：提交源码仓库并打 Tag 触发 CI
 
+> ⚠️ commit message **不能含 `[skip ci]`** —— 被 tag 的那个 commit 带 `[skip ci]` 的话，
+> tag push 触发的 workflow 也会被一并跳过（v1.9.0-mobile 时踩过这个坑）。
+
 ```bash
 cd "E:/my/桌面软件tauri/knowledge_base"
 git add src-tauri/tauri.conf.json src-tauri/Cargo.toml package.json
@@ -368,15 +371,8 @@ def build(base):
                 'url': f'{base}/Knowledge.Base_{VERSION}_amd64.AppImage.tar.gz',
                 'signature': read_sig(f'{RELEASE_DIR}/Knowledge.Base_{VERSION}_amd64.AppImage.tar.gz.sig'),
             },
-            # Android arm64 —— App 内"检查更新"(check_mobile_update) 读这个 url 拿 APK 直链。
-            # 不放 signature（Android 自己验 APK 签名，不用 minisign）。URL 跟其他平台一样走
-            # 公开 release 仓 raw / R2（源码仓是私有的，releases/download 下不动）—— 所以 APK 也要
-            # 放进 releases/v{VERSION}/ 一起 push（步骤 7b 的 WANT 里加一行 Knowledge.Base_{VERSION}_android-arm64.apk）。
-            # 前提：本版本已跑过 android.yml release 构建（推 v{VERSION}-mobile.0 tag 触发）。
-            # 若本版本没出 Android 包，就把这一项删掉（check_mobile_update 会回落到 release 发布页）。
-            'android-arm64': {
-                'url': f'{base}/Knowledge.Base_{VERSION}_android-arm64.apk',
-            },
+            # 注意：这里 **没有** android —— 移动端走独立版本线 + 独立的 update-mobile.json，
+            # 见下方「移动端（Android）独立发布」章节。桌面 update.json 只管 Win/macOS/Linux。
         },
     }
 
@@ -583,29 +579,47 @@ git push github vx.y.z
 
 ---
 
-## Android APK（移动端，独立于桌面三平台）
+## 移动端（Android）独立发布
 
-桌面 `release.yml`（`v*.*.*` tag 触发）只出 Windows/macOS/Linux。Android 走单独的
-`.github/workflows/android.yml`，触发方式：
+> **桌面和移动端是两条独立的版本线、两条独立的发布管道，互不影响。**
+> 桌面 = `tauri.conf.json` 的版本（1.x）+ `v*.*.*` tag + `release.yml` + `update.json`。
+> 移动端 = `src-tauri/tauri.android.conf.json` 的 `version`（从 0.1.0 起）+ `mobile-v*.*.*` tag
+> + `android.yml` + `update-mobile.json`。`tauri android build` 时 Tauri 2 自动把
+> `tauri.android.conf.json` 合并覆盖到 `tauri.conf.json`，所以 APK 的 versionName 和编译进去的
+> `package_info().version` 都是这个独立的移动版本号。
 
-- 手动：GitHub → Actions → "Android Build" → Run workflow → 选 `release`
-- 或推 `v<VERSION>-mobile.0` tag（与桌面 `v<VERSION>` tag 区分，不互相打架）
+### 移动端发布流程（独立于桌面 `/release`）
 
-release 构建用 `kb-release.jks` 正式签名（6 个 Secrets 主仓 + 备用仓都已配），产物：
-- `Knowledge.Base_<VERSION>_android-arm64.apk`（侧载 / App 内"检查更新"）
-- `Knowledge.Base_<VERSION>_android-arm64.aab`（传 Google Play）
+| 步骤 | 操作 |
+|------|------|
+| M1 本地自检 + 询问版本号/说明 | `npx tsc --noEmit`；问新移动版本号（读 `src-tauri/tauri.android.conf.json` 的 `version`）+ 更新说明 |
+| M2 改版本号 | Edit `src-tauri/tauri.android.conf.json` 的 `"version": "x.y.z"`（**只改这一处**，桌面三处不动） |
+| M3 提交 + 推 | `git add src-tauri/tauri.android.conf.json && git commit -m "release(mobile): vx.y.z ..."`（⚠️ commit message **不能含 `[skip ci]`**，否则 tag push 也会被跳过）；`git push origin master && git push github master && git push github2 master` |
+| M4 打 tag 触发 CI | `git tag mobile-vx.y.z && git push <CI 远端> mobile-vx.y.z`（CI 远端 = `github` 或配额耗尽时 `github2`）→ 触发 `android.yml` release 路径（正式签名 APK + AAB） |
+| M5 ScheduleWakeup 轮询 CI | 同桌面步骤 6，盯 `Android Build` run（`head_branch=mobile-vx.y.z`），~20–30 分钟 |
+| M6 下载产物 | CI 完成后产物在 GitHub Release 草稿（tag = `mobile-vx.y.z`）+ Actions Artifact（名 `knowledge-base-android-release-vx.y.z`）。从 Release assets 或 Artifact zip 取 `Knowledge.Base_x.y.z_android-arm64.apk` + `.aab`，下到 `releases/mobile-vx.y.z/`（release 仓）。校验 APK 是 release 体积（~20–120MB，不是 ~345MB 的 debug） |
+| M7 上传 R2 | `~/bin/rclone.exe copy "releases/mobile-vx.y.z/Knowledge.Base_x.y.z_android-arm64.apk" r2:downloads/knowledge-base/mobile-vx.y.z/`；`.aab` 同样 |
+| M8 生成 `update-mobile.json` + `update-mobile-r2.json` | 扁平结构（无 minisign signature，Android 自己验 APK 签名）：`{"version":"x.y.z","notes":"...","pub_date":"...","url":"<base>/Knowledge.Base_x.y.z_android-arm64.apk"}`。两份只有 `url` 的 base 不同：GitHub 版 base = `https://github.com/bkywksj/knowledge-base-release/raw/main/releases/mobile-vx.y.z`，R2 版 base = `https://pub-...r2.dev/knowledge-base/mobile-vx.y.z`。写到 release 仓根目录 |
+| M9 上传 R2 `update-mobile.json` | `~/bin/rclone.exe copy update-mobile-r2.json r2:downloads/knowledge-base/` → `~/bin/rclone.exe moveto r2:downloads/knowledge-base/update-mobile-r2.json r2:downloads/knowledge-base/update-mobile.json`；curl 验证 200 |
+| M10 更新 README + 推 release 仓 | 在 README 的「移动端（Android）」区块加下载行 + 移动端版本历史条目；`git add -A && git commit -m "release(mobile): vx.y.z" && git pull --rebase origin main && git push origin main && git push gitee main:master`（Gitee 失败跳过，已知 fork 分叉） |
+| M11 publish GitHub Release | 把 `mobile-vx.y.z` 的 draft Release 改 `draft:false`（PATCH，name=`知识库 移动端 vx.y.z`，body=更新说明）。注意 CI 在哪个仓就 publish 哪个仓的 |
+| M12 触发文档站重建 | docs 仓 `docs/public/.last-mobile-release.json`（或在 mobile.md 里更新版本号）→ commit → `git push gitee master && git push github master`，EdgeOne 自动重建 |
+| M13 完成报告 | 移动版本 / 源码 commit / tag / CI / release 仓 commit / R2 / 自动更新（update-mobile.json）|
 
-tag 触发时自动附到 `bkywksj/knowledge-base` 的 GitHub Release 草稿。
+### 配合 App 内"检查更新"
 
-**配合 App 内"检查更新"**：步骤 8 生成的 `update.json` 里 `platforms.android-arm64.url`
-就指向 `.../releases/download/v<VERSION>-mobile.0/Knowledge.Base_<VERSION>_android-arm64.apk`
-（已写进上面 `build()` 脚本）。App 的 `check_mobile_update` 命令读 `update.json` 拿到这个
-直链 → `openUrl` 让浏览器下载 → 用户点一下进系统安装器（首次需在系统里允许"安装未知应用"）。
-**注意**：必须用同一个 `kb-release.jks` 签名，否则老用户装不上（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`）。
+App 的 `check_mobile_update` 命令（`src-tauri/src/commands/mobile_update.rs`，`#[cfg(mobile)]`）
+按 R2 → Gitee → GitHub 顺序拉 `update-mobile.json`，比对 `version` 字段与 `package_info().version`，
+有新版本就把 `url` 给前端 → `openUrl` 浏览器下载 APK → 用户点一下进系统安装器（首次需在系统里允许"安装未知应用"）。
 
-> 发完整版（桌面 + 移动）的顺序：先推 `v<VERSION>-mobile.0` 触发 android.yml（等它出 APK），
-> 再走桌面 `/release` 流程（这样步骤 8 的 `update.json` 里那个 android-arm64 URL 才是可达的）。
-> 只发桌面时，把 `build()` 里的 `'android-arm64'` 那项删掉即可。
+> 🔴 **签名一致性铁律**：同一条移动版本线的所有 APK 必须用同一个 `kb-release.jks` 签名，
+> 否则用户"检查更新→装新 APK"会因签名不匹配失败（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`，只能卸载重装丢数据）。
+> debug APK（SDK 自带 keystore）与 release APK 签名不同；首次从 debug 换 release 需先卸载再装，之后 release→release 才一致。
+
+### versionCode 注意
+
+Tauri 把 Android `versionCode` 从 `version` 推导（`major*1000000 + minor*1000 + patch`，例 0.1.0→1000、0.2.0→2000）。
+只要移动版本号一直往上走就没问题。**永远不要把移动版本号往回调**（versionCode 倒退 → 用户装不上，报 `INSTALL_FAILED_VERSION_DOWNGRADE`）。
 
 ---
 
