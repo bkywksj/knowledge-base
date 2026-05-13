@@ -653,6 +653,10 @@ export const templateApi = {
       title,
       folderId: folderId ?? null,
     }),
+  /** 仅渲染模板内容（不落库）：用于"日记默认模板"等把文本灌入已有编辑器的场景。
+   *  forDate（YYYY-MM-DD）让 `{{date}}/{{weekday}}` 锁定到该日期 —— 翻历史日记套模板用。 */
+  renderContent: (templateId: number, title?: string, forDate?: string) =>
+    invoke<string>("render_template_content", { templateId, title, forDate }),
 };
 
 /** AI 写作辅助 API */

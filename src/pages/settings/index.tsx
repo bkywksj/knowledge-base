@@ -353,6 +353,9 @@ function DesktopSettingsPage() {
   const [tplModalOpen, setTplModalOpen] = useState(false);
   const [editingTpl, setEditingTpl] = useState<NoteTemplate | null>(null);
   const [tplForm] = Form.useForm<NoteTemplateInput>();
+  // 日记默认模板：打开空白日记时自动套用（仅当日记还没落库且配置非空）
+  // null = 不套模板；数值 = 模板 id（与 tplList 关联，被删后会自动失效）
+  const [dailyDefaultTplId, setDailyDefaultTplId] = useState<number | null>(null);
 
   // 启动设置
   const [autostartEnabled, setAutostartEnabled] = useState(false);
@@ -604,6 +607,14 @@ function DesktopSettingsPage() {
           }
         })
         .catch(() => {});
+      // 日记默认模板 id：以字符串存 app_config；未设置时 get 会抛错 → 静默保持 null
+      configApi
+        .get("daily.default_template_id")
+        .then((v) => {
+          const n = Number(v);
+          if (Number.isFinite(n) && n > 0) setDailyDefaultTplId(n);
+        })
+        .catch(() => {});
     });
     return () => cancelIdle(handle);
   }, []);
@@ -614,6 +625,25 @@ function DesktopSettingsPage() {
       await configApi.set("all_day_reminder_time", value);
       setAllDayReminderTime(value);
       message.success(`全天任务提醒时刻已设为 ${value}`);
+    } catch (e) {
+      message.error(`保存失败: ${e}`);
+    }
+  }
+
+  /**
+   * 切换"日记默认模板"。
+   * - null → 删除 config 项（pure off，避免堆历史脏值）
+   * - 数值 → 写入模板 id 字符串
+   */
+  async function handleDailyDefaultTplChange(next: number | null) {
+    try {
+      if (next == null) {
+        await configApi.delete("daily.default_template_id");
+      } else {
+        await configApi.set("daily.default_template_id", String(next));
+      }
+      setDailyDefaultTplId(next);
+      message.success(next == null ? "已关闭日记默认模板" : "已设为日记默认模板");
     } catch (e) {
       message.error(`保存失败: ${e}`);
     }
@@ -1992,6 +2022,23 @@ function DesktopSettingsPage() {
           </Button>
         }
       >
+        <div className="flex items-center justify-between py-1 mb-3">
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div>日记默认模板</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              打开一篇还没写过的日记时，自动用此模板填充编辑区（已有内容的日记不受影响）
+            </Text>
+          </div>
+          <Select<number | null>
+            value={dailyDefaultTplId}
+            onChange={handleDailyDefaultTplChange}
+            placeholder="不套模板"
+            allowClear
+            style={{ minWidth: 220 }}
+            options={tplList.map((t) => ({ value: t.id, label: t.name }))}
+            notFoundContent={tplLoading ? "加载中..." : "暂无模板，请先创建"}
+          />
+        </div>
         <Table
           columns={[
             {

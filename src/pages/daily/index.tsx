@@ -20,7 +20,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { CloseCircleFilled } from "@ant-design/icons";
-import { dailyApi, noteApi } from "@/lib/api";
+import { configApi, dailyApi, noteApi, templateApi } from "@/lib/api";
 import { MicButton } from "@/components/MicButton";
 import { TiptapEditor } from "@/components/editor";
 import { useAutoSave } from "@/hooks/useAutoSave";
@@ -93,6 +93,10 @@ function DesktopDailyPage() {
   const dateRef = useRef(date);
   dateRef.current = date;
 
+  // 套用模板后的"初始内容"指纹：autoSave 用它判断"用户是否真的动过笔"
+  // —— 若 content 仍等于这份初始内容，说明只是程序灌入的模板骨架，不该建档落库。
+  const templateInitialRef = useRef<string | null>(null);
+
   const loadDaily = useCallback(async (d: string) => {
     setLoading(true);
     try {
@@ -101,11 +105,26 @@ function DesktopDailyPage() {
         setNote(n);
         setTitle(n.title);
         setContent(n.content);
+        templateInitialRef.current = null;
       } else {
         // 该日期还没有日记，仅设置默认标题，不创建数据库记录
         setNote(null);
-        setTitle(`${d} 的日记`);
-        setContent("");
+        const defaultTitle = `${d} 的日记`;
+        setTitle(defaultTitle);
+        // 用户在设置里配过"日记默认模板" → 渲染后灌入编辑器（{{date}} 锁到 d）
+        // 任一环节失败都静默回退到空白（模板已删 / config 不存在等都是正常态）
+        let initial = "";
+        try {
+          const v = await configApi.get("daily.default_template_id");
+          const tplId = Number(v);
+          if (Number.isFinite(tplId) && tplId > 0) {
+            initial = await templateApi.renderContent(tplId, defaultTitle, d);
+          }
+        } catch {
+          // ignore
+        }
+        templateInitialRef.current = initial || null;
+        setContent(initial);
       }
     } catch (e) {
       message.error(String(e));
@@ -182,7 +201,8 @@ function DesktopDailyPage() {
    *
    * 创建策略：
    *  - 还没 DB 记录 & 内容为空 → 什么都不做（避免空草稿污染数据库）
-   *  - 还没 DB 记录 & 内容非空 → getOrCreate 建记录再 update
+   *  - 还没 DB 记录 & 内容仍是模板初始骨架 → 同样不建档（用户配了默认模板但今天没动笔）
+   *  - 还没 DB 记录 & 内容非空且偏离模板骨架 → getOrCreate 建记录再 update
    *  - 已有记录 → 直接 update（包括删到空，允许保存）
    */
   const autoSave = useAutoSave({
@@ -193,6 +213,10 @@ function DesktopDailyPage() {
       let current = noteRef.current;
       if (!current) {
         if (c.trim().length === 0) return;
+        // 套了默认模板但用户一字未改 → 视作"路过"，不建档
+        if (templateInitialRef.current !== null && c === templateInitialRef.current) {
+          return;
+        }
         current = await dailyApi.getOrCreate(d);
         setNote(current);
         noteRef.current = current;
