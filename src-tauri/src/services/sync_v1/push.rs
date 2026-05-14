@@ -442,14 +442,20 @@ pub fn push<R: Runtime, E: Emitter<R>>(
         }
     }
 
-    // 写新的远端 manifest = merge(local, remote_独有)
+    // 写新的远端 manifest = merge(local, remote_独有) —— 防 lost-update。
     //
-    // T-S013：以前的版本直接 `write_manifest(&local)` 会**吞掉远端独有项** ——
-    // 比如本机推送时另一台设备刚好 push 了笔记 X，X 的 .md 文件已存在但本机本地 manifest 没有 X，
-    // 写入时把 X 从远端 manifest 中抹掉 → 第三台设备 pull 看不到 X。
+    // T-S013（已修）：直接 `write_manifest(&local)` 会**吞掉远端独有项**——比如本机推送时另一台设备
+    // 刚好 push 了笔记 X，X 的 .md 已存在但本机 local 不含 X，写入时会把 X 从远端 manifest 抹掉。
+    // 解决：写前重新读远端 manifest 合并。
     //
-    // 解决：在写之前重新读远端 manifest（捕获 race 期间别人的更新），
-    // 合并 local 全量 + remote 独有，再写回去。
+    // **Bug 7（本次加固）**：上面的"读 → merge → 写"也有 race 窗口 —— 两台设备同时跑到这一步：
+    // A 读到 rev N → 合并 → 写出 rev N+1A；B 同时读到 rev N → 合并 → 写出 rev N+1B（覆盖 A）。
+    // 一旦 A 那次新写的笔记 entry 是 local 独有的，rev N+1B 就会**丢掉 A 那条 entry** → 第三台设备
+    // pull 不到。
+    //
+    // 务实方案（不做完整 If-Match CAS，因为坚果云等 WebDAV server 的 ETag 实现不可靠）：
+    // 写完后**重读校验**——如果远端的 hash 不等于刚写的 merged 的 hash，说明被别人覆盖了，
+    // 重新合并（包含别人那次新增）+ 重写一次。最多重试 3 次（首次写 + 2 次重试），仍冲突就报错。
     let _ = emitter.emit(
         event_name,
         ProgressEvent {
@@ -460,30 +466,76 @@ pub fn push<R: Runtime, E: Emitter<R>>(
             message: "合并并更新远端 manifest…".into(),
         },
     );
-    let remote_now = match backend.read_manifest() {
-        Ok(Some(m)) => m,
-        Ok(None) => SyncManifestV1 {
-            manifest_version: SyncManifestV1::VERSION,
-            app_version: app_version.into(),
-            device: device.into(),
-            generated_at: String::new(),
-            entries: vec![],
-            hash_algo: Some(SyncManifestV1::HASH_ALGO_V2.into()),
-            vault: None,
-            attachments: vec![],
-        },
-        Err(e) => {
-            result
-                .errors
-                .push(format!("合并前重读远端 manifest 失败: {}", e));
-            // 退化为不合并：用 local。但这种情况"不写"更安全 → 这里仍用 local，因为写远端
-            // manifest 失败的后果是"远端处于不一致中间态"，比"完全不写"略好
-            local.clone()
-        }
+
+    let empty_manifest = || SyncManifestV1 {
+        manifest_version: SyncManifestV1::VERSION,
+        app_version: app_version.into(),
+        device: device.into(),
+        generated_at: String::new(),
+        entries: vec![],
+        hash_algo: Some(SyncManifestV1::HASH_ALGO_V2.into()),
+        vault: None,
+        attachments: vec![],
     };
-    let merged = manifest::merge_manifests(&local, &remote_now);
-    if let Err(e) = backend.write_manifest(&merged) {
-        result.errors.push(format!("写远端 manifest 失败: {}", e));
+
+    const MANIFEST_WRITE_MAX_ATTEMPTS: u32 = 3;
+    let mut last_err: Option<String> = None;
+    for attempt in 1..=MANIFEST_WRITE_MAX_ATTEMPTS {
+        // 1) 重新读远端（含别人这一窗口期里写入的更新）
+        let remote_now = match backend.read_manifest() {
+            Ok(Some(m)) => m,
+            Ok(None) => empty_manifest(),
+            Err(e) => {
+                last_err = Some(format!("合并前重读远端 manifest 失败: {}", e));
+                break;
+            }
+        };
+        // 2) merge + write
+        let merged = manifest::merge_manifests(&local, &remote_now);
+        if let Err(e) = backend.write_manifest(&merged) {
+            last_err = Some(format!("写远端 manifest 失败: {}", e));
+            break;
+        }
+        // 3) 写后重读校验：远端 hash != 我刚写的 hash → 别人在 1) 之后又写过了（race） → 重试
+        // 用 entries 排序后的简单 fingerprint（content_hash 串拼接），对脏数据耐受；不做严格 JSON 等值比对
+        let want_fp = manifest_entries_fingerprint(&merged);
+        let after = match backend.read_manifest() {
+            Ok(Some(m)) => m,
+            Ok(None) => {
+                // 刚写完远端没了 —— 可能是 race 期间别人删掉、或写入 backend 异常返回 Ok 但实际没成
+                last_err = Some("写完 manifest 后重读发现远端为空，疑似 race / 写入未生效".into());
+                if attempt < MANIFEST_WRITE_MAX_ATTEMPTS {
+                    continue;
+                }
+                break;
+            }
+            Err(e) => {
+                last_err = Some(format!("写后校验读远端 manifest 失败: {}", e));
+                break;
+            }
+        };
+        let got_fp = manifest_entries_fingerprint(&after);
+        if got_fp == want_fp {
+            // 我们写的就是当前远端 → 成功，退出
+            last_err = None;
+            break;
+        }
+        log::warn!(
+            "[sync_v1] manifest 写后校验：第 {} 次远端 hash 跟我写的不一致（被并发覆盖），重试 (剩 {} 次)",
+            attempt,
+            MANIFEST_WRITE_MAX_ATTEMPTS - attempt
+        );
+        last_err = Some(format!(
+            "manifest 写后校验：第 {} 次仍被并发覆盖",
+            attempt
+        ));
+        // 重试前轻微退避（只在还有重试机会时）
+        if attempt < MANIFEST_WRITE_MAX_ATTEMPTS {
+            std::thread::sleep(std::time::Duration::from_millis(300 * attempt as u64));
+        }
+    }
+    if let Some(e) = last_err {
+        result.errors.push(e);
     }
 
     db.touch_sync_backend_push(backend_id)?;
@@ -520,3 +572,100 @@ fn short_hash(hash: &str) -> String {
 /// 让未引用的常量不报警告（暂留给 pull 用）
 #[allow(dead_code)]
 const _MARKER: () = ();
+
+/// manifest 写后校验用的轻量 fingerprint —— 把所有 entry 按 stable_id 排序后串接
+/// `<id>=<content_hash>;`，再加 attachments 的 hash 列表。返回结果用 sha256 hex 简化对比。
+///
+/// 不依赖 manifest 顶层易变字段（generated_at / device / app_version），因此 race 重读时即便
+/// 别人这次也写了 manifest（generated_at 不同），只要"内容/附件集合"一致就视为同一份。
+fn manifest_entries_fingerprint(m: &SyncManifestV1) -> String {
+    use sha2::{Digest, Sha256};
+    let mut entries: Vec<&crate::models::ManifestEntry> = m.entries.iter().collect();
+    entries.sort_by(|a, b| a.stable_id.cmp(&b.stable_id));
+    let mut hasher = Sha256::new();
+    for e in &entries {
+        hasher.update(e.stable_id.as_bytes());
+        hasher.update(b"=");
+        hasher.update(e.content_hash.as_bytes());
+        hasher.update(b";");
+    }
+    hasher.update(b"|att|");
+    let mut atts: Vec<&str> = m.attachments.iter().map(|a| a.hash.as_str()).collect();
+    atts.sort_unstable();
+    for h in atts {
+        hasher.update(h.as_bytes());
+        hasher.update(b",");
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{AttachmentEntry, ManifestEntry, SyncManifestV1};
+
+    fn entry(id: &str, hash: &str) -> ManifestEntry {
+        ManifestEntry {
+            stable_id: id.into(),
+            title: "t".into(),
+            content_hash: hash.into(),
+            updated_at: "2026-05-14".into(),
+            remote_path: format!("notes/{}.md", id),
+            tombstone: false,
+            folder_path: String::new(),
+            encrypted: false,
+            is_daily: false,
+            daily_date: None,
+            is_hidden: false,
+        }
+    }
+
+    fn manifest(entries: Vec<ManifestEntry>, atts: Vec<&str>) -> SyncManifestV1 {
+        SyncManifestV1 {
+            manifest_version: SyncManifestV1::VERSION,
+            app_version: "x".into(),
+            device: "x".into(),
+            generated_at: String::new(),
+            entries,
+            hash_algo: Some(SyncManifestV1::HASH_ALGO_V2.into()),
+            vault: None,
+            attachments: atts
+                .into_iter()
+                .map(|h| AttachmentEntry {
+                    hash: h.into(),
+                    size: 0,
+                    mime: None,
+                    ext: None,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn fingerprint_independent_of_entry_order_and_volatile_fields() {
+        let m1 = manifest(vec![entry("a", "h1"), entry("b", "h2")], vec!["x", "y"]);
+        let mut m2 = manifest(vec![entry("b", "h2"), entry("a", "h1")], vec!["y", "x"]);
+        // 干扰易变字段：fingerprint 应不受影响
+        m2.app_version = "different".into();
+        m2.device = "different".into();
+        m2.generated_at = "2099-01-01".into();
+        assert_eq!(manifest_entries_fingerprint(&m1), manifest_entries_fingerprint(&m2));
+    }
+
+    #[test]
+    fn fingerprint_changes_with_entry_content() {
+        let m1 = manifest(vec![entry("a", "h1")], vec![]);
+        let m2 = manifest(vec![entry("a", "h2")], vec![]); // hash 变了
+        assert_ne!(manifest_entries_fingerprint(&m1), manifest_entries_fingerprint(&m2));
+    }
+
+    #[test]
+    fn fingerprint_changes_with_added_entry_or_attachment() {
+        let base = manifest(vec![entry("a", "h1")], vec!["x"]);
+        let plus_entry = manifest(vec![entry("a", "h1"), entry("b", "h2")], vec!["x"]);
+        let plus_att = manifest(vec![entry("a", "h1")], vec!["x", "y"]);
+        let base_fp = manifest_entries_fingerprint(&base);
+        assert_ne!(base_fp, manifest_entries_fingerprint(&plus_entry));
+        assert_ne!(base_fp, manifest_entries_fingerprint(&plus_att));
+    }
+}
