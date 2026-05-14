@@ -282,6 +282,42 @@ impl WebDavClient {
         Ok(())
     }
 
+    /// WebDAV `MOVE`：把 `from` 重命名为 `to`（同 server 内移动，**单一原子操作**）。
+    ///
+    /// 用于 manifest 原子写：先 PUT 到 `manifest.json.tmp.<uuid>`、再 MOVE 到 `manifest.json`，
+    /// 中途断网最多留一个 .tmp.* 文件，永远不会出现"半截 manifest.json"。
+    /// 主流 WebDAV server（坚果云/Nextcloud/Cloudreve/Apache mod_dav）都支持。
+    ///
+    /// `Overwrite: T` 让目标已存在时直接覆盖（manifest 这场景就是要覆盖）。
+    pub async fn move_file(&self, from: &str, to: &str) -> Result<(), AppError> {
+        let dest_url = self.file_url(to);
+        let resp = self
+            .client
+            .request(Method::from_bytes(b"MOVE").unwrap(), self.file_url(from))
+            .headers(self.headers())
+            .header("Destination", &dest_url)
+            .header("Overwrite", "T")
+            .send()
+            .await
+            .map_err(|e| AppError::Custom(format!("MOVE 失败: {}", e)))?;
+        let status = resp.status();
+        if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+            return Err(AppError::Custom("认证失败，请检查用户名/密码".into()));
+        }
+        // 201 Created（目标新建）/ 204 No Content（目标已存在被覆盖）都是成功
+        if status.is_success() {
+            return Ok(());
+        }
+        let body = resp.text().await.unwrap_or_default();
+        Err(AppError::Custom(format!(
+            "MOVE {} -> {} 失败 ({}): {}",
+            from,
+            to,
+            status,
+            body.lines().next().unwrap_or("")
+        )))
+    }
+
     /// T-024c: 下载文件，404 时返回 None（用于"远端没有 manifest 时安全返回 None"）
     pub async fn download_bytes_optional(&self, path: &str) -> Result<Option<Vec<u8>>, AppError> {
         let resp = self

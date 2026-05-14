@@ -48,10 +48,30 @@ impl SyncBackendImpl for WebdavBackend {
         }
     }
 
+    /// 原子写 manifest：先 PUT 到 `manifest.json.tmp.<uuid>`，再 MOVE 到 `manifest.json`。
+    ///
+    /// 修「中途断网/服务器超时 → 远端落半截 JSON → 下次 pull 解析失败 / 全量误判」的隐患
+    /// （之前直接 `upload_bytes(MANIFEST_FILENAME, …)` 是非原子覆盖）。
+    /// MOVE 失败时 best-effort 清掉 .tmp，避免远端堆积无主临时文件。
     fn write_manifest(&self, manifest: &SyncManifestV1) -> Result<(), AppError> {
         let bytes = serde_json::to_vec_pretty(manifest)
             .map_err(|e| AppError::Custom(format!("manifest 序列化失败: {}", e)))?;
-        block_on(self.client.upload_bytes(MANIFEST_FILENAME, bytes))
+        let tmp_name = format!(
+            "{}.tmp.{}",
+            MANIFEST_FILENAME,
+            uuid::Uuid::new_v4().simple()
+        );
+        block_on(async {
+            self.client.upload_bytes(&tmp_name, bytes).await?;
+            match self.client.move_file(&tmp_name, MANIFEST_FILENAME).await {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    // best-effort 清理 .tmp（清不掉也只是远端多一个无主文件，下次 GC 可以扫）
+                    let _ = self.client.delete_file(&tmp_name).await;
+                    Err(e)
+                }
+            }
+        })
     }
 
     fn put_note(&self, path: &str, content: &str) -> Result<(), AppError> {
