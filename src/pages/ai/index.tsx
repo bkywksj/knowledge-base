@@ -954,10 +954,13 @@ function DesktopAiChatPage() {
                 background: token.colorBgContainer,
               }}
             >
-              <div className="flex items-center gap-2 min-w-0">
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                {/* flex-1 + min-w-0 + truncate：标题占满左侧剩余空间但窄屏时优先省略号截断，
+                    不再把右侧的模型选择 / 智能模式 / 存为笔记等控件挤出去 */}
                 <span
-                  className="font-medium truncate"
+                  className="font-medium truncate flex-1 min-w-0"
                   style={{ color: token.colorText }}
+                  title={activeConv?.title || "对话"}
                 >
                   {activeConv?.title || "对话"}
                 </span>
@@ -965,7 +968,7 @@ function DesktopAiChatPage() {
                   <Select
                     size="small"
                     value={activeConv?.model_id}
-                    style={{ width: 180 }}
+                    style={{ width: 180, flexShrink: 0 }}
                     disabled={streaming || models.length === 0}
                     onChange={handleChangeConvModel}
                     options={models.map((m) => ({
@@ -976,7 +979,7 @@ function DesktopAiChatPage() {
                   />
                 </Tooltip>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 shrink-0">
                 <Tooltip
                   title={
                     useSkills

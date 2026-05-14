@@ -13,6 +13,73 @@ use std::path::{Path, PathBuf};
 use state::AppState;
 use tauri::{Emitter, Manager, WindowEvent};
 
+/// 构建 macOS 风格的中文应用菜单（仅 macOS 实际挂载；Windows/Linux 默认不显示 menu bar）。
+/// 抽成普通函数（不带 cfg）是为了让 Windows/Linux 也能编译验证语法。
+#[allow(dead_code)]
+fn build_chinese_app_menu(
+    handle: &tauri::AppHandle,
+) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::Error> {
+    use tauri::menu::{AboutMetadata, MenuBuilder, PredefinedMenuItem, SubmenuBuilder};
+
+    let app_name = handle.package_info().name.clone();
+    let about_meta = AboutMetadata {
+        name: Some(app_name.clone()),
+        version: Some(handle.package_info().version.to_string()),
+        ..Default::default()
+    };
+
+    // 应用菜单（macOS 第一个 Submenu 标题被系统替换为 app 名）
+    let app_submenu = SubmenuBuilder::new(handle, &app_name)
+        .item(&PredefinedMenuItem::about(
+            handle,
+            Some(&format!("关于 {}", app_name)),
+            Some(about_meta),
+        )?)
+        .separator()
+        .item(&PredefinedMenuItem::services(handle, Some("服务"))?)
+        .separator()
+        .item(&PredefinedMenuItem::hide(
+            handle,
+            Some(&format!("隐藏 {}", app_name)),
+        )?)
+        .item(&PredefinedMenuItem::hide_others(handle, Some("隐藏其他"))?)
+        .item(&PredefinedMenuItem::show_all(handle, Some("全部显示"))?)
+        .separator()
+        .item(&PredefinedMenuItem::quit(
+            handle,
+            Some(&format!("退出 {}", app_name)),
+        )?)
+        .build()?;
+
+    let edit_submenu = SubmenuBuilder::new(handle, "编辑")
+        .item(&PredefinedMenuItem::undo(handle, Some("撤销"))?)
+        .item(&PredefinedMenuItem::redo(handle, Some("重做"))?)
+        .separator()
+        .item(&PredefinedMenuItem::cut(handle, Some("剪切"))?)
+        .item(&PredefinedMenuItem::copy(handle, Some("复制"))?)
+        .item(&PredefinedMenuItem::paste(handle, Some("粘贴"))?)
+        .item(&PredefinedMenuItem::select_all(handle, Some("全选"))?)
+        .build()?;
+
+    let view_submenu = SubmenuBuilder::new(handle, "视图")
+        .item(&PredefinedMenuItem::fullscreen(handle, Some("进入全屏"))?)
+        .build()?;
+
+    let window_submenu = SubmenuBuilder::new(handle, "窗口")
+        .item(&PredefinedMenuItem::minimize(handle, Some("最小化"))?)
+        .item(&PredefinedMenuItem::maximize(handle, Some("最大化"))?)
+        .separator()
+        .item(&PredefinedMenuItem::close_window(handle, Some("关闭窗口"))?)
+        .build()?;
+
+    MenuBuilder::new(handle)
+        .item(&app_submenu)
+        .item(&edit_submenu)
+        .item(&view_submenu)
+        .item(&window_submenu)
+        .build()
+}
+
 /// 应用 identifier，必须与 tauri.conf.json 中的 identifier 一致
 /// 用于在 Tauri Builder 启动前估算 app_data_dir（提前判断锁、投递 md 等）
 const IDENTIFIER: &str = "com.agilefr.kb";
@@ -501,6 +568,14 @@ pub fn run() {
             .plugin(tauri_plugin_global_shortcut::Builder::new().build());
     }
 
+    // ─── macOS 应用菜单中文化 ─────────────────────
+    // 不引入 i18n 框架，直接硬编码中文。Windows/Linux 默认不显示 menu bar，不受影响。
+    // 不设置 menu 时 Tauri 在 macOS 上走 muda 内置英文常量（About/Services/Hide/Quit 等）。
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.menu(build_chinese_app_menu);
+    }
+
     builder
         // ─── 应用初始化 ─────────────────────────────
         .setup(move |app| {
@@ -967,6 +1042,8 @@ pub fn run() {
             commands::daily::get_or_create_daily,
             commands::daily::list_daily_dates,
             commands::daily::get_daily_neighbors,
+            commands::daily::list_all_dailies,
+            commands::daily::append_quick_capture,
             // 标签模块
             commands::tags::create_tag,
             commands::tags::list_tags,
@@ -1038,6 +1115,8 @@ pub fn run() {
             commands::export::export_single_note_to_html,
             // R-005 PDF 导出：渲染 HTML 字符串供前端 iframe 打印
             commands::export::render_note_html_for_pdf,
+            // 通用：前端生成的 PNG 落盘到用户选定路径（如表格导出图片）
+            commands::export::export_png_to_file,
             // 笔记批量操作
             commands::notes::trash_all_notes,
             // 图片模块

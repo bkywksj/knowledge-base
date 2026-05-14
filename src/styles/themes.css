@@ -280,14 +280,17 @@
 }
 [data-theme="light-jade"] .activity-item:hover:not([data-active]) {
   color: var(--kb-text-icon-hover) !important;
-  background: rgba(0,0,0,0.05) !important;
+  /* hover 跟随强调色（8% tint），用户改 customAccent 后会自动变色；
+     不再硬编码 rgba(0,0,0,0.05) 中性灰 */
+  background: color-mix(in srgb, var(--kb-primary) 8%, transparent) !important;
 }
 [data-theme="light-jade"] .activity-item:hover:not([data-active]) svg {
   color: var(--kb-text-icon-hover) !important;
 }
 [data-theme="light-jade"] .activity-item[data-active] {
   color: var(--kb-primary) !important;
-  background: rgba(7,193,96,0.14) !important;
+  /* active 跟随强调色（14% tint），不再硬编码 rgba(7,193,96,0.14) 微信绿 */
+  background: color-mix(in srgb, var(--kb-primary) 14%, transparent) !important;
 }
 [data-theme="light-jade"] .activity-item[data-active] svg {
   color: var(--kb-primary) !important;

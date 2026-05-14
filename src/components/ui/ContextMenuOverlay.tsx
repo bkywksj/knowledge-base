@@ -1,6 +1,6 @@
 import { theme as antdTheme } from "antd";
 import type React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 /** 单个菜单项定义 */
@@ -81,6 +81,15 @@ export function ContextMenuOverlay({
   onClose,
 }: Props) {
   const { token } = antdTheme.useToken();
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  // 真实测量后的最终位置；首次渲染先按 estimated 估，挂载后用真实 rect 修正
+  // 用 [x,y] 作为 key 存储，避免菜单换位置时残留上次的 adjusted 导致首帧闪
+  const [adjusted, setAdjusted] = useState<{
+    left: number;
+    top: number;
+    forX: number;
+    forY: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -102,9 +111,36 @@ export function ContextMenuOverlay({
     };
   }, [open, onClose]);
 
+  // 每次 open / 坐标变化时重置 adjusted，由下方 layout effect 用真实尺寸再修正
+  // 注意：放在条件早退前面，避免违反 hooks 顺序
+  useLayoutEffect(() => {
+    if (!open) return;
+    const el = menuRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const margin = 8;
+    let left = x;
+    let top = y;
+    if (left + rect.width + margin > window.innerWidth) {
+      left = Math.max(margin, window.innerWidth - rect.width - margin);
+    }
+    if (top + rect.height + margin > window.innerHeight) {
+      top = Math.max(margin, window.innerHeight - rect.height - margin);
+    }
+    if (left !== x || top !== y) {
+      setAdjusted({ left, top, forX: x, forY: y });
+    } else {
+      setAdjusted(null);
+    }
+    // 依赖 items.length 兜底：菜单条目数量变化也重测
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, x, y, items.length]);
+
   if (!open) return null;
 
   // 边界保护：菜单不超出视口右下
+  // 注：custom 类型（如内嵌色板）实际高度未知，这里只算估算值作为"首帧"位置；
+  // 真正修正交给上面的 useLayoutEffect 用真实 rect 处理
   const itemHeight = 28;
   const dividerHeight = 5;
   const verticalPadding = 8;
@@ -118,15 +154,21 @@ export function ContextMenuOverlay({
     );
   const safeX = Math.min(x, Math.max(8, window.innerWidth - estimatedWidth - 8));
   const safeY = Math.min(y, Math.max(8, window.innerHeight - estimatedHeight - 8));
+  // 只有当 adjusted 是为当前 (x,y) 算的才用，否则先用 estimated（layout effect 会立刻覆盖）
+  const adjustedMatches =
+    adjusted && adjusted.forX === x && adjusted.forY === y;
+  const finalLeft = adjustedMatches ? adjusted.left : safeX;
+  const finalTop = adjustedMatches ? adjusted.top : safeY;
 
   return createPortal(
     <div
+      ref={menuRef}
       data-context-menu="overlay"
       role="menu"
       style={{
         position: "fixed",
-        left: safeX,
-        top: safeY,
+        left: finalLeft,
+        top: finalTop,
         zIndex: 1050,
         background: token.colorBgElevated,
         border: `1px solid ${token.colorBorderSecondary}`,
