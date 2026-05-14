@@ -340,4 +340,28 @@ export const HeadingWithIndent = Heading.extend({
       ((this as any).parent?.() ?? {}) as Record<string, unknown>,
     );
   },
+  // Tiptap 默认只给标题绑了 Mod-Alt-1 ~ Mod-Alt-6（即 Ctrl+Alt+数字），
+  // 这里在保留默认的基础上再补一组更顺手的 Ctrl+1 ~ Ctrl+6 切各级标题、
+  // Ctrl+0 回正文（Notion / 飞书 / Typora 同款）。
+  // Tauri WebView 里 Ctrl+数字 没被其它功能占用，也不和编辑器自身的
+  // Ctrl+F / Ctrl+H 查找替换浮条冲突；toggleHeading 再按一次同级会切回正文。
+  addKeyboardShortcuts() {
+    const parentShortcuts =
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ((this as any).parent?.() ?? {}) as Record<string, () => boolean>;
+    const numberShortcuts = (this.options.levels as number[]).reduce<
+      Record<string, () => boolean>
+    >((acc, level) => {
+      acc[`Mod-${level}`] = () =>
+        this.editor.commands.toggleHeading({
+          level: level as 1 | 2 | 3 | 4 | 5 | 6,
+        });
+      return acc;
+    }, {});
+    return {
+      ...parentShortcuts,
+      ...numberShortcuts,
+      "Mod-0": () => this.editor.commands.setParagraph(),
+    };
+  },
 });

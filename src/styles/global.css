@@ -623,6 +623,83 @@ body,
 
 /* 暗色模式工具栏 — 见 themes.css */
 
+/* ─── AI 写作 sticky bar ─────────────────────────────────────
+ * 紧贴 EditorToolbar 正下方的次级工具栏，选中文字时滑入、取消选中滑出。
+ *
+ * 为什么钉在顶部而不是浮在选区附近？
+ *   - 豆包 / 划词翻译这类系统级悬浮窗会贴在选区上方
+ *   - 它们是独立 OS 窗口，CSS z-index 跨窗口无效，永远盖在 WebView 之上
+ *   - 改钉编辑器顶部 → 位置静态 → 物理错开它们 → 不抢点击区域
+ *
+ * 折叠时 max-height: 0 + overflow: hidden 不占空间；展开时 max-height: 40px。
+ * 结果面板用 absolute top:100% 浮在 bar 下方，不挤压编辑器内容（不会引起跳动）。
+ */
+.kb-ai-bar {
+  position: sticky;
+  /* 优先用 JS 测量的 toolbar 真实高度（ResizeObserver 写入），
+     fallback 40px：toolbar 单行时 28px 按钮 + 12px padding */
+  top: var(--kb-toolbar-h, 40px);
+  /* 低于 EditorToolbar 的 z-index:10，确保 toolbar 始终在最上层 */
+  z-index: 9;
+  flex-shrink: 0;
+  /* 用 height（具体值）而不是 max-height（约束）：
+     具体 height 能让浏览器正确建立 sticky 的参考帧，
+     max-height 在转场期间常常让 sticky 失效（高度先被算成 0） */
+  height: 40px;
+  opacity: 1;
+  overflow: visible;
+  transition: height 200ms ease-out, opacity 180ms ease-out;
+}
+.kb-ai-bar[data-visible="false"] {
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.kb-ai-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  white-space: nowrap;
+  overflow-x: auto;
+  height: 40px;
+  /* 跟 EditorToolbar 同样的半透明 + 磨砂底，视觉上和 toolbar 融为一体 */
+  background: color-mix(in srgb, var(--ant-color-bg-container, #fff) 85%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+/* AI bar 出现时，去掉 EditorToolbar 底部分割线，让两者视觉无缝衔接 */
+.tiptap-wrapper:has(.kb-ai-bar[data-visible="true"]) .tiptap-toolbar {
+  border-bottom-color: transparent;
+}
+/* 隐藏 row 内横向滚动条，但保留滚动能力（按钮太多时可滑动） */
+.kb-ai-bar-row::-webkit-scrollbar {
+  height: 0;
+  background: transparent;
+}
+/* 编辑器页面内：跟 EditorToolbar 一样左右拉伸 -48px，撑满主区域 */
+.editor-content-area .kb-ai-bar-row {
+  margin: 0 -48px;
+  padding: 6px 48px;
+}
+/* 结果面板：浮在 bar 下方，不挤压编辑器内容 */
+.kb-ai-bar-result-overlay {
+  position: absolute;
+  top: 100%;
+  left: 14px;
+  margin-top: 6px;
+  max-width: 480px;
+  min-width: 280px;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+  z-index: 11;
+}
+.editor-content-area .kb-ai-bar-result-overlay {
+  left: 48px;
+}
+
 .tiptap-content .tiptap {
   outline: none;
   padding: 20px 0;

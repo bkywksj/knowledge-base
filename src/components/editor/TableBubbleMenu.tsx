@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/react";
-import { Button, Tooltip, theme as antdTheme } from "antd";
+import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
+import { Button, Tooltip, message, theme as antdTheme } from "antd";
+import { toPng } from "html-to-image";
 import {
+  BoxSelect,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
   ChevronDown,
   Columns3,
+  Copy,
+  ImageDown,
   Rows3,
   Combine,
   Split,
@@ -95,6 +101,123 @@ export function TableBubbleMenu({ editor }: Props) {
     e.preventDefault();
   };
 
+  // 从当前选区向上找到所在 <table> DOM 元素
+  const findTableEl = (): HTMLElement | null => {
+    const { from } = editor.state.selection;
+    let node: Node | null = editor.view.domAtPos(from).node;
+    while (node) {
+      if (node instanceof HTMLElement && node.tagName === "TABLE") return node;
+      node = node.parentNode;
+    }
+    return null;
+  };
+
+  const selectWholeTable = () => {
+    const $from = editor.state.selection.$from;
+    for (let d = $from.depth; d >= 0; d--) {
+      if ($from.node(d).type.name === "table") {
+        const pos = $from.before(d);
+        editor.chain().focus().setNodeSelection(pos).run();
+        return;
+      }
+    }
+  };
+
+  const exportTableAsImage = async () => {
+    const tableEl = findTableEl();
+    if (!tableEl) {
+      message.error("未找到表格");
+      return;
+    }
+
+    // 先弹"另存为"对话框，用户取消就直接退出
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const targetPath = await save({
+      defaultPath: `table-${ts}.png`,
+      filters: [{ name: "PNG 图片", extensions: ["png"] }],
+    });
+    if (!targetPath) return;
+
+    try {
+      // 截原始表格 DOM（保留 ProseMirror 作用域内的 CSS）
+      const rawUrl = await toPng(tableEl, {
+        pixelRatio: 2,
+        backgroundColor: token.colorBgContainer,
+        cacheBust: true,
+      });
+
+      // 加一圈 padding，避免边框紧贴图片边
+      const img = new Image();
+      img.src = rawUrl;
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error("图片加载失败"));
+      });
+      const PAD = 32;
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth + PAD * 2;
+      canvas.height = img.naturalHeight + PAD * 2;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("canvas 上下文创建失败");
+      ctx.fillStyle = token.colorBgContainer;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, PAD, PAD);
+      const finalUrl = canvas.toDataURL("image/png");
+
+      await invoke("export_png_to_file", {
+        targetPath,
+        base64Data: finalUrl,
+      });
+      message.success(`已保存：${targetPath}`);
+    } catch (e) {
+      message.error(`导出失败: ${e}`);
+    }
+  };
+
+  const copyWholeTable = async () => {
+    const tableEl = findTableEl();
+    if (!tableEl) {
+      message.error("未找到表格");
+      return;
+    }
+    const html = tableEl.outerHTML;
+
+    // 为不支持 HTML 粘贴的目标（终端 / 纯文本编辑器）构造 Markdown 兜底
+    const rows = Array.from(tableEl.querySelectorAll("tr"));
+    const mdLines: string[] = [];
+    rows.forEach((row, ri) => {
+      const cells = Array.from(row.querySelectorAll("th,td"));
+      const cellTexts = cells.map((c) =>
+        (c.textContent ?? "").replace(/\|/g, "\\|").replace(/\n+/g, " ").trim(),
+      );
+      mdLines.push("| " + cellTexts.join(" | ") + " |");
+      if (ri === 0) {
+        mdLines.push("| " + cells.map(() => "---").join(" | ") + " |");
+      }
+    });
+    const md = mdLines.join("\n");
+
+    try {
+      if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
+        const item = new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob([md], { type: "text/plain" }),
+        });
+        await navigator.clipboard.write([item]);
+      } else {
+        await navigator.clipboard.writeText(md);
+      }
+      message.success("表格已复制");
+    } catch {
+      try {
+        await navigator.clipboard.writeText(md);
+        message.success("表格已复制（纯文本）");
+      } catch (e2) {
+        message.error(`复制失败: ${e2}`);
+      }
+    }
+  };
+
   const Btn = ({
     icon,
     title,
@@ -151,6 +274,26 @@ export function TableBubbleMenu({ editor }: Props) {
         gap: 0,
       }}
     >
+      <Btn
+        icon={<BoxSelect size={14} />}
+        title="选中整张表格"
+        onClick={selectWholeTable}
+      />
+      <Btn
+        icon={<Copy size={14} />}
+        title="复制整张表格（HTML + Markdown）"
+        onClick={() => {
+          void copyWholeTable();
+        }}
+      />
+      <Btn
+        icon={<ImageDown size={14} />}
+        title="导出表格为 PNG 图片"
+        onClick={() => {
+          void exportTableAsImage();
+        }}
+      />
+      <VDivider />
       <Btn
         icon={<ChevronLeft size={14} />}
         title="在左侧加列"

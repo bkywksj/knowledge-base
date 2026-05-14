@@ -8,9 +8,12 @@
  * - 行号用 CSS counter 实现（零 JS 开销，长代码块不卡）
  * - 自动识别语言：用户首次粘贴/输入时检测一次，仅作"建议"显示，不强制覆盖
  *
- * Markdown 序列化兼容（后续 v2 做）：
- *   ```python title="xxx" wrap showLineNumbers   ← Docusaurus / VitePress 风格
- *   现阶段 attrs 仅在应用内编辑/查看时保留，导出 markdown 暂只保留 language
+ * Markdown 序列化（Docusaurus / VitePress 风格）：
+ *   ```python title="xxx" wrap no-line-numbers
+ *   - 写：addStorage().markdown.serialize 拼接 fence info（见本文件下方）
+ *   - 读：tiptap-markdown 默认会把整段 info 当作 language attr 塞进去，
+ *         由 TiptapEditor 在 setContent 完成后调 normalizeCodeBlockFenceAttrs 拆分
+ *         （把 title/wrap/showLineNumbers 提取出来，language 还原成干净的语言名）
  */
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
@@ -19,6 +22,7 @@ import {
   ReactNodeViewRenderer,
   type NodeViewProps,
 } from "@tiptap/react";
+import type { Editor } from "@tiptap/core";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { Button, Input, Select, Switch, Tooltip, message } from "antd";
 import { Copy, Check } from "lucide-react";
@@ -122,7 +126,105 @@ export const CodeBlockEnhanced = CodeBlockLowlight.extend({
   addNodeView() {
     return ReactNodeViewRenderer(CodeBlockNodeView);
   },
+
+  /**
+   * Markdown 序列化：fence info 写成 Docusaurus / VitePress 风格
+   *   ```python title="xxx" wrap no-line-numbers
+   *
+   * 反序列化（parse）在 TiptapEditor setContent 之后由 normalizeCodeBlockFenceAttrs
+   * 统一处理 —— tiptap-markdown 把 fence 整段 info 当 language 塞进来，需要后处理拆分。
+   */
+  addStorage() {
+    const parent = (this.parent?.() as Record<string, unknown> | undefined) ?? {};
+    return {
+      ...parent,
+      markdown: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        serialize(state: any, node: any) {
+          const lang = (node.attrs.language as string | null) ?? "";
+          const title = node.attrs.title as string | null;
+          const wrap = Boolean(node.attrs.wrap);
+          const noLN = node.attrs.showLineNumbers === false;
+          // title 里如果用户填了双引号，转义掉避免破坏 fence info 解析
+          const titlePart = title
+            ? ` title="${String(title).replace(/"/g, '\\"')}"`
+            : "";
+          const wrapPart = wrap ? " wrap" : "";
+          const lnPart = noLN ? " no-line-numbers" : "";
+          const info = `${lang}${titlePart}${wrapPart}${lnPart}`;
+          state.write("```" + info + "\n");
+          state.text(node.textContent, false);
+          state.ensureNewLine();
+          state.write("```");
+          state.closeBlock(node);
+        },
+        parse: {},
+      },
+    };
+  },
 });
+
+/**
+ * 反序列化辅助：把 fence info 字符串里的 title="..." / wrap / no-line-numbers
+ * 拆回各 attr，并把 language 还原成干净的语言名。
+ *
+ * tiptap-markdown 解析 ```python title="X" wrap``` 时，会把整段 info 塞进 language attr
+ * （= "python title=\"X\" wrap"），lowlight 拿这个去查语言肯定找不到 → 没高亮 + UI 异常。
+ * 这里在 setContent 完成后扫一遍，恢复正确的 attr 分布。
+ *
+ * 调用时机：仅在外部 setContent（载入笔记 / 拖入 .md）之后调用一次即可，
+ * 用户在编辑器里手动编辑 attrs 不会引入混合 language —— 那条路径直接走 updateAttributes。
+ */
+export function normalizeCodeBlockFenceAttrs(editor: Editor): void {
+  const tr = editor.state.tr;
+  let changed = false;
+  editor.state.doc.descendants((node, pos) => {
+    if (node.type.name !== "codeBlock") return;
+    const lang = node.attrs.language as string | null;
+    if (!lang || !/\s/.test(lang)) return; // 没空格 = 纯净的语言名 / 空，跳过
+
+    const parsed = parseCodeFenceInfo(lang);
+    tr.setNodeMarkup(pos, undefined, {
+      ...node.attrs,
+      language: parsed.language || null,
+      title: parsed.title ?? node.attrs.title ?? null,
+      wrap: parsed.wrap || Boolean(node.attrs.wrap),
+      showLineNumbers: parsed.noLineNumbers
+        ? false
+        : node.attrs.showLineNumbers !== false,
+    });
+    changed = true;
+  });
+  if (changed) {
+    editor.view.dispatch(tr.setMeta("addToHistory", false));
+  }
+}
+
+interface ParsedFenceInfo {
+  language: string;
+  title?: string;
+  wrap?: boolean;
+  noLineNumbers?: boolean;
+}
+
+function parseCodeFenceInfo(info: string): ParsedFenceInfo {
+  const trimmed = info.trim();
+  // 第一个空格之前是 language；之后是 attrs
+  const firstSpace = trimmed.indexOf(" ");
+  if (firstSpace < 0) return { language: trimmed };
+  const language = trimmed.slice(0, firstSpace);
+  const rest = trimmed.slice(firstSpace + 1);
+
+  // title="..." 或 title='...'，支持转义的引号
+  const titleMatch = rest.match(/title=(["'])((?:\\.|(?!\1).)*)\1/);
+  const title = titleMatch ? titleMatch[2].replace(/\\"/g, '"').replace(/\\'/g, "'") : undefined;
+
+  // 独立 keyword：wrap / no-line-numbers（前后是空格或边界）
+  const wrap = /(^|\s)wrap(\s|$)/.test(rest);
+  const noLineNumbers = /(^|\s)no-line-numbers(\s|$)/.test(rest);
+
+  return { language, title, wrap, noLineNumbers };
+}
 
 /** React NodeView — toolbar + 代码内容（PM 管） + 行号 */
 function CodeBlockNodeView({

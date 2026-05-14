@@ -29,6 +29,10 @@ import {
   Columns2,
   Columns3,
   Columns4,
+  Calendar,
+  CalendarDays,
+  CalendarClock,
+  Clock,
   type LucideIcon,
 } from "lucide-react";
 import { imageApi, videoApi } from "@/lib/api";
@@ -380,7 +384,115 @@ const BASIC_SLASH_ITEMS: SlashCommandItem[] = [
       editor.chain().focus().deleteRange(range).insertContent("[[").run();
     },
   },
+
+  // ─── 日期与时间 ───
+  // 纯前端实现，不走 Rust 渲染：单纯插入文本没必要绕一圈 IPC；
+  // 如果以后要"会随时间更新的活动日期"，再升级为 inline node。
+  {
+    key: "date-today",
+    title: "今天",
+    subtitle: "如 2026-05-14",
+    group: "日期与时间",
+    icon: Calendar,
+    keywords: [
+      "今天", "日期", "today", "date", "now",
+      "jt", "rq", // 拼音首字母：今天 / 日期
+    ],
+    command: ({ editor, range }) => {
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertContent(formatDateText("date"))
+        .run();
+    },
+  },
+  {
+    key: "date-today-weekday",
+    title: "今天 + 星期",
+    subtitle: "如 2026-05-14 周四",
+    group: "日期与时间",
+    icon: CalendarDays,
+    keywords: [
+      "星期", "周", "weekday", "today",
+      "xq", "zhou", "jtxq",
+    ],
+    command: ({ editor, range }) => {
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertContent(formatDateText("date-weekday"))
+        .run();
+    },
+  },
+  {
+    key: "date-datetime",
+    title: "现在",
+    subtitle: "如 2026-05-14 15:30",
+    group: "日期与时间",
+    icon: CalendarClock,
+    keywords: [
+      "现在", "datetime", "now",
+      "xz", "sjxz", // 现在 / 时间现在
+    ],
+    command: ({ editor, range }) => {
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertContent(formatDateText("datetime"))
+        .run();
+    },
+  },
+  {
+    key: "date-time",
+    title: "当前时间",
+    subtitle: "如 15:30",
+    group: "日期与时间",
+    icon: Clock,
+    keywords: [
+      "时间", "time", "clock",
+      "sj", "dqsj",
+    ],
+    command: ({ editor, range }) => {
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertContent(formatDateText("time"))
+        .run();
+    },
+  },
 ];
+
+/**
+ * 把当前时间格式化成几种预设格式之一。
+ * 纯前端 + 本地时区，不引入 dayjs（这种场景没必要）。
+ * 跟后端 render_variables 的 token 格式保持一致（{{date}} / {{datetime}} / {{weekday}}），
+ * 让斜杠插入的文本和模板渲染产物风格统一。
+ */
+type DateFormat = "date" | "date-weekday" | "datetime" | "time";
+
+function formatDateText(format: DateFormat, d: Date = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const weekday = "周" + "日一二三四五六"[d.getDay()];
+
+  switch (format) {
+    case "date":
+      return `${y}-${m}-${day}`;
+    case "date-weekday":
+      return `${y}-${m}-${day} ${weekday}`;
+    case "datetime":
+      return `${y}-${m}-${day} ${hh}:${mm}`;
+    case "time":
+      return `${hh}:${mm}`;
+  }
+}
 
 /**
  * 解析当前可用的 noteId：

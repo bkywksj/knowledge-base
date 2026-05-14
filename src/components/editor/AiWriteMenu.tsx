@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { Editor } from "@tiptap/react";
 import { useFeatureEnabled } from "@/hooks/useFeatureEnabled";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
@@ -217,7 +217,6 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
   // 设置里关闭"AI 问答"模块时，整个浮动菜单不挂载（不监听选区，零开销）
   const aiEnabled = useFeatureEnabled("ai");
   const [visible, setVisible] = useState(false);
-  const [position, setPosition] = useState({ top: 0, left: 0 });
   const [streaming, setStreaming] = useState(false);
   const [result, setResult] = useState("");
   const [selectedText, setSelectedText] = useState("");
@@ -239,20 +238,34 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
   const mediaNodesRef = useRef<MediaNodeSnapshot[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
   const unlistenRefs = useRef<UnlistenFn[]>([]);
-  // 选区锚点（wrapper-相对坐标）：selectionUpdate 时写入，useLayoutEffect 用
-  // 真实菜单尺寸做最终定位（上下翻转 / 横向 clamp）。
-  // 锚定到选区而非鼠标位置——拖选/键盘选行为一致，每次出现位置都可预期，
-  // 也避免长拖选时菜单贴到鼠标松开点导致和文字脱节的视觉感受。
-  const anchorRef = useRef<{
-    topInWrapper: number;
-    bottomInWrapper: number;
-    centerXInWrapper: number;
-  } | null>(null);
 
   // 首次挂载时拉一次提示词；管理页增删后由用户重新选中触发刷新（下面 selectionUpdate 里刷）。
   // 不做全局事件订阅：管理页和编辑器通常不同时打开，多拉一次成本可以忽略。
   useEffect(() => {
     void reloadPrompts();
+  }, []);
+
+  // 动态测量 EditorToolbar 高度，写入 CSS 变量 --kb-toolbar-h 到 .tiptap-wrapper，
+  // 让 .kb-ai-bar 的 sticky `top` 永远贴在 toolbar 正下方。
+  // 处理两种动态高度场景：
+  //   1) 窄屏 / 按钮多 → toolbar flex-wrap 换行，高度从 40 变 70+
+  //   2) 用户切换视图导致 toolbar 渲染内容变化
+  useEffect(() => {
+    if (!menuRef.current) return;
+    const wrapper = menuRef.current.closest(".tiptap-wrapper") as HTMLElement | null;
+    if (!wrapper) return;
+    const toolbar = wrapper.querySelector(".tiptap-toolbar") as HTMLElement | null;
+    if (!toolbar) return;
+
+    const sync = () => {
+      // offsetHeight 含 padding+border，正好是 sticky 需要避让的高度
+      wrapper.style.setProperty("--kb-toolbar-h", `${toolbar.offsetHeight}px`);
+    };
+    sync(); // 初始同步一次
+
+    const ro = new ResizeObserver(sync);
+    ro.observe(toolbar);
+    return () => ro.disconnect();
   }, []);
 
   async function reloadPrompts() {
@@ -266,12 +279,15 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
     }
   }
 
-  // 监听编辑器选区变化，显示/隐藏菜单
+  // 监听编辑器选区变化，显示/隐藏 AI bar
+  // bar 本身是钉在 EditorToolbar 正下方的 sticky 横条（CSS 控制 max-height + opacity 过渡），
+  // 这里只切换 visible 标志位，不再做任何坐标计算——位置完全静态，跟豆包/划词翻译这类
+  // 系统级浮窗物理错开（它们贴选区，咱钉顶部，z-index 也争不过它们，只能位置避开）。
   useEffect(() => {
     function handleSelectionUpdate() {
       const { from, to } = editor.state.selection;
       if (from === to) {
-        // 无选区 & 不在流式中 → 隐藏
+        // 无选区 & 不在流式中 → 折叠
         if (!streaming) {
           setVisible(false);
           setResult("");
@@ -279,49 +295,11 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
         return;
       }
 
-      // 有选区 → 显示菜单
       const text = editor.state.doc.textBetween(from, to, " ");
       if (text.trim().length < 2) return;
 
       setSelectedText(text);
       selectionRangeRef.current = { from, to };
-
-      // 计算选区锚点：始终锚到"选区最末一行"，不再跟随鼠标位置。
-      // 拖选/键盘选行为一致；多行选区时贴在末行，离用户视觉焦点最近。
-      const view = editor.view;
-      const wrapper = view.dom.closest(".tiptap-wrapper") as HTMLElement | null;
-      if (!wrapper) return;
-      const wrapperRect = wrapper.getBoundingClientRect();
-      const fromCoords = view.coordsAtPos(from);
-      const toCoords = view.coordsAtPos(to);
-      const isMultiLine = Math.abs(toCoords.top - fromCoords.top) > 4;
-
-      // 锚点 X：单行=选区中心，多行=末行起点（拖选鼠标停下来的方向）
-      const anchorCenterX = isMultiLine
-        ? toCoords.left
-        : (fromCoords.left + toCoords.right) / 2;
-
-      anchorRef.current = {
-        topInWrapper: toCoords.top - wrapperRect.top,
-        bottomInWrapper: toCoords.bottom - wrapperRect.top,
-        centerXInWrapper: anchorCenterX - wrapperRect.left,
-      };
-
-      // 初次定位（按估算尺寸先放一个合理值）：贴锚点上方、水平居中。
-      // useLayoutEffect 紧接着会用菜单的真实尺寸做最终校正（含上下翻转 / 横向 clamp），
-      // 浏览器 paint 前完成，用户看到的就是最终位置，没有闪烁。
-      const MENU_W_EST = 400;
-      const MENU_H_EST = 40;
-      const GAP = 8;
-      let left = anchorRef.current.centerXInWrapper - MENU_W_EST / 2;
-      let top = anchorRef.current.topInWrapper - MENU_H_EST - GAP;
-      if (top < 0) {
-        // 上方塞不下 → 翻到下方
-        top = anchorRef.current.bottomInWrapper + GAP;
-      }
-      left = Math.max(8, left);
-      top = Math.max(0, top);
-      setPosition({ top, left });
 
       if (!streaming) {
         setResult("");
@@ -335,43 +313,6 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
       editor.off("selectionUpdate", handleSelectionUpdate);
     };
   }, [editor, streaming]);
-
-  // 渲染后用菜单**真实尺寸** + 选区锚点做最终定位：
-  //   - 垂直：优先上方；上方塞不下 → 翻到下方；再不行就 clamp 进 wrapper
-  //   - 水平：以锚点为中心，clamp 进 wrapper（两边各留 8px）
-  // useLayoutEffect 在浏览器 paint 前同步执行，避免用户看到先错位再修正的闪烁。
-  // streaming/result 切换时菜单尺寸变化 → 重跑一次，让结果面板从锚点上方"长出来"。
-  useLayoutEffect(() => {
-    if (!visible || !menuRef.current || !anchorRef.current) return;
-    const wrapper = (editor.view.dom as HTMLElement).closest(
-      ".tiptap-wrapper",
-    ) as HTMLElement | null;
-    if (!wrapper) return;
-    const wrapperW = wrapper.clientWidth;
-    const wrapperH = wrapper.clientHeight;
-    const menuW = menuRef.current.offsetWidth;
-    const menuH = menuRef.current.offsetHeight;
-    const GAP = 8;
-    const a = anchorRef.current;
-
-    // 垂直：优先上方
-    const aboveTop = a.topInWrapper - menuH - GAP;
-    let finalTop: number;
-    if (aboveTop >= 0) {
-      finalTop = aboveTop;
-    } else {
-      finalTop = a.bottomInWrapper + GAP;
-      finalTop = Math.max(0, Math.min(wrapperH - menuH - GAP, finalTop));
-    }
-
-    // 水平：以锚点为中心 clamp
-    const idealLeft = a.centerXInWrapper - menuW / 2;
-    const finalLeft = Math.max(8, Math.min(wrapperW - menuW - 8, idealLeft));
-
-    if (finalTop !== position.top || finalLeft !== position.left) {
-      setPosition({ top: finalTop, left: finalLeft });
-    }
-  }, [visible, position.top, position.left, streaming, result, editor]);
 
   // 点击外部关闭（流式中 / 自定义弹窗打开时不响应，避免误关）
   useEffect(() => {
@@ -660,31 +601,22 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
   }
 
   if (!aiEnabled) return null;
-  if (!visible) return null;
 
   const defaultMode: PromptOutputMode = activePrompt?.outputMode ?? "replace";
 
+  // 始终挂载，CSS（.kb-ai-bar / [data-visible]）控制 max-height + opacity 过渡。
+  // 不再用 absolute 浮窗：bar 钉在 EditorToolbar 正下方，位置静态，
+  // 不和豆包/划词翻译这类系统级悬浮窗争层级（CSS z-index 跨窗口无效）。
   return (
     <div
       ref={menuRef}
-      className="absolute z-50"
-      style={{
-        top: position.top,
-        left: position.left,
-      }}
+      className="kb-ai-bar"
+      data-visible={visible ? "true" : "false"}
+      data-mode={streaming || result ? "result" : "buttons"}
     >
-      {/* AI 操作按钮行 — 强制单行（nowrap），右边界由 useLayoutEffect 反向 clamp left
-          保证菜单永远完整显示在 wrapper 内，鼠标在哪都不会换行 */}
+      {/* AI 操作按钮行 */}
       {!result && !streaming && (
-        <div
-          className="flex items-center gap-1 px-1.5 py-1 rounded-lg shadow-lg"
-          style={{
-            background: token.colorBgElevated,
-            border: `1px solid ${token.colorBorderSecondary}`,
-            flexWrap: "nowrap",
-            whiteSpace: "nowrap",
-          }}
-        >
+        <div className="kb-ai-bar-row">
           {/* leading：问 AI 这段（蓝色 CTA，与右侧轻量工具按钮做视觉区分） */}
           {onAskAi && (
             <>
@@ -851,15 +783,13 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
         </div>
       )}
 
-      {/* 流式结果 / 已完成结果 */}
+      {/* 流式结果 / 已完成结果：absolute 浮在 bar 下方，不挤压编辑器内容 */}
       {(streaming || result) && (
         <div
-          className="rounded-lg shadow-lg overflow-hidden"
+          className="kb-ai-bar-result-overlay"
           style={{
             background: token.colorBgElevated,
             border: `1px solid ${token.colorBorderSecondary}`,
-            maxWidth: 480,
-            minWidth: 280,
           }}
         >
           {/* 结果标题栏 */}

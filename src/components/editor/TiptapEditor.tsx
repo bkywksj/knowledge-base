@@ -8,7 +8,7 @@ import TaskItem from "@tiptap/extension-task-item";
 import Link from "@tiptap/extension-link";
 import Underline from "@tiptap/extension-underline";
 import Code from "@tiptap/extension-code";
-import { CodeBlockEnhanced } from "./CodeBlockEnhanced";
+import { CodeBlockEnhanced, normalizeCodeBlockFenceAttrs } from "./CodeBlockEnhanced";
 import { Mathematics } from "@tiptap/extension-mathematics";
 import Typography from "@tiptap/extension-typography";
 import { Table } from "@tiptap/extension-table";
@@ -1665,6 +1665,13 @@ export function TiptapEditor({
       } catch (e) {
         console.warn("[math] migrate failed:", e);
       }
+      // 代码块 fence info 拆分：``` python title="X" wrap``` → language="python" + title="X" + wrap
+      // tiptap-markdown 默认把整段 info 当 language 塞进来，这里恢复正确的 attr 分布
+      try {
+        normalizeCodeBlockFenceAttrs(editor);
+      } catch (e) {
+        console.warn("[codeBlock] normalize fence attrs failed:", e);
+      }
       isExternalUpdate.current = false;
     }
   }, [content, editor]);
@@ -1754,6 +1761,10 @@ export function TiptapEditor({
   return (
     <div className="tiptap-wrapper" style={{ position: "relative" }}>
       <EditorToolbar editor={editor} noteId={noteId} ensureNoteId={ensureNoteId} />
+      {/* 「问 AI 这段」与续写/总结/改写等：钉在 EditorToolbar 正下方的次级 sticky bar。
+          位置完全静态，跟豆包/划词翻译这类系统级浮窗物理错开（它们贴选区，咱贴顶部）。
+          选区状态控制可见性，无选区时 max-height:0 折叠，有选区时滑下来。 */}
+      <AiWriteMenu editor={editor} onAskAi={onAskAi} />
       <EditorContent editor={editor} className="tiptap-content" />
       {/* 查找替换浮条（Ctrl+F / Ctrl+H 触发；Esc 关闭） */}
       <SearchReplaceBar
@@ -1764,10 +1775,6 @@ export function TiptapEditor({
       />
       {/* 表格浮动菜单：光标在 table 内时在表格上方显示加列/加行/删列/删行/合并/拆分/删表 */}
       <TableBubbleMenu editor={editor} />
-      {/* 「问 AI 这段」与续写/总结/改写等工具按钮共享同一个浮动菜单：
-          AiWriteMenu 接 onAskAi prop 后会在按钮行最前面渲染蓝色 CTA，
-          整个菜单跟随鼠标位置出现，零重叠，无需独立定位逻辑 */}
-      <AiWriteMenu editor={editor} onAskAi={onAskAi} />
       {/* 斜杠菜单"嵌入网络视频"项的 URL 输入弹窗。
           确认走 closeEmbedSlash(url)，取消走 closeEmbedSlash(null)；
           实际解析与节点插入由 slashCommandItems 内的 command 完成。 */}

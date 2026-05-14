@@ -66,6 +66,7 @@
     "@types/qrcode": "^1.5.6",
     "antd": "^6.3.1",
     "dayjs": "^1.11.20",
+    "html-to-image": "^1.11.13",
     "html5-qrcode": "^2.3.8",
     "katex": "^0.16.45",
     "lowlight": "^3.3.0",

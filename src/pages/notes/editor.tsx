@@ -1440,6 +1440,9 @@ function DesktopNoteEditorPage() {
               {`嵌入图片 ${result.imagesEmbedded} 张` +
                 (result.imagesMissing > 0
                   ? `（${result.imagesMissing} 张缺失，已用占位符替代）`
+                  : "") +
+                (result.attachmentsCopied > 0
+                  ? `，附件 ${result.attachmentsCopied} 个（已放到同名 .attachments 文件夹）`
                   : "")}
               ，文件：
             </p>
@@ -1475,6 +1478,12 @@ function DesktopNoteEditorPage() {
               {`内嵌图片 ${result.imagesInlined} 张` +
                 (result.imagesMissing > 0
                   ? `（${result.imagesMissing} 张缺失）`
+                  : "") +
+                (result.attachmentsInlined > 0
+                  ? `，内嵌附件 ${result.attachmentsInlined} 个` +
+                    (result.attachmentsMissing > 0
+                      ? `（${result.attachmentsMissing} 个缺失）`
+                      : "")
                   : "")}
               ，文件：
             </p>
