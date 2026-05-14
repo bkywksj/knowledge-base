@@ -21,16 +21,20 @@ Tauri Desktop App 的 Git 工作流与版本管理技能，规范分支命名、
 
 ## 🔴 多远端架构（knowledge_base 项目）
 
-本项目有四个远端（`git remote -v`）：
+本项目有五个远端（`git remote -v`）：
 
 | remote | 角色 | 定位 |
 |--------|------|------|
 | **`origin`** | **Gitee (`gitee.com/bkywksj/knowledge-base`)** | 国内主仓 |
-| **`github`** | **GitHub (`github.com/bkywksj/knowledge-base`)** | 主 CI 构建源 + 海外开源镜像 |
-| **`github2`** | **GitHub (`git@github.com:allebamala/knowledge-base.git`，SSH)** | 备用 CI（`bkywksj` 的 Actions 配额耗尽时切到这里跑）— 私有仓库，跟 `tauri-cc` 的 `github2` 同套路（用 `~/.gh_token_allebamala` 那个账号；本机 SSH key 已绑 allebamala） |
+| **`github`** | **GitHub (`github.com/bkywksj/knowledge-base`)** | 主 CI 构建源 + 海外开源镜像（账号 bkywksj） |
+| **`github2`** | **GitHub (`git@github.com:allebamala/knowledge-base.git`，SSH)** | 备用 CI（`bkywksj` 的 Actions 配额耗尽时切到这里跑）— 私有仓库；用 `~/.gh_token_allebamala`；本机 SSH key 已绑 allebamala |
+| **`github3`** | **GitHub (`https://github.com/elginbolds-cell/knowledge-base.git`，token URL)** | 备用 CI（`bkywksj` + `allebamala` 都耗尽时切到这里）— 私有仓库；用 `~/.gh_token_elginbolds`；**远端 URL 必须内嵌 token**（不要存进 git credential helper —— 会覆盖 github.com 默认凭证 bkywksj） |
 | `upstream` | 原 tauri 框架模板 | 极少用，仅在同步模板时拉取 |
 
-> github2 的 GitHub Actions Secrets 已配好同样的 `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`（与主 `github` 一致），切过去跑 Android 签名构建不用重配。
+> **Actions Secrets 同步状态**：
+> - `github` (bkywksj)：✅ 已配齐（TAURI_SIGNING_PRIVATE_KEY + ANDROID_*）
+> - `github2` (allebamala)：✅ 已配齐（与 github 一致）
+> - `github3` (elginbolds-cell)：⚠️ **首次切换前需在 Settings → Secrets and variables → Actions 手动配置**：`TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（空字符串）、`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。配齐前 CI 会失败。
 
 ### 历史已对齐（v1.3.0 起）
 
@@ -44,19 +48,20 @@ v1.3.0 发布时（2026-04-26）已经把 GitHub 历史 force-sync 到 Gitee，*
 
 ### 「日常 commit」— 用户说"提交推送"时
 
-**默认推 origin + github**（两端历史已统一，没有任何冲突风险）；`github2` 是备用镜像，平时可不推，需要切备用 CI / 发版前再 `git push github2 master` 同步一次：
+**默认推 origin + github**（两端历史已统一，没有任何冲突风险）；`github2` / `github3` 是备用镜像，平时可不推，需要切备用 CI / 发版前再同步一次：
 
 ```bash
 git push origin master       # Gitee 主仓
 git push github master       # GitHub 主（CI 触发源 + 海外镜像）
-# git push github2 master    # GitHub 备用（按需，配额耗尽切过去前同步）
+# git push github2 master    # GitHub 备用 1（按需，bkywksj 配额耗尽切过去前同步）
+# git push github3 master    # GitHub 备用 2（按需，bkywksj + allebamala 都耗尽时同步）
 ```
 
 如果用户只说"推 Gitee"，按字面只推 origin。
 
 ### 「发布版本」— 调 /release 时
 
-走下方"发布流程"章节；tag 推 `github`（CI 从这边触发），需要时也推 `github2`。
+走下方"发布流程"章节；tag 推到**当前使用的 CI 远端**（`github` / `github2` / `github3` 之一，发布前必须询问用户选哪个）。Tag 只推到一个仓库 = 只触发一个 CI，避免重复构建浪费配额。
 
 ### ⛔ 注意事项
 
