@@ -44,6 +44,88 @@ pub fn abs_to_rel(absolute: &Path, data_dir: &Path) -> Option<String> {
     None
 }
 
+/// 把笔记 content / 渲染产物里出现的素材 URL 解析为本地绝对路径。
+///
+/// 识别的形态（按优先级）：
+/// - `kb-asset://<rel>` —— 当前唯一会写进 content 的形态，`<rel>` 相对 `data_dir`
+/// - `file://<abs>` —— 老笔记拖入附件用过的协议（Windows 上是 `file:///E:/...`）
+/// - `asset://localhost/<abs>` / `asset://<abs>` —— Tauri 运行期形态
+/// - `http://asset.localhost/<abs>` / `https://asset.localhost/<abs>` —— `convertFileSrc` 运行期输出
+/// - 裸绝对路径（`C:\...` / `/home/...`）—— 很早期写法
+/// - 裸相对路径 —— 相对 `data_dir` 解析
+///
+/// 返回 `None`：真·外链（`http(s)://` / `ftp://` 等非 asset.localhost）、`data:` / `blob:`、
+/// 页内锚点 `#...`、`mailto:` / `tel:`、空串、解码失败。
+///
+/// 注意：**不**校验文件是否存在，也**不**做"必须在 data_dir 下"的安全校验 ——
+/// 需要时由调用方自行 `canonicalize()` + `starts_with(data_dir)`。
+pub fn resolve_content_url(url: &str, data_dir: &Path) -> Option<PathBuf> {
+    let url = url.trim();
+    if url.is_empty()
+        || url.starts_with('#')
+        || url.starts_with("data:")
+        || url.starts_with("blob:")
+        || url.starts_with("mailto:")
+        || url.starts_with("tel:")
+    {
+        return None;
+    }
+
+    // kb-asset://<rel>：当前 content 里素材的唯一形态
+    if let Some(rest) = url.strip_prefix("kb-asset://") {
+        let rel = pct_decode(rest);
+        return rel_to_abs(&rel, data_dir).ok();
+    }
+
+    // 带协议的"伪本地"形态：剥协议头后是（编码过的）路径
+    let (body, is_file) = if let Some(r) = url.strip_prefix("http://asset.localhost/") {
+        (r, false)
+    } else if let Some(r) = url.strip_prefix("https://asset.localhost/") {
+        (r, false)
+    } else if let Some(r) = url.strip_prefix("asset://localhost/") {
+        (r, false)
+    } else if let Some(r) = url.strip_prefix("asset://") {
+        (r, false)
+    } else if let Some(r) = url.strip_prefix("file://") {
+        (r, true)
+    } else if url.contains("://") {
+        // 其它带 scheme 的（http/https 外链、ftp...）都不是本地文件
+        return None;
+    } else {
+        // 裸路径：绝对路径原样用；相对路径相对 data_dir 拼
+        let s = if url.contains('%') { pct_decode(url) } else { url.to_string() };
+        let p = PathBuf::from(s);
+        return Some(if p.is_absolute() { p } else { data_dir.join(p) });
+    };
+
+    // 去掉 query / fragment 再 urldecode
+    let body = body.split(['?', '#']).next().unwrap_or(body);
+    let decoded = pct_decode(body);
+    let path_str = if is_file {
+        // file:///E:/...（Windows，strip 后剩 /E:/...）；file:///home/...（POSIX，保留前导 /）
+        if decoded.starts_with('/') && decoded.len() >= 3 && decoded.as_bytes()[2] == b':' {
+            decoded[1..].to_string()
+        } else {
+            decoded
+        }
+    } else if decoded.len() >= 2 && decoded.as_bytes()[1] == b':' {
+        // Windows 盘符：E:/foo 已是绝对路径
+        decoded
+    } else if decoded.starts_with('/') {
+        decoded
+    } else {
+        // POSIX 缺前导 / 时补上（asset 协议 strip 后偶尔会丢）
+        format!("/{}", decoded)
+    };
+    Some(PathBuf::from(path_str))
+}
+
+fn pct_decode(s: &str) -> String {
+    urlencoding::decode(s)
+        .map(|c| c.into_owned())
+        .unwrap_or_else(|_| s.to_string())
+}
+
 /// 把相对 POSIX 路径还原成绝对路径（拼接 data_dir）。
 ///
 /// 不验证文件是否存在 —— 调用方按需 `metadata()`。

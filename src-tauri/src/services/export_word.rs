@@ -12,12 +12,14 @@
 //! - 嵌套表格 → 拍平为段落
 //! - 复杂 inline 样式组合（粗体+斜体+链接交错）→ 简化处理
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use docx_rs::*;
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};
 
 use crate::error::AppError;
+use crate::services::asset_path::resolve_content_url;
 
 /// 导出结果
 #[derive(Debug, serde::Serialize)]
@@ -26,6 +28,8 @@ pub struct WordExportResult {
     pub file_path: String,
     pub images_embedded: usize,
     pub images_missing: usize,
+    /// 拷贝到 `<docx 同名>.attachments/` 目录里的非图片附件数（docx 装不下任意文件，只能旁挂）
+    pub attachments_copied: usize,
 }
 
 pub struct WordExportService;
@@ -62,6 +66,12 @@ impl WordExportService {
         // flush 最后一个段落
         state.flush_paragraph(&mut docx);
 
+        // ── 附件打包 ──
+        // docx 容器塞不进任意文件，所以走"旁挂"：把笔记里指向本地文件的链接对应的文件
+        // 拷到 `<目标 docx 同名>.attachments/` 目录，并在文档末尾追加一个「📎 附件」清单
+        // （写明每个附件在旁挂目录里的相对路径）。
+        let attachments_copied = pack_attachments(markdown, target_path, assets_root, &mut docx)?;
+
         // 写文件
         let file = std::fs::File::create(target_path)?;
         docx.build()
@@ -72,6 +82,7 @@ impl WordExportService {
             file_path: target_path.to_string_lossy().into(),
             images_embedded: state.images_embedded,
             images_missing: state.images_missing,
+            attachments_copied,
         })
     }
 }
@@ -426,11 +437,10 @@ fn handle_event(event: Event, state: &mut RenderState, docx: &mut Docx) -> Resul
 ///
 /// 支持：
 /// - `data:image/...;base64,...` 内嵌
-/// - `asset://localhost/...` Tauri asset URL
-/// - 绝对路径 `C:\...` / `/Users/...`
-/// - 相对路径（相对 assets_root）
-/// - 跳过 `http(s)://`（避免迁移 docx 时拉外网）
-fn resolve_image(url: &str, assets_root: &Path) -> Option<Vec<u8>> {
+/// - `kb-asset://...` / `asset://localhost/...` / `file://...` / 绝对 / 相对路径
+///   （统一交给 `asset_path::resolve_content_url`）
+/// - 跳过 `http(s)://` 外链（避免迁移 docx 时拉外网）
+fn resolve_image(url: &str, data_dir: &Path) -> Option<Vec<u8>> {
     // data: URL
     if let Some(stripped) = url.strip_prefix("data:") {
         if let Some(idx) = stripped.find(";base64,") {
@@ -438,27 +448,124 @@ fn resolve_image(url: &str, assets_root: &Path) -> Option<Vec<u8>> {
             return base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64).ok();
         }
     }
+    let abs = resolve_content_url(url, data_dir)?;
+    std::fs::read(&abs).ok()
+}
 
-    // http(s) 跳过
-    if url.starts_with("http://") || url.starts_with("https://") {
-        return None;
+/// 把 markdown 里指向本地文件的链接 `[label](url)` 对应的文件拷到 `<target>.attachments/`，
+/// 并在 `docx` 末尾追加「📎 附件」清单段落。返回实际拷贝的附件数。
+///
+/// - 只处理能被 `resolve_content_url` 解析、且 `canonicalize()` 后真实存在的链接（图片走 `![]()`
+///   不在此列）；外链 / mailto / 锚点都跳过。
+/// - 同一物理文件多次出现只拷一份；同名不同源的自动加 `_1` / `_2` 后缀。
+fn pack_attachments(
+    markdown: &str,
+    target_path: &Path,
+    data_dir: &Path,
+    docx: &mut Docx,
+) -> Result<usize, AppError> {
+    // 1. 用 pulldown-cmark 事件流收集 (链接文字, 绝对路径)，比手写 markdown 正则稳
+    let mut links: Vec<(String, PathBuf)> = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    {
+        let parser = Parser::new(markdown);
+        let mut cur: Option<(String, String)> = None; // (url, 累积文字)
+        for ev in parser {
+            match ev {
+                Event::Start(Tag::Link { dest_url, .. }) => {
+                    cur = Some((dest_url.into_string(), String::new()));
+                }
+                Event::Text(t) => {
+                    if let Some((_, ref mut txt)) = cur {
+                        txt.push_str(&t);
+                    }
+                }
+                Event::End(TagEnd::Link) => {
+                    if let Some((url, txt)) = cur.take() {
+                        if let Some(abs) = resolve_content_url(&url, data_dir) {
+                            if let Ok(canon) = abs.canonicalize() {
+                                if canon.is_file() && seen.insert(canon.clone()) {
+                                    let label = if txt.trim().is_empty() {
+                                        canon
+                                            .file_name()
+                                            .map(|n| n.to_string_lossy().into_owned())
+                                            .unwrap_or_else(|| "附件".to_string())
+                                    } else {
+                                        txt.trim().to_string()
+                                    };
+                                    links.push((label, canon));
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if links.is_empty() {
+        return Ok(0);
     }
 
-    // asset://localhost/path 或 asset://path
-    let path_str = if let Some(rest) = url.strip_prefix("asset://localhost/") {
-        urlencoding::decode(rest).ok()?.into_owned()
-    } else if let Some(rest) = url.strip_prefix("asset://") {
-        urlencoding::decode(rest).ok()?.into_owned()
-    } else {
-        url.to_string()
-    };
+    // 2. 拷贝到 <target 同级>/<stem>.attachments/
+    let parent = target_path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = target_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("note");
+    let att_dir_name = format!("{}.attachments", stem);
+    let att_dir = parent.join(&att_dir_name);
 
-    let path = PathBuf::from(&path_str);
-    let abs_path = if path.is_absolute() {
-        path
-    } else {
-        assets_root.join(path)
-    };
+    let mut taken: HashSet<String> = HashSet::new();
+    let mut listed: Vec<(String, String)> = Vec::new(); // (label, 相对路径展示)
+    for (label, abs) in links {
+        let orig = abs
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "attachment".to_string());
+        let unique = unique_attachment_name(&orig, &mut taken);
+        if std::fs::create_dir_all(&att_dir).is_err() {
+            continue;
+        }
+        if std::fs::copy(&abs, att_dir.join(&unique)).is_err() {
+            continue;
+        }
+        listed.push((label, format!("{}/{}", att_dir_name, unique)));
+    }
+    if listed.is_empty() {
+        return Ok(0);
+    }
 
-    std::fs::read(&abs_path).ok()
+    // 3. 文档末尾追加「📎 附件」清单
+    *docx = std::mem::take(docx)
+        .add_paragraph(Paragraph::new().add_run(Run::new().add_text("─".repeat(40))));
+    *docx = std::mem::take(docx).add_paragraph(
+        Paragraph::new()
+            .style("Heading2")
+            .add_run(Run::new().add_text("📎 附件").bold().size(28)),
+    );
+    for (label, rel) in &listed {
+        *docx = std::mem::take(docx).add_paragraph(
+            Paragraph::new().add_run(Run::new().add_text(format!("• {}  →  {}", label, rel))),
+        );
+    }
+    Ok(listed.len())
+}
+
+/// 附件文件名去重：首个直接用，再次出现加 `_1` / `_2` 后缀（保留扩展名）
+fn unique_attachment_name(name: &str, taken: &mut HashSet<String>) -> String {
+    if taken.insert(name.to_string()) {
+        return name.to_string();
+    }
+    let (stem, ext) = match name.rfind('.') {
+        Some(p) => (&name[..p], &name[p..]),
+        None => (name, ""),
+    };
+    for n in 1..10_000 {
+        let candidate = format!("{}_{}{}", stem, n, ext);
+        if taken.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    name.to_string()
 }

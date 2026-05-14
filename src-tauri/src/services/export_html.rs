@@ -3,12 +3,13 @@
 //! 单文件 HTML：完整可分享（self-contained），含基础样式 + 嵌入图片为 base64。
 //! 用 pulldown-cmark（项目已装）渲染 markdown → HTML，再包一层 minimal CSS 模板。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use base64::Engine as _;
 use pulldown_cmark::{html::push_html, Options, Parser};
 
 use crate::error::AppError;
+use crate::services::asset_path::resolve_content_url;
 
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,6 +17,10 @@ pub struct HtmlExportResult {
     pub file_path: String,
     pub images_inlined: usize,
     pub images_missing: usize,
+    /// 内嵌为 data: URL 下载链接的非图片附件数（PDF / Office / 压缩包等）
+    pub attachments_inlined: usize,
+    /// 解析失败（文件不存在 / 越权）的附件链接数
+    pub attachments_missing: usize,
 }
 
 pub struct HtmlExportService;
@@ -49,7 +54,7 @@ impl HtmlExportService {
         Ok((html, inlined, missing))
     }
 
-    /// 导出单条笔记为单文件 HTML（图片内嵌 base64，可独立分享）
+    /// 导出单条笔记为单文件 HTML（图片内嵌 base64 + 非图片附件内嵌为 data: 下载链接，可独立分享）
     pub fn export_single(
         title: &str,
         markdown: &str,
@@ -57,12 +62,18 @@ impl HtmlExportService {
         assets_root: &Path,
     ) -> Result<HtmlExportResult, AppError> {
         let (html, inlined, missing) = Self::render_html(title, markdown, assets_root)?;
+        // 把正文里指向本地文件的 <a href="..."> 附件链接换成 data: URL（带 download 属性），
+        // 这样导出的单个 .html 仍是 self-contained 的：换台机器/发给别人也能点开下载附件。
+        // CSS 模板里只有 `a {}` 选择器、没有真实 <a> 元素，所以直接在整段 HTML 上跑也安全。
+        let (html, att_inlined, att_missing) = inline_attachments(&html, assets_root);
         std::fs::write(target_path, html)?;
 
         Ok(HtmlExportResult {
             file_path: target_path.to_string_lossy().into(),
             images_inlined: inlined,
             images_missing: missing,
+            attachments_inlined: att_inlined,
+            attachments_missing: att_missing,
         })
     }
 }
@@ -235,26 +246,59 @@ fn inline_images(html: &str, assets_root: &Path) -> (String, usize, usize) {
     (result.into_owned(), inlined, missing)
 }
 
-fn resolve_local_image(url: &str, assets_root: &Path) -> Option<(Vec<u8>, String)> {
-    // asset://localhost/path 或 asset://path
-    let path_str = if let Some(rest) = url.strip_prefix("asset://localhost/") {
-        urlencoding::decode(rest).ok()?.into_owned()
-    } else if let Some(rest) = url.strip_prefix("asset://") {
-        urlencoding::decode(rest).ok()?.into_owned()
-    } else {
-        url.to_string()
-    };
-
-    let path = PathBuf::from(&path_str);
-    let abs_path = if path.is_absolute() {
-        path
-    } else {
-        assets_root.join(path)
-    };
-
+fn resolve_local_image(url: &str, data_dir: &Path) -> Option<(Vec<u8>, String)> {
+    // 统一走 asset_path::resolve_content_url：覆盖 kb-asset:// / asset:// / file:// / 裸路径
+    let abs_path = resolve_content_url(url, data_dir)?;
     let bytes = std::fs::read(&abs_path).ok()?;
     let mime = guess_mime(&abs_path);
     Some((bytes, mime))
+}
+
+/// 把 HTML 里 `<a href="本地文件">…</a>` 的链接换成 `data:application/octet-stream;base64,…` +
+/// `download="原文件名"`，让附件随单文件 HTML 一起走。
+///
+/// 跳过：`data:` / 页内锚点 `#…` / 真·外链（`http(s)://` 等，由 `resolve_content_url` 返回 `None`）。
+/// 返回 `(新 html, 已内嵌附件数, 解析失败附件数)`。
+fn inline_attachments(html: &str, data_dir: &Path) -> (String, usize, usize) {
+    let re = match regex::Regex::new(r#"<a\s+[^>]*href="([^"]+)"[^>]*>"#) {
+        Ok(r) => r,
+        Err(_) => return (html.to_string(), 0, 0),
+    };
+
+    let mut inlined = 0usize;
+    let mut missing = 0usize;
+    let result = re.replace_all(html, |caps: &regex::Captures| {
+        let full_tag = &caps[0];
+        let href = &caps[1];
+        if href.starts_with("data:") || href.starts_with('#') {
+            return full_tag.to_string();
+        }
+        let abs = match resolve_content_url(href, data_dir) {
+            Some(p) => p,
+            None => return full_tag.to_string(), // 外链 / mailto / 锚点等，原样保留
+        };
+        match std::fs::read(&abs) {
+            Ok(bytes) => {
+                let name = abs
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "attachment".to_string());
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                inlined += 1;
+                format!(
+                    r#"<a href="data:application/octet-stream;base64,{}" download="{}">"#,
+                    b64,
+                    html_escape(&name)
+                )
+            }
+            Err(_) => {
+                missing += 1;
+                full_tag.to_string()
+            }
+        }
+    });
+
+    (result.into_owned(), inlined, missing)
 }
 
 fn guess_mime(path: &Path) -> String {

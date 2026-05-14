@@ -747,6 +747,9 @@ function DesktopNoteListPage() {
               {`嵌入图片 ${result.imagesEmbedded} 张` +
                 (result.imagesMissing > 0
                   ? `（${result.imagesMissing} 张缺失，已用占位符替代）`
+                  : "") +
+                (result.attachmentsCopied > 0
+                  ? `，附件 ${result.attachmentsCopied} 个（已放到同名 .attachments 文件夹）`
                   : "")}
               ，文件：
             </p>
@@ -782,6 +785,12 @@ function DesktopNoteListPage() {
               {`内嵌图片 ${result.imagesInlined} 张` +
                 (result.imagesMissing > 0
                   ? `（${result.imagesMissing} 张缺失）`
+                  : "") +
+                (result.attachmentsInlined > 0
+                  ? `，内嵌附件 ${result.attachmentsInlined} 个` +
+                    (result.attachmentsMissing > 0
+                      ? `（${result.attachmentsMissing} 个缺失）`
+                      : "")
                   : "")}
               ，文件：
             </p>
@@ -827,6 +836,7 @@ function DesktopNoteListPage() {
       const hide = message.loading(`正在导出 ${ids.length} 篇 .${ext}…`, 0);
       let success = 0;
       let images = 0;
+      let attachments = 0;
       const failed: number[] = [];
       for (const id of ids) {
         const note = data.items.find((n) => n.id === id);
@@ -835,9 +845,11 @@ function DesktopNoteListPage() {
           if (ext === "docx") {
             const r = await exportApi.exportSingleToWord(id, targetPath);
             images += r.imagesEmbedded;
+            attachments += r.attachmentsCopied;
           } else {
             const r = await exportApi.exportSingleToHtml(id, targetPath);
             images += r.imagesInlined;
+            attachments += r.attachmentsInlined;
           }
           success += 1;
         } catch (e) {
@@ -852,7 +864,11 @@ function DesktopNoteListPage() {
           <div>
             <p style={{ marginBottom: 4 }}>
               成功 {success} 篇{failed.length > 0 ? `，失败 ${failed.length} 篇` : ""}；
-              {ext === "docx" ? "嵌入" : "内嵌"} {images} 张图片。目录：
+              {ext === "docx" ? "嵌入" : "内嵌"} {images} 张图片
+              {attachments > 0
+                ? `，${ext === "docx" ? "旁挂" : "内嵌"}附件 ${attachments} 个`
+                : ""}
+              。目录：
             </p>
             <p style={{ fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
               {parentDir}
@@ -1239,7 +1255,10 @@ function DesktopNoteListPage() {
   });
 
   return (
-    <div className="max-w-4xl mx-auto h-full flex flex-col min-h-0">
+    // px-4：窄屏（内容区宽度 < max-w-4xl）时 mx-auto 不再产生左右留白，
+    // 列表卡片会贴到 Content 的 24px padding 边上显得拥挤；这里再补 16px
+    // 横向内边距，保证任何宽度下卡片两侧都留有呼吸空间。
+    <div className="max-w-4xl mx-auto h-full flex flex-col min-h-0 px-4">
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between mb-2 flex-shrink-0">
         <Title level={3} style={{ margin: 0, lineHeight: "32px" }}>

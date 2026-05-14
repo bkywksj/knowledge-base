@@ -310,7 +310,7 @@ fn rewrite_assets_for_export(
     let mut replacements: Vec<(usize, usize, String)> = Vec::new();
 
     for (start, end, url) in spans {
-        let abs = match url_to_local_path(&url) {
+        let abs = match crate::services::asset_path::resolve_content_url(&url, canon_instance_root) {
             Some(p) => p,
             None => continue, // 远程链接 / 未识别协议，原样保留
         };
@@ -450,45 +450,6 @@ fn scan_attr_urls(content: &str, attr_name: &[u8]) -> Vec<(usize, usize, String)
         i += 1;
     }
     out
-}
-
-/// 把 Tauri asset 协议或 file 协议的 URL 还原成本地绝对路径
-/// 返回 None 表示非本地资产（远程 URL、未识别协议、解码失败等）
-fn url_to_local_path(url: &str) -> Option<PathBuf> {
-    let (body, is_file) = if let Some(r) = url.strip_prefix("http://asset.localhost/") {
-        (r, false)
-    } else if let Some(r) = url.strip_prefix("https://asset.localhost/") {
-        (r, false)
-    } else if let Some(r) = url.strip_prefix("asset://localhost/") {
-        (r, false)
-    } else if let Some(r) = url.strip_prefix("file://") {
-        (r, true)
-    } else {
-        return None;
-    };
-
-    // 去掉 query/fragment
-    let body = body.split(['?', '#']).next().unwrap_or(body);
-    let decoded = urlencoding::decode(body).ok()?.into_owned();
-
-    let path_str = if is_file {
-        // file://path（Linux/macOS）或 file:///E:/...（Windows，strip 后剩 /E:/...）
-        if decoded.starts_with('/') && decoded.len() >= 3 && decoded.as_bytes()[2] == b':' {
-            decoded[1..].to_string()
-        } else {
-            decoded
-        }
-    } else if decoded.len() >= 2 && decoded.as_bytes()[1] == b':' {
-        // Windows 盘符：E:/foo 已是绝对路径
-        decoded
-    } else if decoded.starts_with('/') {
-        decoded
-    } else {
-        // POSIX 缺前导 / 时补上
-        format!("/{}", decoded)
-    };
-
-    Some(PathBuf::from(path_str))
 }
 
 /// 解决目录重名：在 `parent` 下找一个尚未存在的目录名（首选 `base`，否则 `base_1`、`base_2`...）

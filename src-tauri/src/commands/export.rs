@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use tauri::AppHandle;
 
 use crate::models::{ExportResult, SingleExportResult};
@@ -100,6 +101,27 @@ pub fn export_single_note_to_html(
         &assets_root,
     )
     .map_err(|e| e.to_string())
+}
+
+/// 将前端生成的 base64 PNG 数据写入用户在 save dialog 选定的路径。
+///
+/// 用于"导出表格为图片"等"前端渲染→落盘到任意路径"的场景：前端
+/// 用 html-to-image / canvas 生成 data URL，把 base64 部分通过本命令
+/// 写到用户挑的位置，避开 WebView 默认下载行为不可控的问题。
+///
+/// `base64_data` 可以是带前缀的 data URL（`data:image/png;base64,...`），
+/// 也可以是纯 base64 字符串。
+#[tauri::command]
+pub fn export_png_to_file(target_path: String, base64_data: String) -> Result<(), String> {
+    let b64 = base64_data
+        .split_once("base64,")
+        .map(|(_, b)| b)
+        .unwrap_or(&base64_data);
+    let bytes = STANDARD
+        .decode(b64.trim())
+        .map_err(|e| format!("base64 解码失败: {}", e))?;
+    std::fs::write(&target_path, &bytes).map_err(|e| format!("写入文件失败: {}", e))?;
+    Ok(())
 }
 
 /// R-005 渲染笔记为 HTML 字符串供前端 iframe 打印为 PDF。
