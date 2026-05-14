@@ -472,15 +472,15 @@ export function AppLayout() {
       e.preventDefault();
       navigate(1);
     }
-    // Ctrl/Cmd + Shift + N：快速记一笔（追加到今天的日记，每条带时间戳 callout 块）
-    // 写在 Ctrl+N 前面，避免 Shift+N 也被当成新建笔记
-    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "n") {
+    // Ctrl/Cmd + Alt + N：快速记一笔（追加到今天的日记，每条带时间戳 callout 块）
+    // 不用 Ctrl+Shift+N —— 它已被 global.quickCapture「剪贴板内容→新笔记」占用（系统级全局热键）
+    if ((e.ctrlKey || e.metaKey) && e.altKey && e.key.toLowerCase() === "n") {
       e.preventDefault();
       setQuickNoteOpen(true);
       return;
     }
     // Ctrl/Cmd + N 新建笔记
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "n") {
       e.preventDefault();
       createBlankAndOpen(null, navigate, { useDefaults: true });
     }
@@ -672,7 +672,7 @@ export function AppLayout() {
           <DragRegion />
           <div style={{ display: "flex", alignItems: "center" }}>
             <UpdateBadge update={update} onClick={openModal} />
-            <Tooltip title="快速记一笔 (Ctrl+Shift+N) — 追加到今天的日记">
+            <Tooltip title="快速记一笔 (Ctrl+Alt+N) — 追加到今天的日记">
               <Button
                 type="text"
                 icon={<FilePlus2 size={16} />}

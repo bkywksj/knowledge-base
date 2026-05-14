@@ -62,6 +62,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   { id: "app.asrToggle", scope: "app", defaultAccel: "CommandOrControl+Shift+Space", group: "应用内", desc: "语音 toggle：边写边说，文字注入当前焦点输入框（无焦点则打开快速捕获 Modal）" },
   { id: "app.palette", scope: "app", defaultAccel: "CommandOrControl+K", group: "应用内", desc: "打开命令面板" },
   { id: "app.newNote", scope: "app", defaultAccel: "CommandOrControl+N", group: "应用内", desc: "新建空白笔记" },
+  { id: "app.quickNoteCapture", scope: "app", defaultAccel: "CommandOrControl+Alt+N", group: "应用内", desc: "快速记一笔：追加带时间戳的块到今天的日记" },
   { id: "app.save", scope: "app", defaultAccel: "CommandOrControl+S", group: "应用内", desc: "保存当前笔记" },
   { id: "app.help", scope: "app", defaultAccel: "F1", group: "应用内", desc: "查看快捷键帮助" },
   { id: "app.focusToggle", scope: "app", defaultAccel: "F11", group: "应用内", desc: "切换专注模式" },
