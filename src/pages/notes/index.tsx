@@ -1255,10 +1255,9 @@ function DesktopNoteListPage() {
   });
 
   return (
-    // px-4：窄屏（内容区宽度 < max-w-4xl）时 mx-auto 不再产生左右留白，
-    // 列表卡片会贴到 Content 的 24px padding 边上显得拥挤；这里再补 16px
-    // 横向内边距，保证任何宽度下卡片两侧都留有呼吸空间。
-    <div className="max-w-4xl mx-auto h-full flex flex-col min-h-0 px-4">
+    // 列表/卡片/时间线视图直接撑满 Content 区，避免最大化窗口时两侧大片留白；
+    // 表格列宽固定 → 越宽标题列越能完整展示。px-4 保证贴边时有呼吸空间。
+    <div className="h-full flex flex-col min-h-0 px-4">
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between mb-2 flex-shrink-0">
         <Title level={3} style={{ margin: 0, lineHeight: "32px" }}>

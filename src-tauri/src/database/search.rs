@@ -37,7 +37,12 @@ impl Database {
         // 之前 FTS5 路径漏了 is_hidden = 0，会让 FTS5 命中的隐藏笔记泄露到主搜索结果里
         //
         // 排序：bm25 自定义权重，title 列权重 5.0、content 列 1.0。
-        // FTS5 的 bm25() 分数越小越相关，ORDER BY ASC（默认）即可让标题命中靠前。
+        // FTS5 的 bm25() 分数越小越相关，ASC 让标题命中靠前。
+        //
+        // 时间衰减：bm25 + 久远天数 * 0.005。
+        // 例子：相关度差不多的两个笔记，相差 30 天 → 旧的得分 +0.15，足以让新的排前但不会
+        // 让相关度更高的老笔记被一篇刚改的边缘相关笔记盖掉（bm25 量级通常在 1~30）。
+        // 未来想加访问频率加权也是从这里改 ORDER BY。
         let mut stmt = conn.prepare(
             "SELECT n.id, n.title,
                     snippet(notes_fts, 1, '<mark>', '</mark>', '...', 32) as snippet,
@@ -48,6 +53,7 @@ impl Database {
                AND n.is_deleted = 0
                AND n.is_hidden = 0
              ORDER BY bm25(notes_fts, 5.0, 1.0)
+                    + (julianday('now') - julianday(n.updated_at)) * 0.005
              LIMIT ?2",
         )?;
 

@@ -494,9 +494,16 @@ impl Database {
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
 
-        // 构建 WHERE 条件（始终过滤已删除 + 隐藏笔记）
+        // 构建 WHERE 条件（始终过滤已删除 + 隐藏 + 日记）
         // T-003: is_hidden=0 在所有主列表入口强制过滤；隐藏笔记只能从 /hidden 专用页访问
-        let mut conditions = vec!["is_deleted = 0".to_string(), "is_hidden = 0".to_string()];
+        // 日记 is_daily=1 也无条件过滤：所有用户视角的「笔记列表」（主列表 / 未分类 / 文件夹）
+        // 都不显示日记，日记只走 📅 每日笔记专用面板。
+        // 不影响 FTS 全文搜索 / MCP / AI RAG —— 那些走独立查询路径。
+        let mut conditions = vec![
+            "is_deleted = 0".to_string(),
+            "is_hidden = 0".to_string(),
+            "is_daily = 0".to_string(),
+        ];
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(ids) = folder_ids {
@@ -516,9 +523,9 @@ impl Database {
                 }
             }
         } else if uncategorized {
-            // 未分类虚拟文件夹：folder_id 为 NULL 且**不是日记**的笔记
-            // 日记单独走「📅 日记」入口（list_daily_grouped），不再污染未分类列表
-            conditions.push("folder_id IS NULL AND is_daily = 0".to_string());
+            // 未分类虚拟文件夹：folder_id 为 NULL
+            // （is_daily=0 在外层已强制，这里只需要补 folder 条件）
+            conditions.push("folder_id IS NULL".to_string());
         }
 
         if let Some(kw) = keyword {
