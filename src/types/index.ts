@@ -896,6 +896,10 @@ export interface CreateTaskInput {
   category_id?: number | null;
   /** 父任务 ID；传则创建为该任务的子任务，不传 = 创建主任务 */
   parent_task_id?: number | null;
+  /** 所属项目 ID（v41 引入）；不传或 null = 无项目 */
+  project_id?: number | null;
+  /** 甘特图开始日期 'YYYY-MM-DD'（v41 引入） */
+  start_date?: string | null;
 }
 
 export interface UpdateTaskInput {

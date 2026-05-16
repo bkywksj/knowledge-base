@@ -1,6 +1,8 @@
+import { useEffect, useState } from "react";
 import { Modal, Button, Tag, Typography, theme as antdTheme } from "antd";
 import { Star, Edit3 } from "lucide-react";
-import type { Task } from "@/types";
+import type { Project, Task } from "@/types";
+import { projectApi } from "@/lib/api";
 import { SubtaskList } from "./SubtaskList";
 
 const { Text, Paragraph } = Typography;
@@ -47,6 +49,16 @@ export function TaskDetailModal({
 }: Props) {
   const { token } = antdTheme.useToken();
   const isMain = task && task.parent_task_id == null;
+
+  // 任务有 project_id 时拉项目名展示（按需，只在打开 Modal 时拉一次全量）
+  const [projects, setProjects] = useState<Project[]>([]);
+  useEffect(() => {
+    if (!task || task.project_id == null) return;
+    projectApi.list(true).then(setProjects).catch(() => setProjects([]));
+  }, [task]);
+  const project = task?.project_id != null
+    ? projects.find((p) => p.id === task.project_id) ?? null
+    : null;
 
   return (
     <Modal
@@ -144,6 +156,37 @@ export function TaskDetailModal({
                 </Text>
                 <div className="mt-1" style={{ fontSize: 13 }}>
                   {task.due_date}
+                </div>
+              </div>
+            )}
+            {task.start_date && (
+              <div>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  起始
+                </Text>
+                <div className="mt-1" style={{ fontSize: 13 }}>
+                  {task.start_date}
+                </div>
+              </div>
+            )}
+            {project && (
+              <div>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  项目
+                </Text>
+                <div
+                  className="mt-1 inline-flex items-center gap-2"
+                  style={{ fontSize: 13 }}
+                >
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 2,
+                      background: project.color,
+                    }}
+                  />
+                  {project.name}
                 </div>
               </div>
             )}

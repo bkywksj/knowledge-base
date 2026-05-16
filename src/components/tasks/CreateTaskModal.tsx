@@ -20,10 +20,11 @@ import dayjs, { type Dayjs } from "dayjs";
 import { Plus, NotebookText, Folder as FolderIcon, File as FileIcon, Link as LinkIcon } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useNavigate } from "react-router-dom";
-import { taskApi, taskCategoryApi, noteApi, configApi } from "@/lib/api";
+import { taskApi, taskCategoryApi, noteApi, configApi, projectApi } from "@/lib/api";
 import { relativeTime } from "@/lib/utils";
 import type {
   Note,
+  Project,
   Task,
   TaskCategory,
   TaskLinkInput,
@@ -107,6 +108,11 @@ export function CreateTaskModal({
   // ─── 分类 ─────────────────────────────────
   const [categories, setCategories] = useState<TaskCategory[]>([]);
   const [categoryId, setCategoryId] = useState<number | null>(null);
+  // ─── 项目 + 起始日（v41） ─────────────────────
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectId, setProjectId] = useState<number | null>(null);
+  /** 甘特图起始日；可单独存在（没截止也行）或与 dueDate 组成区间 */
+  const [startDate, setStartDate] = useState<Dayjs | null>(null);
 
   // 拉分类列表（一次即可；管理弹窗变更后由父组件 onSaved 触发列表刷新）
   useEffect(() => {
@@ -115,6 +121,11 @@ export function CreateTaskModal({
       .list()
       .then(setCategories)
       .catch(() => setCategories([]));
+    // 项目列表：默认不要归档项目（用户给已归档项目挂新任务的场景极少）
+    projectApi
+      .list(false)
+      .then(setProjects)
+      .catch(() => setProjects([]));
   }, [open]);
 
   // 组件首次挂载时拉一次默认时分；早于用户打开弹窗加载，避免首屏跳变
@@ -173,6 +184,8 @@ export function CreateTaskModal({
       }
       setRemindBefore(editing.remind_before_minutes);
       setCategoryId(editing.category_id);
+      setProjectId(editing.project_id);
+      setStartDate(editing.start_date ? dayjs(editing.start_date) : null);
       setLinks(
         editing.links.map((l) => ({
           kind: l.kind,
@@ -213,6 +226,8 @@ export function CreateTaskModal({
       }
       setRemindBefore(null);
       setCategoryId(presetCategoryId ?? null);
+      setProjectId(null);
+      setStartDate(null);
       setLinks([]);
       // 循环默认清零
       setRepeatMode("none");
@@ -336,6 +351,7 @@ export function CreateTaskModal({
     setSaving(true);
     try {
       const dueStr = dueDate ? dueDate.format("YYYY-MM-DD HH:mm:ss") : null;
+      const startStr = startDate ? startDate.format("YYYY-MM-DD") : null;
       const repeatPayload = buildRepeatPayload({
         mode: repeatMode,
         unit: customUnit,
@@ -357,6 +373,10 @@ export function CreateTaskModal({
           clear_remind_before_minutes: remindBefore === null,
           category_id: categoryId ?? undefined,
           clear_category_id: categoryId === null,
+          project_id: projectId ?? undefined,
+          clear_project_id: projectId === null,
+          start_date: startStr ?? undefined,
+          clear_start_date: !startStr,
           ...repeatPayload.update,
         });
         // 更新 links：简单策略——删除所有旧的，再加新的
@@ -376,6 +396,8 @@ export function CreateTaskModal({
           due_date: dueStr,
           remind_before_minutes: remindBefore,
           category_id: categoryId,
+          project_id: projectId,
+          start_date: startStr,
           links,
           ...repeatPayload.create,
         });
@@ -565,6 +587,58 @@ export function CreateTaskModal({
               })),
             ]}
           />
+        </div>
+
+        {/* 项目（v41） + 起始日 — 配合甘特图 */}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <div className="text-[11px] mb-1" style={{ color: token.colorTextSecondary }}>
+              项目（可选，配合甘特图）
+            </div>
+            <Select
+              value={projectId}
+              onChange={(v) => setProjectId(v ?? null)}
+              allowClear
+              placeholder="无项目"
+              style={{ width: "100%" }}
+              options={[
+                {
+                  value: null,
+                  label: <span style={{ color: token.colorTextTertiary }}>无项目</span>,
+                },
+                ...projects.map((p) => ({
+                  value: p.id,
+                  label: (
+                    <span className="inline-flex items-center gap-2">
+                      <span
+                        style={{
+                          display: "inline-block",
+                          width: 10,
+                          height: 10,
+                          borderRadius: 2,
+                          background: p.color,
+                        }}
+                      />
+                      {p.name}
+                    </span>
+                  ),
+                })),
+              ]}
+            />
+          </div>
+          <div>
+            <div className="text-[11px] mb-1" style={{ color: token.colorTextSecondary }}>
+              起始日（可选）
+            </div>
+            <DatePicker
+              value={startDate}
+              onChange={(v) => setStartDate(v)}
+              format="YYYY-MM-DD"
+              placeholder="无起始日"
+              style={{ width: "100%" }}
+              allowClear
+            />
+          </div>
         </div>
 
         {/* 截止时间 */}

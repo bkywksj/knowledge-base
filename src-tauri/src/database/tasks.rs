@@ -340,8 +340,9 @@ impl super::Database {
             "INSERT INTO tasks (title, description, priority, important, due_date,
                                 remind_before_minutes, repeat_kind, repeat_interval,
                                 repeat_weekdays, repeat_until, repeat_count,
-                                source_batch_id, category_id, parent_task_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                                source_batch_id, category_id, parent_task_id,
+                                project_id, start_date)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 input.title,
                 input.description,
@@ -361,6 +362,8 @@ impl super::Database {
                 input.source_batch_id,
                 input.category_id,
                 input.parent_task_id,
+                input.project_id,
+                input.start_date,
             ],
         )?;
         let task_id = tx.last_insert_rowid();

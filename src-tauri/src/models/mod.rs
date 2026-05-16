@@ -850,6 +850,10 @@ pub struct CreateTaskInput {
     pub category_id: Option<i64>,
     /// 父任务 ID（创建子任务时传）；None = 创建主任务
     pub parent_task_id: Option<i64>,
+    /// 所属项目 ID（v41 引入）；None = 无项目
+    pub project_id: Option<i64>,
+    /// 甘特图开始日期 'YYYY-MM-DD'（v41 引入）；None = 没指定
+    pub start_date: Option<String>,
 }
 
 /// 更新任务入参（字段缺省表示不改动）
