@@ -20,7 +20,7 @@ import {
   App as AntdApp,
   theme as antdTheme,
 } from "antd";
-import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, ChevronDown, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, MessageSquare, ListTree, Network, ExternalLink, BookOpen, FilePen } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, ChevronDown, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, MessageSquare, ListTree, Network, ExternalLink, BookOpen, FilePen, Presentation } from "lucide-react";
 import { CloseCircleFilled } from "@ant-design/icons";
 import { useAppStore } from "@/store";
 import { useTabsStore } from "@/store/tabs";
@@ -40,6 +40,7 @@ import { TagColorPicker } from "@/components/TagColorPicker";
 import { MicButton } from "@/components/MicButton";
 import { NoteAiDrawer } from "@/components/ai/NoteAiDrawer";
 import { MindMapView } from "@/components/notes/MindMapView";
+import { SlideshowView } from "@/components/notes/SlideshowView";
 import type { Note, Tag, Folder, NoteLink } from "@/types";
 import { accelToKeys, findShortcut } from "@/lib/shortcuts/registry";
 
@@ -626,6 +627,8 @@ function DesktopNoteEditorPage() {
   const [dirty, setDirty] = useState(false);
   /** 思维导图视图：在编辑器右侧以 flex 分栏方式渲染（不是浮层） */
   const [mindMapOpen, setMindMapOpen] = useState(false);
+  /** 幻灯片演示模式：fixed 全屏覆盖，按 `<hr>` 分页 */
+  const [slideshowOpen, setSlideshowOpen] = useState(false);
   /** 思维导图分栏宽度（像素，持久化到 localStorage 跨笔记记忆） */
   const [mindMapWidth, setMindMapWidth] = useState<number>(() => {
     const saved = Number(localStorage.getItem("editor.mindMapWidth"));
@@ -1737,6 +1740,12 @@ function DesktopNoteEditorPage() {
               onClick={() => setMindMapOpen(true)}
             />
           </Tooltip>
+          <Tooltip title="幻灯片演示（用 --- 分页）">
+            <Button
+              icon={<Presentation size={16} />}
+              onClick={() => setSlideshowOpen(true)}
+            />
+          </Tooltip>
           {/* popout 窗口里再点这个按钮没有意义（同 id 只会前置已存在窗口），直接隐藏 */}
           {!IS_POPOUT_WINDOW && (
             <Tooltip title="新窗口打开">
@@ -2153,6 +2162,14 @@ function DesktopNoteEditorPage() {
         </div>
       )}
       </div>
+
+      {/* 幻灯片演示：fixed 全屏覆盖，按 <hr> 分页 */}
+      <SlideshowView
+        open={slideshowOpen}
+        onClose={() => setSlideshowOpen(false)}
+        html={content}
+        title={title}
+      />
 
       {/* PDF 原文件预览 */}
       <Modal
