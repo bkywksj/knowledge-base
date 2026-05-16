@@ -113,7 +113,7 @@ export function NewNoteButton({
     },
     {
       key: "import-md-folder",
-      label: "导入 Markdown 文件夹…",
+      label: "导入 Markdown 文件夹 / Obsidian Vault…",
       icon: <FolderOpen size={14} />,
       onClick: () => {
         void handleImportMdFolder();

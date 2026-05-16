@@ -332,23 +332,34 @@ impl ImportService {
                     };
                     let _ = db.set_note_source_file(note.id, Some(&canonical_path), Some(src_type));
 
-                    // ─── T-009: 把 frontmatter 中的标签关联到这条笔记 ───
+                    // ─── T-009 + #9 Obsidian: 标签来源汇总（去重）───
+                    // 1) frontmatter 里的 tags（YAML 显式列出）
+                    // 2) body 里的行内 `#tag`（Obsidian 风格，支持嵌套 `#工作/周报`）
+                    // 都走 get_or_create_tag_path，嵌套路径会自动建父子链（复用 v39 树形标签）
+                    let mut tag_paths: Vec<String> = Vec::new();
                     if let Some(fm) = &front_matter {
-                        for tag_name in &fm.tags {
-                            match db.get_or_create_tag_by_name(tag_name) {
-                                Ok(tag_id) => {
-                                    if db.add_tag_to_note(note.id, tag_id).is_ok() {
-                                        tags_attached += 1;
-                                    }
+                        tag_paths.extend(fm.tags.iter().cloned());
+                    }
+                    for inline_tag in extract_inline_hashtags(&body_content) {
+                        tag_paths.push(inline_tag);
+                    }
+                    // 简单去重（保持首次出现顺序）
+                    let mut seen_tags: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
+                    for tag_path in tag_paths.into_iter().filter(|t| seen_tags.insert(t.clone())) {
+                        match db.get_or_create_tag_path(&tag_path) {
+                            Ok(tag_id) => {
+                                if db.add_tag_to_note(note.id, tag_id).is_ok() {
+                                    tags_attached += 1;
                                 }
-                                Err(e) => {
-                                    log::warn!(
-                                        "[import] 处理 frontmatter 标签失败 ({}/{}): {}",
-                                        final_title,
-                                        tag_name,
-                                        e
-                                    );
-                                }
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "[import] 处理标签失败 ({}/{}): {}",
+                                    final_title,
+                                    tag_path,
+                                    e
+                                );
                             }
                         }
                     }
@@ -809,6 +820,92 @@ fn detect_existing_match_with_content(
     Ok(("new".to_string(), None))
 }
 
+/// #9 Obsidian 导入：从 markdown 正文中提取行内 `#hashtag` 标签。
+///
+/// 识别规则（与 Obsidian 行为对齐）：
+/// - `#` 前面必须是行首或空白字符（避免 `path/#anchor` / `color:#fff` 误识别）
+/// - 标签内容支持中英数字 / `_` / `-` / `/`（嵌套用 `/`）
+/// - **不能全是数字**（避免 `#123` 这种 markdown 标题或颜色 hex 被误识别）
+/// - 必须以**字母**开头（包括汉字）
+/// - 跳过代码块（``` ... ```）和行内代码（`...`）里的 `#`
+///
+/// 返回的 path 形如 `"工作"` 或 `"工作/周报"`，可直接喂给 `get_or_create_tag_path`。
+/// 不去重 —— 上层负责。
+pub fn extract_inline_hashtags(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_fence = false; // ``` 代码块状态
+    for raw_line in body.split('\n') {
+        let trimmed = raw_line.trim_start();
+        // fence 切换（行首三个反引号，允许语言标识）
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        scan_line_hashtags(raw_line, &mut out);
+    }
+    out
+}
+
+/// 扫描一行文本，把 `#tag` 模式提取出来；跳过行内 \`code\` 段
+fn scan_line_hashtags(line: &str, out: &mut Vec<String>) {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    let mut in_inline_code = false;
+    let mut prev_is_boundary = true; // 行首视为边界
+    while i < bytes.len() {
+        let b = bytes[i];
+        // 处理行内代码反引号开关（简单匹配，不处理双反引号边界场景）
+        if b == b'`' {
+            in_inline_code = !in_inline_code;
+            prev_is_boundary = false;
+            i += 1;
+            continue;
+        }
+        if in_inline_code {
+            prev_is_boundary = false;
+            i += 1;
+            continue;
+        }
+        if b == b'#' && prev_is_boundary {
+            // 找标签字符序列
+            let start = i + 1;
+            let mut end = start;
+            while end < bytes.len() && is_tag_char(bytes[end]) {
+                end += 1;
+            }
+            if end > start {
+                // 用 char_indices 检查首字符是否字母（不是纯数字）
+                let raw = &line[start..end];
+                if raw.chars().next().map_or(false, |c| c.is_alphabetic()) {
+                    // 去掉前后多余 `/`
+                    let clean = raw.trim_matches('/');
+                    if !clean.is_empty() {
+                        out.push(clean.to_string());
+                    }
+                }
+            }
+            i = end.max(i + 1);
+            prev_is_boundary = false;
+            continue;
+        }
+        prev_is_boundary = (b as char).is_whitespace();
+        i += 1;
+    }
+}
+
+/// 是否是 hashtag 内容字符。汉字 / 字母 / 数字 / `_` `-` `/` 都接受。
+fn is_tag_char(b: u8) -> bool {
+    // ASCII 字母数字 + `_-/`
+    if b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'/' {
+        return true;
+    }
+    // 非 ASCII 字节（UTF-8 多字节序列开头）认为是合法（汉字等）
+    b >= 0x80
+}
+
 /// T-009: 遍历时是否应跳过该目录条目
 ///
 /// 跳过：
@@ -834,6 +931,40 @@ fn should_skip_dir_entry(entry: &walkdir::DirEntry) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hashtag_basic_extract() {
+        let tags = extract_inline_hashtags("今天写了 #工作 和 #学习/英语 笔记");
+        assert_eq!(tags, vec!["工作".to_string(), "学习/英语".to_string()]);
+    }
+
+    #[test]
+    fn hashtag_ignore_pure_number() {
+        // #123 / #4 不该被识别（避免误识别 markdown 编号或颜色 hex）
+        let tags = extract_inline_hashtags("看看 #123 这条");
+        assert!(tags.is_empty());
+    }
+
+    #[test]
+    fn hashtag_ignore_color_hex_and_anchor() {
+        // 紧贴在 `:` `/` 后的 # 不算（行内非空白）
+        let tags = extract_inline_hashtags("color:#fff 还有 path/#anchor");
+        assert!(tags.is_empty());
+    }
+
+    #[test]
+    fn hashtag_ignore_in_code_block() {
+        // 反引号代码块和行内代码里的 #tag 不识别
+        let md = "正文 #正常\n```\n#代码块里的 不算\n```\n再来个 `#行内代码` 也不算\n#后续";
+        let tags = extract_inline_hashtags(md);
+        assert_eq!(tags, vec!["正常".to_string(), "后续".to_string()]);
+    }
+
+    #[test]
+    fn hashtag_at_line_start() {
+        let tags = extract_inline_hashtags("#行首\n中间 #也行");
+        assert_eq!(tags, vec!["行首".to_string(), "也行".to_string()]);
+    }
 
     #[test]
     fn skip_dot_dirs() {

@@ -86,10 +86,14 @@ export function ImportPreviewModal({
           <div className="opacity-75">
             跳过 <Text code style={{ fontSize: 11 }}>.obsidian</Text> /{" "}
             <Text code style={{ fontSize: 11 }}>.trash</Text> 等隐藏目录 · 解析
-            笔记头部 <Text code style={{ fontSize: 11 }}>tags:</Text> 字段自动建标签 ·
+            笔记头部 <Text code style={{ fontSize: 11 }}>tags:</Text> 字段 +
+            正文行内 <Text code style={{ fontSize: 11 }}>#标签</Text> 自动建标签
+            （含嵌套 <Text code style={{ fontSize: 11 }}>#工作/周报</Text>）·
             复制 <Text code style={{ fontSize: 11 }}>attachments/</Text>{" "}
             <Text code style={{ fontSize: 11 }}>assets/</Text>{" "}
-            <Text code style={{ fontSize: 11 }}>images/</Text> 里的图片并改写 wiki 链接
+            <Text code style={{ fontSize: 11 }}>images/</Text> 里的图片 ·
+            保留 <Text code style={{ fontSize: 11 }}>[[wiki-link]]</Text>{" "}
+            （Ctrl+点击跳转）
           </div>
         </div>
 

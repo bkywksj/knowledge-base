@@ -195,6 +195,67 @@ impl Database {
     /// 按名字获取标签 id；不存在则创建。导入流程使用。
     ///
     /// 名字会做 trim；空名字直接报错而不是默默忽略。
+    /// 按层级路径 find-or-create 标签（用于 Obsidian 嵌套标签 `#parent/child` 导入）。
+    ///
+    /// - `"工作"` → 顶层标签 `工作`
+    /// - `"工作/周报"` → `工作`（顶层）下挂 `周报`；自动建立父子关系
+    /// - 多层 `"工作/项目A/周报"` 同理，逐层 find-or-create
+    /// - 段内空白/`/` 之间空段会被忽略
+    ///
+    /// 返回**叶子节点**的 id（即最末一段标签）。
+    pub fn get_or_create_tag_path(&self, path: &str) -> Result<i64, AppError> {
+        let segments: Vec<&str> = path
+            .split('/')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if segments.is_empty() {
+            return Err(AppError::InvalidInput("标签路径不能为空".into()));
+        }
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let mut parent: Option<i64> = None;
+        for seg in segments {
+            // 查同名 + 同 parent_id 的标签（兄弟里不允许同名）
+            let existing: Option<i64> = match parent {
+                Some(pid) => conn
+                    .query_row(
+                        "SELECT id FROM tags WHERE name = ?1 AND parent_id = ?2",
+                        params![seg, pid],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .ok(),
+                None => conn
+                    .query_row(
+                        "SELECT id FROM tags WHERE name = ?1 AND parent_id IS NULL",
+                        params![seg],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .ok(),
+            };
+            parent = Some(match existing {
+                Some(id) => id,
+                None => {
+                    conn.execute(
+                        "INSERT INTO tags (name, color, parent_id) VALUES (?1, NULL, ?2)",
+                        params![seg, parent],
+                    )?;
+                    conn.last_insert_rowid()
+                }
+            });
+        }
+        Ok(parent.unwrap()) // segments 非空保证此处必有 Some
+    }
+
+    /// 简单按 name find-or-create 顶层标签。
+    ///
+    /// 与 `get_or_create_tag_path` 的区别：本方法**不解析 `/` 嵌套语义**，
+    /// 整个字符串当作单个标签名。保留给历史调用方（sync_v1 manifest 测试用）。
+    ///
+    /// 新增导入入口请优先使用 `get_or_create_tag_path` —— 支持嵌套层级。
+    #[allow(dead_code)]
     pub fn get_or_create_tag_by_name(&self, name: &str) -> Result<i64, AppError> {
         let trimmed = name.trim();
         if trimmed.is_empty() {
@@ -546,6 +607,50 @@ mod sync_tag_tests {
             note_tag_names(&db, n2.id),
             vec!["n2only".to_string(), "共享".to_string()]
         );
+    }
+
+    #[test]
+    fn tag_path_creates_nested() {
+        let db = fresh();
+        let leaf_id = db.get_or_create_tag_path("工作/项目A/周报").unwrap();
+        let listed = db.list_tags().unwrap();
+        // 应该有 3 个标签：工作（顶层）/ 项目A（工作下）/ 周报（项目A下）
+        assert_eq!(listed.len(), 3);
+        let leaf = listed.iter().find(|t| t.id == leaf_id).unwrap();
+        assert_eq!(leaf.name, "周报");
+        let proj_a = listed
+            .iter()
+            .find(|t| t.id == leaf.parent_id.unwrap())
+            .unwrap();
+        assert_eq!(proj_a.name, "项目A");
+        let work = listed
+            .iter()
+            .find(|t| t.id == proj_a.parent_id.unwrap())
+            .unwrap();
+        assert_eq!(work.name, "工作");
+        assert_eq!(work.parent_id, None);
+    }
+
+    #[test]
+    fn tag_path_reuses_existing() {
+        let db = fresh();
+        let a = db.get_or_create_tag_path("工作/周报").unwrap();
+        let b = db.get_or_create_tag_path("工作/周报").unwrap();
+        assert_eq!(a, b);
+        // 同名兄弟不应重复建
+        let listed = db.list_tags().unwrap();
+        assert_eq!(listed.len(), 2);
+    }
+
+    #[test]
+    fn tag_path_segments_independent_namespace() {
+        let db = fresh();
+        // 两个不同层级下都有"周报"标签，互不冲突（按 name + parent_id 唯一）
+        let a = db.get_or_create_tag_path("工作/周报").unwrap();
+        let b = db.get_or_create_tag_path("学习/周报").unwrap();
+        assert_ne!(a, b);
+        let listed = db.list_tags().unwrap();
+        assert_eq!(listed.len(), 4); // 工作 / 学习 / 工作下周报 / 学习下周报
     }
 
     #[test]
