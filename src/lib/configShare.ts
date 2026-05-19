@@ -32,6 +32,24 @@ import type {
 export const ENVELOPE_VERSION = "v1" as const;
 export const ENCRYPTED_VERSION = "v1-enc" as const;
 
+/**
+ * 跨同级软件通用协议（与 tauri-cc 等其他桌面端互通）。
+ *
+ * 单条：`{ kind: "ai.profile", v: 1, data: { name, provider, baseURL, apiKey, model, hints? } }`
+ * 多条：`{ kind: "ai.profile.bundle", v: 1, manifest, data: { api_profiles: [...] } }`
+ *
+ * 字段采用 camelCase，`baseURL` 用大写 URL（业内主流命名：Cherry Studio /
+ * Chatbox / LobeChat / Continue / Vercel AI SDK / OpenCode 等）。
+ *
+ * 输入：parseInner 同时识别本家 kbConfig envelope 和外部 ai.profile envelope，
+ *       后者会被自动映射为本家 ai-model envelope，复用现有 applyEnvelope 流程。
+ * 输出：stringifyAsAiProfile 将本家 AiModel 输出为 ai.profile 文本，
+ *       方便粘贴到 tauri-cc 等其他软件。
+ */
+export const AI_PROFILE_KIND_SINGLE = "ai.profile";
+export const AI_PROFILE_KIND_BUNDLE = "ai.profile.bundle";
+export const AI_PROFILE_VERSION = 1;
+
 /** 加密后的 envelope 外壳：payload = base64url(salt || iv || ciphertext) */
 export interface EncryptedEnvelope {
   kbConfig: typeof ENCRYPTED_VERSION;
@@ -201,6 +219,88 @@ function parseInner(text: string): ParseResult {
     return { ok: false, reason: "不是 JSON 对象" };
   }
   const o = raw as Record<string, unknown>;
+
+  // ─── 跨软件通用协议：ai.profile（单条） ───
+  // 来源如 tauri-cc 等其他桌面端。识别后自动映射为本家 ai-model envelope，
+  // 落库走原有 applyEnvelope -> aiModelApi.create 路径。
+  if (
+    o.kind === AI_PROFILE_KIND_SINGLE &&
+    o.v === AI_PROFILE_VERSION &&
+    o.data &&
+    typeof o.data === "object"
+  ) {
+    const d = o.data as Record<string, unknown>;
+    // baseURL（标准）/ baseUrl / base_url 都接受，最大化跨家兼容
+    const baseURL = String(d.baseURL ?? d.baseUrl ?? d.base_url ?? "");
+    const name = typeof d.name === "string" ? d.name : "";
+    const provider = typeof d.provider === "string" ? d.provider : "";
+    const apiKey = typeof d.apiKey === "string" ? d.apiKey : "";
+    const model = typeof d.model === "string" ? d.model : "";
+    if (!name || !provider || !model) {
+      return {
+        ok: false,
+        reason: "ai.profile 协议缺少必填字段（name / provider / model）",
+      };
+    }
+    const aiModel: AiModelData = {
+      name,
+      provider,
+      api_url: baseURL,
+      api_key: apiKey || null,
+      model_id: model,
+    };
+    return {
+      ok: true,
+      envelope: {
+        kbConfig: ENVELOPE_VERSION,
+        kind: "ai-model",
+        exportedAt: new Date().toISOString(),
+        data: aiModel,
+      },
+    };
+  }
+
+  // ─── 跨软件通用协议：ai.profile.bundle（多条） ───
+  // 内层 data 为 SyncDataPayload，字段保持 snake_case（base_url / api_key / model）。
+  // 自动跳过 auth_type === "oauth" 的档案（与设备绑定，跨实例无意义）。
+  if (
+    o.kind === AI_PROFILE_KIND_BUNDLE &&
+    o.v === AI_PROFILE_VERSION &&
+    o.data &&
+    typeof o.data === "object"
+  ) {
+    const inner = o.data as Record<string, unknown>;
+    const list = Array.isArray(inner.api_profiles) ? (inner.api_profiles as unknown[]) : [];
+    const aiModels: AiModelData[] = [];
+    for (const p of list) {
+      if (!p || typeof p !== "object") continue;
+      const pp = p as Record<string, unknown>;
+      if (pp.auth_type === "oauth") continue; // OAuth 档案不跨实例
+      const name = typeof pp.name === "string" ? pp.name : "";
+      const provider = typeof pp.provider === "string" ? pp.provider : "";
+      const api_url = typeof pp.base_url === "string" ? pp.base_url : "";
+      const api_key = typeof pp.api_key === "string" ? pp.api_key : null;
+      const model_id = typeof pp.model === "string" ? pp.model : "";
+      if (!name || !provider || !model_id) continue;
+      aiModels.push({ name, provider, api_url, api_key, model_id });
+    }
+    if (aiModels.length === 0) {
+      return {
+        ok: false,
+        reason: "ai.profile.bundle 中未发现可导入的 AI 档案",
+      };
+    }
+    return {
+      ok: true,
+      envelope: {
+        kbConfig: ENVELOPE_VERSION,
+        kind: "bundle",
+        exportedAt: new Date().toISOString(),
+        data: { aiModels },
+      },
+    };
+  }
+
   if (o.kbConfig === ENCRYPTED_VERSION) {
     return { ok: false, encrypted: true, reason: "需要 PIN 解密" };
   }
@@ -413,3 +513,31 @@ export const KIND_LABELS: Record<ConfigKind, string> = {
   "feature-toggles": "功能开关",
   "bundle": "完整配置包",
 };
+
+// ──────────────────────────────────────────────────────────
+// 跨软件通用协议：ai.profile 输出
+// ──────────────────────────────────────────────────────────
+
+/**
+ * 把本家 AiModel 输出为 `ai.profile` 通用协议文本（明文，camelCase）。
+ *
+ * 字段映射：
+ *   - api_url   → baseURL（大写 URL，匹配 OpenAI-compatible 客户端主流命名）
+ *   - api_key   → apiKey
+ *   - model_id  → model
+ *   - max_context → 不输出（ai.profile 协议未约定此字段，由各家自行扩展）
+ */
+export function stringifyAsAiProfile(m: AiModel, pretty = true): string {
+  const env = {
+    kind: AI_PROFILE_KIND_SINGLE,
+    v: AI_PROFILE_VERSION,
+    data: {
+      name: m.name,
+      provider: m.provider,
+      baseURL: m.api_url,
+      apiKey: m.api_key ?? "",
+      model: m.model_id,
+    },
+  };
+  return JSON.stringify(env, null, pretty ? 2 : 0);
+}

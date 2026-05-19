@@ -7,8 +7,10 @@ import {
   KIND_LABELS,
   stringifyEnvelope,
   stringifyEncrypted,
+  stringifyAsAiProfile,
   type Envelope,
 } from "@/lib/configShare";
+import type { AiModel } from "@/types";
 
 /**
  * 配置导出弹窗。
@@ -105,6 +107,21 @@ export function ShareConfigModal({
   async function copyJson() {
     if (await writeClipboard(text)) message.success("已复制到剪贴板");
     else message.error("自动复制失败，请手动选中复制");
+  }
+
+  /**
+   * 复制为跨软件通用 ai.profile 协议（明文 camelCase），方便粘到 tauri-cc 等其他桌面端。
+   * 仅 ai-model envelope 启用；PIN 加密在此分支下被忽略（通用协议本身不带加密层）。
+   */
+  async function copyAsAiProfile() {
+    if (!envelope || envelope.kind !== "ai-model") return;
+    // envelope.data 字段与 AiModel 兼容（缺失 id/timestamps 不影响 stringifyAsAiProfile 用到的字段）
+    const text = stringifyAsAiProfile(envelope.data as unknown as AiModel, true);
+    if (await writeClipboard(text)) {
+      message.success("已复制为 ai.profile 通用协议");
+    } else {
+      message.error("复制失败，请手动选中复制");
+    }
   }
 
   async function copyPin() {
@@ -212,6 +229,15 @@ export function ShareConfigModal({
                 >
                   <Copy size={14} /> 复制 JSON
                 </button>
+                {envelope?.kind === "ai-model" && (
+                  <button
+                    onClick={copyAsAiProfile}
+                    className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white py-2 text-xs text-slate-700 active:bg-slate-50"
+                    title="跨软件通用协议：可粘贴到 tauri-cc 等其他桌面端（明文 camelCase）"
+                  >
+                    <Copy size={12} /> 复制为 ai.profile 通用协议
+                  </button>
+                )}
               </div>
             ),
           },
