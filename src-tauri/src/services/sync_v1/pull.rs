@@ -77,6 +77,12 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
         );
         let cleared = db.clear_remote_state_for_backend(backend_id)?;
         log::info!("[sync_v1] 已清空 {} 条 sync_remote_state（backend {}）", cleared, backend_id);
+        // P2-a：之前直接 return 空 result → 前端弹"拉取完成：下载 0 / 冲突 0"像"已是最新"，
+        // 用户无从得知"远端还是旧格式、必须 push 一次才能升级"。塞一条 errors 提示，
+        // 让前端 modal.warning 弹出来引导用户（push 端遇旧 manifest 会自愈，pull 端不会）。
+        result.errors.push(
+            "远端 manifest 仍是旧版本格式（hash 算法 v1）。本次拉取已跳过 —— 请点「推送」或「后台同步」一次，会自动把远端升级到新格式，之后拉取即恢复正常。".into(),
+        );
         return Ok(result);
     }
 

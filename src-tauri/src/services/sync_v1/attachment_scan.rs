@@ -259,7 +259,7 @@ pub fn scan_note(
 
 /// 全库扫描：遍历所有活跃笔记（is_deleted=0），对每条调 scan_note。
 ///
-/// **增量**：只处理 `attachment_scan_at IS NULL OR attachment_scan_at < updated_at` 的笔记
+/// **增量**：只处理 `attachment_scan_at IS NULL OR attachment_scan_at <> updated_at` 的笔记
 /// （v38 起新增的标记列）—— 上次扫过且笔记没动 = 跳过。Push 前自动跑也只重扫真正变更的笔记。
 /// 首次升级：`attachment_scan_at` 是 NULL → 第一次 push 仍全库扫一遍，之后稳态只扫变更。
 ///
@@ -281,12 +281,17 @@ fn scan_active_notes_inner(
     // 选 id：增量模式只挑 scan 标记落后于 updated_at 的；force_full 拿全量
     let note_ids: Vec<i64> = {
         let conn = db.conn_lock()?;
+        // P2-b：判据用 `<>`（不等）而非 `<`（落后）。pull 的 update_note_synced 会把
+        // updated_at 设成远端 entry 的值，可能比本地原值旧（如 is_daily / is_hidden 元数据
+        // 对齐场景）→ updated_at "回退" → 用 `<` 时 scan_at 恒 >= updated_at → 该笔记永久
+        // 跳过增量扫描、附件引用变更再也扫不到。改 `<>` 后任何 updated_at 变动（变新或
+        // 变旧）都触发一次重扫，扫完 mark_scanned 把 scan_at 对齐 → 下次正常跳过。
         let sql = if force_full {
             "SELECT id FROM notes WHERE is_deleted = 0"
         } else {
             "SELECT id FROM notes
              WHERE is_deleted = 0
-               AND (attachment_scan_at IS NULL OR attachment_scan_at < updated_at)"
+               AND (attachment_scan_at IS NULL OR attachment_scan_at <> updated_at)"
         };
         let mut stmt = conn.prepare(sql)?;
         // 不能直接把 collect 当 block 返回值（stmt/conn 会比 collect 结果先 drop）
@@ -641,6 +646,48 @@ mod tests {
             "应被重扫并把 scan_at 推到新 updated_at"
         );
         assert_ne!(scan1.as_deref(), Some("2099-12-31 23:59:59"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// P2-b：updated_at "回退"（被 pull 的 update_note_synced 设成更早的远端值，
+    /// 如 is_daily / is_hidden 元数据对齐场景）也必须重新进入增量扫描集 ——
+    /// 判据是 `<>` 而非 `<`。旧代码（`<`）下本测试会失败：scan_at 恒 >= 回退后的
+    /// updated_at → 该笔记永久跳过增量扫描。
+    #[test]
+    fn updated_at_rolled_back_re_enters_scan_set() {
+        let tmp = std::env::temp_dir().join("kb_incr_scan_test_rollback");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let db = crate::database::Database::init(":memory:").unwrap();
+        let n = db
+            .create_note(&crate::models::NoteInput {
+                title: "x".into(),
+                content: "v1".into(),
+                folder_id: None,
+            })
+            .unwrap();
+        scan_all_active_notes(&db, &tmp).unwrap();
+        let scan1 = note_scan_at(&db, n.id);
+        assert!(scan1.is_some());
+
+        // 模拟 pull 的 update_note_synced：把 updated_at 设成比 scan_at 更早的值（回退）
+        {
+            let conn = db.conn_lock().unwrap();
+            conn.execute(
+                "UPDATE notes SET updated_at = '2000-01-01 00:00:00' WHERE id = ?1",
+                [n.id],
+            )
+            .unwrap();
+        }
+
+        scan_all_active_notes(&db, &tmp).unwrap();
+        assert_eq!(
+            note_scan_at(&db, n.id).as_deref(),
+            Some("2000-01-01 00:00:00"),
+            "updated_at 回退后也应被重扫并把 scan_at 对齐到回退值（P2-b）"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
