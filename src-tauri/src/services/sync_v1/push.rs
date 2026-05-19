@@ -564,6 +564,23 @@ pub fn push<R: Runtime, E: Emitter<R>>(
 
     if manifest_ok {
         db.touch_sync_backend_push(backend_id)?;
+        // P2-c：push 成功后顺带清理 sync_remote_state 死行（对应笔记已硬删 /
+        // 超 30 天 tombstone）。用与 compute_local_manifest 同款的 30 天阈值；
+        // 失败仅 warn，不影响本次 push 结果。
+        let gc_cutoff = (chrono::Local::now()
+            - chrono::Duration::days(manifest::TOMBSTONE_RETENTION_DAYS))
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
+        match db.gc_sync_remote_state(&gc_cutoff) {
+            Ok(n) if n > 0 => {
+                log::info!("[sync_v1] GC 清理 {} 条死 sync_remote_state 行", n)
+            }
+            Ok(_) => {}
+            Err(e) => log::warn!(
+                "[sync_v1] GC sync_remote_state 失败（不影响本次 push）: {}",
+                e
+            ),
+        }
     }
 
     let _ = emitter.emit(

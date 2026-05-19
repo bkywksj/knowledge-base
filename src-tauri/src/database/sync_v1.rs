@@ -277,4 +277,158 @@ impl Database {
         )?;
         Ok(())
     }
+
+    /// P2-c：清理 `sync_remote_state` 里的死数据行。
+    ///
+    /// 删除条件：state 行的 `note_id` 已不在 `compute_local_manifest` 的范围内 ——
+    /// 即笔记被硬删（不在 `notes` 表）、或软删且 `deleted_at` 早于 `tombstone_cutoff`
+    /// （超 tombstone 保留期）。这类笔记永不再进 manifest、diff 不会处理它们，
+    /// 对应的 state 行是纯死数据。
+    ///
+    /// `tombstone_cutoff` 由调用方传 `compute_local_manifest` 同款的 30 天前阈值。
+    /// 笔记若被 restore（`is_deleted` 1→0）会重回 manifest 范围 → 不被本方法删。
+    /// 一条 SQL 清所有 backend（某笔记超期 → 所有 backend 的 manifest 都不带它）。
+    ///
+    /// 返回删除的行数。
+    pub fn gc_sync_remote_state(&self, tombstone_cutoff: &str) -> Result<usize, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let affected = conn.execute(
+            "DELETE FROM sync_remote_state
+             WHERE note_id NOT IN (
+                 SELECT id FROM notes
+                 WHERE is_deleted = 0
+                    OR (is_deleted = 1 AND deleted_at IS NOT NULL AND deleted_at >= ?1)
+             )",
+            params![tombstone_cutoff],
+        )?;
+        Ok(affected)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{NoteInput, SyncBackendInput, SyncBackendKind};
+
+    /// P2-c：gc_sync_remote_state 删孤儿行 + 超期 tombstone 行，
+    /// 保留活笔记 / 30 天内软删的 state 行
+    #[test]
+    fn gc_sync_remote_state_removes_dead_rows() {
+        let db = Database::init(":memory:").unwrap();
+
+        let backend_id = db
+            .create_sync_backend(&SyncBackendInput {
+                kind: SyncBackendKind::Local,
+                name: "t".into(),
+                config_json: "{}".into(),
+                enabled: Some(true),
+                auto_sync: Some(false),
+                sync_interval_min: Some(30),
+            })
+            .unwrap();
+
+        let n_alive = db
+            .create_note(&NoteInput {
+                title: "活".into(),
+                content: "x".into(),
+                folder_id: None,
+            })
+            .unwrap();
+        let n_recent = db
+            .create_note(&NoteInput {
+                title: "近删".into(),
+                content: "y".into(),
+                folder_id: None,
+            })
+            .unwrap();
+        let n_old = db
+            .create_note(&NoteInput {
+                title: "久删".into(),
+                content: "z".into(),
+                folder_id: None,
+            })
+            .unwrap();
+
+        // 三条真笔记 + 一条孤儿（note_id 不存在，模拟硬删）都登记 sync_remote_state
+        for nid in [n_alive.id, n_recent.id, n_old.id, 999_999] {
+            db.upsert_remote_state(backend_id, nid, "notes/x.md", "h", "2026-01-01", false)
+                .unwrap();
+        }
+
+        // n_recent 最近软删（deleted_at = now）
+        db.soft_delete_note(n_recent.id).unwrap();
+        // n_old 改成 60 天前删（超 30 天阈值）
+        let old_ts = (chrono::Local::now() - chrono::Duration::days(60))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        {
+            let conn = db.conn_lock().unwrap();
+            conn.execute(
+                "UPDATE notes SET is_deleted = 1, deleted_at = ?1 WHERE id = ?2",
+                params![old_ts, n_old.id],
+            )
+            .unwrap();
+        }
+
+        let cutoff = (chrono::Local::now() - chrono::Duration::days(30))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let removed = db.gc_sync_remote_state(&cutoff).unwrap();
+        assert_eq!(removed, 2, "应删：n_old（超 30 天软删）+ 999999（孤儿）");
+
+        let states = db.list_remote_state(backend_id).unwrap();
+        assert!(states.contains_key(&n_alive.id), "活笔记 state 必须保留");
+        assert!(states.contains_key(&n_recent.id), "30 天内软删 state 必须保留");
+        assert!(!states.contains_key(&n_old.id), "超 30 天软删 state 应删除");
+        assert!(!states.contains_key(&999_999), "孤儿 state 应删除");
+    }
+
+    /// 笔记被 restore（is_deleted 1→0）→ 重回 manifest 范围 → GC 不应删它的 state
+    #[test]
+    fn gc_keeps_state_of_restored_note() {
+        let db = Database::init(":memory:").unwrap();
+        let backend_id = db
+            .create_sync_backend(&SyncBackendInput {
+                kind: SyncBackendKind::Local,
+                name: "t".into(),
+                config_json: "{}".into(),
+                enabled: Some(true),
+                auto_sync: Some(false),
+                sync_interval_min: Some(30),
+            })
+            .unwrap();
+        let n = db
+            .create_note(&NoteInput {
+                title: "复活".into(),
+                content: "x".into(),
+                folder_id: None,
+            })
+            .unwrap();
+        db.upsert_remote_state(backend_id, n.id, "notes/x.md", "h", "2026-01-01", false)
+            .unwrap();
+
+        // 软删到 60 天前 → 再 restore
+        let old_ts = (chrono::Local::now() - chrono::Duration::days(60))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        {
+            let conn = db.conn_lock().unwrap();
+            conn.execute(
+                "UPDATE notes SET is_deleted = 1, deleted_at = ?1 WHERE id = ?2",
+                params![old_ts, n.id],
+            )
+            .unwrap();
+        }
+        db.restore_note(n.id).unwrap();
+
+        let cutoff = (chrono::Local::now() - chrono::Duration::days(30))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let removed = db.gc_sync_remote_state(&cutoff).unwrap();
+        assert_eq!(removed, 0, "已 restore 的笔记重回 manifest 范围 → 不删 state");
+        assert!(db.list_remote_state(backend_id).unwrap().contains_key(&n.id));
+    }
 }
