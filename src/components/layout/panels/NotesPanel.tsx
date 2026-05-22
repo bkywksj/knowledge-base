@@ -41,6 +41,7 @@ import { useAppStore } from "@/store";
 import { MicButton } from "@/components/MicButton";
 import { useTabsStore } from "@/store/tabs";
 import { folderApi, importApi, noteApi, trashApi } from "@/lib/api";
+import { showExternalMdIntroOnce } from "@/lib/externalMdIntro";
 import type { Folder, Note, ScannedFile } from "@/types";
 import { parseEmojiPrefix } from "@/lib/treeIcons";
 import { NewNoteButton } from "@/components/NewNoteButton";
@@ -601,6 +602,8 @@ export function NotesPanel() {
       if (result.wasSynced) {
         message.info("已根据最新 md 文件同步笔记内容");
       }
+      // Q-003：首次打开外部 .md 弹一次说明，让用户知道"已加入本地库 + 编辑会写回原文件"
+      showExternalMdIntroOnce();
       useAppStore.getState().bumpNotesRefresh();
       navigate(`/notes/${result.noteId}`);
     } catch (e) {

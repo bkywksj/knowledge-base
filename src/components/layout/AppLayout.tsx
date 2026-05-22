@@ -7,6 +7,7 @@ import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { importApi } from "@/lib/api";
+import { showExternalMdIntroOnce } from "@/lib/externalMdIntro";
 import { useAppStore } from "@/store";
 import {
   SIDE_PANEL_MIN_WIDTH,
@@ -288,6 +289,8 @@ export function AppLayout() {
         if (result.wasSynced) {
           message.info("已根据最新 md 文件同步笔记内容");
         }
+        // Q-003：系统快捷菜单 / argv 启动场景，同样需要首次引导（用户报告就是这条路径下找不到保存）
+        showExternalMdIntroOnce();
         useAppStore.getState().bumpNotesRefresh();
         navigate(`/notes/${result.noteId}`);
       } catch (e) {
