@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Button, Modal, message, theme as antdTheme } from "antd";
+import { Button, Modal, Segmented, message, theme as antdTheme } from "antd";
 import { Calendar, ChevronLeft, ChevronRight, Copy, Trash2 } from "lucide-react";
 import { dailyApi, trashApi } from "@/lib/api";
+import type { DailyEntry } from "@/types";
 import { useAppStore } from "@/store";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import {
@@ -52,6 +53,15 @@ function weekdayOf(d: string): string {
   return WEEKDAYS[new Date(d + "T00:00:00").getDay()];
 }
 
+/** localStorage：记住面板上次的视图模式（月历 / 全部） */
+const VIEW_MODE_KEY = "kb.daily.panelViewMode";
+
+/** YYYY-MM → "2026 年 5 月" */
+function monthLabel(ym: string): string {
+  const [y, m] = ym.split("-");
+  return `${y} 年 ${Number(m)} 月`;
+}
+
 export function DailyPanel() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -96,6 +106,52 @@ export function DailyPanel() {
     };
     // notesRefreshTick：主区新建日记后 bump，这里触发重拉
   }, [viewMonth.year, viewMonth.month, notesRefreshTick]);
+
+  // ─── 视图模式：月历 / 全部 ─────────────────────
+  const [viewMode, setViewMode] = useState<"calendar" | "all">(
+    () =>
+      (localStorage.getItem(VIEW_MODE_KEY) as "calendar" | "all" | null) ??
+      "calendar",
+  );
+  useEffect(() => {
+    localStorage.setItem(VIEW_MODE_KEY, viewMode);
+  }, [viewMode]);
+
+  // 「全部」视图数据：一次拉回所有日记元数据，前端按年月分组
+  const [allEntries, setAllEntries] = useState<DailyEntry[]>([]);
+  const [allLoading, setAllLoading] = useState(false);
+
+  useEffect(() => {
+    if (viewMode !== "all") return;
+    let cancelled = false;
+    (async () => {
+      setAllLoading(true);
+      try {
+        const list = await dailyApi.listAll();
+        if (!cancelled) setAllEntries(list);
+      } catch (e) {
+        if (!cancelled) message.error(String(e));
+      } finally {
+        if (!cancelled) setAllLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // notesRefreshTick：新建/删除日记后重拉
+  }, [viewMode, notesRefreshTick]);
+
+  // 按年月（YYYY-MM）分组；后端已按 daily_date DESC 排好，分组天然倒序
+  const groupedAll = useMemo(() => {
+    const map = new Map<string, DailyEntry[]>();
+    for (const e of allEntries) {
+      const ym = e.daily_date.slice(0, 7);
+      const arr = map.get(ym);
+      if (arr) arr.push(e);
+      else map.set(ym, [e]);
+    }
+    return [...map.entries()];
+  }, [allEntries]);
 
   // 倒序展示该月已有日记的日期
   const sortedDates = useMemo(() => [...dates].sort((a, b) => b.localeCompare(a)), [dates]);
@@ -212,6 +268,28 @@ export function DailyPanel() {
         </Button>
       </div>
 
+      {/* 视图切换：月历 / 全部 */}
+      <div
+        className="shrink-0"
+        style={{
+          padding: "8px 12px",
+          borderBottom: `1px solid ${token.colorBorderSecondary}`,
+        }}
+      >
+        <Segmented
+          block
+          size="small"
+          value={viewMode}
+          onChange={(v) => setViewMode(v as "calendar" | "all")}
+          options={[
+            { label: "月历", value: "calendar" },
+            { label: "全部", value: "all" },
+          ]}
+        />
+      </div>
+
+      {viewMode === "calendar" && (
+        <>
       {/* 月份切换 */}
       <div
         className="flex items-center justify-between shrink-0"
@@ -269,12 +347,16 @@ export function DailyPanel() {
           }}
         />
       </div>
+        </>
+      )}
 
-      {/* 日期列表 */}
+      {/* 列表区：月历模式=本月日期列表；全部模式=按年月折叠 */}
       <div
         className="flex-1 overflow-auto"
         style={{ minHeight: 0, padding: "4px 8px 8px" }}
       >
+        {viewMode === "calendar" ? (
+          <>
         {/* "今天"常驻项（仅在当前浏览月不含今天时显示为独立条目） */}
         {isViewingCurrentMonth &&
           !sortedDates.includes(today) && (
@@ -337,6 +419,56 @@ export function DailyPanel() {
               token={token}
             />
           ))
+        )}
+          </>
+        ) : (
+          <>
+            {allLoading && allEntries.length === 0 ? (
+              <div
+                className="text-center py-6"
+                style={{ color: token.colorTextQuaternary, fontSize: 12 }}
+              >
+                加载中…
+              </div>
+            ) : allEntries.length === 0 ? (
+              <div
+                className="text-center py-6"
+                style={{ color: token.colorTextQuaternary, fontSize: 12 }}
+              >
+                还没有任何日记
+              </div>
+            ) : (
+              groupedAll.map(([ym, entries], gi) => (
+                <MonthGroup
+                  key={ym}
+                  ym={ym}
+                  count={entries.length}
+                  defaultOpen={gi < 2}
+                  token={token}
+                >
+                  {entries.map((e) => (
+                    <DateRow
+                      key={e.daily_date}
+                      date={e.daily_date}
+                      selected={selectedDate === e.daily_date}
+                      isToday={e.daily_date === today}
+                      hasEntry
+                      contextActive={ctx.state.payload?.date === e.daily_date}
+                      onClick={() => goToDate(e.daily_date)}
+                      onContextMenu={(ev) => {
+                        ev.preventDefault();
+                        ctx.open(ev.nativeEvent, {
+                          date: e.daily_date,
+                          hasEntry: true,
+                        });
+                      }}
+                      token={token}
+                    />
+                  ))}
+                </MonthGroup>
+              ))
+            )}
+          </>
         )}
       </div>
     </div>
@@ -451,6 +583,57 @@ function DateRow({
           }}
         />
       )}
+    </div>
+  );
+}
+
+/** 「全部」视图里的「年-月」可折叠分组 */
+function MonthGroup({
+  ym,
+  count,
+  defaultOpen,
+  token,
+  children,
+}: {
+  ym: string;
+  count: number;
+  defaultOpen: boolean;
+  token: {
+    colorTextSecondary: string;
+    colorTextTertiary: string;
+  };
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{ marginBottom: 2 }}>
+      <div
+        onClick={() => setOpen((o) => !o)}
+        className="cursor-pointer select-none"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "6px 6px",
+          fontSize: 12,
+          fontWeight: 600,
+          color: token.colorTextSecondary,
+        }}
+      >
+        <ChevronRight
+          size={13}
+          style={{
+            transform: open ? "rotate(90deg)" : "none",
+            transition: "transform .15s",
+            flexShrink: 0,
+          }}
+        />
+        <span>{monthLabel(ym)}</span>
+        <span style={{ fontWeight: 400, color: token.colorTextTertiary }}>
+          {count} 篇
+        </span>
+      </div>
+      {open && <div>{children}</div>}
     </div>
   );
 }

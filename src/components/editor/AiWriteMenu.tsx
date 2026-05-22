@@ -283,8 +283,16 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
   // bar 本身是钉在 EditorToolbar 正下方的 sticky 横条（CSS 控制 max-height + opacity 过渡），
   // 这里只切换 visible 标志位，不再做任何坐标计算——位置完全静态，跟豆包/划词翻译这类
   // 系统级浮窗物理错开（它们贴选区，咱钉顶部，z-index 也争不过它们，只能位置避开）。
+  //
+  // ⚠️ 鼠标拖选期间不展开 bar（Notion / Google Docs 一致行为）：
+  // bar 是 sticky + 占 40px 布局空间，拖选过程中突然展开会把光标下方的目标行往下挤，
+  // 用户原本指向的字被挤走，选不准。改为：mousedown 期间忽略 selectionUpdate，
+  // mouseup 后再统一判断一次。键盘 shift+方向键选择不走这条路径（无 mousedown），
+  // 保持原来的"边选边显示"行为，没有挤压问题。
   useEffect(() => {
-    function handleSelectionUpdate() {
+    let isDragging = false;
+
+    function evaluateSelection() {
       const { from, to } = editor.state.selection;
       if (from === to) {
         // 无选区 & 不在流式中 → 折叠
@@ -308,9 +316,29 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
       }
     }
 
+    function handleSelectionUpdate() {
+      if (isDragging) return; // 拖选过程中不动，避免布局抖动
+      evaluateSelection();
+    }
+
+    const dom = editor.view.dom;
+    function handleMouseDown() {
+      isDragging = true;
+    }
+    // 用 document 监听 mouseup：用户可能拖出编辑器才松开
+    function handleMouseUp() {
+      if (!isDragging) return;
+      isDragging = false;
+      evaluateSelection();
+    }
+
     editor.on("selectionUpdate", handleSelectionUpdate);
+    dom.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("mouseup", handleMouseUp);
     return () => {
       editor.off("selectionUpdate", handleSelectionUpdate);
+      dom.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("mouseup", handleMouseUp);
     };
   }, [editor, streaming]);
 
