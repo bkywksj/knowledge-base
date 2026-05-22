@@ -239,6 +239,9 @@ mod tests {
                 ext: None,
                 paths: vec![],
             }],
+            projects: vec![],
+            tasks: vec![],
+            task_categories: vec![],
         };
         backend.write_manifest(&manifest).unwrap();
 
@@ -306,6 +309,9 @@ mod tests {
             hash_algo: Some(SyncManifestV1::HASH_ALGO_V2.into()),
             vault: None,
             attachments: vec![],
+            projects: vec![],
+            tasks: vec![],
+            task_categories: vec![],
         };
         backend.write_manifest(&manifest_empty).unwrap();
         let db = Database::init(":memory:").unwrap();

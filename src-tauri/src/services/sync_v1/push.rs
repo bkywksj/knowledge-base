@@ -112,6 +112,9 @@ pub fn push<R: Runtime, E: Emitter<R>>(
         hash_algo: Some(SyncManifestV1::HASH_ALGO_V2.into()),
         vault: None,
         attachments: vec![],
+        projects: vec![],
+        tasks: vec![],
+        task_categories: vec![],
     });
 
     let diff = manifest::diff_manifests(&local, &remote);
@@ -484,6 +487,9 @@ pub fn push<R: Runtime, E: Emitter<R>>(
         hash_algo: Some(SyncManifestV1::HASH_ALGO_V2.into()),
         vault: None,
         attachments: vec![],
+        projects: vec![],
+        tasks: vec![],
+        task_categories: vec![],
     };
 
     const MANIFEST_WRITE_MAX_ATTEMPTS: u32 = 3;
@@ -683,6 +689,9 @@ mod tests {
                     paths: vec![],
                 })
                 .collect(),
+            projects: vec![],
+            tasks: vec![],
+            task_categories: vec![],
         }
     }
 

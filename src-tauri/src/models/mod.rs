@@ -1583,12 +1583,138 @@ pub struct SyncManifestV1 {
     /// 拉端据此算差集决定要下载哪些。空 Vec 时不序列化（旧客户端无字段也兼容）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<AttachmentEntry>,
+    /// Bug 12b：项目跨端同步条目。空 Vec 不序列化保兼容；旧客户端读到也忽略。
+    /// **位置要求**：必须在 `tasks` 之前序列化 —— pull 端按 manifest 顺序处理，
+    /// 任务可能引用项目 UUID，先建项目再处理任务。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projects: Vec<ProjectManifestEntry>,
+    /// Bug 12b：任务跨端同步条目（含子任务，通过 parent_task_uuid 引用父任务）。
+    /// 空 Vec 不序列化保兼容。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tasks: Vec<TaskManifestEntry>,
+    /// Bug 12b：任务分类条目（按 stable_uuid 跨端识别；name 重命名也能识别为同一分类）。
+    /// 空 Vec 不序列化保兼容。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub task_categories: Vec<TaskCategoryManifestEntry>,
 }
 
 impl SyncManifestV1 {
     pub const VERSION: u32 = 1;
     /// 当前 hash 算法标识。pull/push 时检测远端 manifest 的 hash_algo 是否匹配。
     pub const HASH_ALGO_V2: &'static str = "v2";
+}
+
+/// Bug 12b：项目跨端同步条目（v44 引入）。
+///
+/// content_hash = `SHA-256(name + "\n" + description + "\n" + color + "\n" +
+///                         start_date + "\n" + end_date + "\n" + archived + "\n" +
+///                         sort_order)`，决定"内容是否变化"。
+/// `tombstone=true` 表示本端已软删，跨端传播删除事件。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectManifestEntry {
+    /// 稳定 UUID（v42 backfill / create 时生成）
+    pub stable_id: String,
+    pub name: String,
+    pub content_hash: String,
+    pub updated_at: String,
+    /// 描述（None 不序列化）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// 颜色十六进制（"#RRGGBB"）
+    pub color: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_date: Option<String>,
+    #[serde(default)]
+    pub archived: bool,
+    #[serde(default)]
+    pub sort_order: i32,
+    #[serde(default)]
+    pub tombstone: bool,
+}
+
+/// Bug 12b：任务跨端同步条目（v44 引入）。
+///
+/// content_hash = `SHA-256(title + "\n" + description + "\n" + due_date + "\n" +
+///                         start_date + "\n" + status + "\n" + priority + "\n" +
+///                         important + "\n" + project_uuid + "\n" + category_uuid + "\n" +
+///                         kanban_stage + "\n" + parent_task_uuid + "\n" +
+///                         repeat_kind + "\n" + repeat_interval + "\n" +
+///                         repeat_weekdays + "\n" + repeat_until + "\n" + repeat_count)`。
+///
+/// **不跨端**字段：
+/// - `reminded_at`（本地提醒去重；多端各算各的）
+/// - `repeat_done_count`（本地推进，避免双端互相 advance）
+/// - `remind_before_minutes` 也是本地偏好（不同端通知策略可不同）
+/// - `source_batch_id`（本地批次标识）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskManifestEntry {
+    /// 稳定 UUID（v43 backfill / create 时生成）
+    pub stable_id: String,
+    pub title: String,
+    pub content_hash: String,
+    pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// 0=urgent / 1=normal / 2=low
+    #[serde(default)]
+    pub priority: i32,
+    #[serde(default)]
+    pub important: bool,
+    /// 0=todo / 1=done
+    #[serde(default)]
+    pub status: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    /// 工作流看板列：'todo' / 'doing' / 'done'
+    #[serde(default)]
+    pub kanban_stage: String,
+    /// 父任务 UUID（子任务才有；主任务为 None）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_task_uuid: Option<String>,
+    /// 所属项目 UUID（None = 无项目）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_uuid: Option<String>,
+    /// 所属分类 UUID（None = 未分类）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category_uuid: Option<String>,
+    /// 循环规则: "none" / "daily" / "weekly" / "monthly"
+    #[serde(default)]
+    pub repeat_kind: String,
+    #[serde(default)]
+    pub repeat_interval: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat_weekdays: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat_until: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat_count: Option<i32>,
+    #[serde(default)]
+    pub tombstone: bool,
+}
+
+/// Bug 12b：任务分类跨端同步条目（v44 引入）。
+///
+/// 不带 tombstone：分类被删时本端任务 category_id 落 NULL，跨端只关心"存在性 + 改名"。
+/// hash 简单按 `name + "\n" + color + "\n" + icon + "\n" + sort_order` 算。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskCategoryManifestEntry {
+    pub stable_id: String,
+    pub name: String,
+    pub content_hash: String,
+    pub color: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub sort_order: i32,
 }
 
 /// 推送结果

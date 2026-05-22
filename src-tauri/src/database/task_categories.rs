@@ -148,4 +148,52 @@ impl super::Database {
             .ok();
         Ok(id)
     }
+
+    /// 同步 pull 端：按已知 UUID 插入分类（用于远端独有）。
+    /// 名字冲突走 translate_name_conflict 回中文提示。
+    #[allow(dead_code)]
+    pub fn create_task_category_with_uuid(
+        &self,
+        stable_uuid: &str,
+        name: &str,
+        color: &str,
+        icon: Option<&str>,
+        sort_order: i32,
+    ) -> Result<i64, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        conn.execute(
+            "INSERT INTO task_categories (name, color, icon, sort_order, stable_uuid)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![name, color, icon, sort_order, stable_uuid],
+        )
+        .map_err(|e| translate_name_conflict(e, name))?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// 同步 pull 端：按 local_id 全字段对齐远端分类。
+    #[allow(dead_code)]
+    pub fn update_task_category_synced(
+        &self,
+        local_id: i64,
+        name: &str,
+        color: &str,
+        icon: Option<&str>,
+        sort_order: i32,
+    ) -> Result<(), AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        conn.execute(
+            "UPDATE task_categories
+             SET name = ?1, color = ?2, icon = ?3, sort_order = ?4
+             WHERE id = ?5",
+            params![name, color, icon, sort_order, local_id],
+        )
+        .map_err(|e| translate_name_conflict(e, name))?;
+        Ok(())
+    }
 }

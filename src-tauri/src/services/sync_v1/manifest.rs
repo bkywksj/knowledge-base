@@ -9,7 +9,10 @@ use sha2::{Digest, Sha256};
 
 use crate::database::Database;
 use crate::error::AppError;
-use crate::models::{ManifestEntry, SyncManifestV1};
+use crate::models::{
+    ManifestEntry, ProjectManifestEntry, SyncManifestV1, TaskCategoryManifestEntry,
+    TaskManifestEntry,
+};
 use crate::services::hash::sha256_hex;
 
 /// 计算 manifest entry 的 content_hash（v2 算法，SHA-256 hex 小写）
@@ -23,6 +26,89 @@ pub fn content_hash(title: &str, content_hash_hex: &str) -> String {
     h.update(title.as_bytes());
     h.update(b"\n");
     h.update(content_hash_hex.as_bytes());
+    format!("{:x}", h.finalize())
+}
+
+/// 项目 entry 的 content_hash —— 字段全拼接（参与同步的所有字段都纳入）。
+/// 任一字段变动会让 hash 变化，触发跨端 push。
+pub fn project_content_hash(p: &ProjectManifestEntry) -> String {
+    let mut h = Sha256::new();
+    h.update(p.name.as_bytes());
+    h.update(b"\n");
+    h.update(p.description.as_deref().unwrap_or("").as_bytes());
+    h.update(b"\n");
+    h.update(p.color.as_bytes());
+    h.update(b"\n");
+    h.update(p.start_date.as_deref().unwrap_or("").as_bytes());
+    h.update(b"\n");
+    h.update(p.end_date.as_deref().unwrap_or("").as_bytes());
+    h.update(b"\n");
+    h.update(if p.archived { b"1" } else { b"0" });
+    h.update(b"\n");
+    h.update(p.sort_order.to_string().as_bytes());
+    h.update(b"\n");
+    h.update(if p.tombstone { b"1" } else { b"0" });
+    format!("{:x}", h.finalize())
+}
+
+/// 任务 entry 的 content_hash —— 字段全拼接（参与同步的所有字段都纳入）。
+/// 不含 reminded_at / repeat_done_count / remind_before_minutes / source_batch_id
+/// 这些"本地推进 / 本地偏好"字段（避免双端互相 advance 状态）。
+pub fn task_content_hash(t: &TaskManifestEntry) -> String {
+    let mut h = Sha256::new();
+    h.update(t.title.as_bytes());
+    h.update(b"\n");
+    h.update(t.description.as_deref().unwrap_or("").as_bytes());
+    h.update(b"\n");
+    h.update(t.priority.to_string().as_bytes());
+    h.update(b"\n");
+    h.update(if t.important { b"1" } else { b"0" });
+    h.update(b"\n");
+    h.update(t.status.to_string().as_bytes());
+    h.update(b"\n");
+    h.update(t.due_date.as_deref().unwrap_or("").as_bytes());
+    h.update(b"\n");
+    h.update(t.start_date.as_deref().unwrap_or("").as_bytes());
+    h.update(b"\n");
+    h.update(t.completed_at.as_deref().unwrap_or("").as_bytes());
+    h.update(b"\n");
+    h.update(t.kanban_stage.as_bytes());
+    h.update(b"\n");
+    h.update(t.parent_task_uuid.as_deref().unwrap_or("").as_bytes());
+    h.update(b"\n");
+    h.update(t.project_uuid.as_deref().unwrap_or("").as_bytes());
+    h.update(b"\n");
+    h.update(t.category_uuid.as_deref().unwrap_or("").as_bytes());
+    h.update(b"\n");
+    h.update(t.repeat_kind.as_bytes());
+    h.update(b"\n");
+    h.update(t.repeat_interval.to_string().as_bytes());
+    h.update(b"\n");
+    h.update(t.repeat_weekdays.as_deref().unwrap_or("").as_bytes());
+    h.update(b"\n");
+    h.update(t.repeat_until.as_deref().unwrap_or("").as_bytes());
+    h.update(b"\n");
+    h.update(
+        t.repeat_count
+            .map(|n| n.to_string())
+            .unwrap_or_default()
+            .as_bytes(),
+    );
+    h.update(b"\n");
+    h.update(if t.tombstone { b"1" } else { b"0" });
+    format!("{:x}", h.finalize())
+}
+
+/// 任务分类 entry 的 content_hash
+pub fn task_category_content_hash(c: &TaskCategoryManifestEntry) -> String {
+    let mut h = Sha256::new();
+    h.update(c.name.as_bytes());
+    h.update(b"\n");
+    h.update(c.color.as_bytes());
+    h.update(b"\n");
+    h.update(c.icon.as_deref().unwrap_or("").as_bytes());
+    h.update(b"\n");
+    h.update(c.sort_order.to_string().as_bytes());
     format!("{:x}", h.finalize())
 }
 
@@ -239,6 +325,20 @@ pub fn compute_local_manifest(
         }
     };
 
+    // Bug 12b：projects / tasks / task_categories 跨端同步条目
+    let projects = build_project_entries(db).unwrap_or_else(|e| {
+        log::warn!("[manifest] 读取 projects 失败 ({}), 留空", e);
+        Vec::new()
+    });
+    let task_categories = build_task_category_entries(db).unwrap_or_else(|e| {
+        log::warn!("[manifest] 读取 task_categories 失败 ({}), 留空", e);
+        Vec::new()
+    });
+    let tasks = build_task_entries(db).unwrap_or_else(|e| {
+        log::warn!("[manifest] 读取 tasks 失败 ({}), 留空", e);
+        Vec::new()
+    });
+
     Ok(SyncManifestV1 {
         manifest_version: SyncManifestV1::VERSION,
         app_version: app_version.to_string(),
@@ -248,7 +348,130 @@ pub fn compute_local_manifest(
         hash_algo: Some(SyncManifestV1::HASH_ALGO_V2.into()),
         vault: vault_meta,
         attachments,
+        projects,
+        tasks,
+        task_categories,
     })
+}
+
+/// 把 DB 的 projects 行转 ProjectManifestEntry（含墓碑）
+fn build_project_entries(db: &Database) -> Result<Vec<ProjectManifestEntry>, AppError> {
+    let rows = db.list_projects_for_sync()?;
+    let mut entries: Vec<ProjectManifestEntry> = Vec::with_capacity(rows.len());
+    for p in rows {
+        // 没 stable_uuid 的行（理论上 v42 backfill 后不会有）跳过
+        let stable_id = match p.stable_uuid {
+            Some(u) => u,
+            None => continue,
+        };
+        let mut entry = ProjectManifestEntry {
+            stable_id,
+            name: p.name,
+            content_hash: String::new(),
+            updated_at: p.updated_at,
+            description: p.description,
+            color: p.color,
+            start_date: p.start_date,
+            end_date: p.end_date,
+            archived: p.archived,
+            sort_order: p.sort_order,
+            tombstone: p.is_deleted,
+        };
+        entry.content_hash = project_content_hash(&entry);
+        entries.push(entry);
+    }
+    entries.sort_by(|a, b| a.stable_id.cmp(&b.stable_id));
+    Ok(entries)
+}
+
+/// 把 DB 的 task_categories 行转 TaskCategoryManifestEntry。分类不带 tombstone，
+/// 删除时本端任务 category_id 落 NULL，跨端只关心当前存在的分类。
+fn build_task_category_entries(db: &Database) -> Result<Vec<TaskCategoryManifestEntry>, AppError> {
+    let rows = db.list_task_categories()?;
+    let mut entries: Vec<TaskCategoryManifestEntry> = Vec::with_capacity(rows.len());
+    for c in rows {
+        let stable_id = match c.stable_uuid {
+            Some(u) => u,
+            None => continue,
+        };
+        let mut entry = TaskCategoryManifestEntry {
+            stable_id,
+            name: c.name,
+            content_hash: String::new(),
+            color: c.color,
+            icon: c.icon,
+            sort_order: c.sort_order,
+        };
+        entry.content_hash = task_category_content_hash(&entry);
+        entries.push(entry);
+    }
+    entries.sort_by(|a, b| a.stable_id.cmp(&b.stable_id));
+    Ok(entries)
+}
+
+/// 把 DB 的 tasks 行（含主任务 + 子任务）转 TaskManifestEntry。
+/// 子任务通过 parent_task_uuid 引用父任务（拉端先按主任务建好 id 映射，再处理子任务）。
+fn build_task_entries(db: &Database) -> Result<Vec<TaskManifestEntry>, AppError> {
+    let rows = db.list_tasks_for_sync()?;
+    // 建 (local_id → stable_uuid) 映射，给 parent_task_uuid / project_uuid / category_uuid 查值
+    let task_uuid_by_id: HashMap<i64, String> = rows
+        .iter()
+        .filter_map(|t| t.stable_uuid.clone().map(|u| (t.id, u)))
+        .collect();
+    let project_uuid_by_id: HashMap<i64, String> = db
+        .list_projects_for_sync()?
+        .into_iter()
+        .filter_map(|p| p.stable_uuid.map(|u| (p.id, u)))
+        .collect();
+    let category_uuid_by_id: HashMap<i64, String> = db
+        .list_task_categories()?
+        .into_iter()
+        .filter_map(|c| c.stable_uuid.map(|u| (c.id, u)))
+        .collect();
+
+    let mut entries: Vec<TaskManifestEntry> = Vec::with_capacity(rows.len());
+    for t in rows {
+        let stable_id = match t.stable_uuid.clone() {
+            Some(u) => u,
+            None => continue,
+        };
+        let parent_task_uuid = t
+            .parent_task_id
+            .and_then(|pid| task_uuid_by_id.get(&pid).cloned());
+        let project_uuid = t
+            .project_id
+            .and_then(|pid| project_uuid_by_id.get(&pid).cloned());
+        let category_uuid = t
+            .category_id
+            .and_then(|cid| category_uuid_by_id.get(&cid).cloned());
+        let mut entry = TaskManifestEntry {
+            stable_id,
+            title: t.title,
+            content_hash: String::new(),
+            updated_at: t.updated_at,
+            description: t.description,
+            priority: t.priority,
+            important: t.important,
+            status: t.status,
+            due_date: t.due_date,
+            start_date: t.start_date,
+            completed_at: t.completed_at,
+            kanban_stage: t.kanban_stage,
+            parent_task_uuid,
+            project_uuid,
+            category_uuid,
+            repeat_kind: t.repeat_kind,
+            repeat_interval: t.repeat_interval,
+            repeat_weekdays: t.repeat_weekdays,
+            repeat_until: t.repeat_until,
+            repeat_count: t.repeat_count,
+            tombstone: t.is_deleted,
+        };
+        entry.content_hash = task_content_hash(&entry);
+        entries.push(entry);
+    }
+    entries.sort_by(|a, b| a.stable_id.cmp(&b.stable_id));
+    Ok(entries)
 }
 
 /// 反查某 folder_id 的祖先链 → "工作/周报" 风格路径；根层为空串
@@ -293,6 +516,18 @@ pub struct ManifestDiff {
     /// 本地有但远端 tombstone 标记删除 → to_delete_local
     pub stats_total_local: usize,
     pub stats_total_remote: usize,
+    // ─── Bug 12b：projects/tasks/task_categories 跨端同步 ───
+    /// 本地较新（或本地独有）的项目 → push 写远端 manifest
+    pub projects_to_push: Vec<ProjectManifestEntry>,
+    /// 远端较新（或远端独有）的项目 → pull 写本地
+    pub projects_to_pull: Vec<ProjectManifestEntry>,
+    /// 本地较新（或本地独有）的任务 → push
+    pub tasks_to_push: Vec<TaskManifestEntry>,
+    /// 远端较新（或远端独有）的任务 → pull
+    pub tasks_to_pull: Vec<TaskManifestEntry>,
+    /// 任务分类（无 tombstone；按 content_hash 不同判别）
+    pub task_categories_to_push: Vec<TaskCategoryManifestEntry>,
+    pub task_categories_to_pull: Vec<TaskCategoryManifestEntry>,
 }
 
 #[derive(Debug)]
@@ -381,6 +616,13 @@ pub fn merge_manifests(local: &SyncManifestV1, remote: &SyncManifestV1) -> SyncM
     // 稳定排序方便 manifest 文本 diff 友好
     merged_attachments.sort_by(|a, b| a.hash.cmp(&b.hash));
 
+    // Bug 12b：projects / tasks / task_categories 的 merge 策略
+    // —— 与 entries 同款：以 stable_id 为键 outer-join 双方，updated_at 新者赢，
+    //    本地 tombstone 总是写出（让远端跟着删）。
+    let projects = merge_project_entries(&local.projects, &remote.projects);
+    let tasks = merge_task_entries(&local.tasks, &remote.tasks);
+    let task_categories = merge_task_category_entries(&local.task_categories, &remote.task_categories);
+
     SyncManifestV1 {
         manifest_version: local.manifest_version,
         app_version: local.app_version.clone(),
@@ -392,7 +634,72 @@ pub fn merge_manifests(local: &SyncManifestV1, remote: &SyncManifestV1) -> SyncM
         // 上层 pull 流程在 read_manifest 时单独 import 写入本机 app_config）
         vault: local.vault.clone(),
         attachments: merged_attachments,
+        projects,
+        tasks,
+        task_categories,
     }
+}
+
+/// 合并双方 projects：按 stable_id outer-join，updated_at 新者赢。
+fn merge_project_entries(
+    local: &[ProjectManifestEntry],
+    remote: &[ProjectManifestEntry],
+) -> Vec<ProjectManifestEntry> {
+    let mut map: HashMap<String, ProjectManifestEntry> = HashMap::with_capacity(local.len() + remote.len());
+    for e in local {
+        map.insert(e.stable_id.clone(), e.clone());
+    }
+    for re in remote {
+        match map.get(&re.stable_id) {
+            Some(le) if le.updated_at >= re.updated_at => {}
+            _ => {
+                map.insert(re.stable_id.clone(), re.clone());
+            }
+        }
+    }
+    let mut out: Vec<_> = map.into_values().collect();
+    out.sort_by(|a, b| a.stable_id.cmp(&b.stable_id));
+    out
+}
+
+fn merge_task_entries(
+    local: &[TaskManifestEntry],
+    remote: &[TaskManifestEntry],
+) -> Vec<TaskManifestEntry> {
+    let mut map: HashMap<String, TaskManifestEntry> = HashMap::with_capacity(local.len() + remote.len());
+    for e in local {
+        map.insert(e.stable_id.clone(), e.clone());
+    }
+    for re in remote {
+        match map.get(&re.stable_id) {
+            Some(le) if le.updated_at >= re.updated_at => {}
+            _ => {
+                map.insert(re.stable_id.clone(), re.clone());
+            }
+        }
+    }
+    let mut out: Vec<_> = map.into_values().collect();
+    out.sort_by(|a, b| a.stable_id.cmp(&b.stable_id));
+    out
+}
+
+fn merge_task_category_entries(
+    local: &[TaskCategoryManifestEntry],
+    remote: &[TaskCategoryManifestEntry],
+) -> Vec<TaskCategoryManifestEntry> {
+    let mut map: HashMap<String, TaskCategoryManifestEntry> = HashMap::with_capacity(local.len() + remote.len());
+    for e in local {
+        map.insert(e.stable_id.clone(), e.clone());
+    }
+    // 分类没有 updated_at —— 取本地版本即可（本端视角权威，name 改名以后下次本地写）
+    for re in remote {
+        if !map.contains_key(&re.stable_id) {
+            map.insert(re.stable_id.clone(), re.clone());
+        }
+    }
+    let mut out: Vec<_> = map.into_values().collect();
+    out.sort_by(|a, b| a.stable_id.cmp(&b.stable_id));
+    out
 }
 
 /// 比对本地 vs 远端 manifest
@@ -507,7 +814,110 @@ pub fn diff_manifests(local: &SyncManifestV1, remote: &SyncManifestV1) -> Manife
         }
     }
 
+    // ─── Bug 12b：projects / tasks / task_categories 的 diff（last-write-wins）───
+    diff_projects(&local.projects, &remote.projects, &mut diff);
+    diff_tasks(&local.tasks, &remote.tasks, &mut diff);
+    diff_task_categories(&local.task_categories, &remote.task_categories, &mut diff);
+
     diff
+}
+
+/// 项目 diff：last-write-wins
+/// - 仅本地有 → push（含本地 tombstone：让远端跟着删）
+/// - 仅远端有 → pull（含远端 tombstone：本地需要软删）
+/// - 双方都有：content_hash 不同 → updated_at 新者赢；相等忽略
+fn diff_projects(
+    local: &[ProjectManifestEntry],
+    remote: &[ProjectManifestEntry],
+    diff: &mut ManifestDiff,
+) {
+    let remote_map: HashMap<&str, &ProjectManifestEntry> =
+        remote.iter().map(|e| (e.stable_id.as_str(), e)).collect();
+    let local_map: HashMap<&str, &ProjectManifestEntry> =
+        local.iter().map(|e| (e.stable_id.as_str(), e)).collect();
+    // 本地视角
+    for le in local {
+        match remote_map.get(le.stable_id.as_str()) {
+            None => diff.projects_to_push.push(le.clone()),
+            Some(re) => {
+                if le.content_hash == re.content_hash {
+                    continue;
+                }
+                if le.updated_at >= re.updated_at {
+                    diff.projects_to_push.push(le.clone());
+                } else {
+                    diff.projects_to_pull.push((*re).clone());
+                }
+            }
+        }
+    }
+    // 远端独有
+    for re in remote {
+        if !local_map.contains_key(re.stable_id.as_str()) {
+            diff.projects_to_pull.push(re.clone());
+        }
+    }
+}
+
+/// 任务 diff（同 projects 套路）
+fn diff_tasks(
+    local: &[TaskManifestEntry],
+    remote: &[TaskManifestEntry],
+    diff: &mut ManifestDiff,
+) {
+    let remote_map: HashMap<&str, &TaskManifestEntry> =
+        remote.iter().map(|e| (e.stable_id.as_str(), e)).collect();
+    let local_map: HashMap<&str, &TaskManifestEntry> =
+        local.iter().map(|e| (e.stable_id.as_str(), e)).collect();
+    for le in local {
+        match remote_map.get(le.stable_id.as_str()) {
+            None => diff.tasks_to_push.push(le.clone()),
+            Some(re) => {
+                if le.content_hash == re.content_hash {
+                    continue;
+                }
+                if le.updated_at >= re.updated_at {
+                    diff.tasks_to_push.push(le.clone());
+                } else {
+                    diff.tasks_to_pull.push((*re).clone());
+                }
+            }
+        }
+    }
+    for re in remote {
+        if !local_map.contains_key(re.stable_id.as_str()) {
+            diff.tasks_to_pull.push(re.clone());
+        }
+    }
+}
+
+/// 任务分类 diff：分类无 updated_at，按 content_hash 不同时一律 push（本端视角权威）
+/// + 远端独有 → pull。
+fn diff_task_categories(
+    local: &[TaskCategoryManifestEntry],
+    remote: &[TaskCategoryManifestEntry],
+    diff: &mut ManifestDiff,
+) {
+    let remote_map: HashMap<&str, &TaskCategoryManifestEntry> =
+        remote.iter().map(|e| (e.stable_id.as_str(), e)).collect();
+    let local_map: HashMap<&str, &TaskCategoryManifestEntry> =
+        local.iter().map(|e| (e.stable_id.as_str(), e)).collect();
+    for le in local {
+        match remote_map.get(le.stable_id.as_str()) {
+            None => diff.task_categories_to_push.push(le.clone()),
+            Some(re) => {
+                if le.content_hash != re.content_hash {
+                    // 本端权威：分类无 updated_at，所以 push 把本地版本写过去
+                    diff.task_categories_to_push.push(le.clone());
+                }
+            }
+        }
+    }
+    for re in remote {
+        if !local_map.contains_key(re.stable_id.as_str()) {
+            diff.task_categories_to_pull.push(re.clone());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -569,6 +979,9 @@ mod tests {
             hash_algo: Some(SyncManifestV1::HASH_ALGO_V2.into()),
             vault: None,
             attachments: vec![],
+            projects: vec![],
+            tasks: vec![],
+            task_categories: vec![],
         }
     }
 
@@ -1079,6 +1492,9 @@ mod tests {
             hash_algo: None,
             vault: None,
             attachments: vec![],
+            projects: vec![],
+            tasks: vec![],
+            task_categories: vec![],
         };
         let json = serde_json::to_string(&m).unwrap();
         assert!(!json.contains("hashAlgo"), "None 时不应输出该字段; got = {}", json);
@@ -1586,5 +2002,206 @@ mod tests {
         let e = m.entries.iter().find(|e| e.title == "密").unwrap();
         assert!(e.encrypted);
         assert!(e.tags.is_none(), "加密笔记 tags 应 None（不明文同步）");
+    }
+
+    // ───────── Bug 12b：projects / tasks / task_categories diff 测试 ─────────
+
+    fn proj(id: &str, hash: &str, ts: &str, tombstone: bool) -> ProjectManifestEntry {
+        ProjectManifestEntry {
+            stable_id: id.into(),
+            name: format!("P-{}", id),
+            content_hash: hash.into(),
+            updated_at: ts.into(),
+            description: None,
+            color: "#1677ff".into(),
+            start_date: None,
+            end_date: None,
+            archived: false,
+            sort_order: 0,
+            tombstone,
+        }
+    }
+
+    fn task(id: &str, hash: &str, ts: &str, tombstone: bool) -> TaskManifestEntry {
+        TaskManifestEntry {
+            stable_id: id.into(),
+            title: format!("T-{}", id),
+            content_hash: hash.into(),
+            updated_at: ts.into(),
+            description: None,
+            priority: 1,
+            important: false,
+            status: 0,
+            due_date: None,
+            start_date: None,
+            completed_at: None,
+            kanban_stage: "todo".into(),
+            parent_task_uuid: None,
+            project_uuid: None,
+            category_uuid: None,
+            repeat_kind: "none".into(),
+            repeat_interval: 1,
+            repeat_weekdays: None,
+            repeat_until: None,
+            repeat_count: None,
+            tombstone,
+        }
+    }
+
+    fn cat(id: &str, hash: &str) -> TaskCategoryManifestEntry {
+        TaskCategoryManifestEntry {
+            stable_id: id.into(),
+            name: format!("C-{}", id),
+            content_hash: hash.into(),
+            color: "#1677ff".into(),
+            icon: None,
+            sort_order: 0,
+        }
+    }
+
+    /// 本地独有项目 → push；远端独有项目 → pull
+    #[test]
+    fn diff_projects_outer_join() {
+        let mut local = manifest(vec![]);
+        local.projects = vec![proj("p1", "h1", "2026-01-01", false)];
+        let mut remote = manifest(vec![]);
+        remote.projects = vec![proj("p2", "h2", "2026-01-01", false)];
+
+        let d = diff_manifests(&local, &remote);
+        assert_eq!(d.projects_to_push.len(), 1);
+        assert_eq!(d.projects_to_push[0].stable_id, "p1");
+        assert_eq!(d.projects_to_pull.len(), 1);
+        assert_eq!(d.projects_to_pull[0].stable_id, "p2");
+    }
+
+    /// 同 UUID 双方都有，hash 不同：远端 updated_at 较新 → pull；本地较新 → push
+    #[test]
+    fn diff_projects_last_write_wins() {
+        // 远端较新
+        {
+            let mut local = manifest(vec![]);
+            local.projects = vec![proj("p", "h_local", "2026-01-01", false)];
+            let mut remote = manifest(vec![]);
+            remote.projects = vec![proj("p", "h_remote", "2026-02-01", false)];
+            let d = diff_manifests(&local, &remote);
+            assert_eq!(d.projects_to_pull.len(), 1);
+            assert_eq!(d.projects_to_push.len(), 0);
+        }
+        // 本地较新
+        {
+            let mut local = manifest(vec![]);
+            local.projects = vec![proj("p", "h_local", "2026-03-01", false)];
+            let mut remote = manifest(vec![]);
+            remote.projects = vec![proj("p", "h_remote", "2026-02-01", false)];
+            let d = diff_manifests(&local, &remote);
+            assert_eq!(d.projects_to_push.len(), 1);
+            assert_eq!(d.projects_to_pull.len(), 0);
+        }
+    }
+
+    /// 同 UUID 双方 hash 相同 → 不进 push/pull（等价跳过）
+    #[test]
+    fn diff_projects_skip_when_hash_equal() {
+        let mut local = manifest(vec![]);
+        local.projects = vec![proj("p", "h_same", "2026-01-01", false)];
+        let mut remote = manifest(vec![]);
+        remote.projects = vec![proj("p", "h_same", "2026-02-01", false)];
+        let d = diff_manifests(&local, &remote);
+        assert!(d.projects_to_push.is_empty());
+        assert!(d.projects_to_pull.is_empty());
+    }
+
+    /// 本地 tombstone 也要 push（让远端跟着软删）
+    #[test]
+    fn diff_projects_push_local_tombstone() {
+        let mut local = manifest(vec![]);
+        local.projects = vec![proj("p", "h_del", "2026-03-01", true)];
+        let mut remote = manifest(vec![]);
+        remote.projects = vec![proj("p", "h_live", "2026-02-01", false)];
+        let d = diff_manifests(&local, &remote);
+        assert_eq!(d.projects_to_push.len(), 1);
+        assert!(d.projects_to_push[0].tombstone, "本地软删 → 远端跟随");
+    }
+
+    /// 任务 diff 同 projects 走 last-write-wins
+    #[test]
+    fn diff_tasks_last_write_wins() {
+        let mut local = manifest(vec![]);
+        local.tasks = vec![task("t", "h_l", "2026-01-01", false)];
+        let mut remote = manifest(vec![]);
+        remote.tasks = vec![task("t", "h_r", "2026-02-01", false)];
+        let d = diff_manifests(&local, &remote);
+        assert_eq!(d.tasks_to_pull.len(), 1);
+        assert_eq!(d.tasks_to_push.len(), 0);
+    }
+
+    /// 分类无 updated_at → hash 不等本地权威，push 把本地版本写过去
+    #[test]
+    fn diff_task_categories_local_wins_on_diff() {
+        let mut local = manifest(vec![]);
+        local.task_categories = vec![cat("c", "h_local")];
+        let mut remote = manifest(vec![]);
+        remote.task_categories = vec![cat("c", "h_remote")];
+        let d = diff_manifests(&local, &remote);
+        assert_eq!(d.task_categories_to_push.len(), 1);
+        assert_eq!(d.task_categories_to_push[0].content_hash, "h_local");
+        assert!(d.task_categories_to_pull.is_empty());
+    }
+
+    /// 分类远端独有 → pull
+    #[test]
+    fn diff_task_categories_remote_only_pulled() {
+        let local = manifest(vec![]);
+        let mut remote = manifest(vec![]);
+        remote.task_categories = vec![cat("c", "h")];
+        let d = diff_manifests(&local, &remote);
+        assert_eq!(d.task_categories_to_pull.len(), 1);
+    }
+
+    /// merge：projects 取较新 updated_at（last-write-wins）+ 远端独有保留
+    #[test]
+    fn merge_projects_keeps_newer_and_remote_only() {
+        let mut local = manifest(vec![]);
+        local.projects = vec![
+            proj("p1", "h1_local", "2026-02-01", false),
+            proj("p2", "h2_local", "2026-01-01", false),
+        ];
+        let mut remote = manifest(vec![]);
+        remote.projects = vec![
+            proj("p1", "h1_remote", "2026-01-01", false), // 本地较新
+            proj("p2", "h2_remote", "2026-03-01", false), // 远端较新
+            proj("p3", "h3_remote", "2026-01-01", false), // 远端独有
+        ];
+        let merged = merge_manifests(&local, &remote);
+        let by_id: HashMap<&str, &ProjectManifestEntry> = merged
+            .projects
+            .iter()
+            .map(|p| (p.stable_id.as_str(), p))
+            .collect();
+        assert_eq!(by_id.get("p1").unwrap().content_hash, "h1_local");
+        assert_eq!(by_id.get("p2").unwrap().content_hash, "h2_remote");
+        assert!(by_id.contains_key("p3"), "远端独有项目必须保留");
+    }
+
+    /// manifest JSON 往返：projects / tasks / task_categories 不丢失
+    #[test]
+    fn manifest_json_roundtrip_includes_new_fields() {
+        let mut m = manifest(vec![]);
+        m.projects = vec![proj("p1", "h1", "2026-01-01", false)];
+        m.tasks = vec![task("t1", "th", "2026-01-01", false)];
+        m.task_categories = vec![cat("c1", "ch")];
+
+        let s = serde_json::to_string(&m).unwrap();
+        // 序列化后键名应是 camelCase（manifestVersion / taskCategories）
+        assert!(s.contains("\"taskCategories\""), "字段名应是 camelCase: {}", s);
+        assert!(s.contains("\"stableId\""), "stable_id 序列化为 stableId: {}", s);
+
+        let back: SyncManifestV1 = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.projects.len(), 1);
+        assert_eq!(back.projects[0].stable_id, "p1");
+        assert_eq!(back.tasks.len(), 1);
+        assert_eq!(back.tasks[0].stable_id, "t1");
+        assert_eq!(back.task_categories.len(), 1);
+        assert_eq!(back.task_categories[0].stable_id, "c1");
     }
 }

@@ -1056,6 +1056,93 @@ impl super::Database {
         tx.commit()?;
         Ok(task_id)
     }
+
+    /// 同步 pull 端 Pass 2：仅回填 parent_task_id（用远端 updated_at 避免 bump）。
+    #[allow(dead_code)]
+    pub fn set_task_parent_synced(
+        &self,
+        local_id: i64,
+        parent_task_id: Option<i64>,
+        updated_at: &str,
+    ) -> Result<(), AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        conn.execute(
+            "UPDATE tasks SET parent_task_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![parent_task_id, updated_at, local_id],
+        )?;
+        Ok(())
+    }
+
+    /// 同步 pull 端用：按 local_id 把任务全字段对齐远端 entry，updated_at 用远端值
+    /// （避免双端 push/pull 互相 bump 引起震荡）。
+    ///
+    /// 不跨端字段保持本地原样：reminded_at / repeat_done_count /
+    /// remind_before_minutes / source_batch_id（不在 SET 列表里）。
+    #[allow(dead_code)]
+    pub fn update_task_synced(
+        &self,
+        local_id: i64,
+        title: &str,
+        description: Option<&str>,
+        priority: i32,
+        important: bool,
+        status: i32,
+        due_date: Option<&str>,
+        start_date: Option<&str>,
+        completed_at: Option<&str>,
+        kanban_stage: &str,
+        category_id: Option<i64>,
+        project_id: Option<i64>,
+        parent_task_id: Option<i64>,
+        repeat_kind: &str,
+        repeat_interval: i32,
+        repeat_weekdays: Option<&str>,
+        repeat_until: Option<&str>,
+        repeat_count: Option<i32>,
+        is_deleted: bool,
+        updated_at: &str,
+    ) -> Result<(), AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        conn.execute(
+            "UPDATE tasks
+             SET title = ?1, description = ?2, priority = ?3, important = ?4, status = ?5,
+                 due_date = ?6, start_date = ?7, completed_at = ?8, kanban_stage = ?9,
+                 category_id = ?10, project_id = ?11, parent_task_id = ?12,
+                 repeat_kind = ?13, repeat_interval = ?14, repeat_weekdays = ?15,
+                 repeat_until = ?16, repeat_count = ?17, is_deleted = ?18,
+                 updated_at = ?19
+             WHERE id = ?20",
+            params![
+                title,
+                description,
+                priority,
+                if important { 1 } else { 0 },
+                status,
+                due_date,
+                start_date,
+                completed_at,
+                kanban_stage,
+                category_id,
+                project_id,
+                parent_task_id,
+                repeat_kind,
+                repeat_interval,
+                repeat_weekdays,
+                repeat_until,
+                repeat_count,
+                if is_deleted { 1 } else { 0 },
+                updated_at,
+                local_id,
+            ],
+        )?;
+        Ok(())
+    }
 }
 
 fn insert_link(conn: &Connection, task_id: i64, input: &TaskLinkInput) -> Result<(), AppError> {

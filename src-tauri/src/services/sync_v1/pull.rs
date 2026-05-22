@@ -569,6 +569,20 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
         }
     }
 
+    // ── Bug 12b：projects / task_categories / tasks 三组的 pull
+    //
+    // 顺序很重要：
+    //   1) task_categories  — tasks 可能引用 category_id
+    //   2) projects         — tasks 可能引用 project_id
+    //   3) tasks            — 引用以上 + 可能引用 parent_task_id（同批，按 uuid 解析两遍）
+    //
+    // 整体策略：上面 diff_manifests 已经按 last-write-wins 把要 pull 的条目筛进
+    // diff.projects_to_pull / tasks_to_pull / task_categories_to_pull。
+    // 这里只负责把每条远端 entry 实际落到本地（create or update）。
+    apply_pulled_task_categories(db, &diff.task_categories_to_pull, &mut result);
+    apply_pulled_projects(db, &diff.projects_to_pull, &mut result);
+    apply_pulled_tasks(db, &diff.tasks_to_pull, &mut result);
+
     db.touch_sync_backend_pull(backend_id)?;
 
     let _ = emitter.emit(
@@ -589,6 +603,294 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
     );
 
     Ok(result)
+}
+
+/// pull → 任务分类：远端独有 → create_with_uuid；双方都有 → update_synced（按 name 等字段对齐）。
+fn apply_pulled_task_categories(
+    db: &Database,
+    entries: &[crate::models::TaskCategoryManifestEntry],
+    result: &mut SyncPullResult,
+) {
+    for e in entries {
+        let icon_ref = e.icon.as_deref();
+        match db.get_task_category_id_by_stable_uuid(&e.stable_id) {
+            Ok(Some(local_id)) => {
+                if let Err(err) =
+                    db.update_task_category_synced(local_id, &e.name, &e.color, icon_ref, e.sort_order)
+                {
+                    result
+                        .errors
+                        .push(format!("更新本地任务分类 {} 失败: {}", e.name, err));
+                }
+            }
+            Ok(None) => {
+                if let Err(err) = db.create_task_category_with_uuid(
+                    &e.stable_id,
+                    &e.name,
+                    &e.color,
+                    icon_ref,
+                    e.sort_order,
+                ) {
+                    result
+                        .errors
+                        .push(format!("创建本地任务分类 {} 失败: {}", e.name, err));
+                }
+            }
+            Err(err) => result
+                .errors
+                .push(format!("查任务分类 UUID 失败 {}: {}", e.name, err)),
+        }
+    }
+}
+
+/// pull → 项目：远端独有 → create_with_uuid（含 tombstone：直接以 is_deleted=1 创建占位行，
+/// 这样后续 task 拉到本端时 project_uuid → project_id 解析仍然能命中）；
+/// 双方都有 → update_project_synced 全字段对齐。
+fn apply_pulled_projects(
+    db: &Database,
+    entries: &[crate::models::ProjectManifestEntry],
+    result: &mut SyncPullResult,
+) {
+    use crate::models::CreateProjectInput;
+    for e in entries {
+        let input = CreateProjectInput {
+            name: e.name.clone(),
+            description: e.description.clone(),
+            color: Some(e.color.clone()),
+            start_date: e.start_date.clone(),
+            end_date: e.end_date.clone(),
+        };
+        match db.get_project_id_by_stable_uuid(&e.stable_id) {
+            Ok(Some(local_id)) => {
+                if let Err(err) = db.update_project_synced(
+                    local_id,
+                    &input,
+                    e.archived,
+                    e.sort_order,
+                    e.tombstone,
+                    &e.updated_at,
+                ) {
+                    result
+                        .errors
+                        .push(format!("更新本地项目 {} 失败: {}", e.name, err));
+                }
+            }
+            Ok(None) => {
+                match db.create_project_with_uuid(
+                    &input,
+                    &e.stable_id,
+                    e.archived,
+                    e.sort_order,
+                    Some(&e.updated_at),
+                ) {
+                    Ok(new_id) if e.tombstone => {
+                        // 远端是 tombstone → 本地创建后立刻软删，保持 UUID 占位但不可见
+                        if let Err(err) = db.update_project_synced(
+                            new_id,
+                            &input,
+                            e.archived,
+                            e.sort_order,
+                            true,
+                            &e.updated_at,
+                        ) {
+                            result.errors.push(format!(
+                                "对新建项目 {} 落 tombstone 失败: {}",
+                                e.name, err
+                            ));
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(err) => result
+                        .errors
+                        .push(format!("创建本地项目 {} 失败: {}", e.name, err)),
+                }
+            }
+            Err(err) => result
+                .errors
+                .push(format!("查项目 UUID 失败 {}: {}", e.name, err)),
+        }
+    }
+}
+
+/// pull → 任务：分两轮处理（解决 parent_task_uuid 同批引用问题）
+/// - Pass 1：先创建/更新所有任务（parent_task_id 暂置 None）
+/// - Pass 2：再回填 parent_task_id（此时所有 uuid 都已有 local_id）
+///
+/// project_uuid / category_uuid 在 Pass 1 中按需查找本地表（前置 apply_pulled_projects
+/// / apply_pulled_task_categories 已保证此时它们已落库）。
+fn apply_pulled_tasks(
+    db: &Database,
+    entries: &[crate::models::TaskManifestEntry],
+    result: &mut SyncPullResult,
+) {
+    use crate::models::CreateTaskInput;
+    if entries.is_empty() {
+        return;
+    }
+    // Pass 1：写入主字段
+    for e in entries {
+        // project_uuid → project_id
+        let project_id = match e.project_uuid.as_deref() {
+            Some(u) => match db.get_project_id_by_stable_uuid(u) {
+                Ok(id) => id,
+                Err(err) => {
+                    result.errors.push(format!(
+                        "任务 {} 查 project_uuid 失败: {}",
+                        e.title, err
+                    ));
+                    None
+                }
+            },
+            None => None,
+        };
+        // category_uuid → category_id
+        let category_id = match e.category_uuid.as_deref() {
+            Some(u) => match db.get_task_category_id_by_stable_uuid(u) {
+                Ok(id) => id,
+                Err(err) => {
+                    result.errors.push(format!(
+                        "任务 {} 查 category_uuid 失败: {}",
+                        e.title, err
+                    ));
+                    None
+                }
+            },
+            None => None,
+        };
+
+        let input = CreateTaskInput {
+            title: e.title.clone(),
+            description: e.description.clone(),
+            priority: Some(e.priority),
+            important: Some(e.important),
+            due_date: e.due_date.clone(),
+            remind_before_minutes: None,
+            links: None,
+            repeat_kind: Some(e.repeat_kind.clone()),
+            repeat_interval: Some(e.repeat_interval),
+            repeat_weekdays: e.repeat_weekdays.clone(),
+            repeat_until: e.repeat_until.clone(),
+            repeat_count: e.repeat_count,
+            source_batch_id: None,
+            category_id,
+            parent_task_id: None, // Pass 2 回填
+            project_id,
+            start_date: e.start_date.clone(),
+        };
+
+        match db.get_task_id_by_stable_uuid(&e.stable_id) {
+            Ok(Some(local_id)) => {
+                if let Err(err) = db.update_task_synced(
+                    local_id,
+                    &e.title,
+                    e.description.as_deref(),
+                    e.priority,
+                    e.important,
+                    e.status,
+                    e.due_date.as_deref(),
+                    e.start_date.as_deref(),
+                    e.completed_at.as_deref(),
+                    &e.kanban_stage,
+                    category_id,
+                    project_id,
+                    None, // Pass 2 回填
+                    &e.repeat_kind,
+                    e.repeat_interval,
+                    e.repeat_weekdays.as_deref(),
+                    e.repeat_until.as_deref(),
+                    e.repeat_count,
+                    e.tombstone,
+                    &e.updated_at,
+                ) {
+                    result
+                        .errors
+                        .push(format!("更新本地任务 {} 失败: {}", e.title, err));
+                }
+            }
+            Ok(None) => {
+                match db.create_task_with_uuid(
+                    &input,
+                    &e.stable_id,
+                    &e.updated_at,
+                    e.status,
+                    e.completed_at.as_deref(),
+                    &e.kanban_stage,
+                ) {
+                    Ok(new_id) if e.tombstone => {
+                        // 远端 tombstone → 本端创建后立刻软删（保留 UUID 占位）
+                        if let Err(err) = db.update_task_synced(
+                            new_id,
+                            &e.title,
+                            e.description.as_deref(),
+                            e.priority,
+                            e.important,
+                            e.status,
+                            e.due_date.as_deref(),
+                            e.start_date.as_deref(),
+                            e.completed_at.as_deref(),
+                            &e.kanban_stage,
+                            category_id,
+                            project_id,
+                            None,
+                            &e.repeat_kind,
+                            e.repeat_interval,
+                            e.repeat_weekdays.as_deref(),
+                            e.repeat_until.as_deref(),
+                            e.repeat_count,
+                            true,
+                            &e.updated_at,
+                        ) {
+                            result.errors.push(format!(
+                                "对新建任务 {} 落 tombstone 失败: {}",
+                                e.title, err
+                            ));
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(err) => result
+                        .errors
+                        .push(format!("创建本地任务 {} 失败: {}", e.title, err)),
+                }
+            }
+            Err(err) => result
+                .errors
+                .push(format!("查任务 UUID 失败 {}: {}", e.title, err)),
+        }
+    }
+    // Pass 2：回填 parent_task_id（拿到所有 task 的 local_id 后再处理）
+    for e in entries {
+        let parent_uuid = match e.parent_task_uuid.as_deref() {
+            Some(u) if !u.is_empty() => u,
+            _ => continue,
+        };
+        let parent_local = match db.get_task_id_by_stable_uuid(parent_uuid) {
+            Ok(Some(id)) => id,
+            Ok(None) => {
+                result.errors.push(format!(
+                    "任务 {} 的父任务 UUID {} 本地未找到（同批未拉到？）",
+                    e.title, parent_uuid
+                ));
+                continue;
+            }
+            Err(err) => {
+                result.errors.push(format!(
+                    "查父任务 UUID {} 失败: {}",
+                    parent_uuid, err
+                ));
+                continue;
+            }
+        };
+        if let Ok(Some(local_id)) = db.get_task_id_by_stable_uuid(&e.stable_id) {
+            // 只回写 parent_task_id 列（避免覆盖 Pass 1 已写的内容 / 触发 updated_at 变动用远端值）
+            if let Err(err) = db.set_task_parent_synced(local_id, Some(parent_local), &e.updated_at)
+            {
+                result.errors.push(format!(
+                    "回填任务 {} 的 parent_task_id 失败: {}",
+                    e.title, err
+                ));
+            }
+        }
+    }
 }
 
 /// T-S051: 判定一条 to_pull 笔记是否"本地远端各改各的"
@@ -653,5 +955,247 @@ mod tests {
         assert!(!should_overwrite_tags("2026-01-01 00:00:00", Some("2026-02-01 00:00:00")));
         // 本地 updated_at 缺失 → 兜底覆盖
         assert!(should_overwrite_tags("2026-01-01 00:00:00", None));
+    }
+
+    // ───────── Bug 12b：apply_pulled_* 端到端测试 ─────────
+
+    use crate::models::{
+        ProjectManifestEntry, TaskCategoryManifestEntry, TaskManifestEntry,
+    };
+
+    fn mk_project_entry(uuid: &str, name: &str, ts: &str, tombstone: bool) -> ProjectManifestEntry {
+        ProjectManifestEntry {
+            stable_id: uuid.into(),
+            name: name.into(),
+            content_hash: format!("h-{}", uuid),
+            updated_at: ts.into(),
+            description: None,
+            color: "#ff0000".into(),
+            start_date: None,
+            end_date: None,
+            archived: false,
+            sort_order: 0,
+            tombstone,
+        }
+    }
+
+    fn mk_task_entry(
+        uuid: &str,
+        title: &str,
+        ts: &str,
+        project_uuid: Option<&str>,
+        category_uuid: Option<&str>,
+        parent_uuid: Option<&str>,
+        tombstone: bool,
+    ) -> TaskManifestEntry {
+        TaskManifestEntry {
+            stable_id: uuid.into(),
+            title: title.into(),
+            content_hash: format!("h-{}", uuid),
+            updated_at: ts.into(),
+            description: None,
+            priority: 1,
+            important: false,
+            status: 0,
+            due_date: None,
+            start_date: None,
+            completed_at: None,
+            kanban_stage: "todo".into(),
+            parent_task_uuid: parent_uuid.map(String::from),
+            project_uuid: project_uuid.map(String::from),
+            category_uuid: category_uuid.map(String::from),
+            repeat_kind: "none".into(),
+            repeat_interval: 1,
+            repeat_weekdays: None,
+            repeat_until: None,
+            repeat_count: None,
+            tombstone,
+        }
+    }
+
+    fn mk_category_entry(uuid: &str, name: &str) -> TaskCategoryManifestEntry {
+        TaskCategoryManifestEntry {
+            stable_id: uuid.into(),
+            name: name.into(),
+            content_hash: format!("h-{}", uuid),
+            color: "#1677ff".into(),
+            icon: None,
+            sort_order: 0,
+        }
+    }
+
+    /// apply_pulled_task_categories：远端独有 → 本地创建；本地已有 → 改名对齐
+    #[test]
+    fn apply_pulled_task_categories_creates_then_updates() {
+        let db = Database::init(":memory:").unwrap();
+        let mut result = SyncPullResult::default();
+
+        // 1) 首次：远端独有 → 本地新建
+        apply_pulled_task_categories(
+            &db,
+            &[mk_category_entry("uuid-c1", "工作")],
+            &mut result,
+        );
+        let cats = db.list_task_categories().unwrap();
+        let c1 = cats
+            .iter()
+            .find(|c| c.stable_uuid.as_deref() == Some("uuid-c1"))
+            .expect("uuid-c1 应已创建");
+        assert_eq!(c1.name, "工作");
+
+        // 2) 同 uuid 再次拉到（改名）→ 本端更新
+        let mut entry = mk_category_entry("uuid-c1", "学习");
+        entry.color = "#00ff00".into();
+        apply_pulled_task_categories(&db, &[entry], &mut result);
+        let cats2 = db.list_task_categories().unwrap();
+        let c2 = cats2
+            .iter()
+            .find(|c| c.stable_uuid.as_deref() == Some("uuid-c1"))
+            .unwrap();
+        assert_eq!(c2.name, "学习");
+        assert_eq!(c2.color, "#00ff00");
+        assert!(result.errors.is_empty(), "应无错误: {:?}", result.errors);
+    }
+
+    /// apply_pulled_projects：远端独有 → 本地创建，updated_at 用远端值；
+    /// 远端 tombstone 项目 → 本地占位但 is_deleted=1
+    #[test]
+    fn apply_pulled_projects_creates_with_remote_ts_and_handles_tombstone() {
+        let db = Database::init(":memory:").unwrap();
+        let mut result = SyncPullResult::default();
+
+        apply_pulled_projects(
+            &db,
+            &[
+                mk_project_entry("uuid-p1", "项目A", "2026-03-01 10:00:00", false),
+                mk_project_entry("uuid-p2", "项目B", "2026-03-02 10:00:00", true), // 远端已删
+            ],
+            &mut result,
+        );
+
+        // p1 应正常出现在 list_projects 里
+        let p1_id = db.get_project_id_by_stable_uuid("uuid-p1").unwrap();
+        assert!(p1_id.is_some(), "uuid-p1 应已创建");
+        let live = db.list_projects(true).unwrap();
+        assert!(
+            live.iter().any(|p| p.stable_uuid.as_deref() == Some("uuid-p1")),
+            "p1 应在 live list（is_deleted=0）"
+        );
+
+        // p2 应在 _for_sync 里（含墓碑）但不在 list_projects（过滤了 is_deleted=1）
+        let p2_id = db.get_project_id_by_stable_uuid("uuid-p2").unwrap();
+        assert!(p2_id.is_some(), "uuid-p2 应占位创建");
+        let live_p2 = live.iter().any(|p| p.stable_uuid.as_deref() == Some("uuid-p2"));
+        assert!(!live_p2, "p2 在 live list 中应不可见（tombstone）");
+        let all_for_sync = db.list_projects_for_sync().unwrap();
+        let p2 = all_for_sync
+            .iter()
+            .find(|p| p.stable_uuid.as_deref() == Some("uuid-p2"))
+            .unwrap();
+        assert!(p2.is_deleted, "p2 应为 tombstone（is_deleted=1）");
+
+        // updated_at 应用远端值
+        let p1 = all_for_sync
+            .iter()
+            .find(|p| p.stable_uuid.as_deref() == Some("uuid-p1"))
+            .unwrap();
+        assert_eq!(p1.updated_at, "2026-03-01 10:00:00");
+
+        assert!(result.errors.is_empty(), "应无错误: {:?}", result.errors);
+    }
+
+    /// apply_pulled_tasks：完整链路 — 先拉 categories + projects，再拉 task，
+    /// 验证 category_id / project_id / parent_task_id（同批引用） 全部解析正确
+    #[test]
+    fn apply_pulled_tasks_resolves_uuid_references_and_parent_in_same_batch() {
+        let db = Database::init(":memory:").unwrap();
+        let mut result = SyncPullResult::default();
+
+        // 1) 先准备好 category + project（pull 顺序保证）
+        apply_pulled_task_categories(&db, &[mk_category_entry("c-uuid", "工作")], &mut result);
+        apply_pulled_projects(
+            &db,
+            &[mk_project_entry("p-uuid", "项目A", "2026-03-01 10:00:00", false)],
+            &mut result,
+        );
+
+        // 2) 同批两条任务：父 + 子
+        let parent = mk_task_entry(
+            "tk-parent",
+            "父任务",
+            "2026-03-01 11:00:00",
+            Some("p-uuid"),
+            Some("c-uuid"),
+            None,
+            false,
+        );
+        // 子任务在数组中出现在父任务之前 → 验证 Pass 2 回填能跨顺序工作
+        let child = mk_task_entry(
+            "tk-child",
+            "子任务",
+            "2026-03-01 11:00:01",
+            Some("p-uuid"),
+            None,
+            Some("tk-parent"),
+            false,
+        );
+        apply_pulled_tasks(&db, &[child, parent], &mut result);
+
+        assert!(result.errors.is_empty(), "应无错误: {:?}", result.errors);
+
+        // 3) 验证
+        let p_local_id = db.get_project_id_by_stable_uuid("p-uuid").unwrap().unwrap();
+        let c_local_id = db
+            .get_task_category_id_by_stable_uuid("c-uuid")
+            .unwrap()
+            .unwrap();
+        let parent_local = db.get_task_id_by_stable_uuid("tk-parent").unwrap().unwrap();
+
+        let all = db.list_tasks_for_sync().unwrap();
+        let parent_t = all
+            .iter()
+            .find(|t| t.stable_uuid.as_deref() == Some("tk-parent"))
+            .unwrap();
+        assert_eq!(parent_t.project_id, Some(p_local_id));
+        assert_eq!(parent_t.category_id, Some(c_local_id));
+        assert_eq!(parent_t.parent_task_id, None);
+        assert_eq!(parent_t.updated_at, "2026-03-01 11:00:00");
+
+        let child_t = all
+            .iter()
+            .find(|t| t.stable_uuid.as_deref() == Some("tk-child"))
+            .unwrap();
+        assert_eq!(child_t.project_id, Some(p_local_id));
+        assert_eq!(
+            child_t.parent_task_id,
+            Some(parent_local),
+            "Pass 2 应已回填 parent_task_id"
+        );
+    }
+
+    /// 远端 tombstone 任务 → 本地占位 + is_deleted=1
+    #[test]
+    fn apply_pulled_tasks_handles_remote_tombstone() {
+        let db = Database::init(":memory:").unwrap();
+        let mut result = SyncPullResult::default();
+
+        let t = mk_task_entry(
+            "tk-x",
+            "被删的任务",
+            "2026-04-01 10:00:00",
+            None,
+            None,
+            None,
+            true, // tombstone
+        );
+        apply_pulled_tasks(&db, &[t], &mut result);
+
+        let all = db.list_tasks_for_sync().unwrap();
+        let row = all
+            .iter()
+            .find(|t| t.stable_uuid.as_deref() == Some("tk-x"))
+            .expect("应占位创建");
+        assert!(row.is_deleted, "远端 tombstone → 本地软删");
+        assert!(result.errors.is_empty(), "应无错误: {:?}", result.errors);
     }
 }
