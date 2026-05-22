@@ -80,17 +80,36 @@ function unescapeMd(s: string): string {
   return out;
 }
 
-/** 从 HTML / Markdown 内容中提取 [[笔记标题]] 链接（带 markdown 反转义） */
-function extractWikiLinks(content: string): string[] {
+/** 从 HTML / Markdown 内容中提取 wiki 链接（带 markdown 反转义）。
+ *
+ * 识别两种形式：
+ *   - `[[标题]]`       → `{ title: "标题", id: null }`     旧 / 手敲形式
+ *   - `[[标题|123]]`   → `{ title: "标题", id: 123 }`      候选下拉选中后的形式，ID 稳定锚点
+ *
+ * 保存反链时优先用 `id`，没有 `id` 才走 `findIdByTitle` 模糊查（详见保存逻辑）。
+ * 同名笔记重名 / 改名后旧引用失效的问题都由 ID 锚点解决。
+ */
+function extractWikiLinks(
+  content: string,
+): Array<{ title: string; id: number | null }> {
   // 先 stripHtml（兼容 HTML），再 unescapeMd（兼容 markdown 序列化形式）
   const text = unescapeMd(stripHtml(content));
-  const regex = /\[\[([^\]]+)\]\]/g;
-  const titles: string[] = [];
-  let match;
+  // 标题段排除 `|`，让 ID 独立捕获；ID 必须纯数字（用户标题里可能有 `|`，不能误识别）
+  const regex = /\[\[([^\[\]\n|]+)(?:\|(\d+))?\]\]/g;
+  const seen = new Set<string>();
+  const out: Array<{ title: string; id: number | null }> = [];
+  let match: RegExpExecArray | null;
   while ((match = regex.exec(text)) !== null) {
-    titles.push(match[1].trim());
+    const title = match[1].trim();
+    if (!title) continue;
+    const id = match[2] ? Number(match[2]) : null;
+    // 去重键：title + id（同名既有带 ID 又有不带 ID 的会保留两条，建边优先 ID）
+    const key = `${title.toLowerCase()}|${id ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ title, id });
   }
-  return [...new Set(titles)]; // 去重
+  return out;
 }
 
 /** 反向链接面板
@@ -966,24 +985,30 @@ function DesktopNoteEditorPage() {
       // 内容已落库，清掉草稿快照
       clearDraft(noteId);
 
-      // 解析 [[]] 链接并同步
-      const wikiTitles = extractWikiLinks(content);
+      // 解析 wiki 链接并同步反链
+      // 优先级：[[标题|ID]] 显式 ID → 直接用；否则按标题模糊查 ID（旧 / 手敲形式）
+      const wikiRefs = extractWikiLinks(content);
       const missing: string[] = [];
-      if (wikiTitles.length > 0) {
-        const targetIds: number[] = [];
-        for (const t of wikiTitles) {
+      if (wikiRefs.length > 0) {
+        const targetIdSet = new Set<number>();
+        for (const ref of wikiRefs) {
+          if (ref.id != null) {
+            // 显式 ID 锚点：标题改了 / 重名都不影响（稳定锚点的核心价值）
+            targetIdSet.add(ref.id);
+            continue;
+          }
           try {
-            const id = await linkApi.findIdByTitle(t);
+            const id = await linkApi.findIdByTitle(ref.title);
             if (id != null) {
-              targetIds.push(id);
+              targetIdSet.add(id);
             } else {
-              missing.push(t);
+              missing.push(ref.title);
             }
           } catch {
-            missing.push(t);
+            missing.push(ref.title);
           }
         }
-        await linkApi.syncLinks(noteId, targetIds).catch(() => {});
+        await linkApi.syncLinks(noteId, [...targetIdSet]).catch(() => {});
       } else {
         await linkApi.syncLinks(noteId, []).catch(() => {});
       }
@@ -1327,23 +1352,40 @@ function DesktopNoteEditorPage() {
     }
   }
 
-  /** Ctrl/Cmd + 点击 [[标题]] 时跳转到对应笔记 */
-  async function handleWikiLinkClick(wikiTitle: string) {
+  /** Ctrl/Cmd + 点击 wiki 链接时跳转到对应笔记
+   *
+   * - `wikiId` 传入时（`[[标题|ID]]` 锚点形式）→ 直接按 ID 跳，跳过所有标题查找逻辑。
+   *   标题改了 / 同名重名都不影响精准跳转。这是 ID 锚点的核心价值。
+   * - 仅 `wikiTitle`（旧 / 手敲 `[[标题]]` 形式）→ 走原来的精确 + 模糊匹配 + 消歧路径。
+   */
+  async function handleWikiLinkClick(wikiTitle: string, wikiId?: number) {
     try {
+      // 显式 ID 锚点路径：直接按 ID 跳
+      if (wikiId != null && Number.isFinite(wikiId)) {
+        const target = await noteApi.get(wikiId).catch(() => null);
+        if (target) {
+          await ensureSavedBeforeNavigate();
+          navigate(`/notes/${target.id}`);
+          return;
+        }
+        // ID 指向已删除 / 不可见笔记 → fallback 到按标题模糊查（让用户至少看到相近的）
+        message.warning(`原链接笔记已不存在，按标题「${wikiTitle}」尝试模糊查找`);
+      }
+
       const results = await linkApi.searchTargets(wikiTitle, 20);
-      const exactMatches = results.filter(([, name]) => name === wikiTitle);
+      const exactMatches = results.filter((r) => r.title === wikiTitle);
 
       // 精确命中 1 条：直接跳
       if (exactMatches.length === 1) {
         await ensureSavedBeforeNavigate();
-        navigate(`/notes/${exactMatches[0][0]}`);
+        navigate(`/notes/${exactMatches[0].id}`);
         return;
       }
 
       // 精确命中多条：弹消歧 Modal
       if (exactMatches.length > 1) {
         const notes = await Promise.all(
-          exactMatches.map(([id]) => noteApi.get(id).catch(() => null)),
+          exactMatches.map((r) => noteApi.get(r.id).catch(() => null)),
         );
         const valid = notes.filter((n): n is Note => n !== null);
         if (valid.length === 1) {
@@ -1360,8 +1402,8 @@ function DesktopNoteEditorPage() {
       // 无精确匹配但有模糊匹配：跳转相近的第一条
       if (results.length > 0) {
         await ensureSavedBeforeNavigate();
-        navigate(`/notes/${results[0][0]}`);
-        message.info(`未找到同名笔记，跳转到相近的「${results[0][1]}」`);
+        navigate(`/notes/${results[0].id}`);
+        message.info(`未找到同名笔记，跳转到相近的「${results[0].title}」`);
         return;
       }
 

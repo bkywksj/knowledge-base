@@ -111,17 +111,25 @@ export const WikiLinkSuggestion = Extension.create({
           const keyword = query.trim();
           try {
             const results = await linkApi.searchTargets(keyword, 8);
-            return results.map(([id, title]) => ({ id, title }));
+            return results.map((r) => ({
+              id: r.id,
+              title: r.title,
+              folderName: r.folderName,
+            }));
           } catch {
             return [];
           }
         },
+        // 插入「字面 ID 锚点」形式：`[[标题|ID]]`
+        // ID 是稳定锚点，目标笔记改名/重名都不影响反链解析（详见
+        // database/links.rs::extract_wiki_refs 的优先级注释）。
+        // 编辑器里 WikiLinkDecoration 会用 CSS 把 `|ID` 段隐藏，视觉上仍是 `[[标题]]`。
         command: ({ editor, range, props }) => {
           const pickedItem = props as WikiSuggestionItem;
           editor
             .chain()
             .focus()
-            .insertContentAt(range, `[[${pickedItem.title}]] `)
+            .insertContentAt(range, `[[${pickedItem.title}|${pickedItem.id}]] `)
             .run();
         },
         render: () => {

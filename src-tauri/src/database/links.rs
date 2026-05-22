@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use crate::models::{GraphData, GraphEdge, GraphNode, NoteLink};
+use crate::models::{GraphData, GraphEdge, GraphNode, NoteLink, WikiLinkSuggestItem};
 
 /// 去 markdown 转义：把 `\X`（X 为非字母数字）中的 `\` 丢弃。
 ///
@@ -39,12 +39,21 @@ pub(crate) fn normalize_title(s: &str) -> String {
         .to_lowercase()
 }
 
-/// 从笔记 HTML 内容里提取所有 `[[标题]]` —— 与前端 `extractWikiLinks` 对齐。
+/// 从笔记 HTML 内容里提取所有 `[[标题]]` / `[[标题|ID]]` —— 与前端 `extractWikiLinks` 对齐。
 ///
-/// 实现：极简 stripHtml → markdown 反转义 → 扫描 `[[ ... ]]` 配对 → trim + 去重。
-/// 反转义这步至关重要：DB 里的 wiki 链接经常是 `\[\[标题\]\]` 这种被 markdown 整体转义的形式，
-/// 不去转义就根本扫描不到 `[[`。所有边界操作都在 char 边界（`[`/`]` 是 ASCII）。
-fn extract_wiki_titles(html: &str) -> Vec<String> {
+/// 返回 `(title, explicit_id)` 列表，按出现顺序去重。
+/// - `[[标题|123]]`：带 ID 锚点（推荐形式，由 wiki 候选下拉选中后生成）
+///   → `("标题", Some(123))`
+/// - `[[标题]]`：旧的"靠 normalize_title 查 ID"形式，作为 fallback
+///   → `("标题", None)`
+///
+/// 实现：极简 stripHtml → markdown 反转义 → 扫描 `[[ ... ]]` 配对 → 切分 `|`。
+/// 反转义这步至关重要：DB 里的 wiki 链接经常是 `\[\[标题\]\]` 这种被 markdown 整体转义的形式。
+/// 所有边界操作都在 char 边界（`[`/`]`/`|` 都是 ASCII）。
+///
+/// 去重规则：以 `(normalize_title(title), explicit_id)` 为键去重。
+/// 同一 title 既出现 `[[X]]` 也出现 `[[X|N]]` 时两条都保留（后者更可靠，建边时优先）。
+pub(crate) fn extract_wiki_refs(html: &str) -> Vec<(String, Option<i64>)> {
     // 极简 stripHtml
     let mut text = String::with_capacity(html.len());
     let mut in_tag = false;
@@ -63,25 +72,96 @@ fn extract_wiki_titles(html: &str) -> Vec<String> {
     // 关键：去 markdown 转义，让 `\[\[…\]\]` 还原为 `[[…]]`
     let text = unescape_md(&text);
 
-    let mut titles: Vec<String> = Vec::new();
+    let mut refs: Vec<(String, Option<i64>)> = Vec::new();
+    let mut seen: std::collections::HashSet<(String, Option<i64>)> =
+        std::collections::HashSet::new();
     let mut rest: &str = text.as_str();
     while let Some(open) = rest.find("[[") {
         let after = &rest[open + 2..];
         match after.find("]]") {
             Some(close) => {
-                let title = after[..close].trim();
-                if !title.is_empty() && !titles.iter().any(|t| t == title) {
-                    titles.push(title.to_string());
+                let inside = &after[..close];
+                // 切分 `标题|ID` —— 仅识别"竖线 + 纯数字"形式
+                let (title_part, id_part) = match inside.rfind('|') {
+                    Some(p) => {
+                        let id_str = inside[p + 1..].trim();
+                        if !id_str.is_empty() && id_str.chars().all(|c| c.is_ascii_digit()) {
+                            (inside[..p].trim(), id_str.parse::<i64>().ok())
+                        } else {
+                            // 竖线后不是纯数字 → 整体当 title（用户标题里可能有 `|`）
+                            (inside.trim(), None)
+                        }
+                    }
+                    None => (inside.trim(), None),
+                };
+                if !title_part.is_empty() {
+                    let key = (normalize_title(title_part), id_part);
+                    if seen.insert(key) {
+                        refs.push((title_part.to_string(), id_part));
+                    }
                 }
                 rest = &after[close + 2..];
             }
             None => break,
         }
     }
-    titles
+    refs
 }
 
 impl super::Database {
+    /// 从笔记 content 解析 `[[wiki]]` 并写入 note_links（sync v1 pull 后补齐反链用）。
+    ///
+    /// 跟前端 handleSave 时的"extractWikiLinks + findIdByTitle + syncLinks"链路同等效果，
+    /// 但完全在 Rust 侧一次完成，避免 pull 完之后用户不打开笔记就拿不到反链。
+    ///
+    /// 解析规则与 [`extract_wiki_refs`] / `compute_graph` 完全一致：
+    /// - `[[Title|N]]` 显式 ID 命中 + 目标可见 → 用该 id
+    /// - explicit_id 指向已删除 / 隐藏 → 当作无目标，不退化到同名笔记（避免静默指错）
+    /// - `[[Title]]` 走 `find_note_id_by_title_loose`（normalize_title 精确匹配）
+    /// - 防自引用 + 去重
+    pub fn rebuild_note_links_from_content(
+        &self,
+        source_id: i64,
+        content: &str,
+    ) -> Result<(), AppError> {
+        let refs = extract_wiki_refs(content);
+        if refs.is_empty() {
+            // 空 refs 也要走一遍 sync_note_links 把旧的清干净
+            return self.sync_note_links(source_id, Vec::new());
+        }
+        // explicit_id 走存在性校验，过滤掉已删 / 隐藏
+        let mut target_ids: Vec<i64> = Vec::with_capacity(refs.len());
+        let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        for (title, explicit_id) in refs {
+            let candidate = match explicit_id {
+                Some(id) => {
+                    // 校验目标存在且 visible
+                    let conn = self
+                        .conn
+                        .lock()
+                        .map_err(|e| AppError::Custom(e.to_string()))?;
+                    let visible: Option<i64> = conn
+                        .query_row(
+                            "SELECT id FROM notes
+                             WHERE id = ?1 AND is_deleted = 0 AND is_hidden = 0",
+                            rusqlite::params![id],
+                            |row| row.get(0),
+                        )
+                        .ok();
+                    drop(conn);
+                    visible
+                }
+                None => self.find_note_id_by_title_loose(&title)?,
+            };
+            if let Some(tid) = candidate {
+                if tid != source_id && seen.insert(tid) {
+                    target_ids.push(tid);
+                }
+            }
+        }
+        self.sync_note_links(source_id, target_ids)
+    }
+
     /// 同步笔记的出链（先删除旧链接，再插入新链接）
     pub fn sync_note_links(&self, source_id: i64, target_ids: Vec<i64>) -> Result<(), AppError> {
         let conn = self
@@ -154,11 +234,14 @@ impl super::Database {
     }
 
     /// 根据标题模糊搜索笔记（用于 [[ 自动补全）
+    ///
+    /// 返回带 folder_name 的 `WikiLinkSuggestItem`，让前端候选下拉在**重名标题**时
+    /// 用直接父文件夹名做消歧义提示。LEFT JOIN folders：无父文件夹时 folder_name = NULL。
     pub fn search_notes_by_title(
         &self,
         keyword: &str,
         limit: usize,
-    ) -> Result<Vec<(i64, String)>, AppError> {
+    ) -> Result<Vec<WikiLinkSuggestItem>, AppError> {
         let conn = self
             .conn
             .lock()
@@ -167,11 +250,20 @@ impl super::Database {
         // T-003: wiki link 候选下拉不暴露隐藏笔记标题（弱保护）；
         // 用户已经写好的 [[隐藏笔记]] 跳转仍可用（走 find_note_id_by_title_loose，那里不过滤）。
         let mut stmt = conn.prepare(
-            "SELECT id, title FROM notes WHERE title LIKE ?1 AND is_deleted = 0 AND is_hidden = 0 ORDER BY updated_at DESC LIMIT ?2",
+            "SELECT n.id, n.title, f.name
+             FROM notes n
+             LEFT JOIN folders f ON f.id = n.folder_id
+             WHERE n.title LIKE ?1 AND n.is_deleted = 0 AND n.is_hidden = 0
+             ORDER BY n.updated_at DESC
+             LIMIT ?2",
         )?;
         let results = stmt
             .query_map(rusqlite::params![pattern, limit as i64], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                Ok(WikiLinkSuggestItem {
+                    id: row.get::<_, i64>(0)?,
+                    title: row.get::<_, String>(1)?,
+                    folder_name: row.get::<_, Option<String>>(2)?,
+                })
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(results)
@@ -226,34 +318,46 @@ impl super::Database {
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
-        // 建索引：normalized_title → id（同名取第一个，与 find_note_id_by_title_loose 行为一致）
+        // 建索引：
+        //   - title_to_id：normalized_title → id（同名取最新的；fallback 路径用）
+        //   - valid_ids：所有可见笔记 ID 集合（带 ID 锚点要校验目标还存在）
         let mut title_to_id: HashMap<String, i64> = HashMap::with_capacity(rows.len());
+        let mut valid_ids: HashSet<i64> = HashSet::with_capacity(rows.len());
         for r in &rows {
             title_to_id.entry(normalize_title(&r.title)).or_insert(r.id);
+            valid_ids.insert(r.id);
         }
 
-        // 扫 content 提取 wiki，匹配建边
+        // 扫 content 提取 wiki ref，匹配建边
+        // 优先级：explicit_id（且目标可见）> normalize_title fallback
         let mut edges: Vec<GraphEdge> = Vec::new();
         let mut link_count: HashMap<i64, usize> = HashMap::new();
         let mut seen: HashSet<(i64, i64)> = HashSet::new();
         for r in &rows {
-            let titles = extract_wiki_titles(&r.content);
-            for t in titles {
-                let norm = normalize_title(&t);
-                if let Some(&target_id) = title_to_id.get(&norm) {
-                    if target_id == r.id {
-                        continue; // 防自引用
-                    }
-                    if !seen.insert((r.id, target_id)) {
-                        continue; // 同 (source, target) 在 content 中可能出现多次，去重
-                    }
-                    edges.push(GraphEdge {
-                        source: r.id,
-                        target: target_id,
-                    });
-                    *link_count.entry(r.id).or_insert(0) += 1;
-                    *link_count.entry(target_id).or_insert(0) += 1;
+            let refs = extract_wiki_refs(&r.content);
+            for (title, explicit_id) in refs {
+                let target_id = match explicit_id {
+                    Some(id) if valid_ids.contains(&id) => Some(id),
+                    // explicit_id 指向已删除 / 隐藏的笔记 → 不要 fallback 到同名笔记，
+                    // 避免出现「想引用 A1，A1 删了，边却悄悄指向同名 A2」的诡异行为
+                    Some(_) => None,
+                    None => title_to_id.get(&normalize_title(&title)).copied(),
+                };
+                let Some(target_id) = target_id else {
+                    continue;
+                };
+                if target_id == r.id {
+                    continue; // 防自引用
                 }
+                if !seen.insert((r.id, target_id)) {
+                    continue; // 同 (source, target) 在 content 中可能出现多次，去重
+                }
+                edges.push(GraphEdge {
+                    source: r.id,
+                    target: target_id,
+                });
+                *link_count.entry(r.id).or_insert(0) += 1;
+                *link_count.entry(target_id).or_insert(0) += 1;
             }
         }
 
@@ -294,36 +398,195 @@ mod tests {
     }
 
     #[test]
-    fn extract_wiki_titles_basic() {
-        let titles = extract_wiki_titles("正文 [[A]] 中间 [[B]] 末尾");
-        assert_eq!(titles, vec!["A".to_string(), "B".to_string()]);
+    fn extract_wiki_refs_basic() {
+        let refs = extract_wiki_refs("正文 [[A]] 中间 [[B]] 末尾");
+        assert_eq!(refs, vec![("A".to_string(), None), ("B".to_string(), None)]);
     }
 
     #[test]
-    fn extract_wiki_titles_handles_escaped_brackets() {
+    fn extract_wiki_refs_handles_escaped_brackets() {
         // 核心回归点：TaskItem 序列化 markdown 时把 [[X]] 写成 \[\[X\]\]
         // 修复前会扫不到任何 wiki-link，反链整体失效
-        let titles = extract_wiki_titles(r"<p>任务 \[\[测试2\]\] 完成</p>");
-        assert_eq!(titles, vec!["测试2".to_string()]);
+        let refs = extract_wiki_refs(r"<p>任务 \[\[测试2\]\] 完成</p>");
+        assert_eq!(refs, vec![("测试2".to_string(), None)]);
     }
 
     #[test]
-    fn extract_wiki_titles_handles_escaped_underscore_inside() {
+    fn extract_wiki_refs_handles_escaped_underscore_inside() {
         // 标题里有 _ 时，markdown 会转义成 \_
-        let titles = extract_wiki_titles(r"<p>查看 [[A\_B]]</p>");
-        assert_eq!(titles, vec!["A_B".to_string()]);
+        let refs = extract_wiki_refs(r"<p>查看 [[A\_B]]</p>");
+        assert_eq!(refs, vec![("A_B".to_string(), None)]);
     }
 
     #[test]
-    fn extract_wiki_titles_dedupes() {
-        let titles = extract_wiki_titles("[[A]] [[A]] [[B]] [[A]]");
-        assert_eq!(titles, vec!["A".to_string(), "B".to_string()]);
+    fn extract_wiki_refs_dedupes() {
+        let refs = extract_wiki_refs("[[A]] [[A]] [[B]] [[A]]");
+        assert_eq!(refs, vec![("A".to_string(), None), ("B".to_string(), None)]);
     }
 
     #[test]
-    fn extract_wiki_titles_skips_unclosed() {
+    fn extract_wiki_refs_skips_unclosed() {
         // 未配对的 [[ 不应卡死或误识别
-        let titles = extract_wiki_titles("正文 [[unclosed 后续");
-        assert!(titles.is_empty());
+        let refs = extract_wiki_refs("正文 [[unclosed 后续");
+        assert!(refs.is_empty());
+    }
+
+    // ─── 新增：带 ID 锚点的形式 ──────────────────
+
+    #[test]
+    fn extract_wiki_refs_with_explicit_id() {
+        // 候选下拉选中后插入的标准形式：[[标题|ID]]
+        let refs = extract_wiki_refs("看 [[张三|42]] 和 [[李四|7]]");
+        assert_eq!(
+            refs,
+            vec![("张三".to_string(), Some(42)), ("李四".to_string(), Some(7))]
+        );
+    }
+
+    #[test]
+    fn extract_wiki_refs_id_with_escaped_brackets() {
+        // markdown 序列化转义后仍应正确识别 ID
+        let refs = extract_wiki_refs(r"<p>\[\[标题\|42\]\]</p>");
+        assert_eq!(refs, vec![("标题".to_string(), Some(42))]);
+    }
+
+    // ─── rebuild_note_links_from_content（sync v1 pull 后反链重建）─────────
+
+    use crate::models::NoteInput;
+
+    fn mem_db() -> crate::database::Database {
+        crate::database::Database::init(":memory:").unwrap()
+    }
+
+    #[test]
+    fn rebuild_links_creates_edge_by_title() {
+        let db = mem_db();
+        let a = db
+            .create_note(&NoteInput {
+                title: "A".into(),
+                content: "x".into(),
+                folder_id: None,
+            })
+            .unwrap();
+        let b = db
+            .create_note(&NoteInput {
+                title: "B".into(),
+                content: "x".into(),
+                folder_id: None,
+            })
+            .unwrap();
+        // 让 A 的内容指向 [[B]]
+        db.rebuild_note_links_from_content(a.id, "看 [[B]]")
+            .unwrap();
+        // B 的反链应能查到 A
+        let backlinks = db.get_backlinks(b.id).unwrap();
+        assert_eq!(backlinks.len(), 1);
+        assert_eq!(backlinks[0].source_id, a.id);
+    }
+
+    #[test]
+    fn rebuild_links_clears_when_no_refs() {
+        let db = mem_db();
+        let a = db
+            .create_note(&NoteInput {
+                title: "A".into(),
+                content: "x".into(),
+                folder_id: None,
+            })
+            .unwrap();
+        let b = db
+            .create_note(&NoteInput {
+                title: "B".into(),
+                content: "x".into(),
+                folder_id: None,
+            })
+            .unwrap();
+        db.rebuild_note_links_from_content(a.id, "[[B]]").unwrap();
+        assert_eq!(db.get_backlinks(b.id).unwrap().len(), 1);
+        // 重建为空内容 → 反链清零
+        db.rebuild_note_links_from_content(a.id, "现在没有引用了")
+            .unwrap();
+        assert!(db.get_backlinks(b.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rebuild_links_skips_invisible_explicit_id() {
+        let db = mem_db();
+        let a = db
+            .create_note(&NoteInput {
+                title: "A".into(),
+                content: "x".into(),
+                folder_id: None,
+            })
+            .unwrap();
+        let b = db
+            .create_note(&NoteInput {
+                title: "B".into(),
+                content: "x".into(),
+                folder_id: None,
+            })
+            .unwrap();
+        // 删掉 B 后用 explicit ID 引用 → 不应建边（避免静默指错）
+        db.soft_delete_note(b.id).unwrap();
+        db.rebuild_note_links_from_content(a.id, &format!("[[B|{}]]", b.id))
+            .unwrap();
+        assert!(db.get_backlinks(b.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rebuild_links_dedupes_and_skips_self() {
+        let db = mem_db();
+        let a = db
+            .create_note(&NoteInput {
+                title: "A".into(),
+                content: "x".into(),
+                folder_id: None,
+            })
+            .unwrap();
+        let b = db
+            .create_note(&NoteInput {
+                title: "B".into(),
+                content: "x".into(),
+                folder_id: None,
+            })
+            .unwrap();
+        // 多次引用 B + 一次自引用 A → 只产生一条 A→B
+        db.rebuild_note_links_from_content(a.id, "[[B]] 又 [[B]] 又 [[A]]")
+            .unwrap();
+        let backlinks_b = db.get_backlinks(b.id).unwrap();
+        assert_eq!(backlinks_b.len(), 1);
+        let backlinks_a = db.get_backlinks(a.id).unwrap();
+        assert!(backlinks_a.is_empty(), "不能有自环边");
+    }
+
+    #[test]
+    fn extract_wiki_refs_pipe_in_title_no_id() {
+        // 用户手敲的标题里含 `|`：竖线后不是纯数字 → 当成 title 一部分
+        let refs = extract_wiki_refs("[[A | B]]");
+        assert_eq!(refs, vec![("A | B".to_string(), None)]);
+    }
+
+    #[test]
+    fn extract_wiki_refs_id_takes_rightmost_pipe() {
+        // 标题里有 `|`，最后是 `|N` 形式 → 切最右侧竖线
+        let refs = extract_wiki_refs("[[A|B|42]]");
+        assert_eq!(refs, vec![("A|B".to_string(), Some(42))]);
+    }
+
+    #[test]
+    fn extract_wiki_refs_mixed_dedupe_keeps_both() {
+        // 同一标题既有带 ID 又有不带 ID → 两条都保留（建边时优先用带 ID 的）
+        let refs = extract_wiki_refs("[[张三]] 又出现 [[张三|9]]");
+        assert_eq!(
+            refs,
+            vec![("张三".to_string(), None), ("张三".to_string(), Some(9))]
+        );
+    }
+
+    #[test]
+    fn extract_wiki_refs_non_numeric_id_falls_back_to_title() {
+        // 竖线后是非数字 → 不识别为 ID，整体当 title
+        let refs = extract_wiki_refs("[[标题|abc]]");
+        assert_eq!(refs, vec![("标题|abc".to_string(), None)]);
     }
 }

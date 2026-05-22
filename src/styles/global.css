@@ -988,6 +988,16 @@ body,
   text-decoration: underline;
 }
 
+/* 带 ID 锚点 `[[标题|123]]` 中的 `|123` 段：视觉隐藏，保留字符
+   字符仍在文档内（光标按字符顺序穿越、复制粘贴一并带走），
+   只是渲染时占 0 宽，用户看到的是 `[[标题]]`。
+   ID 是稳定锚点，目标笔记改名/重名都不影响反链解析。 */
+.tiptap .wiki-link-id-anchor {
+  font-size: 0;
+  /* font-size:0 而不是 display:none：后者会让 ProseMirror 计算光标位置时
+     完全跳过这段，导致选区边界异常；font-size:0 保持文档结构同时 0 宽。 */
+}
+
 /* 笔记 Tab 栏的滚动容器 — 隐藏 webkit 滚动条 */
 .tabbar-scroller::-webkit-scrollbar {
   display: none;

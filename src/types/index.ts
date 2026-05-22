@@ -165,6 +165,14 @@ export interface NoteLink {
   updated_at: string;
 }
 
+/** wiki 链接候选项（`[[` 补全下拉用，带 folder 名做重名消歧义） */
+export interface WikiLinkSuggestItem {
+  id: number;
+  title: string;
+  /** 直接父文件夹名；无父文件夹为 null */
+  folderName: string | null;
+}
+
 // ─── 知识图谱 ─────────────────────────────────
 
 /** 图谱节点 */

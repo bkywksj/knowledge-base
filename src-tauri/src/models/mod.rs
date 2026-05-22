@@ -186,6 +186,19 @@ pub struct NoteLink {
     pub updated_at: String,
 }
 
+/// wiki 链接候选项（`[[` 补全下拉用）
+///
+/// 比旧的 `(id, title)` 元组多了 `folder_name`，让前端在**重名标题**时
+/// 用直接父文件夹名做消歧义提示（如「张三 · 项目A」「张三 · 项目B」）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WikiLinkSuggestItem {
+    pub id: i64,
+    pub title: String,
+    /// 直接父文件夹名；笔记不在任何文件夹下时为 None
+    pub folder_name: Option<String>,
+}
+
 // ─── 知识图谱 ─────────────────────────────────
 
 /// 图谱节点（笔记）

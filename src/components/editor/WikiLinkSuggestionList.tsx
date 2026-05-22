@@ -1,10 +1,12 @@
 import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
 import { theme as antdTheme } from "antd";
-import { NotebookText } from "lucide-react";
+import { NotebookText, Folder as FolderIcon } from "lucide-react";
 
 export interface WikiSuggestionItem {
   id: number;
   title: string;
+  /** 直接父文件夹名；用于重名标题的消歧义提示 */
+  folderName?: string | null;
 }
 
 export interface WikiLinkSuggestionListRef {
@@ -99,10 +101,37 @@ export const WikiLinkSuggestionList = forwardRef<WikiLinkSuggestionListRef, Prop
                 color: token.colorText,
               }}
             >
-              <NotebookText size={14} />
-              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <NotebookText size={14} style={{ flexShrink: 0 }} />
+              <span
+                style={{
+                  flex: 1,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
                 {item.title}
               </span>
+              {/* 直接父文件夹名：让重名标题在视觉上可区分（如「张三 · 项目A」） */}
+              {item.folderName && (
+                <span
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 3,
+                    fontSize: 11,
+                    color: token.colorTextTertiary,
+                    flexShrink: 0,
+                    maxWidth: 100,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <FolderIcon size={10} />
+                  {item.folderName}
+                </span>
+              )}
             </div>
           );
         })}

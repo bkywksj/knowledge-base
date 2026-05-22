@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::models::{GraphData, NoteLink};
+use crate::models::{GraphData, NoteLink, WikiLinkSuggestItem};
 use crate::services::links::LinkService;
 use crate::state::AppState;
 
@@ -26,7 +26,7 @@ pub fn search_link_targets(
     state: State<'_, AppState>,
     keyword: String,
     limit: Option<usize>,
-) -> Result<Vec<(i64, String)>, String> {
+) -> Result<Vec<WikiLinkSuggestItem>, String> {
     LinkService::search_link_targets(&state.db, &keyword, limit.unwrap_or(10))
         .map_err(|e| e.to_string())
 }

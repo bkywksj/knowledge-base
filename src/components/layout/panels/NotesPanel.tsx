@@ -281,6 +281,9 @@ export function NotesPanel() {
   const showOnlyFolders = useAppStore((s) => s.notesShowOnlyFolders);
   const setShowOnlyFolders = useAppStore((s) => s.setNotesShowOnlyFolders);
   const [uncategorizedNotes, setUncategorizedNotes] = useState<Note[]>([]);
+  // 是否完成过至少一次拉取——区分"未加载（空数组占位）"和"加载完确实是空"，
+  // 后者才允许把"未分类"虚拟节点从树上隐藏。
+  const [uncategorizedLoaded, setUncategorizedLoaded] = useState(false);
   const loadingUncategorizedRef = useRef(false);
 
   /** 拉某个文件夹的直属笔记（include_descendants=false） */
@@ -322,6 +325,7 @@ export function NotesPanel() {
         sort_by: "custom",
       });
       setUncategorizedNotes(r.items);
+      setUncategorizedLoaded(true);
     } catch (e) {
       console.warn("[notes-panel] 加载未分类笔记失败:", e);
     } finally {
@@ -502,10 +506,9 @@ export function NotesPanel() {
     }
     setNotesByFolder(new Map());
     expandedFolderIds.forEach((id) => void loadNotesForFolder(id));
-    // 同步重拉未分类（仅在已展开时；折叠态等下次展开按需拉）
-    if (uncategorizedExpanded) {
-      void loadUncategorizedNotes();
-    }
+    // 始终重拉未分类：需要知道数量来决定"未分类"虚拟节点是否隐藏（空时隐藏）。
+    // 折叠态也拉一次（极轻量：page_size=NOTES_PER_FOLDER_LIMIT），首次 mount 同样命中。
+    void loadUncategorizedNotes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notesRefreshTick]);
 
@@ -1608,8 +1611,10 @@ export function NotesPanel() {
       tabTitleByNoteId,
       showOnlyFolders,
     );
-    // showOnlyFolders 开启时不挂"未分类"——它本质只装笔记，留着是空壳，会让纯文件夹视图变脏
-    if (!showOnlyFolders) {
+    // showOnlyFolders 开启时不挂"未分类"——它本质只装笔记，留着是空壳，会让纯文件夹视图变脏。
+    // 另外：已加载完且确实为空 → 也隐藏，让侧栏更清爽；只有"未加载"或"非空"才挂上去。
+    const hideEmptyUncat = uncategorizedLoaded && uncategorizedNotes.length === 0;
+    if (!showOnlyFolders && !hideEmptyUncat) {
       // 末尾追加"未分类"虚拟根节点：folder_id IS NULL 的笔记直接挂在这里。
       // 这样未分类笔记也能参与 antd Tree 的拖拽（拖到任意文件夹会触发 handleDrop
       // 跨 folder 移动逻辑），不需要单独写一套 HTML5 drag 系统。
@@ -1634,7 +1639,7 @@ export function NotesPanel() {
       });
     }
     return folderTree;
-  }, [folders, creatingUnderKey, notesByFolder, tabTitleByNoteId, uncategorizedNotes, showOnlyFolders]);
+  }, [folders, creatingUnderKey, notesByFolder, tabTitleByNoteId, uncategorizedNotes, uncategorizedLoaded, showOnlyFolders]);
 
   return (
     <div

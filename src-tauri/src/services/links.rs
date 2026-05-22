@@ -1,6 +1,6 @@
 use crate::database::Database;
 use crate::error::AppError;
-use crate::models::{GraphData, NoteLink};
+use crate::models::{GraphData, NoteLink, WikiLinkSuggestItem};
 
 pub struct LinkService;
 
@@ -24,7 +24,7 @@ impl LinkService {
         db: &Database,
         keyword: &str,
         limit: usize,
-    ) -> Result<Vec<(i64, String)>, AppError> {
+    ) -> Result<Vec<WikiLinkSuggestItem>, AppError> {
         db.search_notes_by_title(keyword, limit)
     }
 

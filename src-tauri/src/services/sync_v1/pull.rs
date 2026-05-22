@@ -514,6 +514,13 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
                     .errors
                     .push(format!("upsert sync_remote_state 失败: {}", e));
             }
+            // 反链 pull 后重建：原本只有"前端 handleSave"才会触发 sync_note_links，
+            // 新端 pull 完笔记不打开就拿不到反向链接。这里立刻按 content 重新解析
+            // [[wiki]] 写 note_links 表，让反链面板第一次打开就准确。
+            // 失败只记 warn 不影响主流程（反链数据可由用户编辑保存自愈）。
+            if let Err(e) = db.rebuild_note_links_from_content(local_id, &input.content) {
+                log::warn!("[sync_v1] 重建反链失败 {}: {}", entry.title, e);
+            }
         }
     }
 

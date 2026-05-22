@@ -341,7 +341,10 @@ fn handle_event(event: Event, state: &mut RenderState, docx: &mut Docx) -> Resul
             let url = dest_url.into_string();
             match resolve_image(&url, &state.assets_root) {
                 Some(bytes) => {
-                    let pic = Pic::new(&bytes).size(4_000_000, 3_000_000); // EMU；约 11x8.3 cm
+                    // 读图片真实像素 → 按 A4 可用宽度等比缩放，保留原宽高比。
+                    // 旧实现硬编码 4_000_000 × 3_000_000 EMU（4:3），导致竖图 / 16:9 横图被拉伸变形。
+                    let (w_emu, h_emu) = compute_image_emu(&bytes);
+                    let pic = Pic::new(&bytes).size(w_emu, h_emu);
                     let p = Paragraph::new().add_run(Run::new().add_image(pic));
                     *docx = std::mem::take(docx).add_paragraph(p);
                     state.images_embedded += 1;
@@ -450,6 +453,168 @@ fn resolve_image(url: &str, data_dir: &Path) -> Option<Vec<u8>> {
     }
     let abs = resolve_content_url(url, data_dir)?;
     std::fs::read(&abs).ok()
+}
+
+/// 96 DPI 下 1 像素对应的 EMU（English Metric Unit）值。
+/// docx 里所有尺寸都用 EMU；1 inch = 914400 EMU，标准屏 96 DPI → 914400 / 96 = 9525。
+const EMU_PER_PIXEL: u64 = 9525;
+
+/// A4 纵向页面可用宽度上限（约 14.83 cm，预留左右各 2.5 cm 边距 + 一点余量）。
+/// 超过这个宽度的图片按比例缩小到此宽度。
+const MAX_WIDTH_EMU: u64 = 5_400_000;
+
+/// 单张图片高度上限（约 23.7 cm），避免一张超高竖图独占整页打断阅读。
+const MAX_HEIGHT_EMU: u64 = 8_640_000;
+
+/// 默认尺寸：图片头解析失败时兜底用的"约 11×8.3 cm 4:3"——和旧硬编码一致，
+/// 保证未知格式（SVG / TIFF / 损坏文件等）至少能塞进 docx 不崩。
+const DEFAULT_W_EMU: u32 = 4_000_000;
+const DEFAULT_H_EMU: u32 = 3_000_000;
+
+/// 计算图片在 docx 中应使用的 (width, height) EMU 值。
+///
+/// 流程：读图片像素尺寸 → 按 96 DPI 转 EMU → 超过 MAX_WIDTH / MAX_HEIGHT 则等比缩。
+/// 头解析失败时返回默认 4:3 矩形（兼容旧行为，避免崩）。
+fn compute_image_emu(bytes: &[u8]) -> (u32, u32) {
+    let Some((w_px, h_px)) = read_image_dimensions(bytes) else {
+        return (DEFAULT_W_EMU, DEFAULT_H_EMU);
+    };
+    if w_px == 0 || h_px == 0 {
+        return (DEFAULT_W_EMU, DEFAULT_H_EMU);
+    }
+    let mut w_emu = (w_px as u64) * EMU_PER_PIXEL;
+    let mut h_emu = (h_px as u64) * EMU_PER_PIXEL;
+    // 先按宽限制
+    if w_emu > MAX_WIDTH_EMU {
+        h_emu = h_emu * MAX_WIDTH_EMU / w_emu;
+        w_emu = MAX_WIDTH_EMU;
+    }
+    // 再按高限制（窄长图）
+    if h_emu > MAX_HEIGHT_EMU {
+        w_emu = w_emu * MAX_HEIGHT_EMU / h_emu;
+        h_emu = MAX_HEIGHT_EMU;
+    }
+    (w_emu as u32, h_emu as u32)
+}
+
+/// 极简图片头解析：返回 (width_px, height_px)。
+///
+/// 仅识别 PNG / JPEG / GIF / BMP / WebP（覆盖编辑器里常见的所有格式）。
+/// 不调用 image 解码 crate —— 只读 header 几十字节、零依赖、几乎零开销。
+/// 不识别时返回 None，调用方走默认尺寸兜底。
+fn read_image_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.len() < 12 {
+        return None;
+    }
+
+    // PNG: 8 字节签名 + 长度(4) + "IHDR"(4) + width(4 BE) + height(4 BE)
+    if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+        if bytes.len() >= 24 && &bytes[12..16] == b"IHDR" {
+            let w = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
+            let h = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
+            return Some((w, h));
+        }
+        return None;
+    }
+
+    // GIF87a / GIF89a: 6 字节签名 + width(2 LE) + height(2 LE)
+    if (bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")) && bytes.len() >= 10 {
+        let w = u16::from_le_bytes(bytes[6..8].try_into().ok()?) as u32;
+        let h = u16::from_le_bytes(bytes[8..10].try_into().ok()?) as u32;
+        return Some((w, h));
+    }
+
+    // BMP: "BM" 后 BITMAPINFOHEADER 在偏移 14 开始；width@18(4 LE) height@22(4 LE，可负=正向存储)
+    if bytes.starts_with(b"BM") && bytes.len() >= 26 {
+        let w = u32::from_le_bytes(bytes[18..22].try_into().ok()?);
+        let h_signed = i32::from_le_bytes(bytes[22..26].try_into().ok()?);
+        let h = h_signed.unsigned_abs();
+        return Some((w, h));
+    }
+
+    // WebP: "RIFF????WEBP" + 子 chunk
+    if bytes.starts_with(b"RIFF") && bytes.len() >= 30 && &bytes[8..12] == b"WEBP" {
+        let chunk = &bytes[12..16];
+        if chunk == b"VP8 " {
+            // 有损 VP8：bytes[26..28] = width 14bit LE，bytes[28..30] = height 14bit LE
+            let w = (u16::from_le_bytes(bytes[26..28].try_into().ok()?) & 0x3FFF) as u32;
+            let h = (u16::from_le_bytes(bytes[28..30].try_into().ok()?) & 0x3FFF) as u32;
+            return Some((w, h));
+        }
+        if chunk == b"VP8L" {
+            // 无损 VP8L：signature 0x2F 后 4 字节里塞了两个 14-bit (w-1) (h-1)
+            if bytes.len() >= 25 && bytes[20] == 0x2F {
+                let b0 = bytes[21] as u32;
+                let b1 = bytes[22] as u32;
+                let b2 = bytes[23] as u32;
+                let b3 = bytes[24] as u32;
+                let w = (b0 | ((b1 & 0x3F) << 8)) + 1;
+                let h = ((b1 >> 6) | (b2 << 2) | ((b3 & 0xF) << 10)) + 1;
+                return Some((w, h));
+            }
+            return None;
+        }
+        if chunk == b"VP8X" {
+            // 扩展 VP8X：bytes[24..27] = width-1 (3B LE), bytes[27..30] = height-1
+            let w = ((bytes[24] as u32)
+                | ((bytes[25] as u32) << 8)
+                | ((bytes[26] as u32) << 16))
+                + 1;
+            let h = ((bytes[27] as u32)
+                | ((bytes[28] as u32) << 8)
+                | ((bytes[29] as u32) << 16))
+                + 1;
+            return Some((w, h));
+        }
+        return None;
+    }
+
+    // JPEG: SOI(0xFFD8) → 扫描各 segment 找 SOFn（含尺寸）
+    if bytes.starts_with(&[0xFF, 0xD8]) {
+        let mut i = 2usize;
+        while i + 1 < bytes.len() {
+            // segment 必须以 0xFF 开头
+            if bytes[i] != 0xFF {
+                return None;
+            }
+            // 跳过填充 0xFF（标准允许多个 0xFF 串联）
+            while i < bytes.len() && bytes[i] == 0xFF {
+                i += 1;
+            }
+            if i >= bytes.len() {
+                return None;
+            }
+            let marker = bytes[i];
+            i += 1;
+            // 无负载的 marker：RSTn(D0-D7) / SOI(D8) / EOI(D9) / TEM(01)
+            if matches!(marker, 0xD0..=0xD9 | 0x01) {
+                continue;
+            }
+            // SOFn (Start Of Frame，含尺寸)：0xC0-0xC3 / 0xC5-0xC7 / 0xC9-0xCB / 0xCD-0xCF
+            // 排除 0xC4(DHT) / 0xC8(JPG) / 0xCC(DAC)
+            if matches!(marker, 0xC0..=0xC3 | 0xC5..=0xC7 | 0xC9..=0xCB | 0xCD..=0xCF) {
+                // segment 内偏移：长度(2 BE) + 精度(1) + 高(2 BE) + 宽(2 BE)
+                if i + 7 > bytes.len() {
+                    return None;
+                }
+                let h = u16::from_be_bytes(bytes[i + 3..i + 5].try_into().ok()?) as u32;
+                let w = u16::from_be_bytes(bytes[i + 5..i + 7].try_into().ok()?) as u32;
+                return Some((w, h));
+            }
+            // 其他 segment：读长度（含自身 2 字节），跳过
+            if i + 2 > bytes.len() {
+                return None;
+            }
+            let seg_len = u16::from_be_bytes(bytes[i..i + 2].try_into().ok()?) as usize;
+            if seg_len < 2 {
+                return None;
+            }
+            i += seg_len;
+        }
+        return None;
+    }
+
+    None
 }
 
 /// 把 markdown 里指向本地文件的链接 `[label](url)` 对应的文件拷到 `<target>.attachments/`，
@@ -568,4 +733,161 @@ fn unique_attachment_name(name: &str, taken: &mut HashSet<String>) -> String {
         }
     }
     name.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 拼一个最小 PNG header（8 字节签名 + IHDR）
+    fn make_png(w: u32, h: u32) -> Vec<u8> {
+        let mut v = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        v.extend_from_slice(&[0, 0, 0, 13]);
+        v.extend_from_slice(b"IHDR");
+        v.extend_from_slice(&w.to_be_bytes());
+        v.extend_from_slice(&h.to_be_bytes());
+        v
+    }
+
+    /// 拼一个最小 JPEG：SOI + SOF0 segment（含尺寸）+ EOI
+    fn make_jpeg(w: u16, h: u16) -> Vec<u8> {
+        let mut v = vec![0xFF, 0xD8];
+        // SOF0: 0xFF 0xC0 长度(2 BE) 精度(1) 高(2 BE) 宽(2 BE) 通道(1) 通道描述符
+        v.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x11, 0x08]);
+        v.extend_from_slice(&h.to_be_bytes());
+        v.extend_from_slice(&w.to_be_bytes());
+        v.push(0x03);
+        v.extend_from_slice(&[0; 12]);
+        v.extend_from_slice(&[0xFF, 0xD9]);
+        v
+    }
+
+    fn make_gif(w: u16, h: u16) -> Vec<u8> {
+        let mut v = b"GIF89a".to_vec();
+        v.extend_from_slice(&w.to_le_bytes());
+        v.extend_from_slice(&h.to_le_bytes());
+        v.extend_from_slice(&[0; 4]);
+        v
+    }
+
+    fn make_bmp(w: u32, h: i32) -> Vec<u8> {
+        let mut v = b"BM".to_vec();
+        v.extend_from_slice(&[0; 16]);
+        v.extend_from_slice(&w.to_le_bytes());
+        v.extend_from_slice(&h.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn read_dimensions_png() {
+        assert_eq!(read_image_dimensions(&make_png(1920, 1080)), Some((1920, 1080)));
+        assert_eq!(read_image_dimensions(&make_png(800, 600)), Some((800, 600)));
+    }
+
+    #[test]
+    fn read_dimensions_jpeg() {
+        assert_eq!(read_image_dimensions(&make_jpeg(1920, 1080)), Some((1920, 1080)));
+        // 正方形（用户场景）：原图正方形不应该被压扁
+        assert_eq!(read_image_dimensions(&make_jpeg(500, 500)), Some((500, 500)));
+    }
+
+    #[test]
+    fn read_dimensions_jpeg_skips_unrelated_segments() {
+        // SOI + APP0(JFIF) + SOF0 + EOI —— SOF0 不是紧跟 SOI，验证段跳过逻辑
+        let mut v = vec![0xFF, 0xD8];
+        v.extend_from_slice(&[0xFF, 0xE0, 0x00, 0x10]);
+        v.extend_from_slice(&[0; 14]);
+        v.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x11, 0x08]);
+        v.extend_from_slice(&1024u16.to_be_bytes());
+        v.extend_from_slice(&768u16.to_be_bytes());
+        v.push(0x03);
+        v.extend_from_slice(&[0; 12]);
+        assert_eq!(read_image_dimensions(&v), Some((768, 1024)));
+    }
+
+    #[test]
+    fn read_dimensions_gif() {
+        assert_eq!(read_image_dimensions(&make_gif(640, 480)), Some((640, 480)));
+    }
+
+    #[test]
+    fn read_dimensions_bmp_positive_height() {
+        assert_eq!(read_image_dimensions(&make_bmp(800, 600)), Some((800, 600)));
+    }
+
+    #[test]
+    fn read_dimensions_bmp_negative_height() {
+        // BMP height 可负（表示行存储顺序），尺寸应取绝对值
+        assert_eq!(read_image_dimensions(&make_bmp(800, -600)), Some((800, 600)));
+    }
+
+    #[test]
+    fn read_dimensions_unknown_returns_none() {
+        assert!(read_image_dimensions(b"not an image").is_none());
+        assert!(read_image_dimensions(&[]).is_none());
+        assert!(read_image_dimensions(&[0u8; 12]).is_none());
+    }
+
+    #[test]
+    fn compute_emu_preserves_aspect_ratio_for_landscape() {
+        // 1920×1080 横图：超宽，按宽缩到 MAX_WIDTH，高按比例
+        let bytes = make_png(1920, 1080);
+        let (w, h) = compute_image_emu(&bytes);
+        assert_eq!(w as u64, MAX_WIDTH_EMU);
+        let expected_h = (MAX_WIDTH_EMU * 1080 / 1920) as u32;
+        assert_eq!(h, expected_h);
+        let ratio_in = 1920.0_f64 / 1080.0;
+        let ratio_out = w as f64 / h as f64;
+        assert!((ratio_in - ratio_out).abs() < 0.01);
+    }
+
+    #[test]
+    fn compute_emu_preserves_aspect_ratio_for_portrait() {
+        // 1080×1920 竖图：旧实现会塞成 4:3 严重变形（这是用户报的 bug）
+        let bytes = make_png(1080, 1920);
+        let (w, h) = compute_image_emu(&bytes);
+        // 1080×9525=10_287_000 EMU 超宽，先缩宽：w=5_400_000, h=5_400_000*1920/1080=9_600_000
+        // 9_600_000 > MAX_HEIGHT_EMU(8_640_000)，再缩高：h=8_640_000, w=按比例
+        assert_eq!(h as u64, MAX_HEIGHT_EMU);
+        let ratio_in = 1080.0_f64 / 1920.0;
+        let ratio_out = w as f64 / h as f64;
+        assert!((ratio_in - ratio_out).abs() < 0.01);
+    }
+
+    #[test]
+    fn compute_emu_preserves_aspect_ratio_for_square() {
+        // 用户最敏感场景：500×500 正方形 → 必须保持正方形
+        let bytes = make_png(500, 500);
+        let (w, h) = compute_image_emu(&bytes);
+        // 500×9525 = 4_762_500 < MAX_WIDTH_EMU(5_400_000)，不缩放
+        assert_eq!(w, 500 * EMU_PER_PIXEL as u32);
+        assert_eq!(h, 500 * EMU_PER_PIXEL as u32);
+        assert_eq!(w, h);
+    }
+
+    #[test]
+    fn compute_emu_small_image_no_upscale() {
+        // 100×80 小图：不应被强制放大到固定尺寸（旧 bug 的对偶面）
+        let bytes = make_png(100, 80);
+        let (w, h) = compute_image_emu(&bytes);
+        assert_eq!(w, 100 * EMU_PER_PIXEL as u32);
+        assert_eq!(h, 80 * EMU_PER_PIXEL as u32);
+    }
+
+    #[test]
+    fn compute_emu_unknown_format_falls_back_to_default() {
+        // 未知格式 / 损坏头：兜底 4:3，至少能塞进去不崩
+        let (w, h) = compute_image_emu(b"not an image");
+        assert_eq!(w, DEFAULT_W_EMU);
+        assert_eq!(h, DEFAULT_H_EMU);
+    }
+
+    #[test]
+    fn compute_emu_zero_dimension_falls_back_to_default() {
+        // 头里写着 0×0（异常但不该 div by zero）
+        let bytes = make_png(0, 0);
+        let (w, h) = compute_image_emu(&bytes);
+        assert_eq!(w, DEFAULT_W_EMU);
+        assert_eq!(h, DEFAULT_H_EMU);
+    }
 }

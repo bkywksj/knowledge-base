@@ -4,11 +4,19 @@ import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import type { Node as PMNode } from "@tiptap/pm/model";
 
 export interface WikiLinkOptions {
-  /** Ctrl/Cmd + 点击 [[标题]] 时触发 */
-  onClick: (title: string) => void;
+  /**
+   * Ctrl/Cmd + 点击 wiki 链接时触发。
+   * 优先用 `id`（候选下拉选中的稳定锚点，永不失效）；
+   * 没有 `id` 时（用户手敲的 `[[标题]]`）回退按 title 查。
+   */
+  onClick: (title: string, id?: number) => void;
 }
 
-const WIKI_LINK_REGEX = /\[\[([^\[\]\n]+)\]\]/g;
+// 识别两种形式：
+//   - 旧：[[标题]]
+//   - 新：[[标题|123]]  ← 候选下拉选中后插入的形式，ID 为稳定锚点
+// `[^\[\]\n|]+` 排除 `|`，让 ID 段独立捕获；ID 必须是纯数字。
+const WIKI_LINK_REGEX = /\[\[([^\[\]\n|]+)(?:\|(\d+))?\]\]/g;
 
 function buildDecorations(doc: PMNode): DecorationSet {
   const decorations: Decoration[] = [];
@@ -21,14 +29,32 @@ function buildDecorations(doc: PMNode): DecorationSet {
       const from = pos + match.index;
       const to = from + match[0].length;
       const title = match[1].trim();
+      const idStr = match[2]; // 可能为 undefined（旧格式 `[[标题]]`）
       if (!title) continue;
+
+      // 整段 `[[标题|123]]` 加 wiki-link class（含 [[ 和 ]]，方便 Ctrl+点击命中）
       decorations.push(
         Decoration.inline(from, to, {
           class: "wiki-link",
           "data-wiki-link": title,
+          ...(idStr ? { "data-wiki-link-id": idStr } : {}),
           title: `Ctrl/Cmd + 点击跳转到「${title}」`,
         }),
       );
+
+      // 带 ID 形式：单独标记 `|123` 段，靠 CSS 视觉隐藏（display:none）。
+      // 字符仍在文档里、选中复制时一并带走，仅渲染时不可见 → 视觉上等同 `[[标题]]`。
+      if (idStr) {
+        // match[0] 形如 `[[标题|123]]`，最后两个 `]]` 占 2 个 char，
+        // 倒推：`|123` 段从 `to - 2 - (1 + idStr.length)` 到 `to - 2`
+        const pipeFrom = to - 2 - (1 + idStr.length);
+        const pipeTo = to - 2;
+        decorations.push(
+          Decoration.inline(pipeFrom, pipeTo, {
+            class: "wiki-link-id-anchor",
+          }),
+        );
+      }
     }
   });
   return DecorationSet.create(doc, decorations);
@@ -67,8 +93,11 @@ export const WikiLinkDecoration = Extension.create<WikiLinkOptions>({
             if (!el) return false;
             const title = el.getAttribute("data-wiki-link");
             if (!title) return false;
+            // 有 ID 锚点优先用 ID（标题改了也能跳到正确笔记）；否则交给上层按 title 查
+            const idAttr = el.getAttribute("data-wiki-link-id");
+            const id = idAttr ? Number(idAttr) : undefined;
             event.preventDefault();
-            onClick(title);
+            onClick(title, Number.isFinite(id) ? id : undefined);
             return true;
           },
         },

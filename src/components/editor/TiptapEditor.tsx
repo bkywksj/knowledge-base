@@ -641,8 +641,12 @@ interface TiptapEditorProps {
    * 同步自己的 noteId 状态。
    */
   ensureNoteId?: () => Promise<number>;
-  /** Ctrl/Cmd + 点击 [[标题]] 时触发（编辑器内 wiki 链接跳转） */
-  onWikiLinkClick?: (title: string) => void;
+  /**
+   * Ctrl/Cmd + 点击 wiki 链接时触发（编辑器内跳转）。
+   * `id` 来自 `[[标题|123]]` 形式的稳定锚点（候选下拉选中后的产物），
+   * 有 `id` 时直接按 ID 跳；只有 `title` 时按标题模糊查（旧 / 手敲形式）。
+   */
+  onWikiLinkClick?: (title: string, id?: number) => void;
   /**
    * 选中文本后浮起的「问 AI」按钮回调。
    * 传入选中的纯文本，调用方负责弹抽屉 / 预填问题。
@@ -1289,7 +1293,7 @@ export function TiptapEditor({
       Columns,
       Column,
       WikiLinkDecoration.configure({
-        onClick: (title: string) => wikiClickRef.current?.(title),
+        onClick: (title: string, id?: number) => wikiClickRef.current?.(title, id),
       }),
       WikiLinkSuggestion,
       SlashCommand.configure({

@@ -23,6 +23,7 @@ import type {
   Tag,
   SearchResult,
   NoteLink,
+  WikiLinkSuggestItem,
   GraphData,
   AiModel,
   AiModelInput,
@@ -371,7 +372,7 @@ export const linkApi = {
   getBacklinks: (noteId: number) =>
     invoke<NoteLink[]>("get_backlinks", { noteId }),
   searchTargets: (keyword: string, limit?: number) =>
-    invoke<[number, string][]>("search_link_targets", { keyword, limit }),
+    invoke<WikiLinkSuggestItem[]>("search_link_targets", { keyword, limit }),
   /** 规范化精确匹配：trim + 空白折叠 + 大小写不敏感 */
   findIdByTitle: (title: string) =>
     invoke<number | null>("find_note_id_by_title_loose", { title }),
