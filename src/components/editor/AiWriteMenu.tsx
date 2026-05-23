@@ -220,6 +220,9 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
   const [streaming, setStreaming] = useState(false);
   const [result, setResult] = useState("");
   const [selectedText, setSelectedText] = useState("");
+  // 浮动 AI 工具栏：贴近选区下方，一行展示所有提示词按钮（横向滚动，不换行）
+  // 直接展开整条工具栏，不再走"先点小按钮→再展开菜单"的二段交互
+  const [triggerPos, setTriggerPos] = useState<{ x: number; y: number } | null>(null);
   // 正在执行的 Prompt（用于决定结果插入模式 / 菜单标题）
   const [activePrompt, setActivePrompt] = useState<PromptTemplate | null>(null);
   // DB 里的提示词列表，AI 菜单从这里渲染；为空时显示"去添加提示词"占位
@@ -299,6 +302,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
         if (!streaming) {
           setVisible(false);
           setResult("");
+          setTriggerPos(null);
         }
         return;
       }
@@ -308,6 +312,14 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
 
       setSelectedText(text);
       selectionRangeRef.current = { from, to };
+      // 选区结束位置的视口坐标 → 把 ✨ 按钮贴在选区右下方 4px 处
+      // coordsAtPos 返回的就是视口坐标（getBoundingClientRect 体系），fixed 定位直接可用
+      try {
+        const coords = editor.view.coordsAtPos(to);
+        setTriggerPos({ x: coords.left, y: coords.bottom + 4 });
+      } catch {
+        setTriggerPos(null);
+      }
 
       if (!streaming) {
         setResult("");
@@ -332,13 +344,30 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
       evaluateSelection();
     }
 
+    // 编辑器滚动 / 窗口 resize 时重新算一遍 trigger 坐标
+    // 用 ProseMirror dom 找最近的可滚动祖先；fallback 用 window
+    function reposition() {
+      if (!selectionRangeRef.current) return;
+      try {
+        const coords = editor.view.coordsAtPos(selectionRangeRef.current.to);
+        setTriggerPos({ x: coords.left, y: coords.bottom + 4 });
+      } catch {
+        /* ignore */
+      }
+    }
+
     editor.on("selectionUpdate", handleSelectionUpdate);
     dom.addEventListener("mousedown", handleMouseDown);
     document.addEventListener("mouseup", handleMouseUp);
+    // capture=true：捕获阶段，能监听任何祖先元素的 scroll（编辑器外层容器多半在滚）
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
     return () => {
       editor.off("selectionUpdate", handleSelectionUpdate);
       dom.removeEventListener("mousedown", handleMouseDown);
       document.removeEventListener("mouseup", handleMouseUp);
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
     };
   }, [editor, streaming]);
 
@@ -632,291 +661,316 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
 
   const defaultMode: PromptOutputMode = activePrompt?.outputMode ?? "replace";
 
-  // 始终挂载，CSS（.kb-ai-bar / [data-visible]）控制 max-height + opacity 过渡。
-  // 不再用 absolute 浮窗：bar 钉在 EditorToolbar 正下方，位置静态，
-  // 不和豆包/划词翻译这类系统级悬浮窗争层级（CSS z-index 跨窗口无效）。
-  return (
+  // ===== AI 工具栏内容（一行，按钮太多时横向滚动，不换行）=====
+  const promptsContent = (
     <div
-      ref={menuRef}
-      className="kb-ai-bar"
-      data-visible={visible ? "true" : "false"}
-      data-mode={streaming || result ? "result" : "buttons"}
+      className="kb-ai-floating-toolbar"
+      style={{
+        background: token.colorBgElevated,
+        border: `1px solid ${token.colorBorderSecondary}`,
+      }}
     >
-      {/* AI 操作按钮行 */}
-      {!result && !streaming && (
-        <div className="kb-ai-bar-row">
-          {/* leading：问 AI 这段（蓝色 CTA，与右侧轻量工具按钮做视觉区分） */}
-          {onAskAi && (
-            <>
-              <button
-                className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap"
-                style={{
-                  background: token.colorPrimary,
-                  color: "#fff",
-                  border: "none",
-                  cursor: "pointer",
-                }}
-                onMouseDown={(e) => {
-                  // mousedown 先于 blur，避免点击瞬间菜单消失
-                  e.preventDefault();
-                  onAskAi(selectedText);
-                }}
-              >
-                🤖 问AI
-              </button>
-              {/* 主 CTA 和工具按钮之间的细分隔线，比图标更克制 */}
-              <span
-                style={{
-                  width: 1,
-                  height: 18,
-                  background: token.colorBorderSecondary,
-                  margin: "0 4px",
-                }}
-              />
-            </>
-          )}
-          {/* 没有 onAskAi 时（独立用 AiWriteMenu 的场景）保留原来的 ✨ 前缀 */}
-          {!onAskAi && (
-            <Sparkles
-              size={13}
-              style={{ color: token.colorPrimary, marginRight: 4 }}
-            />
-          )}
-          {prompts.length === 0 && promptsLoaded && (
-            <span
-              style={{
-                color: token.colorTextTertiary,
-                fontSize: 12,
-                padding: "2px 6px",
-              }}
-            >
-              无可用提示词，去"提示词"页添加
-            </span>
-          )}
-          {prompts.map((p) => (
-            <Tooltip
-              key={p.id}
-              title={p.description || p.title}
-              mouseEnterDelay={0.3}
-            >
-              <button
-                className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-black/5 transition-colors whitespace-nowrap"
-                style={{ color: token.colorText }}
-                onClick={() => handlePrompt(p)}
-              >
-                {renderIcon(p.icon, 13)}
-                {p.title}
-              </button>
-            </Tooltip>
-          ))}
-          {/* 自定义提示词：贴在按钮下方的小 Popover 输入即兴指令，不写入 DB */}
-          <Popover
-            open={customOpen}
-            onOpenChange={(o) => {
-              setCustomOpen(o);
-              if (!o) setCustomInstruction("");
+      {/* leading：问 AI 这段（蓝色 CTA） */}
+      {onAskAi && (
+        <>
+          <button
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap"
+            style={{
+              background: token.colorPrimary,
+              color: "#fff",
+              border: "none",
+              cursor: "pointer",
             }}
-            trigger="click"
-            placement="bottomLeft"
-            destroyTooltipOnHide
-            content={
-              <div style={{ width: 320 }}>
-                <Input.TextArea
-                  autoFocus
-                  value={customInstruction}
-                  onChange={(e) => setCustomInstruction(e.target.value)}
-                  placeholder="例如：翻译为日文，并解释每个词的含义"
-                  autoSize={{ minRows: 2, maxRows: 6 }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void handleCustomSubmit();
-                    }
-                  }}
-                />
-                {/* AI 建议气泡：suggestion="" 加载中；非空 = 可点击采纳；undefined = 静默隐藏 */}
-                {suggestion === "" && (
-                  <div
-                    className="flex items-center gap-1.5 mt-2 text-xs"
-                    style={{ color: token.colorTextTertiary }}
-                  >
-                    <Loader2 size={11} className="animate-spin" />
-                    AI 正在为这段文本想建议…
-                  </div>
-                )}
-                {typeof suggestion === "string" && suggestion.length > 0 && (
-                  <Tooltip title="点击填入输入框" mouseEnterDelay={0.3}>
-                    <button
-                      type="button"
-                      className="flex items-start gap-1.5 mt-2 px-2 py-1.5 rounded text-xs text-left w-full transition-colors"
-                      style={{
-                        background: token.colorFillQuaternary,
-                        border: `1px dashed ${token.colorBorderSecondary}`,
-                        color: token.colorText,
-                        cursor: "pointer",
-                      }}
-                      onMouseEnter={(e) => {
-                        (e.currentTarget as HTMLElement).style.background =
-                          token.colorPrimaryBg;
-                      }}
-                      onMouseLeave={(e) => {
-                        (e.currentTarget as HTMLElement).style.background =
-                          token.colorFillQuaternary;
-                      }}
-                      onClick={() => setCustomInstruction(suggestion)}
-                    >
-                      <Sparkles
-                        size={12}
-                        style={{
-                          color: token.colorPrimary,
-                          marginTop: 2,
-                          flexShrink: 0,
-                        }}
-                      />
-                      <span className="flex-1">{suggestion}</span>
-                    </button>
-                  </Tooltip>
-                )}
-                <div className="flex items-center justify-between mt-2">
-                  <span
-                    className="text-xs"
-                    style={{ color: token.colorTextTertiary }}
-                  >
-                    Enter 发送 / Shift+Enter 换行
-                  </span>
-                  <Button
-                    type="primary"
-                    size="small"
-                    onClick={handleCustomSubmit}
-                  >
-                    发送
-                  </Button>
-                </div>
-              </div>
-            }
+            onMouseDown={(e) => {
+              // mousedown 先于 blur，避免点击瞬间选区丢失
+              e.preventDefault();
+              onAskAi(selectedText);
+            }}
           >
-            <Tooltip title="输入自定义指令" mouseEnterDelay={0.3}>
-              <button
-                className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-black/5 transition-colors whitespace-nowrap"
-                style={{
-                  color: customOpen ? token.colorPrimary : token.colorText,
-                }}
-                onMouseDown={(e) => e.preventDefault()}
-              >
-                <PenLine size={13} />
-                自定义
-              </button>
-            </Tooltip>
-          </Popover>
-        </div>
+            🤖 问AI
+          </button>
+          <span
+            style={{
+              width: 1,
+              height: 18,
+              background: token.colorBorderSecondary,
+              margin: "0 4px",
+            }}
+          />
+        </>
       )}
-
-      {/* 流式结果 / 已完成结果：absolute 浮在 bar 下方，不挤压编辑器内容 */}
-      {(streaming || result) && (
-        <div
-          className="kb-ai-bar-result-overlay"
+      {!onAskAi && (
+        <Sparkles
+          size={13}
+          style={{ color: token.colorPrimary, marginRight: 4 }}
+        />
+      )}
+      {prompts.length === 0 && promptsLoaded && (
+        <span
           style={{
-            background: token.colorBgElevated,
-            border: `1px solid ${token.colorBorderSecondary}`,
+            color: token.colorTextTertiary,
+            fontSize: 12,
+            padding: "2px 6px",
           }}
         >
-          {/* 结果标题栏 */}
-          <div
-            className="flex items-center justify-between px-3 py-1.5 text-xs"
-            style={{
-              borderBottom: `1px solid ${token.colorBorderSecondary}`,
-              color: token.colorTextSecondary,
-            }}
-          >
-            <span className="flex items-center gap-1.5">
-              <Sparkles size={12} style={{ color: token.colorPrimary }} />
-              {activePrompt ? activePrompt.title : "AI 写作辅助"}
-              {streaming && (
-                <Loader2
-                  size={12}
-                  className="animate-spin"
-                  style={{ color: token.colorPrimary }}
-                />
-              )}
-            </span>
-            {streaming && (
-              <Button
-                type="text"
-                size="small"
-                danger
-                icon={<StopCircle size={12} />}
-                onClick={handleCancel}
-                style={{ height: 20, padding: "0 4px", fontSize: 11 }}
-              >
-                停止
-              </Button>
-            )}
-          </div>
-
-          {/* 结果内容 */}
-          <div
-            className="px-3 py-2 text-sm whitespace-pre-wrap max-h-60 overflow-auto"
+          无可用提示词，去"提示词"页添加
+        </span>
+      )}
+      {prompts.map((p) => (
+        <Tooltip
+          key={p.id}
+          title={p.description || p.title}
+          mouseEnterDelay={0.3}
+        >
+          <button
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-black/5 transition-colors whitespace-nowrap"
             style={{ color: token.colorText }}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => handlePrompt(p)}
           >
-            {result}
-            {streaming && !result && (
-              <span style={{ color: token.colorTextQuaternary }}>
-                生成中...
-              </span>
-            )}
-            {streaming && result && (
-              <span
-                className="inline-block w-1.5 h-3.5 ml-0.5 animate-pulse"
-                style={{ background: token.colorPrimary }}
-              />
-            )}
-          </div>
-
-          {/* 操作按钮 */}
-          {!streaming && result && (
-            <div
-              className="flex items-center justify-end gap-2 px-3 py-1.5"
-              style={{
-                borderTop: `1px solid ${token.colorBorderSecondary}`,
+            {renderIcon(p.icon, 13)}
+            {p.title}
+          </button>
+        </Tooltip>
+      ))}
+      {/* 自定义提示词：嵌套 Popover 输入即兴指令 */}
+      <Popover
+        open={customOpen}
+        onOpenChange={(o) => {
+          setCustomOpen(o);
+          if (!o) setCustomInstruction("");
+        }}
+        trigger="click"
+        placement="bottomLeft"
+        destroyTooltipOnHide
+        content={
+          <div style={{ width: 320 }}>
+            <Input.TextArea
+              autoFocus
+              value={customInstruction}
+              onChange={(e) => setCustomInstruction(e.target.value)}
+              placeholder="例如：翻译为日文，并解释每个词的含义"
+              autoSize={{ minRows: 2, maxRows: 6 }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void handleCustomSubmit();
+                }
               }}
-            >
-              <Tooltip title="复制到剪贴板">
-                <Button
-                  size="small"
-                  icon={<Copy size={12} />}
-                  onClick={handleCopy}
+            />
+            {suggestion === "" && (
+              <div
+                className="flex items-center gap-1.5 mt-2 text-xs"
+                style={{ color: token.colorTextTertiary }}
+              >
+                <Loader2 size={11} className="animate-spin" />
+                AI 正在为这段文本想建议…
+              </div>
+            )}
+            {typeof suggestion === "string" && suggestion.length > 0 && (
+              <Tooltip title="点击填入输入框" mouseEnterDelay={0.3}>
+                <button
+                  type="button"
+                  className="flex items-start gap-1.5 mt-2 px-2 py-1.5 rounded text-xs text-left w-full transition-colors"
+                  style={{
+                    background: token.colorFillQuaternary,
+                    border: `1px dashed ${token.colorBorderSecondary}`,
+                    color: token.colorText,
+                    cursor: "pointer",
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.background =
+                      token.colorPrimaryBg;
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.background =
+                      token.colorFillQuaternary;
+                  }}
+                  onClick={() => setCustomInstruction(suggestion)}
                 >
-                  复制
-                </Button>
+                  <Sparkles
+                    size={12}
+                    style={{
+                      color: token.colorPrimary,
+                      marginTop: 2,
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span className="flex-1">{suggestion}</span>
+                </button>
               </Tooltip>
-              <Button
-                size="small"
-                icon={<X size={12} />}
-                onClick={handleDiscard}
+            )}
+            <div className="flex items-center justify-between mt-2">
+              <span
+                className="text-xs"
+                style={{ color: token.colorTextTertiary }}
               >
-                丢弃
-              </Button>
-              {/* 追加按钮：续写场景（append）默认主按钮；其他场景降级为次按钮 */}
+                Enter 发送 / Shift+Enter 换行
+              </span>
               <Button
-                type={defaultMode === "append" ? "primary" : "default"}
+                type="primary"
                 size="small"
-                onClick={() => applyResult("append")}
+                onClick={handleCustomSubmit}
               >
-                追加
-              </Button>
-              <Button
-                type={defaultMode === "append" ? "default" : "primary"}
-                size="small"
-                icon={<Check size={12} />}
-                onClick={() => applyResult("replace")}
-              >
-                替换
+                发送
               </Button>
             </div>
-          )}
+          </div>
+        }
+      >
+        <Tooltip title="输入自定义指令" mouseEnterDelay={0.3}>
+          <button
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-black/5 transition-colors whitespace-nowrap"
+            style={{
+              color: customOpen ? token.colorPrimary : token.colorText,
+            }}
+            onMouseDown={(e) => e.preventDefault()}
+          >
+            <PenLine size={13} />
+            自定义
+          </button>
+        </Tooltip>
+      </Popover>
+    </div>
+  );
+
+  return (
+    <>
+      {/* AI 工具栏：直接浮在选区右下方一整条（fixed 定位 + selectionRange 坐标）。
+          不再走"先点 ✨ → 再展开菜单"的两段交互——选段立刻看到所有提示词，
+          按钮太多时容器内部横向滚动，永远一行不换行。
+          原 sticky 横条钉工具栏下方视线要回顶部找按钮，体验差，改为跟随选区。
+          系统级划词浮窗（豆包等）通常出在选区上方，本工具栏在选区下方物理错开。*/}
+      {visible && !streaming && !result && triggerPos && (
+        <div
+          ref={menuRef}
+          style={{
+            position: "fixed",
+            left: triggerPos.x,
+            top: triggerPos.y,
+            zIndex: 999,
+            maxWidth: "min(720px, calc(100vw - 24px))",
+          }}
+          // 阻止 mousedown 冒泡到 document → 避免编辑器选区被清掉
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          {promptsContent}
         </div>
       )}
 
-    </div>
+      {/* 结果面板：保留原 sticky bar 位置（钉在 EditorToolbar 正下方）。
+          理由：流式输出 + 替换/追加按钮需要稳定的容器，跟选区漂移反而难点；
+          也不会和系统级浮窗冲突。 */}
+      {(streaming || result) && (
+        <div
+          ref={menuRef}
+          className="kb-ai-bar"
+          data-visible="true"
+          data-mode="result"
+        >
+          <div
+            className="kb-ai-bar-result-overlay"
+            style={{
+              background: token.colorBgElevated,
+              border: `1px solid ${token.colorBorderSecondary}`,
+            }}
+          >
+            {/* 结果标题栏 */}
+            <div
+              className="flex items-center justify-between px-3 py-1.5 text-xs"
+              style={{
+                borderBottom: `1px solid ${token.colorBorderSecondary}`,
+                color: token.colorTextSecondary,
+              }}
+            >
+              <span className="flex items-center gap-1.5">
+                <Sparkles size={12} style={{ color: token.colorPrimary }} />
+                {activePrompt ? activePrompt.title : "AI 写作辅助"}
+                {streaming && (
+                  <Loader2
+                    size={12}
+                    className="animate-spin"
+                    style={{ color: token.colorPrimary }}
+                  />
+                )}
+              </span>
+              {streaming && (
+                <Button
+                  type="text"
+                  size="small"
+                  danger
+                  icon={<StopCircle size={12} />}
+                  onClick={handleCancel}
+                  style={{ height: 20, padding: "0 4px", fontSize: 11 }}
+                >
+                  停止
+                </Button>
+              )}
+            </div>
+
+            {/* 结果内容 */}
+            <div
+              className="px-3 py-2 text-sm whitespace-pre-wrap max-h-60 overflow-auto"
+              style={{ color: token.colorText }}
+            >
+              {result}
+              {streaming && !result && (
+                <span style={{ color: token.colorTextQuaternary }}>
+                  生成中...
+                </span>
+              )}
+              {streaming && result && (
+                <span
+                  className="inline-block w-1.5 h-3.5 ml-0.5 animate-pulse"
+                  style={{ background: token.colorPrimary }}
+                />
+              )}
+            </div>
+
+            {/* 操作按钮 */}
+            {!streaming && result && (
+              <div
+                className="flex items-center justify-end gap-2 px-3 py-1.5"
+                style={{
+                  borderTop: `1px solid ${token.colorBorderSecondary}`,
+                }}
+              >
+                <Tooltip title="复制到剪贴板">
+                  <Button
+                    size="small"
+                    icon={<Copy size={12} />}
+                    onClick={handleCopy}
+                  >
+                    复制
+                  </Button>
+                </Tooltip>
+                <Button
+                  size="small"
+                  icon={<X size={12} />}
+                  onClick={handleDiscard}
+                >
+                  丢弃
+                </Button>
+                <Button
+                  type={defaultMode === "append" ? "primary" : "default"}
+                  size="small"
+                  onClick={() => applyResult("append")}
+                >
+                  追加
+                </Button>
+                <Button
+                  type={defaultMode === "append" ? "default" : "primary"}
+                  size="small"
+                  icon={<Check size={12} />}
+                  onClick={() => applyResult("replace")}
+                >
+                  替换
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
   );
 }

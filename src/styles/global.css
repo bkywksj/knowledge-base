@@ -728,6 +728,29 @@ body,
   left: 48px;
 }
 
+/**
+ * AI 浮动工具栏 — 贴在选区右下方一整条，单行不换行。
+ * - 容器 position: fixed 由内联 style + selectionRange 坐标驱动
+ * - flex-nowrap + overflow-x: auto：按钮太多时容器内部横向滚动，永远不换行
+ * - max-width 由 inline style 控制（视口宽 - 24px 与 720 取小），防止伸出屏幕
+ */
+.kb-ai-floating-toolbar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+}
+.kb-ai-floating-toolbar::-webkit-scrollbar {
+  height: 0;
+  background: transparent;
+}
+
 .tiptap-content .tiptap {
   outline: none;
   padding: 20px 0;
