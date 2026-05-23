@@ -2,56 +2,82 @@
  * 笔记幻灯片演示模式（v1.12 引入）。
  *
  * 设计：
- * - 输入是 HTML（笔记 content），找到所有顶层 `<hr>` 作为分页边界
- *   —— 复用 markdown `---` 渲染出来的 hr，无需新的语法
- * - fixed 全屏黑底，每页居中渲染当前页 HTML 片段
+ * - 输入是 **markdown 字符串**（TiptapEditor onChange 给出的就是 markdown）
+ * - 按 markdown 的水平分割线行（`---` / `***` / `___` 独占一行）作为页边界
+ * - fixed 全屏黑底，每页用项目共用的 `MarkdownContent`（react-markdown + GFM）渲染
  * - ← / → 翻页（PageUp/PageDown 也支持）；Esc 退出
- * - 右下角页码 + 顶部短期淡出的提示（按 ? 显示帮助）
- * - 零外部依赖，不引 reveal.js
+ * - 右下角页码 + 顶部小字操作提示
+ * - 零原生依赖，复用项目已有的 markdown 渲染管线
+ *
+ * 历史：v1（commit c1f4852）用 DOMParser 找 `<hr>`，但 prop 实际是 markdown
+ * 而非 HTML（TiptapEditor 的 onChange 给的是 storage.markdown.getMarkdown()），
+ * DOMParser 永远只切出 1 张幻灯片（截图证实 "1 / 1"）。本次修复改为按 markdown
+ * 文本切片 + 用 MarkdownContent 渲染。
  */
 import { useEffect, useMemo, useState } from "react";
 import { theme as antdTheme } from "antd";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { MarkdownContent } from "@/components/ai/MarkdownContent";
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  /** 笔记 HTML（Tiptap 产出的 content） */
+  /** 笔记 markdown 内容（与 editor.tsx 里 `content` 同源） */
   html: string;
   /** 笔记标题，仅用于左上角小字 */
   title: string;
 }
 
 /**
- * 把 HTML 按顶层 `<hr>` 切片。
+ * 把 markdown 按"水平分割线行"切片。
  *
- * 用 DOMParser 解析，遍历 body 顶层子节点：
- * - 遇到 `<hr>` → 开新页
- * - 其它节点 → 追加到当前页的 fragment
+ * CommonMark 规定：一行只含 3+ 个 `-` / `*` / `_`（可有前后空白）→ 渲染为 `<hr>`。
+ * 我们按这个规则切（也是用户在笔记里写 `---` 想要的分页效果）。
  *
- * 返回每页的 HTML 字符串（不含 hr 本身）。空页（连续 hr）会保留为占位。
+ * 边界：
+ * - 代码块内（` ``` `…` ``` ` 之间）的 `---` 不算分页符（CommonMark 也不当 hr）
+ * - 空 markdown → 单页占位
+ * - 连续两条分割线 → 中间空页保留（让用户看到自己的笔记结构）
  */
-function splitIntoSlides(html: string): string[] {
-  if (!html || !html.trim()) return ["<p style='color:#888'>（笔记为空）</p>"];
-  const doc = new DOMParser().parseFromString(`<body>${html}</body>`, "text/html");
+function splitIntoSlides(md: string): string[] {
+  if (!md || !md.trim()) return ["*（笔记为空）*"];
+
+  const HR_LINE = /^[ \t]{0,3}(?:-[ \t]*){3,}[ \t]*$|^[ \t]{0,3}(?:\*[ \t]*){3,}[ \t]*$|^[ \t]{0,3}(?:_[ \t]*){3,}[ \t]*$/;
+  const CODE_FENCE = /^[ \t]{0,3}(`{3,}|~{3,})/;
+
+  const lines = md.split(/\r?\n/);
   const slides: string[] = [];
-  let buffer = "";
-  for (const node of Array.from(doc.body.childNodes)) {
-    if (node.nodeType === Node.ELEMENT_NODE && (node as Element).tagName === "HR") {
-      slides.push(buffer);
-      buffer = "";
-    } else {
-      // outerHTML 对元素；文本节点用 textContent 包一下
-      if (node.nodeType === Node.ELEMENT_NODE) {
-        buffer += (node as Element).outerHTML;
-      } else if (node.nodeType === Node.TEXT_NODE && node.textContent) {
-        buffer += node.textContent;
+  let buffer: string[] = [];
+  let inFence = false;
+  let fenceMark = "";
+
+  for (const line of lines) {
+    // 围栏代码块状态机：开/关括号都不计入页边界判定
+    const fenceMatch = line.match(CODE_FENCE);
+    if (fenceMatch) {
+      const mark = fenceMatch[1];
+      if (!inFence) {
+        inFence = true;
+        fenceMark = mark[0]; // ` 或 ~
+      } else if (mark[0] === fenceMark) {
+        inFence = false;
+        fenceMark = "";
       }
+      buffer.push(line);
+      continue;
     }
+
+    if (!inFence && HR_LINE.test(line)) {
+      slides.push(buffer.join("\n"));
+      buffer = [];
+      continue;
+    }
+    buffer.push(line);
   }
-  slides.push(buffer);
-  // 至少返回 1 页；只有一页时不去掉空白（让用户看到空页提示）
-  return slides.length === 0 ? [html] : slides;
+  slides.push(buffer.join("\n"));
+
+  // 至少返回 1 页
+  return slides.length === 0 ? [md] : slides;
 }
 
 export function SlideshowView({ open, onClose, html, title }: Props) {
@@ -199,9 +225,11 @@ export function SlideshowView({ open, onClose, html, title }: Props) {
           <ChevronLeft size={22} />
         </button>
 
-        {/* 内容区：复用 .tiptap 样式，加大字号方便投屏 */}
+        {/* 内容区：复用 .tiptap + .ai-markdown 样式（与 AI 回复同款 markdown 渲染），
+            加大字号方便投屏。MarkdownContent 内部走 react-markdown + remark-gfm，
+            原生支持表格 / 删除线 / 任务列表 / wiki link 文本（如需 wiki 跳转可后续补）。 */}
         <div
-          className="tiptap slideshow-page"
+          className="tiptap ai-markdown slideshow-page"
           style={{
             background: token.colorBgContainer,
             color: token.colorText,
@@ -214,11 +242,13 @@ export function SlideshowView({ open, onClose, html, title }: Props) {
             lineHeight: 1.7,
             boxShadow: "0 16px 48px rgba(0,0,0,0.45)",
           }}
-          // dangerouslySetInnerHTML：内容来源是用户自己的笔记，无 XSS 风险
-          dangerouslySetInnerHTML={{
-            __html: current || "<p style='color:#888'>（空页）</p>",
-          }}
-        />
+        >
+          {current.trim() ? (
+            <MarkdownContent>{current}</MarkdownContent>
+          ) : (
+            <p style={{ color: "#888" }}>（空页）</p>
+          )}
+        </div>
 
         {/* 右侧热区：下一页 */}
         <button
