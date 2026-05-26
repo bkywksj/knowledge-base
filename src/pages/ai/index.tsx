@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { MarkdownContent as Markdown } from "@/components/ai/MarkdownContent";
+import { NoteImageRefs } from "@/components/ai/NoteImageRefs";
 import {
   Button,
   Input,
@@ -1492,6 +1493,9 @@ function MessageBubble({
             参考了 {refs.length} 篇笔记
           </div>
         )}
+
+        {/* 溯源图片：把引用笔记里的图片挂出来，点击可放大 */}
+        {refs.length > 0 && <NoteImageRefs noteIds={refs} />}
       </div>
     </div>
   );

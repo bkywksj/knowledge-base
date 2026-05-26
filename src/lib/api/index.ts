@@ -16,6 +16,7 @@ import type {
   SystemInfo,
   DashboardStats,
   Note,
+  NoteImageRef,
   NoteInput,
   NoteQuery,
   PageResult,
@@ -206,6 +207,9 @@ export const noteApi = {
   delete: (id: number) => invoke<void>("delete_note", { id }),
   trashAll: () => invoke<number>("trash_all_notes"),
   get: (id: number) => invoke<Note>("get_note", { id }),
+  /** 取一批笔记里的图片资源（AI 回答下方"溯源"挂缩略图用）；只回带图的笔记 */
+  getImages: (noteIds: number[]) =>
+    invoke<NoteImageRef[]>("get_notes_images", { noteIds }),
   list: (query: NoteQuery = {}) =>
     invoke<PageResult<Note>>("list_notes", { query }),
   togglePin: (id: number) => invoke<boolean>("toggle_pin", { id }),

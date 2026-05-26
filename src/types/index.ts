@@ -58,6 +58,17 @@ export interface Note {
   sort_order: number;
 }
 
+/**
+ * AI 引用笔记里抽出的图片清单（回答下方"溯源"挂缩略图）。
+ * 与 Rust models::NoteImageRef 对齐。
+ * images 是相对 data_dir 的 POSIX 路径，前端 `toKbAsset` 拼 `kb-asset://` 后渲染。
+ */
+export interface NoteImageRef {
+  note_id: number;
+  title: string;
+  images: string[];
+}
+
 /** PDF 导入结果（单个文件） */
 export interface PdfImportResult {
   sourcePath: string;

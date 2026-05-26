@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Drawer, Button, Input, message, Tooltip, Empty, theme as antdTheme } from "antd";
 import { MarkdownContent as Markdown } from "@/components/ai/MarkdownContent";
+import { NoteImageRefs } from "@/components/ai/NoteImageRefs";
 import { Send, StopCircle, ExternalLink, Bot, RefreshCw, Quote, X } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { aiChatApi } from "@/lib/api";
@@ -422,6 +423,7 @@ function MiniBubble({
   const { quote, body } = isUser
     ? splitQuoteAndBody(msg.content)
     : { quote: null, body: msg.content };
+  const refs: number[] = msg.references ? JSON.parse(msg.references) : [];
 
   return (
     <div className={`flex gap-2 mb-3 ${isUser ? "flex-row-reverse" : ""}`}>
@@ -434,12 +436,13 @@ function MiniBubble({
       >
         {isUser ? "我" : "AI"}
       </div>
+      <div className={`flex flex-col gap-1 min-w-0 ${isUser ? "items-end" : "items-start"}`} style={{ maxWidth: "85%" }}>
       <div
         className={isUser ? "px-2.5 py-1.5 rounded-lg text-sm" : "px-2.5 py-1.5 rounded-lg text-sm ai-markdown"}
         style={{
           background: isUser ? token.colorPrimary : token.colorBgContainer,
           color: isUser ? "#fff" : token.colorText,
-          maxWidth: "85%",
+          maxWidth: "100%",
           wordBreak: "break-word",
         }}
       >
@@ -486,6 +489,10 @@ function MiniBubble({
             )}
           </div>
         )}
+      </div>
+
+      {/* 溯源图片：把引用笔记里的图片挂在气泡下方，点击可放大 */}
+      {refs.length > 0 && <NoteImageRefs noteIds={refs} />}
       </div>
     </div>
   );
