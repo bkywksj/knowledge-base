@@ -37,11 +37,9 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
-  Rows3,
   Columns2,
   Columns3,
   Columns4,
-  Trash2,
   ChevronDown,
   Search,
 } from "lucide-react";
@@ -52,6 +50,7 @@ import { MicButton } from "@/components/MicButton";
 import { insertVideoTimestamp } from "./VideoTimestamp";
 import { EmojiPicker } from "./EmojiPicker";
 import { AnnotationButton } from "./AnnotationButton";
+import { TableButton } from "./TableButton";
 import { CompareClipboardButton } from "./CompareClipboardButton";
 import { CompareNotesButton } from "./CompareNotesButton";
 import { parseEmbedUrl, SUPPORTED_PROVIDERS } from "./embedVideoProviders";
@@ -116,6 +115,7 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
   /** 嵌入网络视频弹窗：粘贴 B站/YouTube/腾讯/优酷链接 → iframe 节点 */
   const [embedModalOpen, setEmbedModalOpen] = useState(false);
   const [embedUrlInput, setEmbedUrlInput] = useState("");
+
 
   function openCaptionModal() {
     if (!editor.isActive("imageResize")) {
@@ -832,93 +832,13 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
         isActive: () => editor.isActive({ textAlign: "right" }),
       },
     ],
-    // 表格 — T-017 全部命令折叠到 Dropdown 菜单，避免工具栏过挤
+    // 表格 — 整块交给 TableButton：点击按钮直接在浮层里选行列插入（含网格 + 自定义行列），
+    // 光标在表格内时浮层下方展示编辑命令。icon/title 仅为满足类型，customRender 优先生效。
     [
       {
-        icon: (
-          <span className="inline-flex items-center gap-0.5">
-            <TableIcon size={15} />
-            <ChevronDown size={11} style={{ opacity: 0.6 }} />
-          </span>
-        ),
+        icon: <TableIcon size={15} />,
         title: "表格",
-        isActive: () => editor.isActive("table"),
-        dropdownItems: [
-          {
-            key: "insert",
-            icon: <TableIcon size={14} />,
-            label: "插入 3×3 表格",
-            onClick: () =>
-              editor
-                .chain()
-                .focus()
-                .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
-                .run(),
-          },
-          { type: "divider" },
-          {
-            key: "add-col",
-            icon: <Columns3 size={14} />,
-            label: "在右侧加列",
-            disabled: !editor.can().addColumnAfter(),
-            onClick: () => editor.chain().focus().addColumnAfter().run(),
-          },
-          {
-            key: "add-row",
-            icon: <Rows3 size={14} />,
-            label: "在下方加行",
-            disabled: !editor.can().addRowAfter(),
-            onClick: () => editor.chain().focus().addRowAfter().run(),
-          },
-          { type: "divider" },
-          {
-            key: "merge-cells",
-            label: "合并单元格",
-            disabled: !editor.can().mergeCells(),
-            onClick: () => editor.chain().focus().mergeCells().run(),
-          },
-          {
-            key: "split-cell",
-            label: "拆分单元格",
-            disabled: !editor.can().splitCell(),
-            onClick: () => editor.chain().focus().splitCell().run(),
-          },
-          { type: "divider" },
-          {
-            key: "delete-row",
-            label: "删除当前行",
-            disabled: !editor.can().deleteRow(),
-            onClick: () => editor.chain().focus().deleteRow().run(),
-          },
-          {
-            key: "delete-col",
-            label: "删除当前列",
-            disabled: !editor.can().deleteColumn(),
-            onClick: () => editor.chain().focus().deleteColumn().run(),
-          },
-          { type: "divider" },
-          {
-            key: "toggle-header-row",
-            label: "切换首行表头",
-            disabled: !editor.can().toggleHeaderRow(),
-            onClick: () => editor.chain().focus().toggleHeaderRow().run(),
-          },
-          {
-            key: "toggle-header-col",
-            label: "切换首列表头",
-            disabled: !editor.can().toggleHeaderColumn(),
-            onClick: () => editor.chain().focus().toggleHeaderColumn().run(),
-          },
-          { type: "divider" },
-          {
-            key: "delete-table",
-            icon: <Trash2 size={14} />,
-            label: "删除整个表格",
-            danger: true,
-            disabled: !editor.can().deleteTable(),
-            onClick: () => editor.chain().focus().deleteTable().run(),
-          },
-        ],
+        customRender: () => <TableButton editor={editor} />,
       },
     ],
     // 链接 & 媒体

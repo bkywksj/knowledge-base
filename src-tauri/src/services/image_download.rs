@@ -79,23 +79,60 @@ pub async fn fetch_image_bytes(
         )));
     }
 
-    // 优先按 Content-Type 推断扩展，回退按 URL 末尾，最后兜底 png
-    let ext = ext_from_content_type(&content_type)
-        .or_else(|| ext_from_url(&parsed))
-        .unwrap_or_else(|| "png".to_string());
-
-    // 双保险：若 Content-Type 不是 image/* 且 URL 也无图片扩展名，
-    // 大概率是被防盗链返回的 HTML 错误页，直接判失败避免把垃圾落盘。
-    let looks_like_image = content_type.to_lowercase().starts_with("image/")
-        || ext_from_url(&parsed).is_some();
-    if !looks_like_image {
-        return Err(AppError::Custom(format!(
-            "非图片响应 (content-type={}, url={})",
-            content_type, url
-        )));
+    // 按真实字节内容（magic number）识别格式，是判定"是不是图片"的唯一可靠依据。
+    //
+    // Why 不能信 Content-Type / URL 后缀：很多站点（如 shui5.cn 这类反爬 CMS）对带
+    // 通用 Referer 的图片请求做防盗链，会返回 HTTP 200 + 一个 HTML 提示页/登录页。
+    // 旧逻辑只要 URL 以 .jpg 结尾就放行，于是把 HTML 页面的字节当图片存成 *.jpg，
+    // 前端提示"已保存"实际却是裂图。改成嗅探字节后：
+    //   - 是已知图片格式 → 用嗅探出的真实扩展名（同时修正"服务器谎报扩展名"）；
+    //   - 不是图片字节 → 直接判失败，让前端剥离该图并如实提示"无法访问"。
+    match sniff_image_format(&bytes) {
+        Some(ext) => Ok((bytes.to_vec(), ext.to_string())),
+        None => Err(AppError::Custom(format!(
+            "响应不是有效图片（content-type={}, {} 字节，可能是防盗链/登录页），url={}",
+            content_type,
+            bytes.len(),
+            url
+        ))),
     }
+}
 
-    Ok((bytes.to_vec(), ext))
+/// 按文件头 magic number 嗅探图片真实格式，返回不带点的扩展名。
+///
+/// 覆盖位图常见格式 + SVG（文本）。命中不了返回 None（调用方据此判定"非图片"）。
+/// SVG 需特判 HTML 错误页：以 `<!doctype html` / `<html` 开头的一律不当图片。
+fn sniff_image_format(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() < 4 {
+        return None;
+    }
+    if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+        return Some("png");
+    }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("jpg");
+    }
+    if bytes.starts_with(b"GIF8") {
+        return Some("gif");
+    }
+    if bytes.starts_with(b"BM") {
+        return Some("bmp");
+    }
+    // WEBP: "RIFF"....（4 字节长度）...."WEBP"
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("webp");
+    }
+    // SVG 是文本格式，取头部一小段判断；务必排除 HTML 错误页
+    let head_len = bytes.len().min(512);
+    let head = String::from_utf8_lossy(&bytes[..head_len]);
+    let lower = head.trim_start_matches('\u{feff}').trim_start().to_lowercase();
+    if lower.starts_with("<!doctype html") || lower.starts_with("<html") {
+        return None;
+    }
+    if lower.starts_with("<svg") || (lower.starts_with("<?xml") && lower.contains("<svg")) {
+        return Some("svg");
+    }
+    None
 }
 
 /// 按 host 关键字匹配最常见的国内图床，用对应站点的根路径作 Referer。
@@ -126,32 +163,6 @@ fn smart_referer(url: &reqwest::Url) -> String {
     format!("{}://{}/", url.scheme(), host)
 }
 
-fn ext_from_content_type(ct: &str) -> Option<String> {
-    let main = ct.split(';').next()?.trim().to_lowercase();
-    match main.as_str() {
-        "image/png" => Some("png".into()),
-        "image/jpeg" | "image/jpg" => Some("jpg".into()),
-        "image/gif" => Some("gif".into()),
-        "image/webp" => Some("webp".into()),
-        "image/svg+xml" => Some("svg".into()),
-        "image/bmp" => Some("bmp".into()),
-        _ => None,
-    }
-}
-
-fn ext_from_url(url: &reqwest::Url) -> Option<String> {
-    let path = url.path();
-    let ext = path.rsplit('.').next()?.split('?').next()?.to_lowercase();
-    if matches!(
-        ext.as_str(),
-        "png" | "jpg" | "jpeg" | "webp" | "gif" | "svg" | "bmp"
-    ) {
-        Some(ext)
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,13 +186,40 @@ mod tests {
     }
 
     #[test]
-    fn ext_from_url_basic() {
-        let u = reqwest::Url::parse("https://x.com/a/b.JPG?x=1").unwrap();
-        assert_eq!(ext_from_url(&u), Some("jpg".into()));
+    fn sniff_png_jpg_gif_bmp() {
+        assert_eq!(
+            sniff_image_format(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
+            Some("png")
+        );
+        assert_eq!(sniff_image_format(&[0xFF, 0xD8, 0xFF, 0xE0, 0x00]), Some("jpg"));
+        assert_eq!(sniff_image_format(b"GIF89a..."), Some("gif"));
+        assert_eq!(sniff_image_format(b"BM\x00\x00\x00\x00"), Some("bmp"));
     }
 
     #[test]
-    fn ext_from_content_type_jpeg() {
-        assert_eq!(ext_from_content_type("image/jpeg; charset=utf-8"), Some("jpg".into()));
+    fn sniff_webp() {
+        // RIFF + 4 字节占位 + WEBP
+        let bytes = b"RIFF\x00\x00\x00\x00WEBPVP8 ";
+        assert_eq!(sniff_image_format(bytes), Some("webp"));
+    }
+
+    #[test]
+    fn sniff_svg_text() {
+        assert_eq!(sniff_image_format(b"<svg xmlns=\"...\"></svg>"), Some("svg"));
+        assert_eq!(
+            sniff_image_format(b"<?xml version=\"1.0\"?><svg></svg>"),
+            Some("svg")
+        );
+    }
+
+    #[test]
+    fn sniff_rejects_html_antileech_page() {
+        // 防盗链/登录页：URL 可能以 .jpg 结尾，但字节是 HTML → 必须判非图片
+        assert_eq!(
+            sniff_image_format(b"<!DOCTYPE html><html><body>403</body></html>"),
+            None
+        );
+        assert_eq!(sniff_image_format(b"<html><head></head></html>"), None);
+        assert_eq!(sniff_image_format(b"not an image at all"), None);
     }
 }

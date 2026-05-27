@@ -8,6 +8,7 @@ import {
   Input,
   message,
   Modal,
+  TreeSelect,
 } from "antd";
 import {
   ContextMenuOverlay,
@@ -33,6 +34,7 @@ import {
   PinOff,
   Inbox,
   GitCompare,
+  Sparkles,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderFilled } from "@ant-design/icons";
@@ -40,7 +42,7 @@ import type { DataNode } from "antd/es/tree";
 import { useAppStore } from "@/store";
 import { MicButton } from "@/components/MicButton";
 import { useTabsStore } from "@/store/tabs";
-import { folderApi, importApi, noteApi, trashApi } from "@/lib/api";
+import { aiChatApi, folderApi, importApi, noteApi, trashApi } from "@/lib/api";
 import { showExternalMdIntroOnce } from "@/lib/externalMdIntro";
 import type { Folder, Note, ScannedFile } from "@/types";
 import { parseEmojiPrefix } from "@/lib/treeIcons";
@@ -79,6 +81,14 @@ const UNCATEGORIZED_KEY = "__uncategorized__";
 
 /** 单个文件夹直属笔记的展示上限（超过引导用户去主区） */
 const NOTES_PER_FOLDER_LIMIT = 100;
+
+/** 拖拽悬停多久（ms）后自动展开折叠文件夹（spring-loaded）。
+ *  取 600ms：低于 ~400 仍易误触，高于 ~800 等得不耐烦；与 Finder / VS Code 体感一致。 */
+const HOVER_EXPAND_DELAY = 600;
+
+/** 「移动到…」TreeSelect 里代表"根目录（未分类）"的哨兵值。
+ *  TreeSelect 不接受 null 作为可选项 value，用 -1 占位，提交时映射回 null。 */
+const ROOT_FOLDER_VALUE = -1;
 
 function isNoteKey(key: string): boolean {
   return key.startsWith(NOTE_KEY_PREFIX);
@@ -382,6 +392,19 @@ export function NotesPanel() {
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
+  // 多选（仅笔记）：Ctrl/Cmd 点击切换、Shift 点击选区间。独立于 antd Tree 的单选
+  // selectedKey（那个表示"当前打开的笔记"），这里只做"标记一批笔记待批量操作"的视觉层。
+  // 选中后整批可一起拖到目标文件夹（handleDrop 里走 noteApi.moveBatch）。
+  const [selectedNoteKeys, setSelectedNoteKeys] = useState<Set<string>>(new Set());
+  // Shift 连选的锚点（上一次普通/Ctrl 点击的笔记 key）
+  const multiSelectAnchorRef = useRef<string | null>(null);
+  // 「移动到…」弹窗：TreeSelect 选目标文件夹后批量移动。
+  // moveModalIds 在打开弹窗时快照，避免弹窗开着时多选集合再变化导致移错。
+  const [moveModalOpen, setMoveModalOpen] = useState(false);
+  const [moveModalIds, setMoveModalIds] = useState<number[]>([]);
+  // TreeSelect 选中值：数字=目标文件夹 id；ROOT_FOLDER_VALUE 哨兵=移到根（未分类）
+  const [moveTargetValue, setMoveTargetValue] = useState<number | null>(null);
+
   const [contextMenu, setContextMenu] = useState<{
     key: string;
     name: string;
@@ -412,6 +435,18 @@ export function NotesPanel() {
   const lastClickRef = useRef<{ key: string; time: number } | null>(null);
   // Esc 取消编辑时置 true，后续 onBlur 跳过提交
   const cancelEditRef = useRef(false);
+  // 拖拽悬停展开（spring-loaded folder）：记录"当前正在计时展开的目标 key"和定时器。
+  // 改自"一进入折叠文件夹就立即展开"——那样拖去深层目标时一路经过的文件夹会全炸开、
+  // 树结构狂跳导致目标位置乱移。改为悬停 ~0.6s 才展开，路过不展开（与 Finder / VS Code 一致）。
+  const hoverExpandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hoverExpandKeyRef = useRef<string | null>(null);
+  const cancelHoverExpand = () => {
+    if (hoverExpandTimerRef.current) {
+      clearTimeout(hoverExpandTimerRef.current);
+      hoverExpandTimerRef.current = null;
+    }
+    hoverExpandKeyRef.current = null;
+  };
 
   useEffect(() => {
     loadFolders();
@@ -777,6 +812,8 @@ export function NotesPanel() {
   };
 
   async function handleDrop(info: DropInfo) {
+    // 拖拽落下：清掉可能仍在计时的悬停展开，避免松手后目标文件夹又被延迟展开
+    cancelHoverExpand();
     // 防御：OS 文件拖入时 antd Tree 的 onDrop 理论上不会触发（内部无 dragNode），
     // 但不同版本行为有差异，保底校验避免 undefined.key 抛错
     if (!info.dragNode || info.dragNode.key == null) return;
@@ -811,6 +848,24 @@ export function NotesPanel() {
         targetFolderId = info.dropToGap
           ? findFolderParentId(folders, dropFolderId)
           : dropFolderId;
+      }
+
+      // ── 多选批量拖动：拖的是已多选集合里的笔记，且选了不止一项 →
+      //    把整批一次性 moveBatch 到目标文件夹（忽略 gap 重排语义，批量只做归类）。
+      if (selectedNoteKeys.has(dragKey) && selectedNoteKeys.size > 1) {
+        const ids = Array.from(selectedNoteKeys)
+          .filter((k) => isNoteKey(k))
+          .map((k) => noteIdFromKey(k))
+          .filter((id) => Number.isFinite(id));
+        try {
+          const moved = await noteApi.moveBatch(ids, targetFolderId);
+          clearMultiSelect();
+          useAppStore.getState().bumpNotesRefresh();
+          message.success(`已移动 ${moved} 篇笔记`);
+        } catch (e) {
+          message.error(String(e));
+        }
+        return;
       }
 
       // 跨 folder：保持原"只换 folder_id"行为
@@ -980,6 +1035,9 @@ export function NotesPanel() {
     if (key.startsWith(NEW_NODE_PREFIX)) return;
     if (editingKey === key) return;
 
+    // 点文件夹 / 未分类 → 退出笔记多选（多选只在笔记之间维持）
+    if (!isNoteKey(key)) clearMultiSelect();
+
     // 「未分类」虚拟根节点：点击 = 切换展开 + 跳转 /notes?folder=uncategorized
     if (key === UNCATEGORIZED_KEY) {
       const cur = uncategorizedExpanded;
@@ -1047,9 +1105,64 @@ export function NotesPanel() {
     }
   }
 
+  // ─── 多选（仅笔记）─────────────────────────
+  // 笔记节点点击的统一入口：带修饰键 → 多选；否则走原 handleTitleClick（打开/重命名）。
+  // 返回 true 表示"已作为多选处理，调用方不要再走普通打开逻辑"。
+  function handleNoteClickWithModifiers(
+    key: string,
+    e: React.MouseEvent,
+  ): boolean {
+    // Ctrl/Cmd：切换该笔记的多选态，不打开、不导航
+    if (e.ctrlKey || e.metaKey) {
+      setSelectedNoteKeys((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      });
+      multiSelectAnchorRef.current = key;
+      return true;
+    }
+    // Shift：从锚点到当前，按展示顺序连选；无锚点则退化为单选该项
+    if (e.shiftKey) {
+      const anchor = multiSelectAnchorRef.current;
+      if (!anchor) {
+        setSelectedNoteKeys(new Set([key]));
+        multiSelectAnchorRef.current = key;
+        return true;
+      }
+      const ai = flatNoteKeys.indexOf(anchor);
+      const bi = flatNoteKeys.indexOf(key);
+      if (ai === -1 || bi === -1) {
+        setSelectedNoteKeys(new Set([key]));
+        multiSelectAnchorRef.current = key;
+        return true;
+      }
+      const [lo, hi] = ai <= bi ? [ai, bi] : [bi, ai];
+      setSelectedNoteKeys(new Set(flatNoteKeys.slice(lo, hi + 1)));
+      return true;
+    }
+    // 普通点击：清空多选，把锚点设到当前，交回普通打开逻辑
+    if (selectedNoteKeys.size > 0) setSelectedNoteKeys(new Set());
+    multiSelectAnchorRef.current = key;
+    return false;
+  }
+
+  /** 清空多选（点文件夹/空白/Esc 时调用） */
+  function clearMultiSelect() {
+    if (selectedNoteKeys.size > 0) setSelectedNoteKeys(new Set());
+    multiSelectAnchorRef.current = null;
+  }
+
   // ─── F2 快捷键 ─────────────────────────────
 
   function handleTreeKeyDown(e: React.KeyboardEvent) {
+    // Esc：退出笔记多选
+    if (e.key === "Escape" && selectedNoteKeys.size > 0 && !editingKey) {
+      e.preventDefault();
+      clearMultiSelect();
+      return;
+    }
     if (e.key === "F2" && selectedKey && !editingKey) {
       const name = findFolderName(selectedKey ? folders : [], Number(selectedKey));
       if (name !== null) {
@@ -1069,7 +1182,37 @@ export function NotesPanel() {
       const noteId = noteIdFromKey(key);
       const note = findNoteById(noteId);
       const isPinned = note?.is_pinned ?? false;
+
+      // 右键的笔记在多选集合且选了不止一项 → 顶部给一组批量操作。
+      // （只对"已多选"展示；单篇右键仍走下方原菜单）
+      const inMultiSelect = selectedNoteKeys.has(key) && selectedNoteKeys.size > 1;
+      const batchEntries: ContextMenuEntry[] = inMultiSelect
+        ? [
+            {
+              key: "batch-move",
+              icon: <FolderOpen size={14} />,
+              label: `移动选中的 ${selectedNoteKeys.size} 篇到…`,
+              onClick: () => {
+                close();
+                openMoveModal();
+              },
+            },
+            {
+              key: "batch-trash",
+              icon: <Trash2 size={14} />,
+              label: `移到回收站（${selectedNoteKeys.size} 篇）`,
+              danger: true,
+              onClick: () => {
+                close();
+                trashSelectedNotes();
+              },
+            },
+            { type: "divider" },
+          ]
+        : [];
+
       return [
+        ...batchEntries,
         {
           key: "open",
           icon: <ExternalLink size={14} />,
@@ -1165,6 +1308,26 @@ export function NotesPanel() {
         onClick: () => {
           startCreateChild(key);
           close();
+        },
+      },
+      { type: "divider" },
+      // ─── 对此文件夹问 AI：新建一个 RAG 范围限定到本文件夹（含子孙）的会话并跳转 ───
+      {
+        key: "ask-ai-folder",
+        icon: <Sparkles size={14} />,
+        label: "对此文件夹问 AI",
+        onClick: async () => {
+          close();
+          try {
+            const conv = await aiChatApi.createConversation(
+              `📁 ${name}`,
+              undefined,
+              folderId,
+            );
+            navigate("/ai", { state: { activeConvId: conv.id } });
+          } catch (e) {
+            message.error(`发起文件夹问答失败: ${e}`);
+          }
         },
       },
       { type: "divider" },
@@ -1500,15 +1663,26 @@ export function NotesPanel() {
       : {};
 
     if (isNoteKey(key)) {
+      const isMultiSelected = selectedNoteKeys.has(key);
+      // 多选高亮：用主色淡底，区别于 antd 的"当前打开"行高亮，又彼此和谐
+      const multiStyle: React.CSSProperties = isMultiSelected
+        ? {
+            background: token.colorPrimaryBg,
+            borderRadius: 4,
+            outline: `1px solid ${token.colorPrimaryBorder}`,
+          }
+        : {};
       return (
         <span
           className="flex items-center gap-1.5 w-full min-w-0"
           onClick={(e) => {
             e.stopPropagation();
+            // 带 Ctrl/Cmd/Shift → 多选处理，吞掉点击不打开
+            if (handleNoteClickWithModifiers(key, e)) return;
             handleTitleClick(key);
           }}
           title={name}
-          style={ctxStyle}
+          style={{ ...ctxStyle, ...multiStyle }}
         >
           {emoji ? (
             <span style={{ fontSize: 14, flexShrink: 0, lineHeight: 1 }}>
@@ -1643,6 +1817,96 @@ export function NotesPanel() {
     }
     return folderTree;
   }, [folders, creatingUnderKey, notesByFolder, tabTitleByNoteId, uncategorizedNotes, uncategorizedLoaded, showOnlyFolders]);
+
+  // 当前 treeData 里所有笔记 key 的「展示顺序」扁平列表，供 Shift 连选按顺序取区间。
+  // 含折叠文件夹下未渲染的笔记也无妨：Shift 连选基于逻辑顺序，与是否展开无关。
+  const flatNoteKeys = useMemo<string[]>(() => {
+    const acc: string[] = [];
+    const walk = (nodes: EnrichedNode[]) => {
+      for (const node of nodes) {
+        const k = String(node.key);
+        if (isNoteKey(k)) acc.push(k);
+        if (node.children && node.children.length > 0) {
+          walk(node.children as EnrichedNode[]);
+        }
+      }
+    };
+    walk(treeData as EnrichedNode[]);
+    return acc;
+  }, [treeData]);
+
+  // 「移动到…」弹窗的 TreeSelect 数据：直接用 folders 的嵌套结构转成 {value,title,children}，
+  // 顶部插入"根目录（未分类）"项（哨兵 value）。
+  const moveTreeSelectData = useMemo(() => {
+    type MoveNode = { value: number; title: string; children?: MoveNode[] };
+    const toNode = (f: Folder): MoveNode => ({
+      value: f.id,
+      title: f.name,
+      children: f.children.length ? f.children.map(toNode) : undefined,
+    });
+    const data: MoveNode[] = [
+      { value: ROOT_FOLDER_VALUE, title: "根目录（未分类）" },
+      ...folders.map(toNode),
+    ];
+    return data;
+  }, [folders]);
+
+  /** 打开「移动到…」弹窗，快照当前多选的笔记 id */
+  function openMoveModal() {
+    const ids = Array.from(selectedNoteKeys)
+      .filter((k) => isNoteKey(k))
+      .map((k) => noteIdFromKey(k))
+      .filter((id) => Number.isFinite(id));
+    if (ids.length === 0) return;
+    setMoveModalIds(ids);
+    setMoveTargetValue(null);
+    setMoveModalOpen(true);
+  }
+
+  /** 提交「移动到…」：把快照的笔记批量移到所选文件夹 */
+  async function submitMove() {
+    if (moveTargetValue === null) {
+      message.warning("请选择目标文件夹");
+      return;
+    }
+    const target = moveTargetValue === ROOT_FOLDER_VALUE ? null : moveTargetValue;
+    try {
+      const moved = await noteApi.moveBatch(moveModalIds, target);
+      setMoveModalOpen(false);
+      clearMultiSelect();
+      useAppStore.getState().bumpNotesRefresh();
+      message.success(`已移动 ${moved} 篇笔记`);
+    } catch (e) {
+      message.error(String(e));
+    }
+  }
+
+  /** 批量移到回收站（带二次确认） */
+  function trashSelectedNotes() {
+    const ids = Array.from(selectedNoteKeys)
+      .filter((k) => isNoteKey(k))
+      .map((k) => noteIdFromKey(k))
+      .filter((id) => Number.isFinite(id));
+    if (ids.length === 0) return;
+    Modal.confirm({
+      title: `移到回收站`,
+      content: `确定把选中的 ${ids.length} 篇笔记移到回收站吗？`,
+      okText: "移到回收站",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        try {
+          const n = await noteApi.trashBatch(ids);
+          ids.forEach((id) => useTabsStore.getState().closeTab(id));
+          clearMultiSelect();
+          useAppStore.getState().bumpNotesRefresh();
+          message.success(`已移到回收站 ${n} 篇`);
+        } catch (e) {
+          message.error(String(e));
+        }
+      },
+    });
+  }
 
   // Q-004：节点超阈值时启用 antd Tree 的 virtual scroll，避免几千条笔记全量挂载导致拖拽 / 展开卡顿。
   // 只数"当前展开后会渲染"的节点：折叠的 children 不算（antd 内部也只渲染展开的）。
@@ -1906,27 +2170,44 @@ export function NotesPanel() {
                   },
                 }}
                 onDrop={handleDrop}
+                onDragEnd={cancelHoverExpand}
                 onDragEnter={({ node }) => {
                   // 拖拽 hover 到折叠文件夹时自动展开，避免用户拖到一半还要先点开。
                   // 仅对真实文件夹节点生效；笔记叶子 / 新建占位 / 未分类逻辑各自独立处理。
+                  //
+                  // spring-loaded：不立即展开，而是悬停 HOVER_EXPAND_DELAY 才展开。
+                  // 进入新节点 → 重置计时；路过（很快又进别的节点）不会触发展开。
                   const k = String(node.key);
-                  if (k.startsWith(NEW_NODE_PREFIX) || isNoteKey(k)) return;
-                  if (k === UNCATEGORIZED_KEY) {
-                    if (!uncategorizedExpanded) {
-                      setUncategorizedExpanded(true);
-                      if (uncategorizedNotes.length === 0) {
-                        void loadUncategorizedNotes();
-                      }
-                    }
+                  // 进入的是叶子/占位节点：取消任何待展开计时（路过即取消）
+                  if (k.startsWith(NEW_NODE_PREFIX) || isNoteKey(k)) {
+                    cancelHoverExpand();
                     return;
                   }
-                  const id = Number(k);
-                  if (!Number.isFinite(id)) return;
-                  const collapsed = collapsedFolderKeys.includes(k);
-                  if (collapsed) {
-                    useAppStore.getState().setNotesFolderCollapsed(k, false);
-                    if (!notesByFolder.has(id)) void loadNotesForFolder(id);
-                  }
+                  // 已经在为同一个目标计时，无需重置
+                  if (hoverExpandKeyRef.current === k) return;
+                  // 切到了新目标：清掉上一个计时，重新计时
+                  cancelHoverExpand();
+                  hoverExpandKeyRef.current = k;
+                  hoverExpandTimerRef.current = setTimeout(() => {
+                    hoverExpandTimerRef.current = null;
+                    hoverExpandKeyRef.current = null;
+                    if (k === UNCATEGORIZED_KEY) {
+                      if (!uncategorizedExpanded) {
+                        setUncategorizedExpanded(true);
+                        if (uncategorizedNotes.length === 0) {
+                          void loadUncategorizedNotes();
+                        }
+                      }
+                      return;
+                    }
+                    const id = Number(k);
+                    if (!Number.isFinite(id)) return;
+                    const collapsed = collapsedFolderKeys.includes(k);
+                    if (collapsed) {
+                      useAppStore.getState().setNotesFolderCollapsed(k, false);
+                      if (!notesByFolder.has(id)) void loadNotesForFolder(id);
+                    }
+                  }, HOVER_EXPAND_DELAY);
                 }}
                 selectedKeys={
                   isUncategorizedActive
@@ -2073,6 +2354,30 @@ export function NotesPanel() {
         firstNoteId={compareFirstNoteId}
         onClose={() => setCompareFirstNoteId(null)}
       />
+
+      {/* 多选批量"移动到…"：TreeSelect 选目标文件夹 */}
+      <Modal
+        title={`移动 ${moveModalIds.length} 篇笔记到…`}
+        open={moveModalOpen}
+        onOk={() => void submitMove()}
+        onCancel={() => setMoveModalOpen(false)}
+        okText="移动"
+        cancelText="取消"
+        okButtonProps={{ disabled: moveTargetValue === null }}
+        destroyOnClose
+      >
+        <TreeSelect
+          style={{ width: "100%" }}
+          value={moveTargetValue ?? undefined}
+          onChange={(v) => setMoveTargetValue(v as number)}
+          treeData={moveTreeSelectData}
+          placeholder="选择目标文件夹"
+          treeDefaultExpandAll
+          showSearch
+          treeNodeFilterProp="title"
+          popupMatchSelectWidth={false}
+        />
+      </Modal>
     </div>
   );
 }

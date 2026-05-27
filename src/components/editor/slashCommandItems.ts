@@ -207,17 +207,15 @@ const BASIC_SLASH_ITEMS: SlashCommandItem[] = [
   {
     key: "table",
     title: "表格",
-    subtitle: "插入 3×3 表格",
+    subtitle: "插入表格（可设行列数）",
     group: "代码与表格",
     icon: TableIcon,
     keywords: ["表格", "table", "bg"],
     command: ({ editor, range }) => {
-      editor
-        .chain()
-        .focus()
-        .deleteRange(range)
-        .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
-        .run();
+      // 先删掉 "/表格" 触发文本并把光标留在原处，再唤起 EditorToolbar 的「插入表格」弹窗
+      // （由用户填行列数后插入）。slashCommandItems 不是组件，借 CustomEvent 与工具栏通信。
+      editor.chain().focus().deleteRange(range).run();
+      document.dispatchEvent(new CustomEvent("kb-open-insert-table"));
     },
   },
 

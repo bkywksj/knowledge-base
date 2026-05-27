@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/react";
+import { CellSelection } from "@tiptap/pm/tables";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { Button, Tooltip, message, theme as antdTheme } from "antd";
@@ -14,6 +15,10 @@ import {
   Columns3,
   Copy,
   ImageDown,
+  PanelLeft,
+  PanelTop,
+  RectangleHorizontal,
+  RectangleVertical,
   Rows3,
   Combine,
   Split,
@@ -121,6 +126,34 @@ export function TableBubbleMenu({ editor }: Props) {
         return;
       }
     }
+  };
+
+  // 选中当前光标所在的整行 / 整列。
+  // TipTap 没有内置 selectRow/selectColumn 命令，直接用 ProseMirror tables 的
+  // CellSelection.rowSelection / colSelection：传入当前单元格的解析位置即可，
+  // 第二个 headCell 省略时默认等于 anchorCell，会自动扩展成整行/整列。
+  const selectRowOrColumn = (kind: "row" | "column") => {
+    editor.commands.command(({ state, dispatch, tr }) => {
+      const $from = state.selection.$from;
+      // 向上找到最近的单元格层级（tableRole 为 cell / header_cell）
+      let cellDepth = -1;
+      for (let d = $from.depth; d > 0; d--) {
+        const role = $from.node(d).type.spec.tableRole;
+        if (role === "cell" || role === "header_cell") {
+          cellDepth = d;
+          break;
+        }
+      }
+      if (cellDepth === -1) return false;
+      const $cell = state.doc.resolve($from.before(cellDepth));
+      const sel =
+        kind === "row"
+          ? CellSelection.rowSelection($cell)
+          : CellSelection.colSelection($cell);
+      if (dispatch) dispatch(tr.setSelection(sel));
+      return true;
+    });
+    editor.view.focus();
   };
 
   const exportTableAsImage = async () => {
@@ -280,6 +313,17 @@ export function TableBubbleMenu({ editor }: Props) {
         onClick={selectWholeTable}
       />
       <Btn
+        icon={<RectangleHorizontal size={14} />}
+        title="选中整行"
+        onClick={() => selectRowOrColumn("row")}
+      />
+      <Btn
+        icon={<RectangleVertical size={14} />}
+        title="选中整列"
+        onClick={() => selectRowOrColumn("column")}
+      />
+      <VDivider />
+      <Btn
         icon={<Copy size={14} />}
         title="复制整张表格（HTML + Markdown）"
         onClick={() => {
@@ -332,6 +376,19 @@ export function TableBubbleMenu({ editor }: Props) {
         danger
         disabled={!can.deleteRow()}
         onClick={() => editor.chain().focus().deleteRow().run()}
+      />
+      <VDivider />
+      <Btn
+        icon={<PanelTop size={14} />}
+        title="设置/取消标题行"
+        disabled={!can.toggleHeaderRow()}
+        onClick={() => editor.chain().focus().toggleHeaderRow().run()}
+      />
+      <Btn
+        icon={<PanelLeft size={14} />}
+        title="设置/取消标题列"
+        disabled={!can.toggleHeaderColumn()}
+        onClick={() => editor.chain().focus().toggleHeaderColumn().run()}
       />
       <VDivider />
       <Btn
