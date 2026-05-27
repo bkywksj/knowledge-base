@@ -117,12 +117,12 @@ export function DailyPanel() {
     localStorage.setItem(VIEW_MODE_KEY, viewMode);
   }, [viewMode]);
 
-  // 「全部」视图数据：一次拉回所有日记元数据，前端按年月分组
+  // 全部日记元数据：一次拉回（含标题），「全部」视图按年月分组，「月历」视图查标题。
+  // 始终加载（不限「全部」模式）——月历底部列表也要靠它显示标题。
   const [allEntries, setAllEntries] = useState<DailyEntry[]>([]);
   const [allLoading, setAllLoading] = useState(false);
 
   useEffect(() => {
-    if (viewMode !== "all") return;
     let cancelled = false;
     (async () => {
       setAllLoading(true);
@@ -138,8 +138,15 @@ export function DailyPanel() {
     return () => {
       cancelled = true;
     };
-    // notesRefreshTick：新建/删除日记后重拉
-  }, [viewMode, notesRefreshTick]);
+    // notesRefreshTick：新建/删除日记/改标题后重拉
+  }, [notesRefreshTick]);
+
+  // 日期 → 标题 映射：月历视图列表行靠它显示标题（O(1) 查询）
+  const titleByDate = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const e of allEntries) map.set(e.daily_date, e.title);
+    return map;
+  }, [allEntries]);
 
   // 按年月（YYYY-MM）分组；后端已按 daily_date DESC 排好，分组天然倒序
   const groupedAll = useMemo(() => {
@@ -407,6 +414,7 @@ export function DailyPanel() {
             <DateRow
               key={d}
               date={d}
+              title={titleByDate.get(d)}
               selected={selectedDate === d}
               isToday={d === today}
               hasEntry
@@ -450,6 +458,7 @@ export function DailyPanel() {
                     <DateRow
                       key={e.daily_date}
                       date={e.daily_date}
+                      title={e.title}
                       selected={selectedDate === e.daily_date}
                       isToday={e.daily_date === today}
                       hasEntry
@@ -487,6 +496,7 @@ export function DailyPanel() {
 /** 单行日期渲染 */
 function DateRow({
   date,
+  title,
   selected,
   isToday,
   hasEntry,
@@ -496,6 +506,11 @@ function DateRow({
   token,
 }: {
   date: string;
+  /**
+   * 日记标题。「全部」视图会传入，让列表能看到标题而不只是日期；
+   * 月历视图只有日期串、拿不到标题，留空回退为「星期 + 日期」。
+   */
+  title?: string;
   selected: boolean;
   isToday: boolean;
   hasEntry: boolean;
@@ -512,6 +527,8 @@ function DateRow({
   };
 }) {
   const { day } = parseDate(date);
+  // 「全部」视图传了标题就显示标题（含默认的「XXXX 的日记」）；月历视图没标题回退星期。
+  const shownTitle = title && title.trim() ? title.trim() : undefined;
   return (
     <div
       onClick={onClick}
@@ -558,16 +575,31 @@ function DateRow({
       >
         {day}
       </div>
-      {/* 星期 + 标签 */}
+      {/* 主行：有自定义标题显标题，否则显星期；次行补星期/日期 */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13 }}>{weekdayOf(date)}</div>
+        <div
+          style={{
+            fontSize: 13,
+            // 标题可能较长，单行省略避免撑破窄面板
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={shownTitle ?? weekdayOf(date)}
+        >
+          {shownTitle ?? weekdayOf(date)}
+        </div>
         <div
           style={{
             fontSize: 11,
             color: selected ? token.colorPrimary : token.colorTextTertiary,
           }}
         >
-          {isToday ? "今天" : date}
+          {shownTitle
+            ? `${weekdayOf(date)} · ${isToday ? "今天" : date}`
+            : isToday
+              ? "今天"
+              : date}
         </div>
       </div>
       {/* 有日记的小圆点 */}

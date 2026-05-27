@@ -211,6 +211,7 @@ function DesktopDailyPage() {
     save: async ({ title: t, content: c }) => {
       const d = dateRef.current;
       let current = noteRef.current;
+      let isNew = false;
       if (!current) {
         if (c.trim().length === 0) return;
         // 套了默认模板但用户一字未改 → 视作"路过"，不建档
@@ -220,10 +221,17 @@ function DesktopDailyPage() {
         current = await dailyApi.getOrCreate(d);
         setNote(current);
         noteRef.current = current;
-        // 新建了一条日记 → 通知 SidePanel 重拉本月日期列表
+        isNew = true;
+      }
+      // 标题是侧边栏「全部」列表的展示项；改了标题才需要让列表重拉（内容变化不影响列表）
+      const titleChanged = current.title !== t;
+      await noteApi.update(current.id, { title: t, content: c });
+      // 同步本地缓存的 note，避免下次保存误判 titleChanged
+      noteRef.current = { ...current, title: t, content: c };
+      // 新建 或 标题变化 → 通知 SidePanel 重拉日期/标题列表
+      if (isNew || titleChanged) {
         useAppStore.getState().bumpNotesRefresh();
       }
-      await noteApi.update(current.id, { title: t, content: c });
     },
   });
 
