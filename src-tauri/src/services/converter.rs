@@ -58,6 +58,15 @@ pub fn detect_converter() -> DocConverter {
     })
 }
 
+/// 把 LibreOffice / Word 能打开的任意文档（含 `.html`）转换为 `.docx`，
+/// 输出到 `dst_dir`，返回输出文件绝对路径。
+///
+/// 本质与 [`convert_doc_to_docx`] 相同（转换器对输入类型不挑食，靠扩展名/内容自动识别），
+/// 单独命名是为了让「笔记 HTML → docx」这条导出路径在调用处语义清晰。
+pub fn convert_to_docx(src: &Path, dst_dir: &Path) -> Result<PathBuf, AppError> {
+    convert_doc_to_docx(src, dst_dir)
+}
+
 /// 把 `.doc` 转换为 `.docx`，输出到 `dst_dir`，返回输出文件绝对路径
 pub fn convert_doc_to_docx(src: &Path, dst_dir: &Path) -> Result<PathBuf, AppError> {
     if !src.exists() {

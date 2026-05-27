@@ -69,7 +69,7 @@ pub fn export_single_note_to_word(
     let assets_root = state.data_dir.clone();
     let target = PathBuf::from(&target_path);
 
-    services::export_word::WordExportService::export_single(
+    services::export_word::WordExportService::export_single_best_effort(
         &note.title,
         &note.content,
         &target,

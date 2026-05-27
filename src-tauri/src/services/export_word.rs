@@ -14,12 +14,33 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use docx_rs::*;
-use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::error::AppError;
 use crate::services::asset_path::resolve_content_url;
+use crate::services::converter::{self, DocConverter};
+use crate::services::export_html::HtmlExportService;
+use crate::services::markdown::html_to_markdown;
+
+/// GFM 扩展开关（表格 / 删除线 / 任务列表）。
+///
+/// 笔记内容是 tiptap-markdown 产出的「Markdown 夹 HTML」混合体——管道表格、删除线、
+/// 任务列表都可能出现，必须开启这些扩展，否则会被当成普通段落文本。
+fn gfm_options() -> Options {
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_TABLES);
+    opts.insert(Options::ENABLE_STRIKETHROUGH);
+    opts.insert(Options::ENABLE_TASKLISTS);
+    opts
+}
+
+/// 原生回退路径里「HTML 块 → Markdown」递归展开的最大深度，防呆护栏：
+/// 万一 html2md 产出仍含 raw HTML、再被 pulldown 当 HTML 块吐回来，
+/// 到达深度上限后直接按纯文本落盘，杜绝无限递归。
+const MAX_HTML_FLUSH_DEPTH: u32 = 4;
 
 /// 导出结果
 #[derive(Debug, serde::Serialize)]
@@ -35,7 +56,79 @@ pub struct WordExportResult {
 pub struct WordExportService;
 
 impl WordExportService {
-    /// 把单条笔记导出到指定文件路径
+    /// 导出单条笔记为 .docx —— 尽力而为（hybrid）策略：
+    ///
+    /// 1. **优先走系统转换器**（LibreOffice / Word / WPS）：先用 `export_html` 把笔记渲染成
+    ///    自包含 HTML（表格/分栏/Callout/图片/样式全保真），再交给转换器转成 docx。保真度最高。
+    /// 2. **无转换器或转换失败时回退到原生 docx 生成**（`export_single`）：纯 Rust、零外部依赖、
+    ///    离线可用，但复杂结构（嵌套分栏/自定义样式）会被简化。
+    ///
+    /// 这样：装了 Office/WPS/LibreOffice 的机器拿到高保真结果，裸机也至少能把
+    /// 文字 + 表格 + 图片 + 列表导出来，不再「只剩标题」。
+    pub fn export_single_best_effort(
+        title: &str,
+        content: &str,
+        target_path: &Path,
+        assets_root: &Path,
+    ) -> Result<WordExportResult, AppError> {
+        if converter::detect_converter() != DocConverter::None {
+            match Self::export_via_converter(title, content, target_path, assets_root) {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    log::warn!("Word 导出：转换器路径失败，回退原生 docx 生成：{}", e);
+                }
+            }
+        }
+        Self::export_single(title, content, target_path, assets_root)
+    }
+
+    /// 转换器路径：笔记 → 自包含 HTML → 系统转换器 → docx → 拷到用户目标路径。
+    fn export_via_converter(
+        title: &str,
+        content: &str,
+        target_path: &Path,
+        assets_root: &Path,
+    ) -> Result<WordExportResult, AppError> {
+        // 渲染为自包含 HTML（图片已内嵌为 base64 data: URL）
+        let (html, images_inlined, images_missing) =
+            HtmlExportService::render_html(title, content, assets_root)?;
+
+        // 临时工作目录用纯 ASCII 路径与文件名，规避部分转换器对非 ASCII 路径的兼容问题
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let tmp_dir = std::env::temp_dir().join(format!("kb_word_export_{}", nanos));
+        std::fs::create_dir_all(&tmp_dir)?;
+        let tmp_html = tmp_dir.join("note.html");
+        std::fs::write(&tmp_html, html.as_bytes())?;
+
+        // HTML → docx（产物固定为 <tmp_dir>/note.docx）
+        let convert_result = converter::convert_to_docx(&tmp_html, &tmp_dir);
+        let produced = match convert_result {
+            Ok(p) => p,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&tmp_dir);
+                return Err(e);
+            }
+        };
+
+        // 拷到用户在 save dialog 选定的最终路径
+        let copy_result = std::fs::copy(&produced, target_path);
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        copy_result.map_err(|e| AppError::Custom(format!("写 docx 失败: {}", e)))?;
+
+        Ok(WordExportResult {
+            file_path: target_path.to_string_lossy().into(),
+            images_embedded: images_inlined,
+            images_missing,
+            // 转换器路径下图片已内嵌进 HTML/docx，无旁挂附件
+            attachments_copied: 0,
+        })
+    }
+
+    /// 原生 docx 生成（回退路径）：用 `pulldown-cmark` 解析「Markdown 夹 HTML」内容，
+    /// 事件驱动地映射到 docx 元素。
     ///
     /// `assets_root` 是 kb_assets 目录的绝对路径（用于解析相对图片路径）；
     /// 不存在时所有非绝对路径图片都会算"缺失"。
@@ -56,14 +149,13 @@ impl WordExportService {
             );
         }
 
-        let parser = Parser::new(markdown);
         let mut state = RenderState::new(assets_root.to_path_buf());
 
-        for event in parser {
-            handle_event(event, &mut state, &mut docx)?;
-        }
+        // 走统一的事件驱动器：它会在遇到非 HTML 事件前先 flush 累积的 HTML 块
+        drive_parser(markdown, &mut state, &mut docx)?;
 
-        // flush 最后一个段落
+        // flush 收尾：剩余 HTML 块 + 最后一个段落
+        flush_html_buffer(&mut state, &mut docx)?;
         state.flush_paragraph(&mut docx);
 
         // ── 附件打包 ──
@@ -116,6 +208,12 @@ struct RenderState {
     current_row_cells: Vec<TableCell>,
     current_cell_text: String,
 
+    /// 累积当前连续的 raw HTML 块（pulldown-cmark 可能把一段 HTML 拆成多个 Event::Html）。
+    /// 遇到下一个非 HTML 事件时统一冲刷：html2md 转成 Markdown 后递归喂回解析器。
+    html_buffer: String,
+    /// HTML 块递归展开深度（防呆，配合 `MAX_HTML_FLUSH_DEPTH`）
+    html_flush_depth: u32,
+
     /// 图片解析根
     assets_root: PathBuf,
     images_embedded: usize,
@@ -142,6 +240,8 @@ impl RenderState {
             table_rows: Vec::new(),
             current_row_cells: Vec::new(),
             current_cell_text: String::new(),
+            html_buffer: String::new(),
+            html_flush_depth: 0,
             assets_root,
             images_embedded: 0,
             images_missing: 0,
@@ -214,6 +314,63 @@ impl RenderState {
             r = r.color("0563c1").underline("single");
         }
         r
+    }
+}
+
+/// 统一事件驱动器：解析 `markdown`（开 GFM 扩展），逐事件喂给 `handle_event`。
+///
+/// 关键点：在处理任何**非 HTML 事件**之前，先 flush 已累积的 HTML 块——保证
+/// 「HTML 块里的内容」与「前后 Markdown 内容」在 docx 里的先后顺序正确。
+fn drive_parser(markdown: &str, state: &mut RenderState, docx: &mut Docx) -> Result<(), AppError> {
+    let parser = Parser::new_ext(markdown, gfm_options());
+    for event in parser {
+        if !matches!(event, Event::Html(_)) {
+            flush_html_buffer(state, docx)?;
+        }
+        handle_event(event, state, docx)?;
+    }
+    Ok(())
+}
+
+/// 冲刷累积的 raw HTML 块：html2md 转成 Markdown 后递归喂回 `drive_parser`，
+/// 从而把表格 `<table>`、图片 `<figure><img>`、分栏 `<div data-type=columns>` 等
+/// tiptap-markdown 退化成 HTML 的结构，重新还原成 docx 元素。
+fn flush_html_buffer(state: &mut RenderState, docx: &mut Docx) -> Result<(), AppError> {
+    if state.html_buffer.is_empty() {
+        return Ok(());
+    }
+    let html = std::mem::take(&mut state.html_buffer);
+
+    // 防呆：递归过深直接按纯文本落盘，杜绝 html2md ↔ pulldown 之间反复横跳
+    if state.html_flush_depth >= MAX_HTML_FLUSH_DEPTH {
+        let text = strip_html_tags(&html);
+        if !text.trim().is_empty() {
+            *docx = std::mem::take(docx)
+                .add_paragraph(Paragraph::new().add_run(Run::new().add_text(text)));
+        }
+        return Ok(());
+    }
+
+    let md = html_to_markdown(&html);
+    if md.trim().is_empty() {
+        // 纯标签（如孤立的 <span> / <br>）转换后为空，跳过即可（被包裹文本已另行渲染）
+        return Ok(());
+    }
+
+    state.html_flush_depth += 1;
+    drive_parser(&md, state, docx)?;
+    flush_html_buffer(state, docx)?; // 排空本层递归过程中再次累积的 HTML
+    state.flush_paragraph(docx);
+    state.html_flush_depth -= 1;
+    Ok(())
+}
+
+/// 极简去标签：把 `<...>` 全部抹掉，仅保留可见文本。
+/// 仅用于递归护栏触发时的兜底，正常路径不会走到。
+fn strip_html_tags(html: &str) -> String {
+    match regex::Regex::new(r"<[^>]+>") {
+        Ok(re) => re.replace_all(html, "").trim().to_string(),
+        Err(_) => html.to_string(),
     }
 }
 
@@ -416,9 +573,16 @@ fn handle_event(event: Event, state: &mut RenderState, docx: &mut Docx) -> Resul
                 .add_paragraph(Paragraph::new().add_run(Run::new().add_text("─".repeat(40))));
         }
 
-        // ── 其他 ──
-        Event::Html(_) | Event::InlineHtml(_) => {
-            // 简化：忽略 raw HTML（v1 不解析）
+        // ── raw HTML ──
+        Event::Html(t) => {
+            // 块级 HTML：先冲掉当前段落，再累积到 html_buffer，
+            // 由 drive_parser/flush_html_buffer 统一交给 html2md 还原（表格/图片/分栏等）
+            state.flush_paragraph(docx);
+            state.html_buffer.push_str(&t);
+        }
+        Event::InlineHtml(_) => {
+            // 内联 HTML 标签（如 <span> / </span>）：忽略标签本身，
+            // 被它包裹的文本会以独立的 Event::Text 正常渲染，不丢内容
         }
         Event::FootnoteReference(_)
         | Event::Start(Tag::FootnoteDefinition(_))
@@ -889,5 +1053,70 @@ mod tests {
         let (w, h) = compute_image_emu(&bytes);
         assert_eq!(w, DEFAULT_W_EMU);
         assert_eq!(h, DEFAULT_H_EMU);
+    }
+
+    /// 在临时目录里造一个唯一 .docx 路径
+    fn tmp_docx(tag: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("kb_export_word_test_{}_{}.docx", tag, nanos))
+    }
+
+    /// 回归：tiptap 表格带列宽会序列化成 `<table>` HTML 块。
+    /// 旧实现把所有 Event::Html 丢弃 → 表格内容全丢（用户报的「只剩标题」）。
+    /// 现在原生路径应把 HTML 表格经 html2md 还原，文档体积明显大于纯标题。
+    #[test]
+    fn native_export_recovers_html_table() {
+        let assets = std::env::temp_dir(); // 无图片，随便给个存在的目录
+        let html_table = "<table><tr><th>项</th><th>值</th></tr>\
+                          <tr><td>服务器</td><td>1.2.3.4</td></tr>\
+                          <tr><td>协议</td><td>VLESS</td></tr></table>";
+
+        let with_table = tmp_docx("with_table");
+        WordExportService::export_single("标题", html_table, &with_table, &assets)
+            .expect("含表格导出应成功");
+
+        let title_only = tmp_docx("title_only");
+        WordExportService::export_single("标题", "", &title_only, &assets)
+            .expect("纯标题导出应成功");
+
+        let table_len = std::fs::metadata(&with_table).unwrap().len();
+        let title_len = std::fs::metadata(&title_only).unwrap().len();
+        // 表格内容进入了 docx → 体积应显著大于纯标题文档
+        assert!(
+            table_len > title_len,
+            "HTML 表格内容被丢弃了：with_table={} bytes, title_only={} bytes",
+            table_len,
+            title_len
+        );
+
+        let _ = std::fs::remove_file(&with_table);
+        let _ = std::fs::remove_file(&title_only);
+    }
+
+    /// 回归：带尺寸/图注的图片会序列化成 `<figure><img src="data:...">`。
+    /// 原生路径应把它经 html2md 还原成 `![](data:...)` 并把 base64 图片内嵌进 docx。
+    #[test]
+    fn native_export_embeds_html_figure_image() {
+        // 真实可解码的 1×1 PNG（docx-rs 的 Pic::new 会真正解码图片，假 header 会 panic）
+        let b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+        let content = format!(
+            "<figure><img src=\"data:image/png;base64,{}\" alt=\"图\"></figure>",
+            b64
+        );
+
+        let assets = std::env::temp_dir();
+        let target = tmp_docx("figure_img");
+        let result = WordExportService::export_single("标题", &content, &target, &assets)
+            .expect("含图片导出应成功");
+
+        assert_eq!(
+            result.images_embedded, 1,
+            "data: URL 图片应被内嵌（embedded），实际 embedded={} missing={}",
+            result.images_embedded, result.images_missing
+        );
+        let _ = std::fs::remove_file(&target);
     }
 }
