@@ -30,9 +30,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useLocation } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
-import type { Update } from "@tauri-apps/plugin-updater";
 import type { AiModel, AiModelInput, ImportResult, ImportProgress, ImportConflictPolicy, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput } from "@/types";
-import { systemApi, updaterApi, aiModelApi, importApi, exportApi, folderApi, templateApi, pdfApi, sourceFileApi, autostartApi, configApi } from "@/lib/api";
+import { systemApi, aiModelApi, importApi, exportApi, folderApi, templateApi, pdfApi, sourceFileApi, autostartApi, configApi } from "@/lib/api";
 import {
   useAppStore,
   EDITOR_FONT_LABELS,
@@ -50,7 +49,7 @@ import {
 } from "@/store";
 import { importWordFiles } from "@/lib/wordImport";
 import { Checkbox } from "antd";
-import { UpdateModal } from "@/components/ui/UpdateModal";
+import { useUpdater } from "@/components/updater/UpdaterProvider";
 import { RecommendCards } from "@/components/ui/RecommendCards";
 import { SyncTabs } from "@/components/settings/SyncTabs";
 import { AsrSection } from "@/components/settings/AsrSection";
@@ -299,8 +298,7 @@ function SettingsAnchorNav() {
 
 function DesktopSettingsPage() {
   const [checking, setChecking] = useState(false);
-  const [update, setUpdate] = useState<Update | null>(null);
-  const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const updater = useUpdater();
   const [appVersion, setAppVersion] = useState("0.1.0");
 
   // AI 模型状态
@@ -388,17 +386,17 @@ function DesktopSettingsPage() {
   }
 
   async function handleCheckUpdate() {
+    if (!updater) return;
     setChecking(true);
     try {
-      const result = await updaterApi.checkUpdate();
-      if (result) {
-        setUpdate(result);
-        setUpdateModalOpen(true);
-      } else {
+      // 走全局更新状态机：有更新会自动弹出（并已在后台开始下载）的全局 UpdateModal，
+      // 这里只需对「已是最新 / 检查失败」给出反馈。
+      const r = await updater.checkManually();
+      if (r.error) {
+        message.warning(`检查更新失败: ${r.error}`);
+      } else if (!r.hasUpdate) {
         message.success("当前已是最新版本");
       }
-    } catch (e) {
-      message.warning(`检查更新失败: ${String(e)}`);
     } finally {
       setChecking(false);
     }
@@ -2530,11 +2528,6 @@ function DesktopSettingsPage() {
         </Form>
       </Modal>
 
-      <UpdateModal
-        open={updateModalOpen}
-        onClose={() => setUpdateModalOpen(false)}
-        update={update}
-      />
 
       <ShareConfigModal
         open={shareEnv !== null}

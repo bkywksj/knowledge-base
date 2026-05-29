@@ -8,6 +8,7 @@ import { useAppStore } from "@/store";
 import { AppRouter } from "@/Router";
 import { getAntdTokens } from "@/theme/tokens";
 import { TaskReminderListener } from "@/components/tasks/TaskReminderListener";
+import { UpdaterProvider } from "@/components/updater/UpdaterProvider";
 
 // 紧急提醒窗口 / 迁移 splash 等子窗口共用同一个 React bundle，
 // 但只有 main 窗口才需要挂全局提醒监听器，否则子窗口也会响应 task:reminder
@@ -125,7 +126,9 @@ function App() {
     >
       <AntdApp style={{ height: "100%" }}>
         <ErrorBoundary>
-          <AppRouter />
+          <UpdaterProvider enabled={IS_MAIN_WINDOW}>
+            <AppRouter />
+          </UpdaterProvider>
           {IS_MAIN_WINDOW && <TaskReminderListener />}
         </ErrorBoundary>
       </AntdApp>
