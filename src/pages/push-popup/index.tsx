@@ -5,6 +5,7 @@ import { BellRing, Copy, ExternalLink, NotebookPen, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { LogicalSize } from "@tauri-apps/api/dpi";
+import { MarkdownContent } from "@/components/ai/MarkdownContent";
 import { pushApi, dailyApi } from "@/lib/api";
 import type { PushPopupData } from "@/types";
 
@@ -175,12 +176,15 @@ export default function PushPopupPage() {
           </div>
         ) : errorText ? (
           <div className="text-sm text-red-500">{errorText}</div>
-        ) : (
-          <div
-            className="whitespace-pre-wrap break-words text-[15px] leading-relaxed"
-            style={{ color: isFailed ? "#ff4d4f" : "inherit" }}
-          >
+        ) : isFailed ? (
+          // 失败内容是报错文本，按纯文本展示（不当 markdown 解析）
+          <div className="whitespace-pre-wrap break-words text-[15px] leading-relaxed text-red-500">
             {data?.content}
+          </div>
+        ) : (
+          // 成功内容是 AI 输出，可能含 Markdown（**加粗**/列表/标题等），用统一组件渲染
+          <div className="kb-md break-words text-[15px] leading-relaxed">
+            <MarkdownContent>{data?.content ?? ""}</MarkdownContent>
           </div>
         )}
       </div>
