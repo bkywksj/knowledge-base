@@ -106,6 +106,7 @@ import type {
   CreatePushJobInput,
   UpdatePushJobInput,
   PushRunLog,
+  PushPopupData,
 } from "@/types";
 
 /** 系统相关 API */
@@ -801,6 +802,9 @@ export const pushApi = {
   /** 某条推送的最近运行历史 */
   logs: (jobId: number, limit?: number) =>
     invoke<PushRunLog[]>("list_push_run_logs", { jobId, limit }),
+  /** 居中弹窗页按 run_log id 拉展示数据 */
+  popupData: (logId: number) =>
+    invoke<PushPopupData>("get_push_popup_data", { logId }),
 };
 
 /** 同步 API（V0 快照归档：本地 ZIP + WebDAV 全量快照） */

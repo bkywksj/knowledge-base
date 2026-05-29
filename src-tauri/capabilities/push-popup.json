@@ -1,0 +1,23 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "push-popup",
+  "description": "定时推送居中弹窗的权限（仅匹配 push-popup-* label）。可关闭自身、可唤起主窗。多窗口仅桌面端支持。",
+  "platforms": ["windows", "macOS", "linux"],
+  "windows": ["push-popup-*"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-unminimize",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-size",
+    "core:window:allow-center",
+    "core:window:allow-start-dragging",
+    "core:event:default",
+    "log:default",
+    "notification:default"
+  ]
+}

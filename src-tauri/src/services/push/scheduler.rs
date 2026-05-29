@@ -94,7 +94,15 @@ fn tick_once(app: &AppHandle) {
     if due.is_empty() {
         return;
     }
-    log::info!("[push] 命中 {} 条到点推送", due.len());
+
+    // 模块总开关（设置→功能模块）。关掉时：仍推进各任务的下次时刻（避免重新启用时
+    // 积压的过期任务一次性全部触发），但不投递任何推送。
+    let module_enabled = PushService::is_module_enabled(&state.db);
+    if module_enabled {
+        log::info!("[push] 命中 {} 条到点推送", due.len());
+    } else {
+        log::info!("[push] 模块已关闭，静默推进 {} 条（不投递）", due.len());
+    }
 
     let now = Local::now().naive_local();
     let now_str = now.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -109,6 +117,11 @@ fn tick_once(app: &AppHandle) {
         );
         if let Err(e) = state.db.update_push_job_run(job.id, &now_str, next.as_deref()) {
             log::warn!("[push] 推进推送 #{} 调度字段失败: {}", job.id, e);
+            continue;
+        }
+
+        // 模块关闭时只推进时刻、不投递（上面已统一记日志）
+        if !module_enabled {
             continue;
         }
 

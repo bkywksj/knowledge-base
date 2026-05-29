@@ -2087,3 +2087,14 @@ pub struct PushRunLog {
     /// 失败原因
     pub error: Option<String>,
 }
+
+/// 居中弹窗页所需的一次性数据（按 run_log id 取，JOIN 出推送名）
+#[derive(Debug, Clone, Serialize)]
+pub struct PushPopupData {
+    /// 推送名（弹窗标题）
+    pub name: String,
+    /// 展示内容：成功为 AI 输出，失败为错误提示
+    pub content: String,
+    pub status: String,
+    pub run_at: String,
+}

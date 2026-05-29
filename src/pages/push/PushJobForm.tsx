@@ -36,8 +36,15 @@ interface FormValues {
   time: Dayjs;
   repeat_kind: PushRepeatKind;
   weekdays: number[];
+  channels: string[];
   enabled: boolean;
 }
+
+/** 投递方式选项 */
+const CHANNEL_OPTIONS = [
+  { label: "居中弹窗", value: "popup" },
+  { label: "系统通知", value: "notification" },
+];
 
 interface Props {
   open: boolean;
@@ -59,6 +66,13 @@ export default function PushJobForm({ open, editing, onClose, onSaved }: Props) 
     if (!open) return;
     aiModelApi.list().then(setModels).catch(() => setModels([]));
     if (editing) {
+      let channels: string[] = ["popup", "notification"];
+      try {
+        const parsed = JSON.parse(editing.channels);
+        if (Array.isArray(parsed) && parsed.length) channels = parsed;
+      } catch {
+        /* 脏数据回退默认 */
+      }
       form.setFieldsValue({
         name: editing.name,
         prompt: editing.prompt,
@@ -68,6 +82,7 @@ export default function PushJobForm({ open, editing, onClose, onSaved }: Props) 
         weekdays: editing.repeat_weekdays
           ? editing.repeat_weekdays.split(",").map((x) => Number(x.trim()))
           : [],
+        channels,
         enabled: editing.enabled,
       });
     } else {
@@ -78,6 +93,7 @@ export default function PushJobForm({ open, editing, onClose, onSaved }: Props) 
         time: dayjs("08:00", "HH:mm"),
         repeat_kind: "daily",
         weekdays: [1, 2, 3, 4, 5],
+        channels: ["popup", "notification"],
         enabled: true,
       });
     }
@@ -94,6 +110,10 @@ export default function PushJobForm({ open, editing, onClose, onSaved }: Props) 
       message.warning("每周重复至少选择一天");
       return;
     }
+    if (!values.channels || values.channels.length === 0) {
+      message.warning("至少选择一种推送方式");
+      return;
+    }
     const input: CreatePushJobInput = {
       name: values.name.trim(),
       prompt: values.prompt.trim(),
@@ -104,8 +124,7 @@ export default function PushJobForm({ open, editing, onClose, onSaved }: Props) 
         values.repeat_kind === "weekly"
           ? values.weekdays.slice().sort((a, b) => a - b).join(",")
           : null,
-      // MVP：投递通道固定系统通知；source 留空（生成型）
-      channels: JSON.stringify(["notification"]),
+      channels: JSON.stringify(values.channels),
       enabled: values.enabled,
     };
     setSaving(true);
@@ -196,6 +215,14 @@ export default function PushJobForm({ open, editing, onClose, onSaved }: Props) 
             <Checkbox.Group options={WEEKDAY_OPTIONS} />
           </Form.Item>
         )}
+
+        <Form.Item
+          name="channels"
+          label="推送方式"
+          tooltip="居中弹窗 = 独立小窗口弹到屏幕中央，不打扰主窗；系统通知 = 右下角系统提示"
+        >
+          <Checkbox.Group options={CHANNEL_OPTIONS} />
+        </Form.Item>
 
         <Form.Item name="enabled" label="启用" valuePropName="checked">
           <Switch />

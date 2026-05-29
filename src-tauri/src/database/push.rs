@@ -11,7 +11,9 @@ use rusqlite::params;
 
 use super::Database;
 use crate::error::AppError;
-use crate::models::{CreatePushJobInput, PushJob, PushRunLog, UpdatePushJobInput};
+use crate::models::{
+    CreatePushJobInput, PushJob, PushPopupData, PushRunLog, UpdatePushJobInput,
+};
 
 /// push_jobs 全列，SELECT 与 row 映射共用，避免索引错位
 const PUSH_JOB_COLS: &str = "id, name, prompt, model_id, source_kind, source_config, \
@@ -232,6 +234,7 @@ impl Database {
 
     // ─── 运行历史 ─────────────────────────────
 
+    /// 写一条运行记录，返回新行 id（弹窗投递据此打开 `#/push-popup/<id>`）。
     pub fn insert_push_run_log(
         &self,
         job_id: i64,
@@ -240,7 +243,7 @@ impl Database {
         item_count: i32,
         payload: Option<&str>,
         error: Option<&str>,
-    ) -> Result<(), AppError> {
+    ) -> Result<i64, AppError> {
         let conn = self
             .conn
             .lock()
@@ -250,7 +253,38 @@ impl Database {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![job_id, run_at, status, item_count, payload, error],
         )?;
-        Ok(())
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// 按 run_log id 取弹窗展示数据（JOIN 推送名）。成功取 payload，失败取 error。
+    pub fn get_push_popup_data(&self, log_id: i64) -> Result<PushPopupData, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        conn.query_row(
+            "SELECT j.name, l.status, l.run_at, l.payload, l.error
+             FROM push_run_logs l JOIN push_jobs j ON j.id = l.job_id
+             WHERE l.id = ?1",
+            params![log_id],
+            |row| {
+                let name: String = row.get(0)?;
+                let status: String = row.get(1)?;
+                let run_at: String = row.get(2)?;
+                let payload: Option<String> = row.get(3)?;
+                let error: Option<String> = row.get(4)?;
+                let content = payload
+                    .or(error)
+                    .unwrap_or_else(|| "（无内容）".to_string());
+                Ok(PushPopupData {
+                    name,
+                    content,
+                    status,
+                    run_at,
+                })
+            },
+        )
+        .map_err(|_| AppError::NotFound(format!("推送记录 #{} 不存在", log_id)))
     }
 
     /// 取某条推送的最近 N 条运行历史（前端"查看上次推了什么"用）

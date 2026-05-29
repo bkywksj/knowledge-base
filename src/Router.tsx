@@ -27,6 +27,7 @@ import FeatureTogglePage from "@/pages/feature-toggle";
 import MigrationSplash from "@/pages/migration-splash";
 import EmergencyReminderPage from "@/pages/emergency-reminder";
 import MindMapPopoutPage from "@/pages/mindmap-popout";
+import PushPopupPage from "@/pages/push-popup";
 
 // 路由级 errorElement：路由内任何同步渲染异常（如 TipTap 在老 WebView 上
 // 的 lookbehind 正则解析失败）都会被 RouteErrorFallback 接管，给用户友好
@@ -42,6 +43,12 @@ const router = createHashRouter([
   {
     path: "/emergency-reminder/:id",
     element: <EmergencyReminderPage />,
+    errorElement: <RouteErrorFallback />,
+  },
+  // 定时推送居中弹窗：独立 URL，不挂 AppLayout（由 popout_window.rs::open_push_popup 加载）
+  {
+    path: "/push-popup/:logId",
+    element: <PushPopupPage />,
     errorElement: <RouteErrorFallback />,
   },
   // 思维导图独立弹窗：纯导图视图，不挂 AppLayout（由 popout_window.rs::open_mindmap 加载）

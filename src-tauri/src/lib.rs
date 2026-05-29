@@ -1027,6 +1027,7 @@ pub fn run() {
             commands::push::set_push_job_enabled,
             commands::push::run_push_job_now,
             commands::push::list_push_run_logs,
+            commands::push::get_push_popup_data,
             // 导入模块
             commands::import::scan_markdown_folder,
             commands::import::import_selected_files,

@@ -16,6 +16,10 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::error::AppError;
 
+/// 定时推送弹窗最小尺寸（与前端 push-popup 页的 MIN_W/MIN_H 保持一致）
+const MIN_W: f64 = 360.0;
+const MIN_H: f64 = 200.0;
+
 /// 给指定笔记打开 pop-out 窗口；同 id 已存在则前置
 pub fn open_note(app: &AppHandle, note_id: i64) -> Result<(), AppError> {
     let label = format!("popout-note-{}", note_id);
@@ -149,6 +153,52 @@ pub fn open_quick_add(app: &AppHandle) -> Result<(), AppError> {
     builder
         .build()
         .map_err(|e| AppError::Custom(format!("快速记一笔窗口创建失败: {}", e)))?;
+
+    Ok(())
+}
+
+/// 定时推送「居中弹窗」独立悬浮窗。
+///
+/// 设计（参考 quick-add + emergency_window，但更温和）：
+/// - 独立窗口、屏幕居中、置顶、无边框、不抢主窗（绝不动主窗状态）
+/// - 不全屏、无循环铃声（推送是"看一眼"，不是紧急接管）
+/// - 进任务栏（skip_taskbar=false）：用户切走后还能从任务栏找回来
+/// - label = `push-popup-{log_id}`，对应 capabilities/push-popup.json 的 `push-popup-*` glob
+/// - URL `#/push-popup/{log_id}`，页面按 id 拉内容（payload 快照），自带 复制/写入日记/打开主窗/关闭
+pub fn open_push_popup(app: &AppHandle, log_id: i64) -> Result<(), AppError> {
+    let label = format!("push-popup-{}", log_id);
+
+    if let Some(existing) = app.get_webview_window(&label) {
+        let _ = existing.unminimize();
+        let _ = existing.show();
+        let _ = existing.set_always_on_top(true);
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+
+    let url = format!("index.html#/push-popup/{}", log_id);
+
+    // 初始给个保守尺寸；前端内容加载后会按内容多少调用 setSize 智能调整（见 push-popup 页）。
+    // resizable=true 让用户随后还能手动拉伸；min 防止被拉到不可用的小尺寸。
+    let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
+        .title("定时推送")
+        .inner_size(440.0, 300.0)
+        .min_inner_size(MIN_W, MIN_H)
+        .center()
+        .resizable(true)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(false)
+        .focused(true)
+        .shadow(true)
+        .visible(true);
+
+    #[cfg(debug_assertions)]
+    let builder = builder.devtools(true);
+
+    builder
+        .build()
+        .map_err(|e| AppError::Custom(format!("定时推送弹窗创建失败: {}", e)))?;
 
     Ok(())
 }

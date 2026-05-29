@@ -1486,3 +1486,14 @@ export interface PushRunLog {
   payload: string | null;
   error: string | null;
 }
+
+/** 居中弹窗页所需数据（按 run_log id 取） */
+export interface PushPopupData {
+  /** 推送名（弹窗标题） */
+  name: string;
+  /** 展示内容：成功为 AI 输出，失败为错误提示 */
+  content: string;
+  /** "success" / "failed" / "empty" */
+  status: string;
+  run_at: string;
+}

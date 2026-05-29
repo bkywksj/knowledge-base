@@ -189,7 +189,7 @@ export default function PushPage() {
   ];
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="max-w-5xl mx-auto">
       <Card
         title={
           <span className="flex items-center gap-2">

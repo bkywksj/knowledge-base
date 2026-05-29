@@ -5,7 +5,9 @@
 
 use tauri::{AppHandle, State};
 
-use crate::models::{CreatePushJobInput, PushJob, PushRunLog, UpdatePushJobInput};
+use crate::models::{
+    CreatePushJobInput, PushJob, PushPopupData, PushRunLog, UpdatePushJobInput,
+};
 use crate::services::push::PushService;
 use crate::state::AppState;
 
@@ -112,6 +114,15 @@ pub async fn run_push_job_now(app: AppHandle, id: i64) -> Result<(), String> {
     let job = state.db.get_push_job(id).map_err(|e| e.to_string())?;
     PushService::run_job(&app, &state.db, &job).await;
     Ok(())
+}
+
+/// 居中弹窗页按 run_log id 拉展示数据（推送名 + 内容）
+#[tauri::command]
+pub fn get_push_popup_data(
+    state: State<'_, AppState>,
+    log_id: i64,
+) -> Result<PushPopupData, String> {
+    state.db.get_push_popup_data(log_id).map_err(|e| e.to_string())
 }
 
 /// 查看某条推送的最近运行历史
