@@ -14,8 +14,8 @@
 //! - push/pull 内部是同步阻塞 IO（reqwest blocking），用 `spawn_blocking` 包起来
 //!   避免阻塞 tokio worker 影响其他后台任务
 //!
-//! 与多实例的关系：仅默认实例启动 scheduler（lib.rs setup 里判 instance_id.is_none），
-//! 避免多实例对同一远端做"同步竞速"互相覆盖。
+//! 单实例：应用是单实例守护（第二个进程会退出），scheduler 在唯一实例里启动，
+//! 不存在多个进程对同一远端做"同步竞速"互相覆盖的问题。
 
 use std::time::Duration;
 

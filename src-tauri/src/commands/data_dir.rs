@@ -32,9 +32,6 @@ pub fn clear_pending_data_dir(app: tauri::AppHandle) -> Result<(), String> {
 /// T-013 完整版：写指针 + 写迁移 marker，让重启时自动迁移
 ///
 /// `from_dir` 是当前使用的数据目录（即 AppState.data_dir），由前端从 get_data_dir_info 得到。
-/// **不在 from_dir 默认实例情况下使用 AppState.data_dir 作为 from**：因为多开实例的
-/// data_dir 是 instance-N 子目录，迁移整库还是要从父目录复制。所以前端传 framework
-/// 默认 app_data_dir 还是用户当前自定义路径作为 from——保持简单，由前端控制。
 #[tauri::command]
 pub fn set_pending_data_dir_with_migration(
     app: tauri::AppHandle,
@@ -42,7 +39,7 @@ pub fn set_pending_data_dir_with_migration(
     new_path: String,
 ) -> Result<(), String> {
     let app_data_dir = crate::framework_app_data_dir(&app).map_err(|e| e.to_string())?;
-    // from = 当前实际数据根（多开实例情况下也是当前实例所在）
+    // from = 当前实际数据根
     let from_dir = state.data_dir.clone();
     DataDirResolver::set_pending_with_migration(&app_data_dir, &from_dir, &new_path)
         .map_err(|e| e.to_string())

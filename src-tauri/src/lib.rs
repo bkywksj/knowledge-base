@@ -83,15 +83,10 @@ fn build_chinese_app_menu(
 /// 应用 identifier，必须与 tauri.conf.json 中的 identifier 一致
 /// 用于在 Tauri Builder 启动前估算 app_data_dir（提前判断锁、投递 md 等）
 const IDENTIFIER: &str = "com.agilefr.kb";
-/// .md 文件投递文件名（默认实例的轮询 watcher 监听此文件）
+/// .md 文件投递文件名（单实例守护的轮询 watcher 监听此文件）
 const DELIVER_FILE: &str = "deliver-md.txt";
-/// 「允许多开实例」flag 文件名。
-/// 存在 = 允许多开；缺失 = 不允许（默认）。
-/// 故意用文件存在与否而不是文件内容：避免在 Tauri Builder 启动前还得读 SQLite / JSON
-/// 这种重设施。`Path::exists()` 本身就是原子查询。
-const MULTI_INSTANCE_FLAG: &str = "multi_instance.enabled";
 
-// ───────── 多开实例支持 ─────────
+// ───────── 单实例守护 ─────────
 
 /// 从命令行参数中提取 .md / .markdown / .txt 文件路径（仅桌面端：移动端无 CLI 参数）
 #[cfg(desktop)]
@@ -154,23 +149,6 @@ fn setup_internal_mcp(
 
         Ok(std::sync::Arc::new(client))
     })
-}
-
-/// 解析命令行 `--instance N` 或 `--instance=N`（仅桌面端：移动端无 CLI 参数）
-#[cfg(desktop)]
-fn parse_instance_arg() -> Option<u32> {
-    let args: Vec<String> = std::env::args().collect();
-    for i in 0..args.len() {
-        if args[i] == "--instance" {
-            if let Some(val) = args.get(i + 1) {
-                return val.parse().ok();
-            }
-        }
-        if let Some(stripped) = args[i].strip_prefix("--instance=") {
-            return stripped.parse().ok();
-        }
-    }
-    None
 }
 
 /// 当前进程使用的 app_data 子目录名。
@@ -303,32 +281,14 @@ fn try_exclusive_lock(path: &Path) -> Result<File, ()> {
     }
 }
 
-/// 自动分配实例锁
-/// - 显式 ID：直接锁该 ID
-/// - 自动模式：先试默认锁；占用则在 2..=99 中找空位
-/// 仅桌面端：移动端单实例
+/// 获取单实例独占锁（默认锁）。
+/// 正常情况下早期路径已保证第二个进程退出，这里能稳定拿到；拿不到也只返回 None
+/// （锁是辅助约束，拿不到不阻断启动）。
+/// 仅桌面端：移动端天然单实例。
 #[cfg(desktop)]
-fn acquire_instance_lock(
-    data_dir: &Path,
-    explicit_id: Option<u32>,
-    prefix: &str,
-) -> (Option<u32>, Option<File>) {
-    if let Some(id) = explicit_id {
-        let lock = data_dir.join(format!("{}instance-{}.lock", prefix, id));
-        let file = try_exclusive_lock(&lock).ok();
-        return (Some(id), file);
-    }
+fn acquire_default_lock(data_dir: &Path, prefix: &str) -> Option<File> {
     let default_lock = data_dir.join(format!("{}default.lock", prefix));
-    if let Ok(f) = try_exclusive_lock(&default_lock) {
-        return (None, Some(f));
-    }
-    for id in 2..=99u32 {
-        let lock = data_dir.join(format!("{}instance-{}.lock", prefix, id));
-        if let Ok(f) = try_exclusive_lock(&lock) {
-            return (Some(id), Some(f));
-        }
-    }
-    (Some(100), None)
+    try_exclusive_lock(&default_lock).ok()
 }
 
 /// 探测默认实例锁是否被占（不持有结果）
@@ -355,7 +315,7 @@ fn deliver_md_to_default(app_data_dir: &Path, md_paths: &[String]) -> std::io::R
 }
 
 /// 仅写一个空行到投递文件，触发已运行实例的 watcher 唤起主窗。
-/// 用于"不允许多开"模式下，第二个进程退出前把焦点让给已运行的实例。
+/// 用于第二个进程启动时退出前把焦点让给已运行的实例（单实例守护）。
 /// 仅桌面端
 #[cfg(desktop)]
 fn ping_default_to_focus(app_data_dir: &Path) -> std::io::Result<()> {
@@ -369,33 +329,11 @@ fn ping_default_to_focus(app_data_dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// 检查是否允许多开实例（flag 文件存在即允许）。
-/// 注意：必须在 Tauri Builder 启动前能跑，所以走 `early_app_data_dir` 估算路径，
-/// 不依赖 AppHandle / State。
-pub(crate) fn is_multi_instance_enabled(framework_app_data_dir: &Path) -> bool {
-    framework_app_data_dir.join(MULTI_INSTANCE_FLAG).exists()
-}
-
-/// 写/删 flag 文件，下一次启动生效。
-pub(crate) fn set_multi_instance_enabled(
-    framework_app_data_dir: &Path,
-    enabled: bool,
-) -> std::io::Result<()> {
-    let path = framework_app_data_dir.join(MULTI_INSTANCE_FLAG);
-    if enabled {
-        std::fs::create_dir_all(framework_app_data_dir)?;
-        std::fs::write(&path, b"")?;
-    } else if path.exists() {
-        std::fs::remove_file(&path)?;
-    }
-    Ok(())
-}
-
-/// 默认实例的投递监听线程：轮询 deliver 文件 mtime。
+/// 单实例投递监听线程：轮询 deliver 文件 mtime。
 /// 检测到 mtime 变化即唤起主窗（前置 + 取消最小化），如果文件里有 .md 路径
 /// 则同时 emit `open-md-file` 事件。
 ///
-/// 「不允许多开」时，第二个进程会用 `ping_default_to_focus` 写空行触发这个唤起 ——
+/// 第二个进程启动时会用 `ping_default_to_focus` 写空行触发这个唤起 ——
 /// 所以即使没有 .md 内容也要把窗口前置。
 /// 仅桌面端：移动端单实例 + 无 unminimize/show/set_focus 等 WebviewWindow 方法
 #[cfg(desktop)]
@@ -510,18 +448,15 @@ fn run_data_dir_migration_with_splash(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 桌面端早期路径：多开实例锁 + .md 投递（移动端无此概念，整段跳过）
+    // 桌面端早期路径：单实例守护 + .md 投递（移动端无此概念，整段跳过）
     #[cfg(desktop)]
     let lock_prefix = if cfg!(debug_assertions) { "dev-" } else { "" };
-    #[cfg(desktop)]
-    let explicit_id = parse_instance_arg();
 
-    // 早期路径：默认实例已运行时的处理。
+    // 早期路径：已有实例正在运行时（默认锁被占）的处理 —— 单实例守护。
     // - 有 .md 投递 → 转给已有实例打开 + 退出（双击 .md 的直觉行为，不开新窗）
-    // - 不允许多开（默认）→ 让已有实例把窗口前置 + 退出
-    // - 允许多开（flag 文件存在）→ 继续启动，下面 acquire_instance_lock 会自动分配 instance-2/3...
+    // - 否则       → 让已有实例把窗口前置 + 退出（避免误开第二个进程并发写坏 SQLite）
     #[cfg(desktop)]
-    if explicit_id.is_none() {
+    {
         let app_data_dir = early_app_data_dir();
         let _ = std::fs::create_dir_all(&app_data_dir);
         let default_lock = app_data_dir.join(format!("{}default.lock", lock_prefix));
@@ -529,14 +464,10 @@ pub fn run() {
             let md_paths = extract_md_paths_from_args(std::env::args().skip(1));
             if !md_paths.is_empty() {
                 let _ = deliver_md_to_default(&app_data_dir, &md_paths);
-                return;
-            }
-            if !is_multi_instance_enabled(&app_data_dir) {
-                // 默认行为：唤起已有窗口然后退出，避免用户误开第二个实例造成 SQLite 并发冲突
+            } else {
                 let _ = ping_default_to_focus(&app_data_dir);
-                return;
             }
-            // 用户显式开了"允许多开"，继续走自动分配
+            return;
         }
     }
 
@@ -652,60 +583,44 @@ pub fn run() {
             let data_dir_root = std::path::PathBuf::from(&resolved_data_dir.current_dir);
             std::fs::create_dir_all(&data_dir_root)?;
 
-            // 多开实例 + 单实例锁：仅桌面端有此概念
-            // 桌面端：拿锁、解析 instance_id、计算实例数据目录
-            // 移动端：单实例（instance_id = None, lock_file = None, instance_dir = data_dir_root）
+            // 单实例守护锁：仅桌面端有此概念（移动端天然单实例，无锁）
             #[cfg(desktop)]
-            let (instance_id, lock_file, instance_dir) = {
-                // dev 模式旧数据迁移：仅默认实例需要（多开实例自带独立子目录）
-                if cfg!(debug_assertions) && explicit_id.is_none() {
+            let lock_file = {
+                // dev 模式旧数据迁移到 dev- 前缀目录
+                if cfg!(debug_assertions) {
                     migrate_to_dev_prefix(&data_dir_root);
                 }
-                // 拿锁（这次真持有，存活到进程结束）
+                // 拿默认锁（这次真持有，存活到进程结束）
                 // ⚠️ 锁文件刻意放 framework_app_data_dir（不是 data_dir_root）：
                 //    用户改数据目录不应该突破单例约束
-                let (instance_id, lock_file) =
-                    acquire_instance_lock(&framework_app_data_dir, explicit_id, lock_prefix);
-                match instance_id {
-                    None => log::info!("默认实例模式"),
-                    Some(n) => log::info!("多开实例模式: instance-{}", n),
-                }
-                // 实例数据目录：默认实例 = data_dir_root（兼容老用户）
-                //               多开实例 = data_dir_root/{prefix}instance-N
-                let instance_dir = match instance_id {
-                    None => data_dir_root.clone(),
-                    Some(n) => data_dir_root.join(format!("{}instance-{}", lock_prefix, n)),
-                };
-                (instance_id, lock_file, instance_dir)
+                let lock_file = acquire_default_lock(&framework_app_data_dir, lock_prefix);
+                log::info!("单实例模式");
+                lock_file
             };
             #[cfg(mobile)]
-            let (instance_id, lock_file, instance_dir): (
-                Option<u32>,
-                Option<std::fs::File>,
-                std::path::PathBuf,
-            ) = (None, None, data_dir_root.clone());
+            let lock_file: Option<std::fs::File> = None;
 
-            std::fs::create_dir_all(&instance_dir)?;
+            std::fs::create_dir_all(&data_dir_root)?;
 
             let prefix = if cfg!(debug_assertions) { "dev-" } else { "" };
-            let db_path = instance_dir.join(format!("{}app.db", prefix));
+            let db_path = data_dir_root.join(format!("{}app.db", prefix));
             let db_path_str = db_path.to_string_lossy().to_string();
 
             let db = database::Database::init(&db_path_str)
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             log::info!("数据库初始化完成: {}", db_path_str);
 
-            // 资产目录均基于 instance_dir（service 内部仍叫 app_data_dir，语义是"实例数据根"）
-            let images_dir = services::image::ImageService::ensure_dir(&instance_dir)
+            // 资产目录均基于 data_dir_root（service 内部仍叫 app_data_dir，语义是"数据根"）
+            let images_dir = services::image::ImageService::ensure_dir(&data_dir_root)
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             log::info!("图片存储目录: {}", images_dir.display());
 
             let attachments_dir =
-                services::attachment::AttachmentService::ensure_dir(&instance_dir)
+                services::attachment::AttachmentService::ensure_dir(&data_dir_root)
                     .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             log::info!("附件存储目录: {}", attachments_dir.display());
 
-            let pdfs_dir = services::pdf::PdfService::ensure_dir(&instance_dir)
+            let pdfs_dir = services::pdf::PdfService::ensure_dir(&data_dir_root)
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             log::info!("PDF 存储目录: {}", pdfs_dir.display());
 
@@ -738,29 +653,29 @@ pub fn run() {
                 }
             }
 
-            let sources_dir = services::source_file::SourceFileService::ensure_dir(&instance_dir)
+            let sources_dir = services::source_file::SourceFileService::ensure_dir(&data_dir_root)
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
             log::info!("源文件存储目录: {}", sources_dir.display());
 
-            // 把当前实例数据目录加进 asset protocol scope（递归）。
+            // 把当前数据目录加进 asset protocol scope（递归）。
             // 静态 tauri.conf.json 里的 `$APPDATA/**` 只覆盖 OS 默认 app_data_dir，
-            // 用户改自定义数据目录 / KB_DATA_DIR / 多开 instance-N 后 kb_assets/pdfs/sources
+            // 用户改自定义数据目录 / KB_DATA_DIR 后 kb_assets/pdfs/sources
             // 都会落到这条静态 scope 之外，导致 `convertFileSrc()` 出来的 asset URL 被 WebView 拒绝
             // → 图片/视频/PDF/附件全部加载失败。
             // 失败仅 log warn：素材渲染降级，不阻断启动。
             if let Err(e) = app
                 .asset_protocol_scope()
-                .allow_directory(&instance_dir, true)
+                .allow_directory(&data_dir_root, true)
             {
                 log::warn!(
                     "[asset_scope] 注册数据目录到 asset 协议失败（图片/PDF 可能无法显示）: {} ({})",
-                    instance_dir.display(),
+                    data_dir_root.display(),
                     e
                 );
             } else {
                 log::info!(
                     "[asset_scope] 已允许 asset 协议读取: {}",
-                    instance_dir.display()
+                    data_dir_root.display()
                 );
             }
 
@@ -782,13 +697,7 @@ pub fn run() {
             );
 
             // 注册全局状态
-            let state = AppState::new(
-                db,
-                instance_dir.clone(),
-                instance_id,
-                mcp_internal,
-                lock_file,
-            );
+            let state = AppState::new(db, data_dir_root.clone(), mcp_internal, lock_file);
 
             // 若由"双击 md 文件"启动，暂存路径到 state，
             // 等前端 mount 完成后通过 take_pending_open_md_path 取走并打开
@@ -808,36 +717,29 @@ pub fn run() {
 
             // 启动期清理 .sync-tmp-* 孤儿（上次崩溃 / kill 可能残留 VACUUM 副本 / push-zip / pull-zip）
             // 顶层扫，严格前缀匹配，不递归子目录 → 不会误删任何业务资产
-            let cleaned = services::sync::SyncService::cleanup_orphan_temp_files(&instance_dir);
+            let cleaned = services::sync::SyncService::cleanup_orphan_temp_files(&data_dir_root);
             if cleaned > 0 {
                 log::info!("[startup] 清理 {} 个同步临时孤儿文件", cleaned);
             }
 
-            // 窗口标题区分实例（DEV/PROD × 默认/实例N 四态）
+            // 窗口标题：dev build 追加 [DEV]，prod 保留 conf.json 默认标题
             // 仅桌面端：移动端无窗口标题概念（标题栏由系统/状态栏管理）
             #[cfg(desktop)]
-            if let Some(window) = app.get_webview_window("main") {
-                let title = match (cfg!(debug_assertions), instance_id) {
-                    (true, None) => Some("知识库 [DEV]".to_string()),
-                    (true, Some(n)) => Some(format!("知识库 [DEV 实例 {}]", n)),
-                    (false, None) => None,
-                    (false, Some(n)) => Some(format!("知识库 [实例 {}]", n)),
-                };
-                if let Some(t) = title {
-                    let _ = window.set_title(&t);
+            if cfg!(debug_assertions) {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_title("知识库 [DEV]");
                 }
             }
 
-            // 默认实例：启动 .md 投递监听，接管其他实例转来的双击打开请求
+            // 启动 .md 投递监听，接管双击 .md 文件转来的打开请求
             // ⚠️ 投递文件刻意走 framework_app_data_dir（不是 data_dir_root）：
             //    其他进程不知道当前用户配的自定义路径，必须用 OS 给的固定位置约定
-            // 仅桌面端：移动端没有"多实例"概念也没有"双击 .md 启动"路径
+            // 仅桌面端：移动端没有"双击 .md 启动"路径
             #[cfg(desktop)]
-            if instance_id.is_none() {
+            {
                 start_md_deliver_watcher(app.handle().clone(), framework_app_data_dir.clone());
 
-                // 全局快捷键：仅默认实例注册，避免多开实例互抢系统级热键。
-                // 单条注册失败只 log warn，不阻断启动；用户可在设置页改键/禁用
+                // 全局快捷键注册。单条注册失败只 log warn，不阻断启动；用户可在设置页改键/禁用
                 services::shortcut::ShortcutService::register_all(
                     app.handle(),
                     &app.state::<AppState>().db,
@@ -850,7 +752,7 @@ pub fn run() {
             // 会让 setup 闭包提前 Err return，主窗永远 visible:false 导致白屏。
             #[cfg(desktop)]
             {
-                if let Err(e) = tray::setup_tray(app, instance_id) {
+                if let Err(e) = tray::setup_tray(app) {
                     log::error!("[tray] 初始化失败（不影响主窗运行）: {}", e);
                 } else {
                     log::info!("系统托盘初始化完成");
@@ -878,10 +780,10 @@ pub fn run() {
                 }
             }
 
-            // 自动同步调度器：仅默认实例启动，避免多实例并发推送 WebDAV 互相覆盖
+            // 自动同步调度器
             // 仅桌面端：移动端按 T-M014 改"手动同步按钮"，且 sync_v1_scheduler 依赖 rust-s3
             #[cfg(desktop)]
-            if instance_id.is_none() {
+            {
                 let app_handle_sched = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     services::sync_scheduler::run_scheduler(app_handle_sched).await;
@@ -893,7 +795,7 @@ pub fn run() {
                 });
             }
 
-            // 待办定时提醒：每个实例独立（操作各自实例 db）
+            // 待办定时提醒
             let app_handle_reminder = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 services::task_reminder::run_reminder_loop(app_handle_reminder).await;
@@ -953,8 +855,6 @@ pub fn run() {
             commands::system::get_system_info,
             commands::system::get_dashboard_stats,
             commands::system::get_writing_trend,
-            commands::system::get_multi_instance_enabled,
-            commands::system::set_multi_instance_enabled,
             commands::system::write_text_file,
             commands::system::write_binary_file,
             commands::system::resolve_asset_absolute_path,

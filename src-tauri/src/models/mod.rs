@@ -24,8 +24,7 @@ pub struct ShortcutBinding {
 
 /// 系统信息
 ///
-/// `instance_id` / `is_dev` 用于 UI 区分多开实例（默认实例 = None；多开 = Some(N)）。
-/// `data_dir` 永远是当前实例的数据根目录（多开 = `app_data_dir/instance-N`），不是 app_data_dir。
+/// `data_dir` 是当前数据根目录（用户改自定义目录 / KB_DATA_DIR / 便携模式后为对应路径）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemInfo {
@@ -34,10 +33,6 @@ pub struct SystemInfo {
     pub app_version: String,
     pub data_dir: String,
     pub images_dir: String,
-    /// 多开实例编号；None = 默认实例
-    pub instance_id: Option<u32>,
-    /// 是否运行在 debug build 下（前端徽章追加 [DEV] 标识）
-    pub is_dev: bool,
 }
 
 // ─── 笔记 ─────────────────────────────────────

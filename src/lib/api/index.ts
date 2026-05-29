@@ -111,16 +111,10 @@ export const systemApi = {
   getDashboardStats: () => invoke<DashboardStats>("get_dashboard_stats"),
   getWritingTrend: (days?: number) =>
     invoke<DailyWritingStat[]>("get_writing_trend", { days }),
-  /** 是否允许多开实例（默认 false：第二个进程会唤起已有窗口并退出） */
-  getMultiInstanceEnabled: () =>
-    invoke<boolean>("get_multi_instance_enabled"),
   /** 把笔记 content 里的 `kb-asset://...` 后那段相对路径还原成 OS 绝对路径。
    * 用于附件链接点击 → opener 打开（opener 必须传绝对路径）。 */
   resolveAssetAbsolute: (rel: string) =>
     invoke<string>("resolve_asset_absolute_path", { rel }),
-  /** 切换"允许多开"开关，下次启动生效 */
-  setMultiInstanceEnabled: (enabled: boolean) =>
-    invoke<void>("set_multi_instance_enabled", { enabled }),
   /** 把任意文本写入指定路径（UTF-8）。配合 dialog.save() 用于前端导出 SVG/JSON 等。 */
   writeTextFile: (path: string, content: string) =>
     invoke<void>("write_text_file", { path, content }),

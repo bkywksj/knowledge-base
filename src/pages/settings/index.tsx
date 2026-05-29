@@ -362,8 +362,6 @@ function DesktopSettingsPage() {
   const [startMinimized, setStartMinimized] = useState(false);
   const [autostartLoading, setAutostartLoading] = useState(false);
   const [startMinimizedLoading, setStartMinimizedLoading] = useState(false);
-  const [multiInstanceEnabled, setMultiInstanceEnabled] = useState(false);
-  const [multiInstanceLoading, setMultiInstanceLoading] = useState(false);
   // 关闭按钮行为：ask=每次询问 / minimize=最小化到托盘 / exit=直接退出
   const [closeAction, setCloseAction] = useState<"ask" | "minimize" | "exit">(
     "ask",
@@ -590,11 +588,6 @@ function DesktopSettingsPage() {
         .get("start_minimized")
         .then((v) => setStartMinimized(v === "1"))
         .catch(() => {});
-      // 多开开关存在 framework_app_data_dir 下的 flag 文件，启动早期就要读得到
-      systemApi
-        .getMultiInstanceEnabled()
-        .then(setMultiInstanceEnabled)
-        .catch(() => {});
       configApi
         .get("window.close_action")
         .then((v) => {
@@ -676,23 +669,6 @@ function DesktopSettingsPage() {
       message.error(`保存失败: ${e}`);
     } finally {
       setStartMinimizedLoading(false);
-    }
-  }
-
-  async function handleMultiInstanceToggle(next: boolean) {
-    setMultiInstanceLoading(true);
-    try {
-      await systemApi.setMultiInstanceEnabled(next);
-      setMultiInstanceEnabled(next);
-      message.info(
-        next
-          ? "已允许多开实例，下次启动生效"
-          : "已禁止多开，下次再启动会唤起当前窗口",
-      );
-    } catch (e) {
-      message.error(`设置失败: ${e}`);
-    } finally {
-      setMultiInstanceLoading(false);
     }
   }
 
@@ -1243,23 +1219,6 @@ function DesktopSettingsPage() {
             loading={startMinimizedLoading}
             disabled={!autostartEnabled}
             onChange={handleStartMinimizedToggle}
-          />
-        </div>
-        <div
-          className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
-        >
-          <div>
-            <div>允许多开实例</div>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              关闭时再次启动会唤起已有窗口（默认）；开启后每次启动都开新窗口，
-              注意多个实例同时写同一份数据库可能导致冲突。下次启动生效。
-            </Text>
-          </div>
-          <Switch
-            checked={multiInstanceEnabled}
-            loading={multiInstanceLoading}
-            onChange={handleMultiInstanceToggle}
           />
         </div>
         <div

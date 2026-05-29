@@ -15,12 +15,9 @@ pub type InternalMcpClient = rmcp::service::RunningService<rmcp::RoleClient, ()>
 /// 应用全局状态，通过 tauri::State 注入到 Command 中
 pub struct AppState {
     pub db: Database,
-    /// 实例数据根目录（默认实例 = app_data_dir，多开实例 = app_data_dir/instance-N）
+    /// 数据根目录（默认 = app_data_dir；用户改自定义目录 / KB_DATA_DIR / 便携模式后为对应路径）
     /// 资产/PDF/sources/db 都基于此路径
     pub data_dir: PathBuf,
-    /// 实例 ID（None = 默认实例，Some(N) = 第 N 个多开实例）
-    /// 由 `get_system_info` 暴露给前端，用于在 UI 上区分多开实例
-    pub instance_id: Option<u32>,
     /// AI 生成取消信号 (conversation_id -> sender)
     pub ai_cancel: Mutex<std::collections::HashMap<i64, watch::Sender<bool>>>,
     /// 自动同步调度器唤醒信号：配置变更时 notify_one 重载
@@ -44,7 +41,7 @@ pub struct AppState {
     /// 仅桌面端：移动端 fork/spawn 受限，没有外部 MCP 概念
     #[cfg(desktop)]
     pub mcp_external: Arc<crate::services::mcp_client::McpClientManager>,
-    /// 实例锁文件句柄（保持存活以维持独占锁，进程退出时自动释放）
+    /// 单实例守护锁文件句柄（保持存活以维持独占锁，进程退出时自动释放）
     _lock_file: Option<File>,
 }
 
@@ -52,14 +49,12 @@ impl AppState {
     pub fn new(
         db: Database,
         data_dir: PathBuf,
-        instance_id: Option<u32>,
         mcp_internal: Option<Arc<InternalMcpClient>>,
         lock_file: Option<File>,
     ) -> Self {
         Self {
             db,
             data_dir,
-            instance_id,
             ai_cancel: Mutex::new(std::collections::HashMap::new()),
             sync_scheduler_notify: Arc::new(Notify::new()),
             sync_v1_gate: crate::services::sync_v1::lock::SyncGate::new(),

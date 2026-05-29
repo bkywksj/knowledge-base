@@ -300,11 +300,11 @@ interface AppStore {
    */
   customBgFit: "cover" | "contain" | "center" | "repeat";
   /**
-   * 当前进程的系统信息（含多开实例编号 + 数据目录）。
-   * null = 启动时还没拉到；UI 据此渲染实例徽章
+   * 当前进程的系统信息（数据目录 / 版本 / 平台等）。
+   * null = 启动时还没拉到；多处取 dataDir 拼接 kb-asset 资源路径。
    */
   instanceInfo: SystemInfo | null;
-  /** 启动时拉一次后端 system_info；失败静默（标识不是关键路径） */
+  /** 启动时拉一次后端 system_info；失败静默（不是关键路径） */
   loadInstanceInfo: () => Promise<void>;
   /**
    * 内置 in-memory MCP 是否允许 AI 调用写工具（create/update/delete/move 等 11 个）。
@@ -561,7 +561,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const info = await systemApi.getSystemInfo();
       set({ instanceInfo: info });
     } catch {
-      // 静默：实例徽章不是关键路径，拉失败就不显示
+      // 静默：系统信息不是关键路径，拉失败就不更新
     }
   },
   aiWritable: true,

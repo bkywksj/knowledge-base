@@ -20,7 +20,6 @@ import { ActivityBar, deriveActiveViewFromPath } from "./ActivityBar";
 import { SidePanel, viewHasPanel } from "./SidePanel";
 import { TabBar } from "./TabBar";
 import { WindowControls } from "./WindowControls";
-import { InstanceBadge } from "./InstanceBadge";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 import { QuickCaptureAsrModal } from "@/components/QuickCaptureAsrModal";
 import { QuickNoteCaptureModal } from "@/components/QuickNoteCaptureModal";
@@ -670,9 +669,6 @@ export function AppLayout() {
               />
             </Tooltip>
           </div>
-          {/* DragRegion 拆成左右两半，InstanceBadge 居中显示当前多开实例 */}
-          <DragRegion />
-          <InstanceBadge />
           <DragRegion />
           <div style={{ display: "flex", alignItems: "center" }}>
             <UpdateBadge update={update} onClick={openModal} />

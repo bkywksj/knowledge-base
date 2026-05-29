@@ -22,8 +22,8 @@ pub fn resolve_asset_absolute_path(
 
 /// 获取系统信息
 ///
-/// data_dir / images_dir 都从 state 取，保证多开实例下返回的是当前实例自己的目录
-/// （而不是被所有实例共享的 app_data_dir 根）。
+/// data_dir / images_dir 都从 state 取，返回的是当前生效的数据根目录
+/// （用户改自定义目录 / KB_DATA_DIR / 便携模式后即对应路径）。
 #[tauri::command]
 pub fn get_system_info(
     app: tauri::AppHandle,
@@ -40,8 +40,6 @@ pub fn get_system_info(
         app_version: app.package_info().version.to_string(),
         data_dir,
         images_dir,
-        instance_id: state.instance_id,
-        is_dev: cfg!(debug_assertions),
     })
 }
 
@@ -70,23 +68,6 @@ pub fn greet(name: &str) -> Result<String, String> {
         return Err("名称不能为空".into());
     }
     Ok(format!("Hello, {}! 来自 Rust 的问候!", name))
-}
-
-/// 查询是否允许多开实例。
-/// flag 文件位于 framework_app_data_dir 根（与单实例锁同目录），
-/// 在 Tauri Builder 启动前由 lib.rs 读取以决定是否拒绝第二个进程。
-/// dev 模式下走 `-dev` 隔离目录，避免污染 prod 设置。
-#[tauri::command]
-pub fn get_multi_instance_enabled(app: tauri::AppHandle) -> Result<bool, String> {
-    let dir = crate::framework_app_data_dir(&app).map_err(|e| e.to_string())?;
-    Ok(crate::is_multi_instance_enabled(&dir))
-}
-
-/// 切换"允许多开实例"开关。下次启动生效（当前进程的实例锁不会变）。
-#[tauri::command]
-pub fn set_multi_instance_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
-    let dir = crate::framework_app_data_dir(&app).map_err(|e| e.to_string())?;
-    crate::set_multi_instance_enabled(&dir, enabled).map_err(|e| e.to_string())
 }
 
 /// 把任意文本写入指定路径（UTF-8）。前端"导出 SVG"等小工具用。

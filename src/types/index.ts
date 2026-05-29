@@ -23,13 +23,9 @@ export interface SystemInfo {
   os: string;
   arch: string;
   appVersion: string;
-  /** 当前实例的数据根目录（多开实例 = app_data_dir/instance-N，不是公共 app_data_dir） */
+  /** 当前数据根目录（用户改自定义目录 / KB_DATA_DIR / 便携模式后为对应路径） */
   dataDir: string;
   imagesDir: string;
-  /** 多开实例编号；null = 默认实例 */
-  instanceId: number | null;
-  /** 是否运行在 dev build 下（前端徽章追加 [DEV] 标识） */
-  isDev: boolean;
 }
 
 // ─── 笔记 ─────────────────────────────────────

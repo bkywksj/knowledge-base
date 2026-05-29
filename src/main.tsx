@@ -60,7 +60,7 @@ window.addEventListener(
 );
 
 loadThemeFromStore().then(() => {
-  // 启动后台拉一次实例信息（多开标识 / 数据目录），不阻塞首屏
+  // 启动后台拉一次系统信息（数据目录 / 版本等），不阻塞首屏
   useAppStore.getState().loadInstanceInfo();
   // 拉一次"全局新建笔记"的默认文件夹 / 标签偏好，便于第一次按 Ctrl+N 就能用
   useAppStore.getState().loadNoteDefaults();
