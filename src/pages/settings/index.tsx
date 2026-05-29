@@ -39,10 +39,14 @@ import {
   EDITOR_FONT_STACKS,
   EDITOR_FONT_SIZE_OPTIONS,
   EDITOR_LINE_HEIGHT_OPTIONS,
+  EDITOR_READING_WIDTH_OPTIONS,
+  EDITOR_READING_WIDTH_LABELS,
+  EDITOR_RULE_LABELS,
   UI_SCALE_OPTIONS,
   AUTO_SAVE_DELAY_OPTIONS,
   suggestUiScale,
   type EditorFontFamily,
+  type EditorRuleLines,
 } from "@/store";
 import { importWordFiles } from "@/lib/wordImport";
 import { Checkbox } from "antd";
@@ -472,6 +476,15 @@ function DesktopSettingsPage() {
   const setEditorFontSize = useAppStore((s) => s.setEditorFontSize);
   const setEditorLineHeight = useAppStore((s) => s.setEditorLineHeight);
   const resetEditorTypography = useAppStore((s) => s.resetEditorTypography);
+  // 编辑器版面偏好（阅读列宽 / 纸张 / 纹理 / 首行缩进）
+  const editorReadingWidth = useAppStore((s) => s.editorReadingWidth);
+  const editorPaper = useAppStore((s) => s.editorPaper);
+  const editorRuleLines = useAppStore((s) => s.editorRuleLines);
+  const editorFirstLineIndent = useAppStore((s) => s.editorFirstLineIndent);
+  const setEditorReadingWidth = useAppStore((s) => s.setEditorReadingWidth);
+  const setEditorPaper = useAppStore((s) => s.setEditorPaper);
+  const setEditorRuleLines = useAppStore((s) => s.setEditorRuleLines);
+  const setEditorFirstLineIndent = useAppStore((s) => s.setEditorFirstLineIndent);
 
   // 全局界面缩放
   const uiScale = useAppStore((s) => s.uiScale);
@@ -1658,6 +1671,79 @@ function DesktopSettingsPage() {
               value: h,
               label: h.toFixed(1),
             }))}
+          />
+        </div>
+
+        {/* ─── 版面（让书写手感摆脱"像 txt"，靠拢 OneNote） ─── */}
+        <div
+          className="flex items-center justify-between py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div>
+            <div>阅读列宽</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              限制正文宽度并居中，宽屏下一行不再横扫一大片
+            </Text>
+          </div>
+          <Select
+            value={editorReadingWidth}
+            onChange={setEditorReadingWidth}
+            style={{ width: 160 }}
+            options={EDITOR_READING_WIDTH_OPTIONS.map((w) => ({
+              value: w,
+              label: EDITOR_READING_WIDTH_LABELS[w] ?? `${w} px`,
+            }))}
+          />
+        </div>
+
+        <div
+          className="flex items-center justify-between py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div>
+            <div>纸张观感</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              正文区变白卡 + 阴影，外层垫浅灰底，像在纸上写
+            </Text>
+          </div>
+          <Switch checked={editorPaper} onChange={setEditorPaper} />
+        </div>
+
+        <div
+          className="flex items-center justify-between py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div>
+            <div>背景纹理</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              横线 / 网格底纹，还原笔记本质感（OneNote 风）
+            </Text>
+          </div>
+          <Radio.Group
+            optionType="button"
+            buttonStyle="solid"
+            size="small"
+            value={editorRuleLines}
+            onChange={(e) => setEditorRuleLines(e.target.value as EditorRuleLines)}
+            options={(Object.keys(EDITOR_RULE_LABELS) as EditorRuleLines[]).map(
+              (k) => ({ value: k, label: EDITOR_RULE_LABELS[k] }),
+            )}
+          />
+        </div>
+
+        <div
+          className="flex items-center justify-between py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div>
+            <div>首行缩进</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              顶层段落首行缩进 2 字符（中文写作习惯）
+            </Text>
+          </div>
+          <Switch
+            checked={editorFirstLineIndent}
+            onChange={setEditorFirstLineIndent}
           />
         </div>
 

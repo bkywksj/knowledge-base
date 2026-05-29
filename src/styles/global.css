@@ -350,24 +350,94 @@ body,
   display: flex;
   flex-direction: column;
   min-height: 100%;
+  /* 阅读列宽：--editor-reading-width 由 store(applyEditorLayout) 写入。
+     未设置（"不限制"）时 max-width:none → 退回老的铺满行为，仍受下方大屏媒体查询约束。
+     设置后在所有宽度下居中成一列，解决"行过长像 txt"。 */
+  max-width: var(--editor-reading-width, none);
+  margin-left: auto;
+  margin-right: auto;
 }
 
-/* 大屏阅读宽度限制：避免在 2.5K / 4K logical 宽屏上正文行过长难以扫读。
-   - 1800px+: 1600 阅读宽度（原 1280 太窄，最大化时两侧空白过大）
-   - 2200px+: 1900 上限（更舒展，仍优于满屏铺开）
+/* 大屏阅读宽度上限：仅在"不限制"（未设 --editor-reading-width）时生效——
+   用 var(...) 兜底值实现：用户显式设了列宽 → 取用户值，没设 → 取 1600/1900。
+   - 1800px+: 1600 阅读宽度
+   - 2200px+: 1900 上限
    大纲打开时，编辑器主体在 grid 1fr 槽内继续居中，大纲仍贴右侧。
    工具栏的 negative margin -48px 仍能正确撑到 content-area 边缘。 */
 @media (min-width: 1800px) {
   .editor-content-area {
-    max-width: 1600px;
-    margin-left: auto;
-    margin-right: auto;
+    max-width: var(--editor-reading-width, 1600px);
   }
 }
 @media (min-width: 2200px) {
   .editor-content-area {
-    max-width: 1900px;
+    max-width: var(--editor-reading-width, 1900px);
   }
+}
+
+/* ───────────────────────────────────────────────────────────
+   编辑器版面观感（由 store applyEditorLayout 写 :root data-* 属性驱动）
+   目标：摆脱"书写手感像 txt"，靠拢 OneNote / Notion 的"在纸上写"质感。
+   全部用主题 token（--ant-color-*）+ color-mix，亮/暗主题自动适配。
+   ─────────────────────────────────────────────────────────── */
+
+/* 纸张卡片：写作列变白卡（边框 + 阴影 + 圆角），外层滚动容器垫一层浅灰底衬托。
+   只在开关开启时生效，不影响默认 / 玻璃主题等其它观感。 */
+:root[data-editor-paper="1"] .editor-body {
+  /* 用 AntD 的"页面层"背景 token 当衬底：亮色=浅灰、暗色=更深，纸张都能正确浮起。
+     token 缺失时回退到 text 4% 混色。 */
+  background: var(
+    --ant-color-bg-layout,
+    color-mix(in srgb, var(--ant-color-text, #000) 4%, var(--ant-color-bg-container, #fff))
+  );
+}
+:root[data-editor-paper="1"] .editor-content-area {
+  background: var(--ant-color-bg-container, #fff);
+  border: 1px solid color-mix(in srgb, var(--ant-color-text, #000) 7%, transparent);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 10px 30px rgba(0, 0, 0, 0.06);
+  margin-top: 20px;
+  /* 保留基础规则的 padding-bottom:10vh：大纲 scrollIntoView 依赖这段滚动余量，
+     卡片底部略空属"一页纸"的正常观感，不另压低。 */
+}
+/* sticky 工具栏在纸张顶端时圆角跟随卡片，避免方角戳破圆角 */
+:root[data-editor-paper="1"] .editor-content-area .tiptap-toolbar {
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+}
+
+/* 背景纹理：横线 / 网格。画在 .tiptap（正文层），随内容滚动。
+   行距节奏 = 字号 × 行距倍数，营造笔记本横线观感（不强制与每行文字像素级对齐）。 */
+:root[data-editor-rule="lines"] .editor-content-area .tiptap {
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--ant-color-text, #000) 7%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 100% calc(var(--editor-font-size, 15px) * var(--editor-line-height, 1.8));
+  background-position: 0 calc(var(--editor-font-size, 15px) * var(--editor-line-height, 1.8) - 1px);
+}
+:root[data-editor-rule="grid"] .editor-content-area .tiptap {
+  background-image:
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--ant-color-text, #000) 6%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to right,
+      color-mix(in srgb, var(--ant-color-text, #000) 6%, transparent) 1px,
+      transparent 1px
+    );
+  background-size:
+    100% calc(var(--editor-font-size, 15px) * var(--editor-line-height, 1.8)),
+    calc(var(--editor-font-size, 15px) * var(--editor-line-height, 1.8)) 100%;
+}
+
+/* 首行缩进：仅顶层段落（不动列表 / 引用 / 表格内段落）。
+   2em ≈ 中文 2 字符宽度，符合中文写作习惯。空段落 text-indent 无副作用。 */
+:root[data-editor-indent="1"] .editor-content-area .tiptap > p {
+  text-indent: 2em;
 }
 
 /* Mermaid 预览块：右上角"全屏"按钮，hover preview 时显形 */
@@ -759,6 +829,14 @@ body,
   font-family: var(--editor-font-family, inherit);
   font-size: var(--editor-font-size, 15px);
   line-height: var(--editor-line-height, 1.8);
+  /* 极轻字间距：让中文不再"挤成一坨"，更接近 OneNote 的舒展感（代码处下方复位） */
+  letter-spacing: 0.01em;
+}
+/* 等宽 / 代码场景复位字间距，避免 token 对齐被破坏 */
+.tiptap code,
+.tiptap pre,
+.tiptap kbd {
+  letter-spacing: normal;
 }
 
 /* 非编辑器页面的 tiptap 保持内边距 */
@@ -774,8 +852,8 @@ body,
 .tiptap h5 { font-size: 1em;     font-weight: 600; margin: 0.4em 0 0.2em; line-height: 1.4; color: var(--ant-color-text-secondary, #555); }
 .tiptap h6 { font-size: 0.92em;  font-weight: 600; margin: 0.35em 0 0.18em; line-height: 1.4; color: var(--ant-color-text-tertiary, #888); text-transform: uppercase; letter-spacing: 0.04em; }
 
-/* 段落 */
-.tiptap p { margin: 0.3em 0; }
+/* 段落：0.45em 比原 0.3em 多一点呼吸，段间更清晰、不再像记事本贴行 */
+.tiptap p { margin: 0.45em 0; }
 
 /* 列表 */
 .tiptap ul { list-style: disc; padding-left: 1.5em; }

@@ -42,6 +42,7 @@ export type ActiveView =
   | "graph"
   | "ai"
   | "prompts"
+  | "push"
   | "about"
   | "trash"
   | "hidden";
@@ -100,6 +101,40 @@ export const EDITOR_FONT_DEFAULTS = {
   family: "system" as EditorFontFamily,
   size: 15,
   lineHeight: 1.8,
+};
+
+/**
+ * 编辑器版面（页面排版）偏好——区别于"字体偏好"，专治"书写手感像 txt"。
+ *
+ * - readingWidth: 正文阅读列宽（px）。0 = 不限制（铺满，老行为）；> 0 = 居中成一列，
+ *   宽屏不再让一行横扫一大片。这是改善"像 txt"观感的头号开关。
+ * - paper: 纸张卡片——正文列加白卡 + 阴影 + 圆角，外层垫浅灰底，营造"在纸上写"的实体感。
+ * - ruleLines: 背景纹理（none / 横线 / 网格），还原 OneNote 招牌的笔记本质感。
+ * - firstLineIndent: 顶层段落首行缩进 2 字符（中文写作习惯）。
+ */
+export type EditorRuleLines = "none" | "lines" | "grid";
+
+/** 阅读列宽预设（px）。0 作为"不限制"哨兵值由 UI 单列出来。 */
+export const EDITOR_READING_WIDTH_OPTIONS = [0, 720, 820, 960, 1080] as const;
+export const EDITOR_READING_WIDTH_LABELS: Record<number, string> = {
+  0: "不限制（铺满）",
+  720: "紧凑 720",
+  820: "舒适 820",
+  960: "宽松 960",
+  1080: "超宽 1080",
+};
+
+export const EDITOR_RULE_LABELS: Record<EditorRuleLines, string> = {
+  none: "无",
+  lines: "横线",
+  grid: "网格",
+};
+
+export const EDITOR_LAYOUT_DEFAULTS = {
+  readingWidth: 820,
+  paper: true,
+  ruleLines: "none" as EditorRuleLines,
+  firstLineIndent: false,
 };
 
 /**
@@ -204,6 +239,14 @@ interface AppStore {
   editorFontSize: number;
   /** 编辑器行距倍数（持久化） */
   editorLineHeight: number;
+  /** 编辑器正文阅读列宽 px（持久化）。0 = 不限制（铺满） */
+  editorReadingWidth: number;
+  /** 编辑器纸张卡片观感开关（持久化） */
+  editorPaper: boolean;
+  /** 编辑器背景纹理：none / lines / grid（持久化） */
+  editorRuleLines: EditorRuleLines;
+  /** 编辑器顶层段落首行缩进 2 字符（持久化） */
+  editorFirstLineIndent: boolean;
   /**
    * 全局界面缩放因子（持久化）。
    * 取值见 UI_SCALE_OPTIONS；默认 1.0（首启会被 suggestUiScale 推荐值覆盖一次）。
@@ -398,8 +441,16 @@ interface AppStore {
   setEditorFontSize: (size: number) => void;
   /** 设置编辑器行距倍数 */
   setEditorLineHeight: (lineHeight: number) => void;
-  /** 重置编辑器字体到默认值 */
+  /** 重置编辑器字体 + 版面到默认值 */
   resetEditorTypography: () => void;
+  /** 设置正文阅读列宽（px，0 = 不限制；非 0 会 clamp 到 [480, 1600]） */
+  setEditorReadingWidth: (w: number) => void;
+  /** 切换纸张卡片观感 */
+  setEditorPaper: (on: boolean) => void;
+  /** 设置背景纹理（none / lines / grid） */
+  setEditorRuleLines: (mode: EditorRuleLines) => void;
+  /** 切换首行缩进 */
+  setEditorFirstLineIndent: (on: boolean) => void;
   /** 设置全局界面缩放（自动 clamp 到 [UI_SCALE_MIN, UI_SCALE_MAX]，标记用户已手动设置） */
   setUiScale: (scale: number) => void;
   /** 重置 uiScale 为 suggestUiScale() 推荐值（一键回归"自动"） */
@@ -475,6 +526,7 @@ export const OPTIONAL_VIEWS: readonly ActiveView[] = [
   "graph",
   "ai",
   "prompts",
+  "push",
   "hidden",
 ] as const;
 
@@ -536,6 +588,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   editorFontFamily: EDITOR_FONT_DEFAULTS.family,
   editorFontSize: EDITOR_FONT_DEFAULTS.size,
   editorLineHeight: EDITOR_FONT_DEFAULTS.lineHeight,
+  editorReadingWidth: EDITOR_LAYOUT_DEFAULTS.readingWidth,
+  editorPaper: EDITOR_LAYOUT_DEFAULTS.paper,
+  editorRuleLines: EDITOR_LAYOUT_DEFAULTS.ruleLines,
+  editorFirstLineIndent: EDITOR_LAYOUT_DEFAULTS.firstLineIndent,
   uiScale: UI_SCALE_DEFAULT,
   uiScaleUserSet: false,
   autoSaveEnabled: false,
@@ -784,7 +840,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
       editorFontFamily: EDITOR_FONT_DEFAULTS.family,
       editorFontSize: EDITOR_FONT_DEFAULTS.size,
       editorLineHeight: EDITOR_FONT_DEFAULTS.lineHeight,
+      editorReadingWidth: EDITOR_LAYOUT_DEFAULTS.readingWidth,
+      editorPaper: EDITOR_LAYOUT_DEFAULTS.paper,
+      editorRuleLines: EDITOR_LAYOUT_DEFAULTS.ruleLines,
+      editorFirstLineIndent: EDITOR_LAYOUT_DEFAULTS.firstLineIndent,
     }),
+  setEditorReadingWidth: (w) => {
+    const n = Math.round(Number(w) || 0);
+    // 0 = 不限制；非 0 时 clamp 到合理区间，防脏值
+    set({ editorReadingWidth: n <= 0 ? 0 : Math.max(480, Math.min(1600, n)) });
+  },
+  setEditorPaper: (on) => set({ editorPaper: !!on }),
+  setEditorRuleLines: (mode) =>
+    set({ editorRuleLines: mode === "lines" || mode === "grid" ? mode : "none" }),
+  setEditorFirstLineIndent: (on) => set({ editorFirstLineIndent: !!on }),
   setUiScale: (scale) => {
     const clamped = Math.max(UI_SCALE_MIN, Math.min(UI_SCALE_MAX, Number(scale) || UI_SCALE_DEFAULT));
     set({ uiScale: clamped, uiScaleUserSet: true });
@@ -952,6 +1021,30 @@ export function applyEditorTypography(state: {
   }
   root.style.setProperty("--editor-font-size", `${state.editorFontSize}px`);
   root.style.setProperty("--editor-line-height", String(state.editorLineHeight));
+}
+
+/**
+ * 把编辑器版面偏好同步到 :root：阅读列宽写 CSS 变量，纸张 / 纹理 / 缩进写 data-* 属性。
+ * global.css 里用 `:root[data-editor-paper="1"] .editor-content-area { ... }` 这类选择器消费。
+ *
+ * - readingWidth=0 时移除变量 → 退回老的"铺满 + 大屏 1600/1900 上限"行为
+ * - 其余偏好用 data 属性而非 class，避免与组件自身 className 冲突，且方便纯 CSS 选择
+ */
+export function applyEditorLayout(state: {
+  editorReadingWidth: number;
+  editorPaper: boolean;
+  editorRuleLines: EditorRuleLines;
+  editorFirstLineIndent: boolean;
+}) {
+  const root = document.documentElement;
+  if (state.editorReadingWidth > 0) {
+    root.style.setProperty("--editor-reading-width", `${state.editorReadingWidth}px`);
+  } else {
+    root.style.removeProperty("--editor-reading-width");
+  }
+  root.setAttribute("data-editor-paper", state.editorPaper ? "1" : "0");
+  root.setAttribute("data-editor-rule", state.editorRuleLines);
+  root.setAttribute("data-editor-indent", state.editorFirstLineIndent ? "1" : "0");
 }
 
 /**
@@ -1153,6 +1246,24 @@ export async function loadThemeFromStore() {
       useAppStore.getState().setEditorLineHeight(lh);
     }
 
+    // 恢复编辑器版面偏好（阅读列宽 / 纸张 / 纹理 / 首行缩进）
+    const erw = await store.get<number>("editorReadingWidth");
+    if (typeof erw === "number" && Number.isFinite(erw)) {
+      useAppStore.getState().setEditorReadingWidth(erw);
+    }
+    const ep = await store.get<boolean>("editorPaper");
+    if (typeof ep === "boolean") {
+      useAppStore.getState().setEditorPaper(ep);
+    }
+    const erl = await store.get<EditorRuleLines>("editorRuleLines");
+    if (erl === "none" || erl === "lines" || erl === "grid") {
+      useAppStore.getState().setEditorRuleLines(erl);
+    }
+    const efi = await store.get<boolean>("editorFirstLineIndent");
+    if (typeof efi === "boolean") {
+      useAppStore.getState().setEditorFirstLineIndent(efi);
+    }
+
     // 恢复界面缩放：用户已手动设置过就尊重持久化值，否则用本机推荐值
     const uiScaleUserSet = await store.get<boolean>("uiScaleUserSet");
     const uiScalePersisted = await store.get<number>("uiScale");
@@ -1245,6 +1356,7 @@ export async function loadThemeFromStore() {
     // 不论加载成功失败，都把当前 store 值（可能是默认值，也可能是已恢复值）
     // 同步到 CSS 变量，确保首次渲染就用对字体而不是闪一下默认再切。
     applyEditorTypography(useAppStore.getState());
+    applyEditorLayout(useAppStore.getState());
     applyUiScale(useAppStore.getState().uiScale);
     void applyThemeOverrides(useAppStore.getState());
   }
@@ -1265,6 +1377,10 @@ export async function saveThemeToStore() {
       editorFontFamily,
       editorFontSize,
       editorLineHeight,
+      editorReadingWidth,
+      editorPaper,
+      editorRuleLines,
+      editorFirstLineIndent,
       uiScale,
       uiScaleUserSet,
       autoSaveEnabled,
@@ -1295,6 +1411,10 @@ export async function saveThemeToStore() {
     await store.set("editorFontFamily", editorFontFamily);
     await store.set("editorFontSize", editorFontSize);
     await store.set("editorLineHeight", editorLineHeight);
+    await store.set("editorReadingWidth", editorReadingWidth);
+    await store.set("editorPaper", editorPaper);
+    await store.set("editorRuleLines", editorRuleLines);
+    await store.set("editorFirstLineIndent", editorFirstLineIndent);
     await store.set("uiScale", uiScale);
     await store.set("uiScaleUserSet", uiScaleUserSet);
     await store.set("autoSaveEnabled", autoSaveEnabled);
@@ -1327,7 +1447,7 @@ useAppStore.subscribe((state) => {
   // notesHeadingFolded 摘要：用 entries 数 + 总 anchor 数 简化对比，避免每次 stringify 大对象
   const headingFoldEntries = Object.entries(state.notesHeadingFolded);
   const headingFoldKey = `${headingFoldEntries.length}:${headingFoldEntries.reduce((acc, [, v]) => acc + v.length, 0)}:${headingFoldEntries.map(([k, v]) => `${k}=${v.join(",")}`).join("|")}`;
-  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.autoHideActivityBar}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.uiScale}|${state.uiScaleUserSet}|${state.autoSaveEnabled}|${state.autoSaveDelay}|${state.outlineVisible}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesShowOnlyFolders}|${state.notesFoldersInitialCollapseDone}|${headingFoldKey}|${state.themeOverridesEnabled}|${state.customAccent ?? ""}|${state.customBgImage ?? ""}|${state.customBgDim}|${state.customBgBlur}|${state.customBgFit}`;
+  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.autoHideActivityBar}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}|${state.uiScale}|${state.uiScaleUserSet}|${state.autoSaveEnabled}|${state.autoSaveDelay}|${state.outlineVisible}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesShowOnlyFolders}|${state.notesFoldersInitialCollapseDone}|${headingFoldKey}|${state.themeOverridesEnabled}|${state.customAccent ?? ""}|${state.customBgImage ?? ""}|${state.customBgDim}|${state.customBgBlur}|${state.customBgFit}`;
   if (key !== _prevPersistKey) {
     _prevPersistKey = key;
     saveThemeToStore();
@@ -1341,6 +1461,16 @@ useAppStore.subscribe((state) => {
   if (key !== _prevTypographyKey) {
     _prevTypographyKey = key;
     applyEditorTypography(state);
+  }
+});
+
+// 编辑器版面偏好变化时实时同步到 :root（变量 + data 属性），无需刷新
+let _prevLayoutKey = "";
+useAppStore.subscribe((state) => {
+  const key = `${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}`;
+  if (key !== _prevLayoutKey) {
+    _prevLayoutKey = key;
+    applyEditorLayout(state);
   }
 });
 
