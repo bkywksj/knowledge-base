@@ -1261,8 +1261,43 @@ export function TiptapEditor({
       // store.editorHighlightShortcut 实时触发，实现"高亮快捷键可自定义"。
       // 若保留内置键位，用户没改键时会和 handleKeyDown 双触发 → toggleHighlight 跑两次互相抵消。
       Highlight.extend({
+        // 高 priority → 在 schema marks 中排序靠前 → mark rank 最小 → markdown 序列化时
+        // <mark> 包在最外层（<mark>**X**</mark>）而非内层（**<mark>X</mark>**）。
+        // 后者在 CJK 场景下，闭合 ** 紧贴标点(</mark> 的 >)+中文，违反 CommonMark 强调
+        // 配对的 right-flanking 规则 → ** 失配退化成字面星号、粗体丢失（用户报「粗体+高亮
+        // 重开变成 <mark>+ 字面**」）。放到最外层后 **X** 两侧均为 CJK，正常配对。
+        priority: 1000,
         addKeyboardShortcuts() {
           return {};
+        },
+        // 自定义 markdown 序列化：highlight 没有标准 markdown 语法，tiptap-markdown 默认
+        // 退化成 HTMLMark（<mark>），但其 open/close 顺序受 mark rank 影响。这里显式声明
+        // 输出 <mark>（带色时保留 data-color/style），配合上面的 priority 确保稳定往返。
+        // 解析端无需特殊处理：html:true 下 markdown-it 原样保留 <mark>，Highlight 默认
+        // parseHTML 识别 mark 标签并从 style 还原 color。
+        addStorage() {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const parent = (this as any).parent?.() ?? {};
+          return {
+            ...parent,
+            markdown: {
+              serialize: {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                open(_state: any, mark: any) {
+                  const c = mark.attrs?.color;
+                  return c
+                    ? `<mark data-color="${c}" style="background-color: ${c}; color: inherit">`
+                    : "<mark>";
+                },
+                close: "</mark>",
+                mixable: false,
+                expelEnclosingWhitespace: true,
+              },
+              parse: {
+                // 由 markdown-it 处理：<mark> 作为 inline HTML 原样保留，Highlight.parseHTML 还原
+              },
+            },
+          };
         },
       }).configure({ multicolor: true }),
       // 批注：选中文字加补充说明，data-comment 直接存在 mark 里，跟着笔记走
