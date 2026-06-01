@@ -176,6 +176,10 @@ export function ContextMenuOverlay({
         boxShadow: token.boxShadowSecondary,
         padding: `${verticalPadding / 2}px 4px`,
         minWidth: estimatedWidth,
+        // 菜单过高（如内嵌色板的文件夹菜单）时不被视口底部裁掉：限高到视口内并自滚动。
+        // 配合下方 useLayoutEffect 的"超出底部上翻"逻辑——上翻后仍高于视口时，这里兜底滚动。
+        maxHeight: "calc(100vh - 16px)",
+        overflowY: "auto",
         userSelect: "none",
         // 微动画：从 95% 缩放 + 弱透明 弹出，符合 "macOS / VSCode 上下文菜单" 感
         animation: "kb-ctx-menu-pop 90ms cubic-bezier(0.16, 1, 0.3, 1)",
