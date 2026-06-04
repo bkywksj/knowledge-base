@@ -35,6 +35,7 @@ import {
   ExternalLink,
   ChevronRight,
   ChevronDown,
+  Inbox,
 } from "lucide-react";
 import { Tooltip as AntTooltip } from "antd";
 import {
@@ -105,8 +106,10 @@ function DesktopHomePage() {
   const [trend, setTrend] = useState<DailyWritingStat[]>([]);
   /** 今日待办速览(今天 + 逾期,前端筛 / 切片) */
   const [todayTasks, setTodayTasks] = useState<Task[]>([]);
-  /** 即将到期速览(明天到 7 天内,前端筛 / 切片) */
+  /** 即将到期速览(今天之后,按 due 升序取最近的,不再卡 7 天上限) */
   const [upcomingTasks, setUpcomingTasks] = useState<Task[]>([]);
+  /** 无截止日期速览(due_date 为空的待办,重要优先 + 最近创建) */
+  const [noDueTasks, setNoDueTasks] = useState<Task[]>([]);
   /** 最近 AI 会话(用于"问 AI"卡 fallback 列表) */
   const [recentChats, setRecentChats] = useState<AiConversation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -141,27 +144,31 @@ function DesktopHomePage() {
       setPinnedNotes(notesResult.items.filter((n) => n.is_pinned));
       setStats(dashStats);
       setTrend(trendData);
-      // 三段筛：逾期+今日 给 todayTasks；明天到 7 天后 给 upcomingTasks
+      // 四段筛：逾期+今日 给 todayTasks；今天之后 给 upcomingTasks（不再卡 7 天）；
+      // 无截止日期 给 noDueTasks（之前被整段丢弃，导致没设时间的待办永不显示）
       const todayEnd = new Date();
       todayEnd.setHours(23, 59, 59, 999);
-      const next7End = new Date(todayEnd);
-      next7End.setDate(next7End.getDate() + 7);
-      const allWithDue = allTodos.filter((t) => t.status === 0 && t.due_date);
+      const open = allTodos.filter((t) => t.status === 0);
+      const allWithDue = open.filter((t) => t.due_date);
+      const noDue = open.filter((t) => !t.due_date);
       const sortByDue = (a: Task, b: Task) =>
         new Date(a.due_date!).getTime() - new Date(b.due_date!).getTime();
       // 逾期 + 今日（≤ 今天结束）
       const todayOrOverdue = allWithDue
         .filter((t) => new Date(t.due_date!).getTime() <= todayEnd.getTime())
         .sort(sortByDue);
-      // 即将到期（今天结束 < due ≤ 7 天后结束）
+      // 即将到期（今天结束之后的全部，按 due 升序——展示时取最靠近今天的几条）
       const upcoming = allWithDue
-        .filter((t) => {
-          const d = new Date(t.due_date!).getTime();
-          return d > todayEnd.getTime() && d <= next7End.getTime();
-        })
+        .filter((t) => new Date(t.due_date!).getTime() > todayEnd.getTime())
         .sort(sortByDue);
+      // 无截止日期：重要优先，其次按创建时间倒序（新建的靠前）
+      const noDueSorted = [...noDue].sort((a, b) => {
+        if (a.important !== b.important) return a.important ? -1 : 1;
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
       setTodayTasks(todayOrOverdue);
       setUpcomingTasks(upcoming);
+      setNoDueTasks(noDueSorted);
       setRecentChats(chats.slice(0, 3));
     } catch (e) {
       console.error("加载首页数据失败:", e);
@@ -243,6 +250,9 @@ function DesktopHomePage() {
       prev.map((t) => (t.id === id ? { ...t, ...patch } : t)),
     );
     setUpcomingTasks((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+    );
+    setNoDueTasks((prev) =>
       prev.map((t) => (t.id === id ? { ...t, ...patch } : t)),
     );
   }, []);
@@ -466,11 +476,18 @@ function DesktopHomePage() {
       overdueTotal: overdue.length,
       today: today.slice(0, 5),
       todayTotal: today.length,
-      upcoming: upcomingTasks.slice(0, 5),
+      // 即将到期去掉 7 天上限后，只展示最靠近今天的 3 条
+      upcoming: upcomingTasks.slice(0, 3),
       upcomingTotal: upcomingTasks.length,
+      noDue: noDueTasks.slice(0, 5),
+      noDueTotal: noDueTasks.length,
     };
-  }, [todayTasks, upcomingTasks]);
-  const totalTodoCount = todoGroups.overdueTotal + todoGroups.todayTotal + todoGroups.upcomingTotal;
+  }, [todayTasks, upcomingTasks, noDueTasks]);
+  const totalTodoCount =
+    todoGroups.overdueTotal +
+    todoGroups.todayTotal +
+    todoGroups.upcomingTotal +
+    todoGroups.noDueTotal;
   const displayedRecent = useMemo(() => recentNotes.slice(0, 5), [recentNotes]);
 
   // ─── 渲染 ─────────────────────────────────────────
@@ -680,7 +697,7 @@ function DesktopHomePage() {
               /** 单条任务渲染（三段共用），按段类型决定日期标签的色/文 */
               const renderTaskRow = (
                 task: Task,
-                sectionKey: "overdue" | "today" | "upcoming",
+                sectionKey: "overdue" | "today" | "upcoming" | "noDue",
               ) => {
                 const due = new Date(task.due_date!);
                 const dueMs = due.getTime();
@@ -728,7 +745,7 @@ function DesktopHomePage() {
                       {noTime ? "今天" : `${hh}:${mm}`}
                     </Text>
                   );
-                } else {
+                } else if (sectionKey === "upcoming") {
                   const todayStart = new Date();
                   todayStart.setHours(0, 0, 0, 0);
                   const days = Math.max(
@@ -741,6 +758,16 @@ function DesktopHomePage() {
                       style={{ fontSize: 11, flexShrink: 0 }}
                     >
                       +{days} 天
+                    </Text>
+                  );
+                } else {
+                  // noDue：无截止日期，显示中性「无期限」标签
+                  dateLabel = (
+                    <Text
+                      type="secondary"
+                      style={{ fontSize: 11, flexShrink: 0 }}
+                    >
+                      无期限
                     </Text>
                   );
                 }
@@ -857,7 +884,7 @@ function DesktopHomePage() {
               };
 
               const sections: Array<{
-                key: "overdue" | "today" | "upcoming";
+                key: "overdue" | "today" | "upcoming" | "noDue";
                 items: Task[];
                 total: number;
                 label: string;
@@ -884,9 +911,17 @@ function DesktopHomePage() {
                   key: "upcoming",
                   items: todoGroups.upcoming,
                   total: todoGroups.upcomingTotal,
-                  label: "即将到期(7 天内)",
+                  label: "即将到期",
                   icon: <Clock size={11} />,
                   color: token.colorTextSecondary,
+                },
+                {
+                  key: "noDue",
+                  items: todoGroups.noDue,
+                  total: todoGroups.noDueTotal,
+                  label: "无截止日期",
+                  icon: <Inbox size={11} />,
+                  color: token.colorTextTertiary,
                 },
               ];
 
