@@ -1,6 +1,26 @@
+use serde::Serialize;
+
 use crate::models::Folder;
 use crate::services::folder::FolderService;
 use crate::state::AppState;
+
+/// 文件夹子树统计（级联删除确认弹窗用）
+#[derive(Debug, Serialize)]
+pub struct FolderSubtreeStats {
+    /// 子孙文件夹数（不含被删文件夹自身）
+    pub folders: i64,
+    /// 子树内未回收的笔记数（含隐藏 / 加密）
+    pub notes: i64,
+}
+
+/// 级联删除结果
+#[derive(Debug, Serialize)]
+pub struct FolderCascadeResult {
+    /// 软删进回收站的笔记数
+    pub notes_trashed: usize,
+    /// 物理删除的文件夹数
+    pub folders_deleted: usize,
+}
 
 /// 创建文件夹
 #[tauri::command]
@@ -22,10 +42,35 @@ pub fn rename_folder(
     FolderService::rename(&state.db, id, &name).map_err(|e| e.to_string())
 }
 
-/// 删除文件夹
+/// 删除文件夹（安全模式：非空则拒绝，提示用户先清空）
 #[tauri::command]
 pub fn delete_folder(state: tauri::State<'_, AppState>, id: i64) -> Result<(), String> {
     FolderService::delete(&state.db, id).map_err(|e| e.to_string())
+}
+
+/// 查询文件夹子树统计（级联删除前给确认弹窗展示"将删 N 个子文件夹、M 篇笔记"）
+#[tauri::command]
+pub fn folder_subtree_stats(
+    state: tauri::State<'_, AppState>,
+    id: i64,
+) -> Result<FolderSubtreeStats, String> {
+    let (folders, notes) = FolderService::subtree_stats(&state.db, id).map_err(|e| e.to_string())?;
+    Ok(FolderSubtreeStats { folders, notes })
+}
+
+/// 级联删除文件夹：子树笔记移入回收站（可恢复）+ 删除子树文件夹。
+/// 用户在确认弹窗明确同意后调用。
+#[tauri::command]
+pub fn delete_folder_cascade(
+    state: tauri::State<'_, AppState>,
+    id: i64,
+) -> Result<FolderCascadeResult, String> {
+    let (notes_trashed, folders_deleted) =
+        FolderService::delete_cascade(&state.db, id).map_err(|e| e.to_string())?;
+    Ok(FolderCascadeResult {
+        notes_trashed,
+        folders_deleted,
+    })
 }
 
 /// 获取文件夹树

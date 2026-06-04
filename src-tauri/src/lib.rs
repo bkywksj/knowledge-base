@@ -937,6 +937,8 @@ pub fn run() {
             commands::folders::create_folder,
             commands::folders::rename_folder,
             commands::folders::delete_folder,
+            commands::folders::folder_subtree_stats,
+            commands::folders::delete_folder_cascade,
             commands::folders::list_folders,
             commands::folders::move_folder,
             commands::folders::reorder_folders,

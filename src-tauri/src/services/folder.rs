@@ -53,6 +53,18 @@ impl FolderService {
         Ok(())
     }
 
+    /// 子树统计：返回 `(子孙文件夹数, 子树内未回收笔记数)`，供级联删除确认弹窗用。
+    pub fn subtree_stats(db: &Database, id: i64) -> Result<(i64, i64), AppError> {
+        db.folder_subtree_stats(id)
+    }
+
+    /// 级联删除：子树笔记软删进回收站（可恢复）+ 物理删除子树文件夹。
+    /// 返回 `(软删笔记数, 删除文件夹数)`。与 `delete` 的区别：delete 遇非空拒绝，
+    /// 本方法在用户明确确认后强制删除（用户诉求：提醒即可，给我删的权限）。
+    pub fn delete_cascade(db: &Database, id: i64) -> Result<(usize, usize), AppError> {
+        db.delete_folder_cascade(id)
+    }
+
     /// 移动文件夹（改父节点，不处理同级排序）
     pub fn move_to(db: &Database, id: i64, new_parent_id: Option<i64>) -> Result<(), AppError> {
         db.move_folder(id, new_parent_id)

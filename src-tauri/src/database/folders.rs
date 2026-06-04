@@ -1,9 +1,42 @@
-use rusqlite::params;
+use rusqlite::{params, params_from_iter, types::Value, Connection};
 
 use crate::error::AppError;
 use crate::models::Folder;
 
 use super::Database;
+
+/// 内部 helper：BFS 收集 root + 所有子孙文件夹 ID（含 root 自身）。
+/// 接收 `&Connection`（事务可用 `&*tx` 传入），不自己 lock，供级联删除 / 子树统计复用，
+/// 避免在已持锁的事务里重复 lock 造成死锁（Mutex 不可重入）。
+fn bfs_descendant_ids(conn: &Connection, root_id: i64) -> Result<Vec<i64>, AppError> {
+    let mut all_ids: Vec<i64> = vec![root_id];
+    let mut frontier: Vec<i64> = vec![root_id];
+    while !frontier.is_empty() {
+        let placeholders: String = (1..=frontier.len())
+            .map(|i| format!("?{}", i))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!("SELECT id FROM folders WHERE parent_id IN ({})", placeholders);
+        let mut stmt = conn.prepare(&sql)?;
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> = frontier
+            .iter()
+            .map(|x| x as &dyn rusqlite::types::ToSql)
+            .collect();
+        let next: Vec<i64> = stmt
+            .query_map(params_ref.as_slice(), |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        if next.is_empty() {
+            break;
+        }
+        all_ids.extend(&next);
+        frontier = next;
+        if all_ids.len() > 5000 {
+            log::warn!("[folders] 子树 ID 超过 5000，root={}，截断防止失控", root_id);
+            break;
+        }
+    }
+    Ok(all_ids)
+}
 
 /// 数据库中的平铺文件夹行
 struct FolderRow {
@@ -197,6 +230,62 @@ impl Database {
             |row| row.get(0),
         )?;
         Ok((sub_folders, active_notes))
+    }
+
+    /// 整棵子树统计：返回 `(子孙文件夹数（不含 root）, 子树内未回收笔记数)`。
+    /// 用于"级联删除"确认弹窗向用户展示将要删除的清单（含隐藏 / 加密笔记，与
+    /// folder_children_count 同口径）。
+    pub fn folder_subtree_stats(&self, root_id: i64) -> Result<(i64, i64), AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let ids = bfs_descendant_ids(&conn, root_id)?;
+        // 子孙文件夹数 = 总数 - root 自身
+        let descendant_folders = (ids.len() as i64 - 1).max(0);
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT COUNT(*) FROM notes WHERE folder_id IN ({}) AND is_deleted = 0",
+            placeholders
+        );
+        let args: Vec<Value> = ids.iter().map(|id| Value::Integer(*id)).collect();
+        let active_notes: i64 =
+            conn.query_row(&sql, params_from_iter(args.iter()), |row| row.get(0))?;
+        Ok((descendant_folders, active_notes))
+    }
+
+    /// 级联删除文件夹子树：先把子树内所有未回收笔记软删进回收站（可恢复），
+    /// 再物理删除整棵子树的文件夹。整个操作在单个事务内，任一步失败全部回滚。
+    /// 返回 `(软删笔记数, 删除文件夹数)`。
+    ///
+    /// 顺序很关键：必须先按 folder_id 软删笔记，再删文件夹——否则先删文件夹会触发
+    /// 外键 ON DELETE SET NULL 把笔记 folder_id 清空，后续按 folder_id 匹配就漏删了。
+    /// 笔记软删后 folder_id 仍指向待删文件夹，删文件夹时被 SET NULL → 回收站恢复
+    /// 时落到"未分类"，符合预期（父文件夹已不存在）。
+    pub fn delete_folder_cascade(&self, root_id: i64) -> Result<(usize, usize), AppError> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let tx = conn.transaction()?;
+        let ids = bfs_descendant_ids(&*tx, root_id)?;
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let args: Vec<Value> = ids.iter().map(|id| Value::Integer(*id)).collect();
+
+        // 1) 软删子树内所有未回收笔记
+        let note_sql = format!(
+            "UPDATE notes SET is_deleted = 1, deleted_at = datetime('now', 'localtime') \
+             WHERE folder_id IN ({}) AND is_deleted = 0",
+            placeholders
+        );
+        let notes_trashed = tx.execute(&note_sql, params_from_iter(args.iter()))?;
+
+        // 2) 物理删除整棵子树的文件夹
+        let folder_sql = format!("DELETE FROM folders WHERE id IN ({})", placeholders);
+        let folders_deleted = tx.execute(&folder_sql, params_from_iter(args.iter()))?;
+
+        tx.commit()?;
+        Ok((notes_trashed, folders_deleted))
     }
 
     /// 批量设置文件夹 sort_order（按给定顺序赋值 0..N-1）

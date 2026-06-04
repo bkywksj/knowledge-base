@@ -803,19 +803,79 @@ export function NotesPanel() {
 
   // ─── 删除 ─────────────────────────────────
 
-  function confirmDelete(key: string, name: string) {
+  async function confirmDelete(key: string, name: string) {
+    const id = Number(key);
+    // 删除收尾：清理选中态 + 刷新文件夹树 + 刷新笔记列表（笔记可能被移入回收站）
+    const finishCleanup = () => {
+      if (selectedKey === key) setSelectedKey(null);
+      loadFolders();
+      useAppStore.getState().bumpFoldersRefresh();
+      useAppStore.getState().bumpNotesRefresh();
+    };
+
+    // 先查子树统计，决定走"普通删除"还是"级联删除确认"
+    let stats = { folders: 0, notes: 0 };
+    try {
+      stats = await folderApi.subtreeStats(id);
+    } catch {
+      // 统计查询失败不阻断：按空处理走普通删除，后端非空会兜底报错
+    }
+    const isEmpty = stats.folders === 0 && stats.notes === 0;
+
+    if (isEmpty) {
+      Modal.confirm({
+        title: `删除文件夹"${name}"`,
+        content: "该文件夹为空。删除后文件夹本身不可恢复。",
+        okText: "删除",
+        okType: "danger",
+        cancelText: "取消",
+        async onOk() {
+          try {
+            await folderApi.delete(id);
+            finishCleanup();
+          } catch (e) {
+            message.error(String(e));
+            throw e;
+          }
+        },
+      });
+      return;
+    }
+
+    // 非空 → 级联删除确认：明确列出将删内容，笔记进回收站可恢复
+    const parts: string[] = [];
+    if (stats.folders > 0) parts.push(`${stats.folders} 个子文件夹`);
+    if (stats.notes > 0) parts.push(`${stats.notes} 篇笔记`);
     Modal.confirm({
-      title: `删除文件夹"${name}"`,
-      content: "若文件夹下含有子文件夹或笔记，将拒绝删除。请先清空内容。",
-      okText: "删除",
+      title: `删除文件夹"${name}"及其内容？`,
+      width: 460,
+      content: (
+        <div style={{ fontSize: 13, lineHeight: 1.7 }}>
+          <div>
+            该文件夹下还有 <b>{parts.join(" 和 ")}</b>，将一并处理：
+          </div>
+          <ul style={{ margin: "8px 0 0", paddingLeft: 20 }}>
+            {stats.notes > 0 && (
+              <li>
+                {stats.notes} 篇笔记<b>移入回收站</b>（可在回收站恢复）
+              </li>
+            )}
+            <li>本文件夹{stats.folders > 0 ? `及 ${stats.folders} 个子文件夹` : ""}一并删除</li>
+          </ul>
+        </div>
+      ),
+      okText: "全部删除",
       okType: "danger",
       cancelText: "取消",
       async onOk() {
         try {
-          await folderApi.delete(Number(key));
-          if (selectedKey === key) setSelectedKey(null);
-          loadFolders();
-          useAppStore.getState().bumpFoldersRefresh();
+          const r = await folderApi.deleteCascade(id);
+          message.success(
+            r.notes_trashed > 0
+              ? `已删除文件夹，${r.notes_trashed} 篇笔记已移入回收站`
+              : "已删除文件夹",
+          );
+          finishCleanup();
         } catch (e) {
           message.error(String(e));
           throw e;

@@ -316,6 +316,15 @@ export const folderApi = {
   rename: (id: number, name: string) =>
     invoke<void>("rename_folder", { id, name }),
   delete: (id: number) => invoke<void>("delete_folder", { id }),
+  /** 查询子树统计：{ folders: 子孙文件夹数, notes: 子树未回收笔记数 } —— 级联删除确认弹窗用 */
+  subtreeStats: (id: number) =>
+    invoke<{ folders: number; notes: number }>("folder_subtree_stats", { id }),
+  /** 级联删除：子树笔记移入回收站 + 删除子树文件夹；返回删除数量 */
+  deleteCascade: (id: number) =>
+    invoke<{ notes_trashed: number; folders_deleted: number }>(
+      "delete_folder_cascade",
+      { id },
+    ),
   list: () => invoke<Folder[]>("list_folders"),
   move: (id: number, newParentId: number | null) =>
     invoke<void>("move_folder", { id, newParentId }),
