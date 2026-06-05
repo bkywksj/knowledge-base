@@ -468,6 +468,38 @@ impl Database {
         Ok(result)
     }
 
+    /// 批量查询若干笔记的 folder_id（轻量：只取 id+folder_id，不加载正文）。
+    ///
+    /// 用于按文件夹范围过滤工具结果（如 find_related 的反链来源笔记）。
+    /// 返回 map: note_id -> folder_id（folder_id 为 None 表示未分类）。不存在的 id 不会出现在 map 里。
+    pub fn note_folder_map(
+        &self,
+        ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, Option<i64>>, AppError> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let placeholders = (1..=ids.len())
+            .map(|i| format!("?{}", i))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!("SELECT id, folder_id FROM notes WHERE id IN ({})", placeholders);
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(ids.iter()), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?))
+        })?;
+        let mut map = std::collections::HashMap::new();
+        for r in rows {
+            let (id, fid) = r?;
+            map.insert(id, fid);
+        }
+        Ok(map)
+    }
+
     /// 查询笔记列表（分页 + 可选 folder_id 和 keyword 过滤）
     ///
     /// `uncategorized=true` 时只返回 folder_id IS NULL 的笔记（"未分类"虚拟文件夹）；

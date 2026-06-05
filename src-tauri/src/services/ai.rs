@@ -1518,6 +1518,18 @@ impl AiService {
         };
         let model = db.get_ai_model(conv_model_id)?;
 
+        // 1.2 文件夹范围会话（"对此文件夹问 AI"）：把 scope_folder_id 展开成
+        // 「该文件夹 + 所有子孙文件夹」的 id 列表，传给工具 dispatch，让内置检索/读取类
+        // 工具（search_notes / get_note / find_related / kb__* 笔记类）只在范围内作答。
+        // None = 全库（未限定范围）。注意这是智能模式工具路径专属；RAG 路径在 chat_stream 里另算。
+        let scope_ids: Option<Vec<i64>> = {
+            let conv = db.get_ai_conversation(conversation_id)?;
+            match conv.scope_folder_id {
+                Some(fid) => db.collect_descendant_folder_ids(fid).ok(),
+                None => None,
+            }
+        };
+
         // 1.5 Ollama 不走工具调用路径，改走原始 RAG（chat_stream）。
         //
         // 原因：智能模式会把几十个工具 schema（5 内置 + 所有 enabled MCP 工具）塞进 /api/chat
@@ -1559,9 +1571,23 @@ impl AiService {
             3. 工具返回的内容可能有省略（标记 `…（已截断）`），必要时再次调用获取更多。\n\
             4. 最终给用户的回答用中文，简洁准确。";
 
+        // 文件夹范围会话：在 system prompt 末尾追加硬约束说明，让模型明确知道检索面被限定，
+        // 不要声称能看到范围外的笔记（工具层已做硬过滤，这里是给模型的认知对齐）。
+        let system_prompt: std::borrow::Cow<'_, str> = if scope_ids.is_some() {
+            std::borrow::Cow::Owned(format!(
+                "{system_prompt}\n\n\
+                 ⚠️ 重要：本次对话已被用户限定在某个文件夹（含其所有子文件夹）范围内。\
+                 search_notes / get_note / find_related 等内置检索工具只会返回该范围内的笔记，\
+                 范围外的笔记你无法访问、也读不到内容。请只基于范围内的笔记作答，\
+                 不要声称看到了范围外的内容，也不要编造范围外笔记的存在。"
+            ))
+        } else {
+            std::borrow::Cow::Borrowed(system_prompt)
+        };
+
         let mut messages: Vec<Value> = vec![json!({
             "role": "system",
-            "content": system_prompt,
+            "content": system_prompt.as_ref(),
         })];
         // 注意：历史里已经包含了刚保存的 user_msg
         for msg in &history {
@@ -1716,7 +1742,7 @@ impl AiService {
                 // 执行：dispatch_with_mcp 会按前缀路由（mcp__<id>__<name> → mcp_external，否则原 skills）
                 // P1: tool 失败时把错误包装为友好提示，避免部分模型遇到 "ERROR: ..." 直接放弃
                 let (result_text, status) =
-                    match skills::dispatch_with_mcp(&app, db, &tc.name, &tc.args_json).await {
+                    match skills::dispatch_with_mcp(&app, db, &tc.name, &tc.args_json, scope_ids.as_deref()).await {
                         Ok(r) => (r, "ok"),
                         Err(e) => (
                             format!(

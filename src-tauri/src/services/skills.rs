@@ -5,7 +5,7 @@
 //!   避免 AI 误删/误改；写入类（创建/删除/移动）放 v2 + 二次确认
 //! - **OpenAI function-calling 兼容**：`tool_schemas()` 返回符合 OpenAI `tools` 字段
 //!   的 JSON，其他厂商（DeepSeek/智谱/Claude 代理）都能复用这套 schema
-//! - **dispatch 集中执行**：`dispatch(db, name, args_json)` 按 skill name 路由到
+//! - **dispatch 集中执行**：`dispatch(db, name, args_json, scope_ids)` 按 skill name 路由到
 //!   具体实现；返回的 result 字符串会经由 AI 流式通道回注到模型作为 tool role 消息
 //! - **结果截断**：防 token 爆炸，笔记/列表类返回统一裁剪到 ~2000 字节
 //!
@@ -112,12 +112,20 @@ pub fn known_skill_names() -> &'static [&'static str] {
 ///
 /// 返回 `Err(AppError)` 代表执行失败（DB 错误 / 参数解析失败 / 未知 skill 等），
 /// 调用方（`services::ai`）把错误消息当作 tool result 回注给 AI，让 AI 有机会自我修正。
-pub fn dispatch(db: &Database, name: &str, args_json: &str) -> Result<String, AppError> {
+///
+/// `scope_ids`：文件夹范围会话（"对此文件夹问 AI"）展开后的「文件夹 + 所有子孙」id 列表。
+/// `Some(&[..])` 时，笔记检索/读取类工具只在这些文件夹内作答，范围外硬性拒绝；`None` = 全库。
+pub fn dispatch(
+    db: &Database,
+    name: &str,
+    args_json: &str,
+    scope_ids: Option<&[i64]>,
+) -> Result<String, AppError> {
     let result = match name {
-        "search_notes" => run_search_notes(db, args_json)?,
-        "get_note" => run_get_note(db, args_json)?,
+        "search_notes" => run_search_notes(db, args_json, scope_ids)?,
+        "get_note" => run_get_note(db, args_json, scope_ids)?,
         "list_tags" => run_list_tags(db)?,
-        "find_related" => run_find_related(db, args_json)?,
+        "find_related" => run_find_related(db, args_json, scope_ids)?,
         "get_today_tasks" => run_get_today_tasks(db)?,
         other => {
             return Err(AppError::Custom(format!(
@@ -281,10 +289,12 @@ pub async fn dispatch_with_mcp(
     db: &Database,
     name: &str,
     args_json: &str,
+    scope_ids: Option<&[i64]>,
 ) -> Result<String, AppError> {
-    // kb__ 前缀（内置 kb-core 工具）—— 写权限在 dispatch_kb_internal 里拦截
+    // kb__ 前缀（内置 kb-core 工具）—— 写权限在 dispatch_kb_internal 里拦截；
+    // 文件夹范围会话下，kb-core 返回的笔记类结果在 dispatch_kb_internal 里按 scope 硬过滤
     if let Some(suffix) = name.strip_prefix(KB_TOOL_PREFIX) {
-        return dispatch_kb_internal(app, suffix, args_json).await;
+        return dispatch_kb_internal(app, suffix, args_json, scope_ids).await;
     }
 
     // mcp__<id>__<name> 前缀（外部 MCP 子进程）—— 仅桌面端
@@ -305,7 +315,7 @@ pub async fn dispatch_with_mcp(
     let _ = app; // 移动端避免未使用警告（仅当也不走 kb__ 分支时）
 
     // 5 个高层内置 skills（无前缀）
-    dispatch(db, name, args_json)
+    dispatch(db, name, args_json, scope_ids)
 }
 
 /// 走 in-memory MCP client 调用 kb-core 工具，写工具走相同拦截门
@@ -313,6 +323,7 @@ async fn dispatch_kb_internal(
     app: &AppHandle,
     tool_name: &str,
     args_json: &str,
+    scope_ids: Option<&[i64]>,
 ) -> Result<String, AppError> {
     let state = app
         .try_state::<AppState>()
@@ -367,7 +378,55 @@ async fn dispatch_kb_internal(
     if result.is_error.unwrap_or(false) {
         return Err(AppError::Custom(format!("MCP 工具返回错误: {out}")));
     }
+    // 文件夹范围会话：对 kb-core 返回的笔记类结果按 scope 硬过滤（范围外的笔记剔除）
+    let out = match scope_ids {
+        Some(scope) => filter_kb_result_by_scope(&out, scope),
+        None => out,
+    };
     Ok(truncate(&out, SKILL_RESULT_MAX_CHARS))
+}
+
+/// 文件夹范围会话下，对内置 kb-core 工具返回的 JSON 结果做"硬过滤"。
+///
+/// 规则（只针对"笔记"类结果，不误伤标签/文件夹/任务/模板等非笔记结果）：
+/// - 结果是数组：逐个元素判断——对象若含 `folder_id` 字段，folder_id 必须 ∈ scope 才保留
+///   （`null` 即未分类笔记，不属于任何具体文件夹子树，剔除）；不含 `folder_id` 字段的对象
+///   （TagInfo / FolderInfo / TaskRow 等）一律保留；非对象元素保留。
+/// - 结果是单对象（如 get_note 的 NoteDetail）：含 `folder_id` 且越界 → 替换为越界提示。
+/// - 非 JSON（纯文本）或其它形状：原样返回。
+///
+/// 已知小缺口：get_backlinks（BacklinkRef 无 folder_id）/ list_trash（回收站项无 folder_id）
+/// 这类不含 folder_id 的笔记类结果无法在此层过滤，保持原样；高层 find_related 已单独按 scope 过滤。
+fn filter_kb_result_by_scope(raw: &str, scope_ids: &[i64]) -> String {
+    let parsed: Value = match serde_json::from_str(raw) {
+        Ok(v) => v,
+        Err(_) => return raw.to_string(),
+    };
+    // 对象是否命中范围：有 folder_id 字段且为范围内数字才算命中
+    let obj_in_scope = |obj: &Value| -> bool {
+        match obj.get("folder_id") {
+            Some(Value::Number(n)) => n.as_i64().map_or(false, |f| scope_ids.contains(&f)),
+            Some(_) => false, // null 或异常类型：未分类/越界，剔除
+            None => true,     // 非笔记类结果（无 folder_id 字段），保留
+        }
+    };
+    match parsed {
+        Value::Array(items) => {
+            let kept: Vec<Value> = items
+                .into_iter()
+                .filter(|it| !it.is_object() || obj_in_scope(it))
+                .collect();
+            serde_json::to_string(&kept).unwrap_or_else(|_| "[]".to_string())
+        }
+        Value::Object(ref map) => {
+            if map.contains_key("folder_id") && !obj_in_scope(&parsed) {
+                json!({ "error": "该笔记不在当前对话限定的文件夹范围内，无法访问。" }).to_string()
+            } else {
+                raw.to_string()
+            }
+        }
+        _ => raw.to_string(),
+    }
 }
 
 #[cfg(desktop)]
@@ -436,12 +495,16 @@ struct SearchNotesArgs {
     limit: Option<u32>,
 }
 
-fn run_search_notes(db: &Database, args: &str) -> Result<String, AppError> {
+fn run_search_notes(
+    db: &Database,
+    args: &str,
+    scope_ids: Option<&[i64]>,
+) -> Result<String, AppError> {
     let a: SearchNotesArgs = serde_json::from_str(args)
         .map_err(|e| AppError::Custom(format!("search_notes 参数非法: {}", e)))?;
     let limit = a.limit.unwrap_or(5).clamp(1, 20) as usize;
-    // 智能模式工具调用暂不接文件夹范围限定（无会话上下文）；范围问答走 RAG 路径 chat_stream。
-    let notes = db.search_notes_for_rag(&a.query, limit, None)?;
+    // 文件夹范围会话：scope_ids 限定只在该文件夹（含子孙）内检索；None = 全库。
+    let notes = db.search_notes_for_rag(&a.query, limit, scope_ids)?;
     if notes.is_empty() {
         return Ok("未找到相关笔记".to_string());
     }
@@ -461,12 +524,26 @@ struct GetNoteArgs {
     id: i64,
 }
 
-fn run_get_note(db: &Database, args: &str) -> Result<String, AppError> {
+fn run_get_note(
+    db: &Database,
+    args: &str,
+    scope_ids: Option<&[i64]>,
+) -> Result<String, AppError> {
     let a: GetNoteArgs = serde_json::from_str(args)
         .map_err(|e| AppError::Custom(format!("get_note 参数非法: {}", e)))?;
     let note = db
         .get_note(a.id)?
         .ok_or_else(|| AppError::Custom(format!("笔记 #{} 不存在", a.id)))?;
+    // 文件夹范围会话：拒绝读取范围外的笔记（即使模型猜到了 id）。
+    if let Some(scope) = scope_ids {
+        let in_scope = note.folder_id.map_or(false, |f| scope.contains(&f));
+        if !in_scope {
+            return Err(AppError::Custom(format!(
+                "笔记 #{} 不在当前对话限定的文件夹范围内，无法读取。",
+                a.id
+            )));
+        }
+    }
     // content 是 markdown，直接回给 AI；截断在 dispatch 尾部统一做
     Ok(serde_json::to_string(&json!({
         "id": note.id,
@@ -492,10 +569,30 @@ struct FindRelatedArgs {
     note_id: i64,
 }
 
-fn run_find_related(db: &Database, args: &str) -> Result<String, AppError> {
+fn run_find_related(
+    db: &Database,
+    args: &str,
+    scope_ids: Option<&[i64]>,
+) -> Result<String, AppError> {
     let a: FindRelatedArgs = serde_json::from_str(args)
         .map_err(|e| AppError::Custom(format!("find_related 参数非法: {}", e)))?;
     let links = db.get_backlinks(a.note_id)?;
+    // 文件夹范围会话：只保留来源笔记在范围内的反链（BacklinkRef 自身无 folder_id，按 source_id 批量查）。
+    let links = match scope_ids {
+        Some(scope) => {
+            let ids: Vec<i64> = links.iter().map(|l| l.source_id).collect();
+            let fmap = db.note_folder_map(&ids)?;
+            links
+                .into_iter()
+                .filter(|l| {
+                    fmap.get(&l.source_id)
+                        .and_then(|f| *f)
+                        .map_or(false, |f| scope.contains(&f))
+                })
+                .collect::<Vec<_>>()
+        }
+        None => links,
+    };
     if links.is_empty() {
         return Ok(r#"{"backlinks":[]}"#.to_string());
     }
@@ -595,6 +692,44 @@ mod tests {
     fn summarize_strips_html_and_whitespace() {
         let raw = "<p>hello   <b>world</b></p>  foo";
         assert_eq!(summarize_content(raw, 100), "hello world foo");
+    }
+
+    #[test]
+    fn scope_filter_array_drops_out_of_folder_notes() {
+        // 笔记数组：folder_id ∈ scope 保留；越界 / null（未分类）剔除
+        let raw = r#"[
+            {"id":1,"title":"in","folder_id":10},
+            {"id":2,"title":"out","folder_id":99},
+            {"id":3,"title":"uncat","folder_id":null}
+        ]"#;
+        let out = filter_kb_result_by_scope(raw, &[10, 11]);
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let arr = v.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"], 1);
+    }
+
+    #[test]
+    fn scope_filter_keeps_non_note_results() {
+        // 标签 / 文件夹等无 folder_id 字段的结果不被误伤
+        let raw = r#"[{"id":1,"name":"标签A","note_count":3}]"#;
+        let out = filter_kb_result_by_scope(raw, &[10]);
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v.as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn scope_filter_single_note_out_of_scope_becomes_error() {
+        let raw = r#"{"id":5,"title":"x","content":"...","folder_id":99}"#;
+        let out = filter_kb_result_by_scope(raw, &[10]);
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert!(v.get("error").is_some());
+    }
+
+    #[test]
+    fn scope_filter_passthrough_non_json() {
+        // 纯文本（如 ping 的 "pong"）原样返回
+        assert_eq!(filter_kb_result_by_scope("pong", &[10]), "pong");
     }
 
     #[test]
