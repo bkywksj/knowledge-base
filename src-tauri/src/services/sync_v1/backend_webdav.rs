@@ -62,13 +62,31 @@ impl SyncBackendImpl for WebdavBackend {
             uuid::Uuid::new_v4().simple()
         );
         block_on(async {
-            self.client.upload_bytes(&tmp_name, bytes).await?;
+            // 先 PUT 到临时文件（bytes 先 clone 一份，留给 MOVE 不被支持时的降级 PUT 复用）
+            self.client.upload_bytes(&tmp_name, bytes.clone()).await?;
             match self.client.move_file(&tmp_name, MANIFEST_FILENAME).await {
                 Ok(()) => Ok(()),
                 Err(e) => {
-                    // best-effort 清理 .tmp（清不掉也只是远端多一个无主文件，下次 GC 可以扫）
-                    let _ = self.client.delete_file(&tmp_name).await;
-                    Err(e)
+                    let msg = e.to_string();
+                    // 飞牛 NAS（fnOS）/ 群晖等经公网反向代理暴露 WebDAV 时，反代或上游常对
+                    // MOVE 方法返回 405/501/502（坚果云 / Nextcloud 这类标准 WebDAV 则正常）。
+                    // 这种"服务器不支持 MOVE"的场景，降级成直接 PUT 覆盖 manifest.json
+                    // （即 tauri-cc 一直在用的非原子写法），保证这类 NAS 也能完成同步。
+                    if is_move_unsupported(&msg) {
+                        log::warn!(
+                            "[sync_v1] WebDAV MOVE 不被支持（{}），降级为直接 PUT manifest.json",
+                            msg.lines().next().unwrap_or("")
+                        );
+                        let put_res = self.client.upload_bytes(MANIFEST_FILENAME, bytes).await;
+                        // 不论降级 PUT 成功与否，都尽量清掉临时文件，避免远端堆积无主 .tmp
+                        let _ = self.client.delete_file(&tmp_name).await;
+                        put_res
+                    } else {
+                        // 认证失败 / 网络错误等非"MOVE 不兼容"问题：清理 tmp 后原样上报
+                        // （清不掉也只是远端多一个无主文件，下次 GC 可以扫）
+                        let _ = self.client.delete_file(&tmp_name).await;
+                        Err(e)
+                    }
                 }
             }
         })
@@ -253,6 +271,30 @@ pub(crate) fn is_transient_server_err(msg: &str) -> bool {
         || msg.contains("Gateway Timeout")
 }
 
+/// 错误信息看着像"服务器 / 反向代理根本不支持 WebDAV MOVE 方法"吗？
+///
+/// 飞牛 NAS（fnOS）、群晖等经公网反代暴露 WebDAV 时，MOVE 常被反代或上游拒掉：
+/// - 405 Method Not Allowed：服务端显式不允许 MOVE
+/// - 501 Not Implemented：服务端没实现 MOVE
+/// - 502 Bad Gateway：反代无法把 MOVE 透传给上游（用户实测就是这个）
+/// - 400 Bad Request：个别反代对未知方法直接报 400
+///
+/// 命中即把 manifest 写入降级为直接 PUT（见 `write_manifest`）。
+///
+/// 安全性：401/403 认证错误在 `WebDavClient::move_file` 内已被单独识别为"认证失败"，
+/// 不会落到这里，故不会把鉴权问题误判成"降级 PUT"；而降级 PUT 本就是写 manifest 的
+/// 合法终态——即便误判，PUT 同样失败也只会把真实错误如实上报，不会掩盖问题。
+pub(crate) fn is_move_unsupported(msg: &str) -> bool {
+    msg.contains("405")
+        || msg.contains("Method Not Allowed")
+        || msg.contains("501")
+        || msg.contains("Not Implemented")
+        || msg.contains("502")
+        || msg.contains("Bad Gateway")
+        || msg.contains("400")
+        || msg.contains("Bad Request")
+}
+
 /// 从 PROPFIND href 列表提取附件 hash（纯函数，便于单测）
 ///
 /// 规则：跳过目录（href 以 `/` 结尾）、跳过 `_` 开头的特殊文件、跳过 manifest.json；
@@ -313,5 +355,21 @@ mod tests {
         assert!(is_transient_server_err("504 Gateway Time-out"));
         assert!(!is_transient_server_err("认证失败，请检查用户名/密码"));
         assert!(!is_transient_server_err("MKCOL notes 失败 (409 Conflict)"));
+    }
+
+    #[test]
+    fn move_unsupported_detection() {
+        // 飞牛公网实测：MOVE 收到 502 → 应判定为"不支持 MOVE"，触发降级 PUT
+        assert!(is_move_unsupported(
+            "MOVE manifest.json.tmp.abc -> manifest.json 失败 (502 Bad Gateway): Bad Gateway"
+        ));
+        // 服务端显式不允许 / 未实现 MOVE
+        assert!(is_move_unsupported("MOVE a -> b 失败 (405 Method Not Allowed): "));
+        assert!(is_move_unsupported("MOVE a -> b 失败 (501 Not Implemented): "));
+        assert!(is_move_unsupported("MOVE a -> b 失败 (400 Bad Request): "));
+        // 认证失败不应被误判为"降级"（move_file 已先把它识别成认证错误）
+        assert!(!is_move_unsupported("认证失败，请检查用户名/密码"));
+        // 普通成功语义之外的 409 冲突等，不属于"MOVE 不支持"
+        assert!(!is_move_unsupported("MOVE a -> b 失败 (409 Conflict): "));
     }
 }
