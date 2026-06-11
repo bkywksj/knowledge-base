@@ -175,7 +175,12 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            // 左键点击：切换主窗口可见性（可见且聚焦 → 隐藏回托盘；否则 → 显示并聚焦）
+            // 左键点击：切换主窗口可见性（可见且未最小化 → 隐藏回托盘；否则 → 显示并聚焦）
+            //
+            // ⚠️ 不要再用 is_focused 作为「隐藏」的判定条件：Windows 上点击托盘图标会把焦点
+            // 从主窗口夺走（转给 shell/任务栏），等 MouseButton::Up 事件到达时主窗口
+            // is_focused() 已经是 false → 永远走不到 hide 分支，表现为「再单击不隐藏，反而重新
+            // 聚焦」。改为纯按可见性切换，保证「单击显示、再单击隐藏」的预期行为。
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
@@ -186,9 +191,8 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(window) = app.get_webview_window("main") {
                     let is_visible = window.is_visible().unwrap_or(false);
                     let is_minimized = window.is_minimized().unwrap_or(false);
-                    let is_focused = window.is_focused().unwrap_or(false);
 
-                    if is_visible && !is_minimized && is_focused {
+                    if is_visible && !is_minimized {
                         let _ = window.hide();
                     } else {
                         let _ = window.unminimize();
