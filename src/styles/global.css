@@ -2065,6 +2065,17 @@ body,
 .tiptap-column .tiptap-image-resize,
 .tiptap-column figure { max-width: 100%; }
 
+/* ─── 更新徽章：下载中图标上下轻柔浮动（替代生硬的旋转） ───────── */
+@keyframes kb-update-float {
+  0%, 100% { transform: translateY(-1.5px); }
+  50%      { transform: translateY(1.5px); }
+}
+.kb-update-float {
+  animation: kb-update-float 1.1s ease-in-out infinite;
+  /* will-change 提示合成层，浮动更顺滑 */
+  will-change: transform;
+}
+
 [data-theme-category="dark"] .tiptap-column {
   border-color: color-mix(in srgb, var(--ant-color-text, #fff) 12%, transparent);
 }

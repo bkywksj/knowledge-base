@@ -12,7 +12,7 @@ interface Props {
 
 /**
  * 顶部栏右侧的更新徽章，随 phase 三态切换：
- * - downloading：「下载中 X%」（图标旋转，仍可点开看进度）
+ * - downloading：「下载中 X%」（下载图标上下浮动，仍可点开看进度）
  * - ready：「重启以更新」（绿色高亮，点击弹窗确认重启秒装）
  * - available / error：「有可用更新」（兜底，点击弹窗手动下载/重试）
  *
@@ -62,7 +62,7 @@ export function UpdateBadge({ update, phase, progress, onClick }: Props) {
           e.currentTarget.style.background = ready ? "rgba(82, 196, 26, 0.12)" : "transparent";
         }}
       >
-        <Icon size={12} className={downloading ? "animate-spin" : undefined} />
+        <Icon size={12} className={downloading ? "kb-update-float" : undefined} />
         <span>{label}</span>
       </button>
     </Tooltip>
