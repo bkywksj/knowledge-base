@@ -2,9 +2,20 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import dayjs from "dayjs";
 import "dayjs/locale/zh-cn";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import App from "./App";
 import { loadThemeFromStore, useAppStore } from "@/store";
 import "./styles/global.css";
+
+// 只有主窗口才需要走"启动锁"门禁；子窗口（quick-add / 紧急提醒 / pop-out 等）
+// 都是从已解锁的会话里派生出来的，不重复拦截。label 取不到时按主窗处理（保守不漏挡）。
+const IS_MAIN_WINDOW = (() => {
+  try {
+    return getCurrentWindow().label === "main";
+  } catch {
+    return true;
+  }
+})();
 
 // antd DatePicker 底层用 dayjs，默认英文；全局设成中文让月份 / 星期都本地化
 dayjs.locale("zh-cn");
@@ -59,7 +70,12 @@ window.addEventListener(
   true,
 );
 
-loadThemeFromStore().then(() => {
+loadThemeFromStore().then(async () => {
+  // 应用启动锁：仅主窗在渲染前查询后端锁状态，已开启则首帧即进入锁屏，
+  // 避免笔记内容在锁屏出现前闪现一下。失败开放（不锁），不阻塞启动。
+  if (IS_MAIN_WINDOW) {
+    await useAppStore.getState().initAppLock();
+  }
   // 启动后台拉一次系统信息（数据目录 / 版本等），不阻塞首屏
   useAppStore.getState().loadInstanceInfo();
   // 拉一次"全局新建笔记"的默认文件夹 / 标签偏好，便于第一次按 Ctrl+N 就能用

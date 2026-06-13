@@ -13,6 +13,7 @@ import type {
   CardStats,
   MobileUpdateInfo,
   AppConfig,
+  AppLockStatus,
   SystemInfo,
   DashboardStats,
   Note,
@@ -286,6 +287,38 @@ export const hiddenPinApi = {
   clear: (currentPin: string) => invoke<void>("clear_hidden_pin", { currentPin }),
   /** 获取 PIN 提示（无则 null）—— 解锁框可展示给用户 */
   getHint: () => invoke<string | null>("get_hidden_pin_hint"),
+};
+
+/**
+ * 应用启动锁 —— 软锁 / 全局进入密码（不是数据加密）
+ *
+ * 与 hiddenPinApi / vaultApi 完全独立：这是"打开软件就要输密码"的全局门禁。
+ * 默认关闭，用户在设置里设密码后才生效；防的是"公用电脑被顺手翻"。
+ * 忘记密码时数据无损（笔记本身仍是明文，可在设置页关闭后重设）。
+ */
+export const appLockApi = {
+  /** 查询锁状态：是否开启 + 闲置自动锁定分钟数 */
+  status: () => invoke<AppLockStatus>("app_lock_status"),
+  /**
+   * 设置或修改进入密码（已设过时必须传 oldPassword）
+   * - hint = null 不动现有提示；hint = "" 清空提示
+   * - 后端会校验 hint 不能包含密码本身，否则报错
+   */
+  setPassword: (
+    oldPassword: string | null,
+    newPassword: string,
+    hint: string | null = null,
+  ) => invoke<void>("app_lock_set_password", { oldPassword, newPassword, hint }),
+  /** 校验进入密码 —— 失败次数限制由后端管 */
+  verify: (password: string) => invoke<void>("app_lock_verify", { password }),
+  /** 关闭应用锁（需当前密码校验通过） */
+  disable: (currentPassword: string) =>
+    invoke<void>("app_lock_disable", { currentPassword }),
+  /** 获取密码提示（无则 null）—— 锁屏页可展示给用户 */
+  getHint: () => invoke<string | null>("app_lock_get_hint"),
+  /** 设置闲置自动锁定分钟数（0 = 关闭；后端 clamp 到 [0, 240]） */
+  setAutoMinutes: (minutes: number) =>
+    invoke<void>("app_lock_set_auto_minutes", { minutes }),
 };
 
 /**

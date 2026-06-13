@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
-import { taskApi, systemApi, folderApi, configApi } from "@/lib/api";
+import { taskApi, systemApi, folderApi, configApi, appLockApi } from "@/lib/api";
 
 /**
  * 读取配置项；不存在时返回 null（避开 configApi.get 的 NotFound Err 抛出）。
@@ -539,6 +539,33 @@ interface AppStore {
   clearHiddenUnlock: () => void;
   /** 当前是否在解锁有效期内 */
   isHiddenUnlocked: () => boolean;
+  /**
+   * 应用启动锁会话态（软锁 / 全局进入密码）。
+   * 故意不持久化、不参与 loadFromStore：每次启动应用都要重新解锁。
+   * - appLockEnabled: 是否已配置进入密码（镜像后端真相，供 UI 决定是否显示"立即锁定"）
+   * - appLocked: 当前是否处于锁定（true = 必须输进入密码才能用）
+   * - appLockAutoMinutes: 闲置自动锁定分钟数（0=关闭），从后端配置加载，仅供前端计时
+   */
+  appLockEnabled: boolean;
+  appLocked: boolean;
+  appLockAutoMinutes: number;
+  /**
+   * 启动时查询后端锁状态：已开启则置为锁定，并读出自动锁定分钟数。
+   * 失败时静默置为"不锁"——软锁场景下宁可放行也不要因后端抖动把用户挡死在外面。
+   */
+  initAppLock: () => Promise<void>;
+  /** 立即锁定（手动点"立即锁定" / 闲置自动锁触发）；仅在已配置时有意义 */
+  lockAppNow: () => void;
+  /** 解锁（进入密码校验通过后调用） */
+  unlockApp: () => void;
+  /**
+   * 设置页设/关密码后调用，同步"是否已配置"标志。
+   * 关闭（enabled=false）时顺带解锁，避免残留锁定态。
+   * 注意：开启时不主动上锁——用户刚设完密码还在用，下次启动才需要解锁。
+   */
+  setAppLockEnabled: (enabled: boolean) => void;
+  /** 更新前端记的自动锁定分钟数（设置页改动后即时生效；持久化在后端 app_config） */
+  setAppLockAutoMinutes: (minutes: number) => void;
 }
 
 /**
@@ -1054,6 +1081,34 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const ts = get().hiddenUnlockedAt;
     return ts !== null && Date.now() - ts < HIDDEN_UNLOCK_TTL_MS;
   },
+  appLockEnabled: false,
+  appLocked: false,
+  appLockAutoMinutes: 0,
+  initAppLock: async () => {
+    try {
+      const st = await appLockApi.status();
+      // 已开启 → 启动即锁定；未开启 → 不锁
+      set({
+        appLockEnabled: st.enabled,
+        appLocked: st.enabled,
+        appLockAutoMinutes: st.autoLockMinutes,
+      });
+    } catch {
+      // 后端不可用 / 启动早期 → 不锁（失败开放），避免误把用户挡在外面
+      set({ appLockEnabled: false, appLocked: false });
+    }
+  },
+  lockAppNow: () => {
+    // 仅在已配置进入密码时才允许锁定，避免没设密码却被锁死（解不开）
+    if (get().appLockEnabled) set({ appLocked: true });
+  },
+  unlockApp: () => set({ appLocked: false }),
+  setAppLockEnabled: (enabled) =>
+    set(enabled ? { appLockEnabled: true } : { appLockEnabled: false, appLocked: false }),
+  setAppLockAutoMinutes: (minutes) =>
+    set({
+      appLockAutoMinutes: Math.max(0, Math.min(240, Math.round(Number(minutes) || 0))),
+    }),
   setAlwaysOnTop: async (enabled, opts) => {
     try {
       await getCurrentWindow().setAlwaysOnTop(enabled);

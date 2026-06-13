@@ -459,6 +459,17 @@ export interface DraftNoteResponse {
 /** Vault 整体状态（三态机）*/
 export type VaultStatus = "notset" | "locked" | "unlocked";
 
+/**
+ * 应用启动锁状态（软锁 / 全局进入密码，非真加密）。
+ * 与 Rust models::AppLockStatus 对齐。
+ */
+export interface AppLockStatus {
+  /** 是否已设置进入密码（= 锁是否开启） */
+  enabled: boolean;
+  /** 闲置自动锁定分钟数；0 = 关闭自动锁定 */
+  autoLockMinutes: number;
+}
+
 // ─── 导入 ─────────────────────────────────────
 
 /** 扫描到的文件在库中的匹配类型（后端扫描时判定） */
