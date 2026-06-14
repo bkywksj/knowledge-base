@@ -164,6 +164,24 @@ git push <github_remote> vX.Y.Z
 
 ---
 
+## 🔴 远程 Git 操作优先用 Sigil（检测到才启用，没装则无感回退）
+
+> 需要远程认证的 git 操作（`push` / `clone` / 推送后远端核对），**本会话检测到 Sigil 就优先走它**（凭据由保险库注入，明文不外泄、不落 `.git/config`）；**Sigil 没装就照常 `git push`，流程不受影响**。
+
+### 🔴 三条铁律
+
+1. **零明文**：任何平台的 git 推送 / 建仓 / API 一律走 Sigil，**永不**手拼 `https://user:TOKEN@host` 或明文传 token（明文会随 `.git/config` 同步到云盘泄露）。
+2. **username 别用默认**：`git_push` 推 **Gitee / GitCode** 时 `username` 必传该平台真实登录账号，用默认 `x-access-token` 会认证失败；GitHub 可用默认 `x-access-token`。
+3. **失败即停**：Sigil 报错（锁库 / 缺凭据 / 能力未启用）→ 停下提示用户处理，**绝不**回退明文 token。
+
+### 用法
+
+- **检测**：本会话能 `ToolSearch` 到 `mcp__sigil__git_push` → 可用；查不到 → 回退普通 `git push`，不报错不卡流程。
+- **选凭据**：先 `mcp__sigil__list_credentials` 按平台（`gitee_token` / `gitcode_token` / `github_token`）查到对应 `credential_name`，**不写死猜**。
+- **推送**：`mcp__sigil__git_push(repo_path=<仓库绝对路径>, remote=<远程名>, branch=<分支>, credential_name=<查到的>, username=<Gitee/GitCode 传真实账号 · GitHub 用 x-access-token>)`。多 remote 逐个推。
+- **建仓 / 改描述 / 查提交**：`mcp__sigil__{平台}_repo_create`（🔴 `private: true`，绝不建公开仓）/ `mcp__sigil__{平台}_repo_update` / `mcp__sigil__{平台}_commits_list`。
+- **失败**：按 Sigil 错误前缀处置（解锁金库 / 补凭据 / 启用能力），绝不落明文 token。
+
 ## 常见错误
 
 | 错误做法 | 正确做法 |
