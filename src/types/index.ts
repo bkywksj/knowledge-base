@@ -666,6 +666,8 @@ export interface DashboardStats {
   total_links: number;
   today_updated: number;
   total_words: number;
+  /** 最后一次「写作」时间（含日记，排除导入笔记）；无手写笔记时为 null */
+  last_written_at: string | null;
 }
 
 // ─── 日记中心 ─────────────────────────────────

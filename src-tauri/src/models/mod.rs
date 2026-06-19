@@ -365,6 +365,9 @@ pub struct DashboardStats {
     pub total_links: usize,
     pub today_updated: usize,
     pub total_words: usize,
+    /// 最后一次「写作」时间（含日记，排除导入笔记）；用于首页「距上次写作」。
+    /// 无任何手写笔记时为 None。
+    pub last_written_at: Option<String>,
 }
 
 // ─── 导入 ─────────────────────────────────────

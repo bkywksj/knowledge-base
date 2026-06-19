@@ -184,15 +184,31 @@ impl Database {
 
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
 
-        // 对 notes 的 4 个聚合用一次扫描完成
-        let (total_notes, today_updated, total_words): (usize, usize, usize) = conn.query_row(
+        // 对 notes 的聚合用一次扫描完成
+        // 注：total_words / last_written_at 排除「导入」笔记（source_file_path IS NOT NULL），
+        // 导入的 PDF/手册等不算用户的「写作」，否则 25 万字的导入会灌爆写作活力。
+        // 日记（is_daily=1）属于手写，正常计入。
+        let (total_notes, today_updated, total_words, last_written_at): (
+            usize,
+            usize,
+            usize,
+            Option<String>,
+        ) = conn.query_row(
             "SELECT
                 COUNT(*) FILTER (WHERE is_deleted = 0),
                 COUNT(*) FILTER (WHERE is_deleted = 0 AND substr(updated_at, 1, 10) = ?1),
-                COALESCE(SUM(word_count) FILTER (WHERE is_deleted = 0), 0)
+                COALESCE(SUM(word_count) FILTER (WHERE is_deleted = 0 AND source_file_path IS NULL), 0),
+                MAX(updated_at) FILTER (WHERE is_deleted = 0 AND source_file_path IS NULL)
              FROM notes",
             [&today],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, i64>(2)? as usize)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get::<_, i64>(2)? as usize,
+                    row.get(3)?,
+                ))
+            },
         )?;
 
         let total_folders: usize =
@@ -209,6 +225,7 @@ impl Database {
             total_links,
             today_updated,
             total_words,
+            last_written_at,
         })
     }
 
@@ -222,9 +239,12 @@ impl Database {
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
         let mut stmt = conn.prepare(
+            // 含日记（is_daily 不过滤）；排除「导入」笔记（source_file_path IS NOT NULL），
+            // 与 get_dashboard_stats 的字数口径保持一致，避免导入大文件压平整张图。
             "SELECT DATE(updated_at) as d, COUNT(*) as cnt, COALESCE(SUM(word_count), 0) as wc
              FROM notes
              WHERE is_deleted = 0
+               AND source_file_path IS NULL
                AND updated_at >= DATE('now', 'localtime', ?1)
              GROUP BY d
              ORDER BY d",

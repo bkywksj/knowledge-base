@@ -87,6 +87,17 @@ const { Text } = Typography;
  * 桌面端原版主页（保留所有原有 hook + 1300+ 行实现）。
  * 移动端走文件末尾的 HomePage wrapper → MobileHome（按设计稿小屏布局）。
  */
+/** 本地时区的 YYYY-MM-DD。
+ *
+ * 不能用 `new Date().toISOString().slice(0,10)` —— 那是 UTC 日期，后端 `DATE(updated_at)`
+ * 用的是 localtime，两者在本地凌晨 0~8 点（东八区）会差一天，导致连续写作/柱状图错位。 */
+function localYmd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 function DesktopHomePage() {
   const navigate = useNavigate();
   const { token } = antdTheme.useToken();
@@ -388,15 +399,15 @@ function DesktopHomePage() {
 
   // ─── 派生指标(纯前端从 trend 计算) ────────────────
   const vitalityMetrics = useMemo(() => {
-    // trend 是按日期升序,只含有笔记的日期
-    const todayStr = new Date().toISOString().slice(0, 10);
+    // trend 是按日期升序,只含有笔记的日期（后端已含日记、排除导入）
+    const todayStr = localYmd(new Date());
     const trendByDate = new Map(trend.map((d) => [d.date, d]));
 
     // 连续写作天数:从今天往前数,直到某天没写作
     let streak = 0;
     const cursor = new Date();
     for (let i = 0; i < 365; i++) {
-      const ymd = cursor.toISOString().slice(0, 10);
+      const ymd = localYmd(cursor);
       const d = trendByDate.get(ymd);
       if (d && d.word_count > 0) {
         streak++;
@@ -411,8 +422,9 @@ function DesktopHomePage() {
       }
     }
 
-    // 距上次写作:用最近笔记 updated_at
-    const lastWritingAt = recentNotes[0]?.updated_at ?? pinnedNotes[0]?.updated_at;
+    // 距上次写作:用后端 last_written_at（含日记、排除导入），口径与图表/连续写作一致。
+    // 不再用 recentNotes[0]——那来自普通笔记列表，强制排除日记，写日记不会刷新此项。
+    const lastWritingAt = stats?.last_written_at ?? undefined;
     const lastSinceLabel = lastWritingAt ? relativeTime(lastWritingAt) : "—";
 
     // 本周字数(最近 7 天) + 上周字数(8-14 天)对比
@@ -422,7 +434,7 @@ function DesktopHomePage() {
     for (let i = 0; i < 14; i++) {
       const d = new Date(now);
       d.setDate(now.getDate() - i);
-      const ymd = d.toISOString().slice(0, 10);
+      const ymd = localYmd(d);
       const stat = trendByDate.get(ymd);
       if (!stat) continue;
       if (i < 7) thisWeek += stat.word_count;
@@ -442,7 +454,7 @@ function DesktopHomePage() {
       todayStr,
       trendByDate,
     };
-  }, [trend, stats, recentNotes, pinnedNotes]);
+  }, [trend, stats]);
 
   // 14 天柱状图的 normalize
   const trendBars = useMemo(() => {
@@ -451,12 +463,17 @@ function DesktopHomePage() {
     for (let i = 13; i >= 0; i--) {
       const d = new Date(now);
       d.setDate(now.getDate() - i);
-      const ymd = d.toISOString().slice(0, 10);
+      const ymd = localYmd(d);
       const stat = vitalityMetrics.trendByDate.get(ymd);
       items.push({ date: ymd, words: stat?.word_count ?? 0 });
     }
     const maxW = Math.max(...items.map((i) => i.words), 1);
-    return items.map((it) => ({ ...it, ratio: it.words / maxW }));
+    // sqrt 归一化:线性归一化下,一条 25 万字的导入/长笔记会把其它天压成肉眼为 0 的细条。
+    // sqrt 压缩动态范围,让几十~几百字的日常写作(含日记)也清晰可见。
+    return items.map((it) => ({
+      ...it,
+      ratio: it.words > 0 ? Math.sqrt(it.words / maxW) : 0,
+    }));
   }, [vitalityMetrics]);
 
   // 待办速览三段：逾期（昨天及更早）/ 今日 / 即将到期。每段最多 5 条
