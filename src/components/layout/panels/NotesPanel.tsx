@@ -35,6 +35,7 @@ import {
   Inbox,
   GitCompare,
   Sparkles,
+  Search,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderFilled } from "@ant-design/icons";
@@ -42,9 +43,10 @@ import type { DataNode } from "antd/es/tree";
 import { useAppStore } from "@/store";
 import { MicButton } from "@/components/MicButton";
 import { useTabsStore } from "@/store/tabs";
-import { aiChatApi, folderApi, importApi, noteApi, trashApi } from "@/lib/api";
+import { aiChatApi, folderApi, importApi, noteApi, searchApi, trashApi } from "@/lib/api";
 import { showExternalMdIntroOnce } from "@/lib/externalMdIntro";
-import type { Folder, Note, ScannedFile } from "@/types";
+import { highlightText, highlightSnippet } from "@/lib/highlight";
+import type { Folder, Note, ScannedFile, SearchResult } from "@/types";
 import { parseEmojiPrefix } from "@/lib/treeIcons";
 import { NewNoteButton } from "@/components/NewNoteButton";
 import { FileTypeIcon } from "@/components/FileTypeIcon";
@@ -414,6 +416,15 @@ export function NotesPanel() {
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
+  // ─── 面板内就地搜索 ─────────────────────────────
+  // 输入关键词 → 防抖走后端 search_notes 全文搜索（标题+正文），结果以扁平列表
+  // 临时替换文件夹树；清空恢复树。树是懒加载的（展开才拉笔记），故不能只过滤已渲染
+  // 节点，必须走后端全量搜索。与活动栏「搜索」页/Ctrl+K 区别：这里是就近快速找+打开。
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const searchActive = searchQuery.trim().length > 0;
+
   // 多选（仅笔记）：Ctrl/Cmd 点击切换、Shift 点击选区间。独立于 antd Tree 的单选
   // selectedKey（那个表示"当前打开的笔记"），这里只做"标记一批笔记待批量操作"的视觉层。
   // 选中后整批可一起拖到目标文件夹（handleDrop 里走 noteApi.moveBatch）。
@@ -474,6 +485,47 @@ export function NotesPanel() {
     loadFolders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [foldersRefreshTick]);
+
+  // 搜索防抖：query 变化后 300ms 才打后端，避免逐字符狂发请求。
+  // 空 query 立即清结果（不打后端）。notesRefreshTick 变化时也重搜，保证
+  // 搜索态下新建/删除笔记后结果跟随刷新。
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      searchApi
+        .search(q, 50)
+        .then((items) => {
+          if (!cancelled) setSearchResults(items);
+        })
+        .catch((e) => {
+          if (!cancelled) {
+            console.warn("[notes-panel] 搜索失败:", e);
+            setSearchResults([]);
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setSearching(false);
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [searchQuery, notesRefreshTick]);
+
+  /** 打开搜索结果里的某篇笔记：跳转 + 高亮，并清空搜索恢复文件夹树视图 */
+  function openSearchResult(id: number) {
+    setSelectedKey(noteKey(id));
+    setSearchQuery("");
+    navigate(`/notes/${id}`);
+  }
 
   /**
    * URL → 树状态同步：当路由进入 /notes/:id（来自搜索面板、Ctrl+K、首页 dropdown 等）时，
@@ -2142,6 +2194,21 @@ export function NotesPanel() {
         />
       </div>
 
+      {/* 面板内搜索框：输入走后端全文搜索，结果替换下方文件夹树 */}
+      <div style={{ padding: "0 12px 8px", flexShrink: 0 }}>
+        <Input
+          size="small"
+          allowClear
+          prefix={<Search size={13} style={{ color: token.colorTextTertiary }} />}
+          placeholder="搜索笔记…"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setSearchQuery("");
+          }}
+        />
+      </div>
+
       {/* 文件夹小节 —— 兼任 OS 文件拖入区（.md/.txt → 新建笔记）
           Q-004：启用 virtual scroll 时本层必须 overflow-hidden + flex-col，让 Tree 占满剩余空间且自己接管滚动；
           节点数少时退化回 overflow-auto，保持旧体验 */}
@@ -2194,35 +2261,99 @@ export function NotesPanel() {
           void handleOsFilesDropped(files);
         }}
       >
-        <div
-          className="flex items-center justify-between cursor-pointer select-none shrink-0"
-          style={{
-            color: token.colorTextSecondary,
-            fontSize: 12,
-            paddingLeft: 16,
-            paddingRight: 16,
-            paddingTop: 12,
-            paddingBottom: 8,
-          }}
-          onClick={() => setFolderExpanded(!folderExpanded)}
-        >
-          <span className="flex items-center gap-1">
-            {folderExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            文件夹
-          </span>
-          <Button
-            type="text"
-            size="small"
-            icon={<FolderPlus size={14} />}
-            onClick={(e) => {
-              e.stopPropagation();
-              setCreatingRoot(true);
-            }}
-            style={{ width: 24, height: 24, padding: 0 }}
-          />
-        </div>
+        {/* 搜索激活：用扁平结果列表替换文件夹树 */}
+        {searchActive && (
+          <div className="flex-1 min-h-0 overflow-auto" style={{ padding: "8px 8px 12px" }}>
+            {searching && searchResults.length === 0 ? (
+              <div
+                className="text-center py-6"
+                style={{ color: token.colorTextQuaternary, fontSize: 12 }}
+              >
+                搜索中…
+              </div>
+            ) : searchResults.length === 0 ? (
+              <div
+                className="text-center py-6"
+                style={{ color: token.colorTextQuaternary, fontSize: 12 }}
+              >
+                未找到匹配的笔记
+              </div>
+            ) : (
+              searchResults.map((r) => (
+                <div
+                  key={r.id}
+                  onClick={() => openSearchResult(r.id)}
+                  className="cursor-pointer"
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 6,
+                    marginBottom: 2,
+                    transition: "background .15s",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = `${token.colorPrimary}10`;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "transparent";
+                  }}
+                >
+                  <div
+                    className="flex items-center gap-1.5 truncate"
+                    style={{ fontSize: 13, color: token.colorText }}
+                  >
+                    <FileText size={13} style={{ color: token.colorTextTertiary, flexShrink: 0 }} />
+                    <span className="truncate">{highlightText(r.title || "未命名", searchQuery)}</span>
+                  </div>
+                  {r.snippet && (
+                    <div
+                      className="truncate"
+                      style={{
+                        fontSize: 11,
+                        color: token.colorTextTertiary,
+                        paddingLeft: 19,
+                        marginTop: 1,
+                      }}
+                    >
+                      {highlightSnippet(r.snippet, searchQuery)}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        )}
 
-        {folderExpanded && (
+        {!searchActive && (
+          <div
+            className="flex items-center justify-between cursor-pointer select-none shrink-0"
+            style={{
+              color: token.colorTextSecondary,
+              fontSize: 12,
+              paddingLeft: 16,
+              paddingRight: 16,
+              paddingTop: 12,
+              paddingBottom: 8,
+            }}
+            onClick={() => setFolderExpanded(!folderExpanded)}
+          >
+            <span className="flex items-center gap-1">
+              {folderExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              文件夹
+            </span>
+            <Button
+              type="text"
+              size="small"
+              icon={<FolderPlus size={14} />}
+              onClick={(e) => {
+                e.stopPropagation();
+                setCreatingRoot(true);
+              }}
+              style={{ width: 24, height: 24, padding: 0 }}
+            />
+          </div>
+        )}
+
+        {!searchActive && folderExpanded && (
           <div
             ref={treeContainerRef}
             // Q-004：virtual 模式下让本层 flex-1 + 自己 overflow-hidden，Tree 才能拿到稳定可测的高度（外层不滚 → 内层撑满）
