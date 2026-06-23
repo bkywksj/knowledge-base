@@ -712,6 +712,9 @@ function DesktopNoteEditorPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [editorInstance, setEditorInstance] = useState<any | null>(null);
   const editorBodyRef = useRef<HTMLDivElement | null>(null);
+  // 当前活跃笔记 id：loadData 开头写入，后台元数据加载回来时比对，防止快速切笔记
+  // 时旧请求结果覆盖新笔记（竞态守卫）。
+  const loadSeqRef = useRef<number>(-1);
 
   // Ctrl/Cmd+A 全选笔记内容。
   // 默认情况下焦点未落到 ProseMirror 编辑器时（比如刚打开笔记还没点入正文），
@@ -791,19 +794,14 @@ function DesktopNoteEditorPage() {
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    loadSeqRef.current = noteId; // 标记当前活跃笔记，供后台元数据加载做竞态守卫
     try {
-      const [noteData, tags, folderTree, existingTags, links] = await Promise.all([
-        noteApi.get(noteId),
-        tagApi.list(),
-        folderApi.list(),
-        tagApi.getNoteTags(noteId),
-        linkApi.getBacklinks(noteId),
-      ]);
+      // ── 关键路径：只等「笔记正文」这一条主键查询 ──
+      // 旧实现把 noteApi.get 和 tagApi.list()/folderApi.list()（全局列表，随库规模
+      // 增长变慢）捆在同一个 Promise.all，5 条全 resolve 才放行渲染 → 正文被无关的
+      // 全局元数据查询阻塞，打开变卡。拆开后：正文一拿到立刻显示，元数据后台补。
+      const noteData = await noteApi.get(noteId);
       setNote(noteData);
-      setAllTags(tags);
-      setNoteTags(existingTags);
-      setFolders(folderTree);
-      setBacklinks(links);
       openTab({
         id: noteData.id,
         title: noteData.title,
@@ -825,10 +823,31 @@ function DesktopNoteEditorPage() {
         // 草稿已和 DB 一致（其他场景 clear 漏了），主动清掉
         if (draft) clearDraft(noteId);
       }
+      // 正文已就绪，立即放行渲染（编辑器先挂起来）。
+      setLoading(false);
+
+      // ── 次要元数据：标签 / 文件夹 / 笔记标签 / 反链 ──
+      // 非关键路径，后台并行加载；失败只告警不影响正文。竞态由 cancelled 守卫拦截，
+      // 避免快速切笔记时旧请求回来覆盖新笔记的元数据。
+      void Promise.all([
+        tagApi.list(),
+        folderApi.list(),
+        tagApi.getNoteTags(noteId),
+        linkApi.getBacklinks(noteId),
+      ])
+        .then(([tags, folderTree, existingTags, links]) => {
+          if (loadSeqRef.current !== noteId) return; // 已切到别的笔记，丢弃旧结果
+          setAllTags(tags);
+          setFolders(folderTree);
+          setNoteTags(existingTags);
+          setBacklinks(links);
+        })
+        .catch((e) => {
+          console.warn("[editor] 加载笔记元数据失败:", e);
+        });
     } catch (e) {
       message.error(String(e));
       navigate("/notes");
-    } finally {
       setLoading(false);
     }
   }, [noteId, navigate, openTab, getDraft, clearDraft, setTabDirty]);
