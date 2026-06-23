@@ -17,6 +17,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { theme as antdTheme } from "antd";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import rehypeRaw from "rehype-raw";
 import { MarkdownContent } from "@/components/ai/MarkdownContent";
 
 interface Props {
@@ -227,7 +228,13 @@ export function SlideshowView({ open, onClose, html, title }: Props) {
 
         {/* 内容区：复用 .tiptap + .ai-markdown 样式（与 AI 回复同款 markdown 渲染），
             加大字号方便投屏。MarkdownContent 内部走 react-markdown + remark-gfm，
-            原生支持表格 / 删除线 / 任务列表 / wiki link 文本（如需 wiki 跳转可后续补）。 */}
+            原生支持表格 / 删除线 / 任务列表 / wiki link 文本（如需 wiki 跳转可后续补）。
+
+            rehypeRaw：笔记里调过列宽的表格会被 TableWithMarkdown 序列化成**原始 HTML**
+            （<table class="tiptap-table">…，见 TiptapEditor.tsx），同理 SafeLink 也是 <a>。
+            react-markdown 默认不解析内嵌 HTML，会把标签当纯文本逐字显示（演示模式 bug）。
+            这里局部启用 rehype-raw 让内嵌 HTML 正常渲染。仅对用户自己的笔记开启，
+            不动全局 MarkdownContent 默认行为（AI 回复仍不解析 HTML，避免 XSS 面）。 */}
         <div
           className="tiptap ai-markdown slideshow-page"
           style={{
@@ -244,7 +251,9 @@ export function SlideshowView({ open, onClose, html, title }: Props) {
           }}
         >
           {current.trim() ? (
-            <MarkdownContent>{current}</MarkdownContent>
+            <MarkdownContent rehypePlugins={[rehypeRaw]}>
+              {current}
+            </MarkdownContent>
           ) : (
             <p style={{ color: "#888" }}>（空页）</p>
           )}
