@@ -629,6 +629,58 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+/**
+ * 复制「纯文本」通道(text/plain)清洗：把只在编辑器内可视的样式从 slice 副本里摘掉，
+ * 再交给 markdown 序列化 —— 避免纯文本出现 `<span style="font-size:…">`、
+ * `<p data-indent="…">` 这类 raw HTML 源码（用户粘到记事本/终端只想要干净文字）。
+ *
+ * 为什么会有源码：字号(fontSize)/颜色挂在 textStyle mark 上，tiptap-markdown 对没有
+ * markdown 表示的 mark 在 html:true 下会回退成 raw <span> 标签；缩进/对齐则被
+ * ParagraphWithIndent 序列化成 <p data-indent>。这些在「复制纯文本」时就露成源码。
+ *
+ * 不影响：① text/html 通道（富文本粘贴仍保留完整样式）
+ *        ② getMarkdown() 存盘（.md 仍保留 span，字号等样式跨「保存→重开」持久）
+ */
+const PLAIN_TEXT_NODE_ATTR_RESETS: Record<string, unknown> = {
+  indent: 0,
+  textAlign: "left",
+  lineHeight: null,
+};
+function stripVisualStylesForPlainText(fragment: Fragment): Fragment {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const children: any[] = [];
+  fragment.forEach((child) => {
+    if (child.isText) {
+      // 摘掉 textStyle（字号/颜色），其余 mark（粗体/斜体/链接/code…）原样保留
+      const marks = child.marks.filter((m) => m.type.name !== "textStyle");
+      children.push(
+        marks.length === child.marks.length ? child : child.mark(marks),
+      );
+      return;
+    }
+    // 递归清子内容
+    const newContent = stripVisualStylesForPlainText(child.content);
+    // 归位会让 markdown 退化成 raw HTML 块的节点属性（缩进 / 对齐 / 行高）
+    let attrs = child.attrs as Record<string, unknown>;
+    let changed = false;
+    for (const [k, v] of Object.entries(PLAIN_TEXT_NODE_ATTR_RESETS)) {
+      if (k in attrs && attrs[k] !== v) {
+        if (!changed) {
+          attrs = { ...attrs };
+          changed = true;
+        }
+        attrs[k] = v;
+      }
+    }
+    children.push(
+      changed
+        ? child.type.create(attrs, newContent, child.marks)
+        : child.copy(newContent),
+    );
+  });
+  return Fragment.fromArray(children);
+}
+
 interface TiptapEditorProps {
   /** 笔记内容（Markdown 字符串） */
   content: string;
@@ -1417,13 +1469,13 @@ export function TiptapEditor({
         // 时 hard break 序列化为 "  \n"（两空格+换行），下次读取还原相同视觉。
         breaks: true,
         transformPastedText: true,
-        // 复制时纯文本(text/plain)走 markdown 序列化，而非 ProseMirror 默认的
-        // textBetween(..., "\n\n")。默认(false)会丢掉列表序号、块间塞 \n\n 空行 →
-        // 复制有序列表粘出来变成"无序号 + 多空行"。改 true 后有序列表复制成
-        // "1. … / 2. …"(tightLists 紧凑无空行)，所见即所得。
-        // 代价：复制加粗/标题/链接等富文本的纯文本会带 markdown 符号(** # []())；
-        // 应用内富文本粘贴走 html/PM-slice，不经此路径、不受影响。
-        transformCopiedText: true,
+        // 复制纯文本(text/plain)：tiptap-markdown 的 transformCopiedText 会走 markdown
+        // 序列化（保留有序列表序号 / 紧凑列表），但它对 textStyle(字号/颜色)这类无 markdown
+        // 表示的 mark 在 html:true 下会回退成 raw `<span style=…>` 源码，缩进/对齐也会变
+        // `<p data-indent>` —— 粘到记事本/终端就露出 HTML 源码。这里改 false 交还控制权，
+        // 由下方 editorProps.clipboardTextSerializer 接管：先摘掉可视样式再走同一个 markdown
+        // 序列化器，既保留列表序号好处，纯文本又不含 <span>/<p data-indent> 源码。
+        transformCopiedText: false,
       }),
       // 必须放在 Markdown 之后：onBeforeCreate 时依赖 markdown.parser 已初始化
       AllowFileLink,
@@ -1481,6 +1533,19 @@ export function TiptapEditor({
           return true;
         }
         return false;
+      },
+      // 复制纯文本(text/plain)清洗：摘掉字号/颜色/缩进/对齐等"仅编辑器内可视"的样式后
+      // 再走 markdown 序列化。保留有序列表序号等格式，但纯文本不再出现 <span>/<p data-indent>
+      // 源码。text/html 通道与存盘(getMarkdown)不经此路径，样式照常保留 / 持久。
+      // 显式标注 `: string` 返回类型 —— 否则箭头体里读 editor.storage 会让 editor 的
+      // 类型推断陷入自引用环（TS7022/7023）。
+      clipboardTextSerializer: (slice): string => {
+        const cleaned = stripVisualStylesForPlainText(slice.content);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const serializer = (editor.storage as any)?.markdown?.serializer;
+        if (serializer) return String(serializer.serialize(cleaned));
+        // 兜底：markdown 序列化器未就绪时退回纯文本（仍是干净文本、无样式）
+        return cleaned.textBetween(0, cleaned.size, "\n\n");
       },
       handlePaste: (_view, event) => {
         // 三种主要场景：
