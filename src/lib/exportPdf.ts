@@ -43,10 +43,12 @@ export function printHtmlAsPdf(html: string, title: string): Promise<void> {
     const iframe = document.createElement("iframe");
     iframe.id = `${PRINT_FRAME_ID_PREFIX}${Date.now()}`;
     iframe.setAttribute("aria-hidden", "true");
-    // ⚠ 关键：iframe 必须有**真实布局尺寸**，否则 Chromium/WebView2 打印 0×0 iframe 时
-    // 布局视口塌成 0、分页计算失效 → 只输出第一页（用户报告「只能打印第一页」的根因）。
-    // 用 A4@96dpi（794×1123）作内容布局宽高，再用 left:-99999px 移出视口隐藏 —— 既不可见
-    // 又保留打印渲染。不能用 width/height:0、display:none、visibility:hidden（都会破坏分页/渲染）。
+    // ⚠ 关键 1：iframe 必须有**真实布局尺寸**，否则 Chromium/WebView2 打印 0×0 iframe 时
+    // 布局视口塌成 0、分页计算失效。用 A4@96dpi 宽度（794px）作内容布局宽，再用
+    // left:-99999px 移出视口隐藏。不能用 width:0、display:none、visibility:hidden（都会破坏渲染）。
+    // ⚠ 关键 2：高度**不能**锁死成一页高（1123px）——WebView2 打印 iframe 时只渲染 iframe
+    // 元素视口内的内容，固定一页高 → 超出部分被裁掉 → 「只能打印第一页」。这里初始给一页高
+    // 兜底布局，onload 后再撑满到内容 scrollHeight，让打印引擎拿到整篇文档去分页。
     iframe.style.cssText =
       "position:fixed;left:-99999px;top:0;width:794px;height:1123px;border:0;background:#fff;";
 
@@ -85,6 +87,22 @@ export function printHtmlAsPdf(html: string, title: string): Promise<void> {
         }
       } catch {
         /* 跨域情况下访问会抛错，忽略：srcdoc 同源所以一般不会进 catch */
+      }
+
+      // ⚠ 多页修复核心：把 iframe 元素高度撑满到内容全高，否则 WebView2 只渲染初始视口
+      // 那一页高的内容、其余被裁 →「只能打印第一页」。onload 此刻 srcdoc 子资源（含 data:
+      // base64 图片）已加载，scrollHeight 可准确反映整篇全高。
+      try {
+        const doc = win.document;
+        const fullHeight = Math.max(
+          doc.documentElement?.scrollHeight || 0,
+          doc.body?.scrollHeight || 0,
+        );
+        if (fullHeight > 0) {
+          iframe.style.height = `${fullHeight}px`;
+        }
+      } catch {
+        /* 测高失败就保留初始高度，graceful 降级 */
       }
 
       // 信号 1：afterprint 事件在用户关闭打印对话框后触发（无论确认还是取消）
