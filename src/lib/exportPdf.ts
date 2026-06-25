@@ -94,6 +94,17 @@ export function printHtmlAsPdf(html: string, title: string): Promise<void> {
       // base64 图片）已加载，scrollHeight 可准确反映整篇全高。
       try {
         const doc = win.document;
+        // 测高前先解除文档根/体自身可能继承的 height:100% / overflow:hidden
+        // （打印 HTML 注入了应用壳层 global.css 的 html,body,#root 规则）。否则 scrollHeight
+        // 会被 clamp 成一屏高，下面的撑高失效。CSS 已兜底，这里 JS 再兜一层确保测高准确。
+        if (doc.documentElement) {
+          doc.documentElement.style.height = "auto";
+          doc.documentElement.style.overflow = "visible";
+        }
+        if (doc.body) {
+          doc.body.style.height = "auto";
+          doc.body.style.overflow = "visible";
+        }
         const fullHeight = Math.max(
           doc.documentElement?.scrollHeight || 0,
           doc.body?.scrollHeight || 0,

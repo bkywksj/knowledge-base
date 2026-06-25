@@ -190,9 +190,18 @@ const PRINT_OVERRIDE_CSS = `
 
 @page { margin: 16mm 14mm; }
 
-html, body {
+/* ⚠ 打印只出一页的真正根因修复：collectDocumentCss() 会把应用壳层的
+   \`html, body, #root { height:100%; overflow:hidden }\`（global.css）原样注入打印文档，
+   把打印 body 锁成一屏高 + 溢出隐藏 → 超出第一页的内容全被裁掉。这里强制解除，
+   让打印文档按内容自然全高展开，分页才能跨页。*/
+html, body, #root {
+  width: auto !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
   margin: 0;
   padding: 0;
+  overflow: visible !important;
   background: #ffffff;
 }
 
@@ -229,6 +238,12 @@ html, body {
 img { max-width: 100% !important; height: auto !important; }
 
 @media print {
+  /* 打印态再兜一层：确保 html/body/#root 全高展开、不裁溢出（防内核在 print 阶段重套媒体规则） */
+  html, body, #root {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
   /* 标题不与紧随其后的正文分页割裂；图片 / 表格 / 代码块 / 引用 / callout 尽量不被截断 */
   h1, h2, h3, h4, h5, h6 { break-after: avoid; page-break-after: avoid; }
   img, table, pre, blockquote, figure,
