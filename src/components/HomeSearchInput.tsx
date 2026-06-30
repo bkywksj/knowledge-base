@@ -69,7 +69,9 @@ export function HomeSearchInput({
 
   function selectNote(id: number) {
     setFocused(false);
-    navigate(`/notes/${id}`);
+    // 带上当前关键词 → 进笔记后自动定位到首个命中
+    const kw = value.trim();
+    navigate(kw ? `/notes/${id}?q=${encodeURIComponent(kw)}` : `/notes/${id}`);
   }
 
   function selectTask(id: number) {

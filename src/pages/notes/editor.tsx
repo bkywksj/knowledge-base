@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Input,
   Button,
@@ -659,9 +659,22 @@ function MetaBar({
   );
 }
 
+/**
+ * 标题粘贴清洗（仅压空白）：把换行 / Tab / 全角空格 / 连续空格等所有空白压成
+ * 单个普通空格并去首尾空白；不动其它符号（引号 / 书名号 / 日期等照旧保留）。
+ * JS 的 `\s` 已覆盖 \n \r \t  (nbsp) 　(全角空格) 等，单条正则即可。
+ * 用途：从网页/来源复制标题时常连带把后面的来源、日期、乱七八糟的空白一起粘进来。
+ */
+function sanitizeTitlePaste(raw: string): string {
+  return raw.replace(/\s+/g, " ").trim();
+}
+
 function DesktopNoteEditorPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  // 搜索结果点进笔记时携带的关键词（?q=）：传给编辑器自动定位首个命中
+  const [searchParams] = useSearchParams();
+  const initialSearch = (searchParams.get("q") ?? "").trim() || undefined;
   // 上下文感知的 message / notification（避免静态方法丢主题、偶发不显示）
   const { message, notification } = AntdApp.useApp();
   const { focusMode, setFocusMode } = useAppStore();
@@ -2098,6 +2111,28 @@ function DesktopNoteEditorPage() {
             <Input
               value={title}
               onChange={(e) => handleTitleChange(e.target.value)}
+              onPaste={(e) => {
+                // 仅清洗空白：去换行/Tab/多余空格，免得从来源复制标题时把日期/来源
+                // 连带的杂乱空白塞进标题。无可清洗的空白则放行原生粘贴，保留光标行为。
+                const raw = e.clipboardData.getData("text");
+                const cleaned = sanitizeTitlePaste(raw);
+                if (cleaned === raw) return;
+                e.preventDefault();
+                const el = e.currentTarget;
+                const start = el.selectionStart ?? title.length;
+                const end = el.selectionEnd ?? title.length;
+                const next = title.slice(0, start) + cleaned + title.slice(end);
+                handleTitleChange(next);
+                // 受控组件重渲染后再把光标还原到插入末尾
+                requestAnimationFrame(() => {
+                  const pos = start + cleaned.length;
+                  try {
+                    el.setSelectionRange(pos, pos);
+                  } catch {
+                    /* 元素可能已卸载，忽略 */
+                  }
+                });
+              }}
               onPressEnter={(e) => {
                 // 填完标题回车 → 焦点跳到正文末尾，直接接着写（阅读模式不抢焦点）
                 e.preventDefault();
@@ -2173,6 +2208,7 @@ function DesktopNoteEditorPage() {
             placeholder="开始写点什么..."
             noteId={noteId}
             readingMode={readingMode}
+            initialSearch={initialSearch}
             onWikiLinkClick={handleWikiLinkClick}
             onAskAi={(selected) => {
               // 选段触发 → 选段挂到抽屉的"引用 chip"，输入框留空给用户写问题

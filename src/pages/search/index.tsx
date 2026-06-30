@@ -249,7 +249,11 @@ function DesktopSearchPage() {
                           item={item}
                           token={token}
                           keyword={query}
-                          onClick={() => navigate(`/notes/${item.id}`)}
+                          onClick={() =>
+                            navigate(
+                              `/notes/${item.id}?q=${encodeURIComponent(query)}`,
+                            )
+                          }
                         />
                       </div>
                     );
@@ -264,7 +268,11 @@ function DesktopSearchPage() {
                       item={item}
                       token={token}
                       keyword={query}
-                      onClick={() => navigate(`/notes/${item.id}`)}
+                      onClick={() =>
+                        navigate(
+                          `/notes/${item.id}?q=${encodeURIComponent(query)}`,
+                        )
+                      }
                     />
                   ))}
                   {results.length > ALL_MODE_NOTES_PREVIEW && (

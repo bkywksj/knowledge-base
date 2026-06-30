@@ -112,7 +112,14 @@ export function CommandPalette({ open, onClose, onOpenShortcuts }: CommandPalett
           if (task) navigate(`/tasks?taskId=${task.id}`);
         } else {
           const note = results[selectedIndex - noteOffset];
-          if (note) navigate(`/notes/${note.id}`);
+          if (note) {
+            const kw = keyword.trim();
+            navigate(
+              kw
+                ? `/notes/${note.id}?q=${encodeURIComponent(kw)}`
+                : `/notes/${note.id}`,
+            );
+          }
         }
         onClose();
       }
@@ -125,6 +132,7 @@ export function CommandPalette({ open, onClose, onOpenShortcuts }: CommandPalett
       filteredPages,
       taskResults,
       results,
+      keyword,
       navigate,
       onClose,
       onOpenShortcuts,
@@ -148,7 +156,9 @@ export function CommandPalette({ open, onClose, onOpenShortcuts }: CommandPalett
   }
 
   function selectNote(id: number) {
-    navigate(`/notes/${id}`);
+    // 带上当前关键词 → 进笔记后自动定位首个命中
+    const kw = keyword.trim();
+    navigate(kw ? `/notes/${id}?q=${encodeURIComponent(kw)}` : `/notes/${id}`);
     onClose();
   }
 

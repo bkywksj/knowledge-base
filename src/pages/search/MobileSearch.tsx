@@ -139,7 +139,9 @@ export function MobileSearch() {
                 key={r.id}
                 result={r}
                 keyword={keyword}
-                onClick={() => navigate(`/notes/${r.id}`)}
+                onClick={() =>
+                  navigate(`/notes/${r.id}?q=${encodeURIComponent(keyword)}`)
+                }
               />
             ))}
           </>

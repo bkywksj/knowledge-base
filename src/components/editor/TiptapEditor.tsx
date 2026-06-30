@@ -724,6 +724,11 @@ interface TiptapEditorProps {
    * 底部 stats 会被推得离视觉底部很远 → 笔记页面应传 false 关闭它。
    */
   showFooterStats?: boolean;
+  /**
+   * 外部预填查询词（搜索结果点进笔记时携带的关键词）。设置后编辑器就绪即
+   * 自动展开查找浮条、定位到首个命中——省去用户进笔记后再 Ctrl+F 搜一遍。
+   */
+  initialSearch?: string;
 }
 
 export function TiptapEditor({
@@ -737,6 +742,7 @@ export function TiptapEditor({
   readingMode = false,
   onEditorReady,
   showFooterStats = true,
+  initialSearch,
 }: TiptapEditorProps) {
   const isExternalUpdate = useRef(false);
 
@@ -1937,6 +1943,18 @@ export function TiptapEditor({
   // ─── 查找替换浮条状态（Ctrl+F / Ctrl+H 触发） ───
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchShowReplace, setSearchShowReplace] = useState(false);
+
+  // 外部预填查询词（搜索结果跳转进来）：编辑器就绪后自动展开查找浮条。
+  // 只依赖 [initialSearch, editor]——不挂 content，避免用户编辑导致 content 变化
+  // 重跑 effect、把用户已关掉的浮条又弹出来。命中定位由浮条内 pendingJump 负责
+  // 等内容灌入（stats.total>0）后再滚，时序天然安全。
+  useEffect(() => {
+    if (initialSearch && editor) {
+      setSearchShowReplace(false);
+      setSearchOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSearch, editor]);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   // 在 window 上挂 keydown：编辑器一旦 mount 就能响应 Ctrl+F / Ctrl+H，
@@ -2041,6 +2059,7 @@ export function TiptapEditor({
         open={searchOpen}
         showReplace={searchShowReplace}
         onClose={() => setSearchOpen(false)}
+        initialQuery={initialSearch}
       />
       <EditorContent editor={editor} className="tiptap-content" />
       {/* 图片双击放大：事件委托覆盖正文 / 表格 / figure 内所有图片 */}

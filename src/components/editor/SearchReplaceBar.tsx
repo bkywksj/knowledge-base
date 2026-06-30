@@ -31,9 +31,14 @@ interface Props {
   showReplace: boolean;
   /** 关闭回调 */
   onClose: () => void;
+  /**
+   * 外部预填的查询词（如从搜索结果点进笔记时携带的关键词）。
+   * 浮条打开时自动填入查询框并定位到首个命中；用户随后正常增删该词。
+   */
+  initialQuery?: string;
 }
 
-export function SearchReplaceBar({ editor, open, showReplace, onClose }: Props) {
+export function SearchReplaceBar({ editor, open, showReplace, onClose, initialQuery }: Props) {
   const { token } = antdTheme.useToken();
   const [query, setQuery] = useState("");
   const [replacement, setReplacement] = useState("");
@@ -47,6 +52,12 @@ export function SearchReplaceBar({ editor, open, showReplace, onClose }: Props) 
     perTerm: TermStat[];
   }>({ total: 0, current: -1, perTerm: [] });
   const queryInputRef = useRef<HTMLInputElement | null>(null);
+  // 上次已预填的 initialQuery：编辑器不随笔记 remount（路由无 key），用「上次词」
+  // 而非布尔标记，才能在同一实例下「换个关键词再搜」时重新预填；用户手敲改词不受影响
+  // （手敲只改本地 query，不动 initialQuery，effect 不重跑）。
+  const lastSeededRef = useRef<string | undefined>(undefined);
+  // 待定位标记：seed 后等命中算出（stats.total>0）再滚动到首个命中
+  const [pendingJump, setPendingJump] = useState(false);
 
   // ─── 打开时聚焦查询输入框 ───────────────────
   useEffect(() => {
@@ -55,6 +66,30 @@ export function SearchReplaceBar({ editor, open, showReplace, onClose }: Props) 
       requestAnimationFrame(() => queryInputRef.current?.select());
     }
   }, [open]);
+
+  // ─── 打开且带「新的」initialQuery：预填查询框并标记待定位 ───
+  useEffect(() => {
+    if (!open) {
+      setPendingJump(false);
+      return;
+    }
+    // 仅当 initialQuery 与上次预填的不同才重填：新关键词进来即更新，
+    // 同一关键词反复打开（如 Esc 关掉再 Ctrl+F）不再强行覆盖用户当前查询。
+    if (initialQuery && initialQuery !== lastSeededRef.current) {
+      lastSeededRef.current = initialQuery;
+      setQuery(initialQuery);
+      setPendingJump(true);
+    }
+  }, [open, initialQuery]);
+
+  // ─── 命中算出后定位到首个命中（仅 seed 触发，用户手敲不自动滚） ───
+  useEffect(() => {
+    if (!editor || !pendingJump) return;
+    if (stats.total > 0) {
+      editor.chain().scrollToCurrent().run();
+      setPendingJump(false);
+    }
+  }, [editor, pendingJump, stats.total]);
 
   // ─── query / options 变化 → 触发搜索 ────────
   useEffect(() => {
