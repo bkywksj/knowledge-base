@@ -144,6 +144,7 @@ export const EDITOR_LAYOUT_DEFAULTS = {
   paper: true,
   ruleLines: "none" as EditorRuleLines,
   firstLineIndent: false,
+  headingNumber: false,
 };
 
 /**
@@ -313,6 +314,8 @@ interface AppStore {
   editorRuleLines: EditorRuleLines;
   /** 编辑器顶层段落首行缩进 2 字符（持久化） */
   editorFirstLineIndent: boolean;
+  /** 编辑器标题自动编号（1/1.1/1.1.1）+ 层级彩虹配色（持久化，纯显示层不写进 .md） */
+  editorHeadingNumber: boolean;
   /**
    * 编辑器「高亮」快捷键（accelerator 字符串，如 "CommandOrControl+Shift+H"，持久化）。
    *
@@ -340,6 +343,8 @@ interface AppStore {
   autoSaveDelay: number;
   /** 打开笔记时的默认查看模式（持久化）。'edit' = 编辑模式（默认），'read' = 阅读模式（隐藏工具栏，不可编辑） */
   defaultViewMode: "edit" | "read";
+  /** 待办模块默认视图（列表/看板/四象限/日历/甘特）：打开待办页时的初始视图，持久化 */
+  tasksDefaultView: "list" | "kanban" | "quadrant" | "calendar" | "gantt";
   /** 笔记编辑页：右侧大纲面板是否显示（持久化）。标题数 < 2 时由组件自动隐藏，与此独立 */
   outlineVisible: boolean;
   /** 笔记编辑页：大纲面板停靠位置（持久化）。'right'（默认）/ 'left' */
@@ -541,6 +546,7 @@ interface AppStore {
   setEditorRuleLines: (mode: EditorRuleLines) => void;
   /** 切换首行缩进 */
   setEditorFirstLineIndent: (on: boolean) => void;
+  setEditorHeadingNumber: (on: boolean) => void;
   /** 设置编辑器高亮快捷键（accelerator 字符串；传空串 = 禁用高亮快捷键） */
   setEditorHighlightShortcut: (accel: string) => void;
   /** 设置全局界面缩放（自动 clamp 到 [UI_SCALE_MIN, UI_SCALE_MAX]，标记用户已手动设置） */
@@ -553,6 +559,9 @@ interface AppStore {
   setAutoSaveDelay: (ms: number) => void;
   /** 设置默认查看模式（edit / read） */
   setDefaultViewMode: (mode: "edit" | "read") => void;
+  setTasksDefaultView: (
+    v: "list" | "kanban" | "quadrant" | "calendar" | "gantt",
+  ) => void;
   /** 切换大纲面板可见性（persist） */
   toggleOutline: () => void;
   /** 设置大纲面板可见性（persist） */
@@ -730,12 +739,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
   editorPaper: EDITOR_LAYOUT_DEFAULTS.paper,
   editorRuleLines: EDITOR_LAYOUT_DEFAULTS.ruleLines,
   editorFirstLineIndent: EDITOR_LAYOUT_DEFAULTS.firstLineIndent,
+  editorHeadingNumber: EDITOR_LAYOUT_DEFAULTS.headingNumber,
   editorHighlightShortcut: EDITOR_HIGHLIGHT_SHORTCUT_DEFAULT,
   uiScale: UI_SCALE_DEFAULT,
   uiScaleUserSet: false,
   autoSaveEnabled: false,
   autoSaveDelay: AUTO_SAVE_DELAY_DEFAULT,
   defaultViewMode: "edit",
+  tasksDefaultView: "list",
   outlineVisible: true,
   outlinePosition: "right",
   notesCollapsedFolderKeys: [],
@@ -1019,6 +1030,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       editorPaper: EDITOR_LAYOUT_DEFAULTS.paper,
       editorRuleLines: EDITOR_LAYOUT_DEFAULTS.ruleLines,
       editorFirstLineIndent: EDITOR_LAYOUT_DEFAULTS.firstLineIndent,
+      editorHeadingNumber: EDITOR_LAYOUT_DEFAULTS.headingNumber,
     }),
   setEditorReadingWidth: (w) => {
     const n = Math.round(Number(w) || 0);
@@ -1029,6 +1041,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setEditorRuleLines: (mode) =>
     set({ editorRuleLines: mode === "lines" || mode === "grid" ? mode : "none" }),
   setEditorFirstLineIndent: (on) => set({ editorFirstLineIndent: !!on }),
+  setEditorHeadingNumber: (on) => set({ editorHeadingNumber: !!on }),
   setEditorHighlightShortcut: (accel) =>
     set({ editorHighlightShortcut: typeof accel === "string" ? accel.trim() : "" }),
   setUiScale: (scale) => {
@@ -1044,6 +1057,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ autoSaveDelay: clamped });
   },
   setDefaultViewMode: (mode) => set({ defaultViewMode: mode === "read" ? "read" : "edit" }),
+  setTasksDefaultView: (v) => set({ tasksDefaultView: v }),
   toggleOutline: () => set((s) => ({ outlineVisible: !s.outlineVisible })),
   setOutlineVisible: (visible) => set({ outlineVisible: visible }),
   setOutlinePosition: (pos) => set({ outlinePosition: pos === "left" ? "left" : "right" }),
@@ -1257,6 +1271,7 @@ export function applyEditorLayout(state: {
   editorPaper: boolean;
   editorRuleLines: EditorRuleLines;
   editorFirstLineIndent: boolean;
+  editorHeadingNumber: boolean;
 }) {
   const root = document.documentElement;
   if (state.editorReadingWidth > 0) {
@@ -1267,6 +1282,10 @@ export function applyEditorLayout(state: {
   root.setAttribute("data-editor-paper", state.editorPaper ? "1" : "0");
   root.setAttribute("data-editor-rule", state.editorRuleLines);
   root.setAttribute("data-editor-indent", state.editorFirstLineIndent ? "1" : "0");
+  root.setAttribute(
+    "data-editor-heading-number",
+    state.editorHeadingNumber ? "1" : "0",
+  );
 }
 
 /**
@@ -1489,6 +1508,10 @@ export async function loadThemeFromStore() {
     if (typeof efi === "boolean") {
       useAppStore.getState().setEditorFirstLineIndent(efi);
     }
+    const ehn = await store.get<boolean>("editorHeadingNumber");
+    if (typeof ehn === "boolean") {
+      useAppStore.getState().setEditorHeadingNumber(ehn);
+    }
     // 恢复编辑器高亮快捷键（空串是合法值 = 用户主动禁用，故只校验类型不校验非空）
     const ehs = await store.get<string>("editorHighlightShortcut");
     if (typeof ehs === "string") {
@@ -1527,6 +1550,16 @@ export async function loadThemeFromStore() {
     const dvm = await store.get<string>("defaultViewMode");
     if (dvm === "read" || dvm === "edit") {
       useAppStore.getState().setDefaultViewMode(dvm);
+    }
+    const tdv = await store.get<string>("tasksDefaultView");
+    if (
+      tdv === "list" ||
+      tdv === "kanban" ||
+      tdv === "quadrant" ||
+      tdv === "calendar" ||
+      tdv === "gantt"
+    ) {
+      useAppStore.getState().setTasksDefaultView(tdv);
     }
 
     // 先恢复"启动默认收起"开关（默认 true）。必须先读它，再决定是否恢复折叠集合：
@@ -1624,12 +1657,14 @@ export async function saveThemeToStore() {
       editorPaper,
       editorRuleLines,
       editorFirstLineIndent,
+      editorHeadingNumber,
       editorHighlightShortcut,
       uiScale,
       uiScaleUserSet,
       autoSaveEnabled,
       autoSaveDelay,
       defaultViewMode,
+      tasksDefaultView,
       outlineVisible,
       outlinePosition,
       notesCollapsedFolderKeys,
@@ -1662,12 +1697,14 @@ export async function saveThemeToStore() {
     await store.set("editorPaper", editorPaper);
     await store.set("editorRuleLines", editorRuleLines);
     await store.set("editorFirstLineIndent", editorFirstLineIndent);
+    await store.set("editorHeadingNumber", editorHeadingNumber);
     await store.set("editorHighlightShortcut", editorHighlightShortcut);
     await store.set("uiScale", uiScale);
     await store.set("uiScaleUserSet", uiScaleUserSet);
     await store.set("autoSaveEnabled", autoSaveEnabled);
     await store.set("autoSaveDelay", autoSaveDelay);
     await store.set("defaultViewMode", defaultViewMode);
+    await store.set("tasksDefaultView", tasksDefaultView);
     await store.set("outlineVisible", outlineVisible);
     await store.set("outlinePosition", outlinePosition);
     await store.set("notesCollapsedFolderKeys", notesCollapsedFolderKeys);
@@ -1700,7 +1737,7 @@ useAppStore.subscribe((state) => {
   // notesHeadingFolded 摘要：用 entries 数 + 总 anchor 数 简化对比，避免每次 stringify 大对象
   const headingFoldEntries = Object.entries(state.notesHeadingFolded);
   const headingFoldKey = `${headingFoldEntries.length}:${headingFoldEntries.reduce((acc, [, v]) => acc + v.length, 0)}:${headingFoldEntries.map(([k, v]) => `${k}=${v.join(",")}`).join("|")}`;
-  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.autoHideActivityBar}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.editorCodeFontSize}|${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}|${state.editorHighlightShortcut}|${state.uiScale}|${state.uiScaleUserSet}|${state.autoSaveEnabled}|${state.autoSaveDelay}|${state.outlineVisible}|${state.outlinePosition}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesShowOnlyFolders}|${state.notesFoldersInitialCollapseDone}|${state.notesCollapseFoldersOnStartup}|${headingFoldKey}|${state.themeOverridesEnabled}|${state.customAccent ?? ""}|${state.customBgImage ?? ""}|${state.customBgDim}|${state.customBgBlur}|${state.customBgFit}`;
+  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.autoHideActivityBar}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.editorCodeFontSize}|${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}|${state.editorHeadingNumber}|${state.editorHighlightShortcut}|${state.uiScale}|${state.uiScaleUserSet}|${state.autoSaveEnabled}|${state.autoSaveDelay}|${state.outlineVisible}|${state.outlinePosition}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesShowOnlyFolders}|${state.notesFoldersInitialCollapseDone}|${state.notesCollapseFoldersOnStartup}|${headingFoldKey}|${state.themeOverridesEnabled}|${state.customAccent ?? ""}|${state.customBgImage ?? ""}|${state.customBgDim}|${state.customBgBlur}|${state.customBgFit}`;
   if (key !== _prevPersistKey) {
     _prevPersistKey = key;
     saveThemeToStore();
@@ -1720,7 +1757,7 @@ useAppStore.subscribe((state) => {
 // 编辑器版面偏好变化时实时同步到 :root（变量 + data 属性），无需刷新
 let _prevLayoutKey = "";
 useAppStore.subscribe((state) => {
-  const key = `${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}`;
+  const key = `${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}|${state.editorHeadingNumber}`;
   if (key !== _prevLayoutKey) {
     _prevLayoutKey = key;
     applyEditorLayout(state);

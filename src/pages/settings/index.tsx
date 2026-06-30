@@ -506,10 +506,12 @@ function DesktopSettingsPage() {
   const editorPaper = useAppStore((s) => s.editorPaper);
   const editorRuleLines = useAppStore((s) => s.editorRuleLines);
   const editorFirstLineIndent = useAppStore((s) => s.editorFirstLineIndent);
+  const editorHeadingNumber = useAppStore((s) => s.editorHeadingNumber);
   const setEditorReadingWidth = useAppStore((s) => s.setEditorReadingWidth);
   const setEditorPaper = useAppStore((s) => s.setEditorPaper);
   const setEditorRuleLines = useAppStore((s) => s.setEditorRuleLines);
   const setEditorFirstLineIndent = useAppStore((s) => s.setEditorFirstLineIndent);
+  const setEditorHeadingNumber = useAppStore((s) => s.setEditorHeadingNumber);
 
   // 全局界面缩放
   const uiScale = useAppStore((s) => s.uiScale);
@@ -581,6 +583,8 @@ function DesktopSettingsPage() {
   // 默认查看模式（打开笔记时默认是"编辑"还是"阅读"）
   const defaultViewMode = useAppStore((s) => s.defaultViewMode);
   const setDefaultViewMode = useAppStore((s) => s.setDefaultViewMode);
+  const tasksDefaultView = useAppStore((s) => s.tasksDefaultView);
+  const setTasksDefaultView = useAppStore((s) => s.setTasksDefaultView);
   // 大纲面板停靠位置（左 / 右）
   const outlinePosition = useAppStore((s) => s.outlinePosition);
   const setOutlinePosition = useAppStore((s) => s.setOutlinePosition);
@@ -1867,6 +1871,22 @@ function DesktopSettingsPage() {
           style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
         >
           <div>
+            <div>标题自动编号 + 彩虹色</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              给 H1–H6 标题自动编号（1 / 1.1 / 1.1.1）并按层级配色。仅显示效果，不写入笔记内容（导出 .md 不含编号）。
+            </Text>
+          </div>
+          <Switch
+            checked={editorHeadingNumber}
+            onChange={setEditorHeadingNumber}
+          />
+        </div>
+
+        <div
+          className="flex items-center justify-between py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div>
             <div>大纲位置</div>
             <Text type="secondary" style={{ fontSize: 12 }}>
               文档大纲（目录）停靠在编辑区的左侧还是右侧
@@ -2019,6 +2039,34 @@ function DesktopSettingsPage() {
               minuteStep={5}
               allowClear={false}
               style={{ width: 120 }}
+            />
+          </div>
+          <div
+            className="flex items-center justify-between py-1"
+            style={{
+              borderTop:
+                "1px solid var(--ant-color-border-secondary, #f0f0f0)",
+              marginTop: 8,
+              paddingTop: 12,
+            }}
+          >
+            <div>
+              <div>待办默认视图</div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                打开「待办」时默认进入的视图；之后切换不影响这个默认值
+              </Text>
+            </div>
+            <Select
+              value={tasksDefaultView}
+              onChange={setTasksDefaultView}
+              style={{ width: 140 }}
+              options={[
+                { value: "list", label: "列表" },
+                { value: "kanban", label: "看板" },
+                { value: "quadrant", label: "四象限" },
+                { value: "calendar", label: "日历" },
+                { value: "gantt", label: "甘特图" },
+              ]}
             />
           </div>
         </Card>

@@ -460,6 +460,74 @@ body,
   text-indent: 2em;
 }
 
+/* 标题自动编号（1 / 1.1 / 1.1.1）+ 层级彩虹配色：data-editor-heading-number="1" 时生效。
+   纯显示层（CSS counter，不写进 .md），靠源码顺序自动逐级编号。
+   用独立 counter 名 kbh1–kbh6，避免与代码块行号 counter 冲突。 */
+:root[data-editor-heading-number="1"] .editor-content-area .tiptap {
+  counter-reset: kbh1 kbh2 kbh3 kbh4 kbh5 kbh6;
+}
+:root[data-editor-heading-number="1"] .editor-content-area .tiptap h1 {
+  counter-increment: kbh1;
+  counter-reset: kbh2 kbh3 kbh4 kbh5 kbh6;
+  color: #e8590c;
+}
+:root[data-editor-heading-number="1"] .editor-content-area .tiptap h2 {
+  counter-increment: kbh2;
+  counter-reset: kbh3 kbh4 kbh5 kbh6;
+  color: #e67700;
+}
+:root[data-editor-heading-number="1"] .editor-content-area .tiptap h3 {
+  counter-increment: kbh3;
+  counter-reset: kbh4 kbh5 kbh6;
+  color: #2f9e44;
+}
+:root[data-editor-heading-number="1"] .editor-content-area .tiptap h4 {
+  counter-increment: kbh4;
+  counter-reset: kbh5 kbh6;
+  color: #1971c2;
+}
+:root[data-editor-heading-number="1"] .editor-content-area .tiptap h5 {
+  counter-increment: kbh5;
+  counter-reset: kbh6;
+  color: #7048e8;
+}
+:root[data-editor-heading-number="1"] .editor-content-area .tiptap h6 {
+  counter-increment: kbh6;
+  color: #c2255c;
+}
+:root[data-editor-heading-number="1"] .editor-content-area .tiptap h1::before {
+  content: counter(kbh1) "\2002";
+  font-weight: 700;
+  opacity: 0.85;
+}
+:root[data-editor-heading-number="1"] .editor-content-area .tiptap h2::before {
+  content: counter(kbh1) "." counter(kbh2) "\2002";
+  font-weight: 700;
+  opacity: 0.85;
+}
+:root[data-editor-heading-number="1"] .editor-content-area .tiptap h3::before {
+  content: counter(kbh1) "." counter(kbh2) "." counter(kbh3) "\2002";
+  font-weight: 600;
+  opacity: 0.85;
+}
+:root[data-editor-heading-number="1"] .editor-content-area .tiptap h4::before {
+  content: counter(kbh1) "." counter(kbh2) "." counter(kbh3) "." counter(kbh4) "\2002";
+  font-weight: 600;
+  opacity: 0.85;
+}
+:root[data-editor-heading-number="1"] .editor-content-area .tiptap h5::before {
+  content: counter(kbh1) "." counter(kbh2) "." counter(kbh3) "." counter(kbh4) "."
+    counter(kbh5) "\2002";
+  font-weight: 600;
+  opacity: 0.85;
+}
+:root[data-editor-heading-number="1"] .editor-content-area .tiptap h6::before {
+  content: counter(kbh1) "." counter(kbh2) "." counter(kbh3) "." counter(kbh4) "."
+    counter(kbh5) "." counter(kbh6) "\2002";
+  font-weight: 600;
+  opacity: 0.85;
+}
+
 /* Mermaid 预览块：右上角"全屏"按钮，hover preview 时显形 */
 .mermaid-preview .mermaid-preview__fullscreen-btn {
   position: absolute;
