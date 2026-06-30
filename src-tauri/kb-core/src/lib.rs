@@ -1287,6 +1287,53 @@ impl KbServer {
     }
 }
 
+/// CLI 查询命令（kb-mcp 子命令用，#6）。只读查询，复用 MCP 工具**完全相同**的过滤逻辑
+/// （回收站 / 隐藏 / 加密笔记一律不暴露），不重写 SQL。
+pub enum CliQuery {
+    /// 全文搜索笔记
+    Search { query: String, limit: usize },
+    /// 按 id 取单篇笔记全文
+    Get { id: i64 },
+    /// 列出所有标签
+    Tags,
+    /// 最近更新的笔记
+    Recent { limit: usize },
+    /// 按标签名筛选笔记
+    SearchByTag { tag: String, limit: usize },
+}
+
+impl KbServer {
+    /// 执行一条 CLI 查询：直接调用对应工具方法、抽出其 JSON 文本返回。
+    /// 走工具方法而非 SQL 重写 → 过滤规则（回收站/隐藏/加密）与 MCP / 自家 AI 完全一致。
+    /// 注意：CLI 直调工具方法，**不经 router**，故不受工具白名单影响（本机用户自己查，给全集）。
+    pub fn cli_run(&self, q: &CliQuery) -> Result<String, McpError> {
+        let result = match q {
+            CliQuery::Search { query, limit } => self.search_notes(Parameters(SearchNotesArgs {
+                query: query.clone(),
+                limit: Some(*limit),
+            }))?,
+            CliQuery::Get { id } => self.get_note(Parameters(GetNoteArgs { id: *id }))?,
+            CliQuery::Tags => self.list_tags()?,
+            CliQuery::Recent { limit } => self.list_recent_notes(Parameters(ListRecentArgs {
+                limit: Some(*limit),
+            }))?,
+            CliQuery::SearchByTag { tag, limit } => {
+                self.search_by_tag(Parameters(SearchByTagArgs {
+                    tag: tag.clone(),
+                    limit: Some(*limit),
+                }))?
+            }
+        };
+        let mut out = String::new();
+        for c in &result.content {
+            if let Some(t) = c.as_text() {
+                out.push_str(&t.text);
+            }
+        }
+        Ok(out)
+    }
+}
+
 #[tool_handler]
 impl ServerHandler for KbServer {
     fn get_info(&self) -> ServerInfo {
