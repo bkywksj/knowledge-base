@@ -268,7 +268,10 @@ function DesktopTasksPage() {
   const [editing, setEditing] = useState<Task | null>(null);
   /** 行点击 → 只读详情 Modal（与首页一致）；编辑走 hover Edit / 右键菜单 → setEditing */
   const [detailViewing, setDetailViewing] = useState<Task | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  // 初值取持久化的「待办默认视图」（设置页可改），不再写死 list
+  const [viewMode, setViewMode] = useState<ViewMode>(
+    () => useAppStore.getState().tasksDefaultView,
+  );
   const [projectManageOpen, setProjectManageOpen] = useState(false);
   const [presetPriority, setPresetPriority] = useState<TaskPriority | undefined>(undefined);
   const [presetImportant, setPresetImportant] = useState<boolean | undefined>(undefined);
@@ -492,8 +495,15 @@ function DesktopTasksPage() {
     }
   }
 
+  // 日历/看板/甘特需要横向铺满（原 max-w-4xl 在全屏下两侧留白、日历挤成小块）；
+  // 列表/四象限保持窄栏更利于阅读
+  const wideView =
+    viewMode === "calendar" || viewMode === "kanban" || viewMode === "gantt";
+
   return (
-    <div className="max-w-4xl mx-auto h-full flex flex-col min-h-0">
+    <div
+      className={`${wideView ? "max-w-none" : "max-w-4xl"} mx-auto h-full flex flex-col min-h-0`}
+    >
       {/* 标题栏：标题随 SidePanel 选择动态变化，操作栏只留视图模式 + AI + 新建
           顶部头(标题 + 搜索) flex-shrink-0 永不滚动；下面列表区单独可滚 */}
       <div className="flex items-end justify-between mb-2 flex-shrink-0">

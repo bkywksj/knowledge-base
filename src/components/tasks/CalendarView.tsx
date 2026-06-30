@@ -106,7 +106,7 @@ export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 h-full">
       {/* 月份导航 + 图例 */}
       <div
         className="flex items-center justify-between px-3 py-2 rounded-t-lg border"
@@ -147,14 +147,14 @@ export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
 
       {/* 日历网格 */}
       <div
-        className="rounded-b-lg border border-t-0 overflow-hidden"
+        className="rounded-b-lg border border-t-0 overflow-hidden flex-1 flex flex-col min-h-0"
         style={{
           background: token.colorBgContainer,
           borderColor: token.colorBorderSecondary,
         }}
       >
         <div
-          className="grid grid-cols-7 text-[10px] font-semibold"
+          className="grid grid-cols-7 text-xs font-semibold"
           style={{
             background: token.colorFillSecondary,
             color: token.colorTextSecondary,
@@ -173,7 +173,7 @@ export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-7">
+        <div className="grid grid-cols-7 flex-1 auto-rows-fr">
           {grid.map((d) => {
             const ymd = d.format("YYYY-MM-DD");
             const sameMonth = d.month() === anchor.month();
@@ -191,7 +191,7 @@ export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
                 onDragLeave={() => setHoverCell(null)}
                 onDrop={(e) => handleDropOnDate(e, ymd)}
                 onDoubleClick={() => onNewOnDate?.(ymd)}
-                className="min-h-[96px] p-1.5 transition cursor-pointer"
+                className="min-h-[100px] p-1.5 transition cursor-pointer"
                 style={{
                   background: isToday
                     ? token.colorPrimaryBg
@@ -206,13 +206,13 @@ export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
                 title="双击空白可在这一天新建任务"
               >
                 <div
-                  className="text-[10px] font-semibold flex items-center gap-1"
+                  className="text-xs font-semibold flex items-center gap-1"
                   style={{ color: sameMonth ? token.colorText : token.colorTextQuaternary }}
                 >
                   {d.date()}
                   {isToday && (
                     <span
-                      className="text-[9px] leading-none px-1 py-0.5 rounded"
+                      className="text-[10px] leading-none px-1 py-0.5 rounded"
                       style={{
                         background: token.colorPrimary,
                         color: "#fff",
@@ -245,7 +245,7 @@ export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
                             e.stopPropagation();
                             onEdit(t);
                           }}
-                          className="truncate px-1 py-0.5 rounded text-[10px] leading-tight cursor-pointer transition hover:opacity-80"
+                          className="truncate px-1 py-0.5 rounded text-xs leading-tight cursor-pointer transition hover:opacity-80"
                           style={{
                             background: isDone
                               ? token.colorFillTertiary
@@ -265,7 +265,7 @@ export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
                   })}
                   {items.length > 4 && (
                     <div
-                      className="text-[10px]"
+                      className="text-xs"
                       style={{ color: token.colorTextTertiary }}
                     >
                       +{items.length - 4} 更多

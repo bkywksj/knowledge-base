@@ -512,7 +512,8 @@ function DesktopHomePage() {
       }}
     >
     <div
-      className="max-w-5xl mx-auto"
+      // 放宽内容最大宽度（原 max-w-5xl=1024px 在大屏/全屏下两侧大量留白、内容显空）
+      className="max-w-7xl mx-auto"
       style={{ display: "flex", flexDirection: "column", gap: 12 }}
     >
 
