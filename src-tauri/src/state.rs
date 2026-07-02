@@ -18,8 +18,12 @@ pub struct AppState {
     /// 数据根目录（默认 = app_data_dir；用户改自定义目录 / KB_DATA_DIR / 便携模式后为对应路径）
     /// 资产/PDF/sources/db 都基于此路径
     pub data_dir: PathBuf,
-    /// AI 生成取消信号 (conversation_id -> sender)
-    pub ai_cancel: Mutex<std::collections::HashMap<i64, watch::Sender<bool>>>,
+    /// AI 生成取消信号 (conversation_id -> 该会话所有在途流式的取消发送端)。
+    /// P2：用 Vec 而非单个 Sender——同一会话极端情况下可能并发多条在途生成，单 Sender 会被
+    /// 后来的 insert 覆盖：①旧流的 Receiver 因 Sender 被 drop 而 select 空转吃 CPU；
+    /// ②先完成者 remove 掉后来者的取消端 → 停止按钮失效。各流式命令持有自己的 Arc<Sender>
+    /// 存活至结束，cancel 时对该会话所有 Sender 发信号。
+    pub ai_cancel: Mutex<std::collections::HashMap<i64, Vec<Arc<watch::Sender<bool>>>>>,
     /// 自动同步调度器唤醒信号：配置变更时 notify_one 重载
     pub sync_scheduler_notify: Arc<Notify>,
     /// V1 多端同步互斥闸门：同一 backend 同时只允许一个 pull/push/双向同步在跑，

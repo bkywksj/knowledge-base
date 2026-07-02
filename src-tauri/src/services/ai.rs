@@ -211,6 +211,29 @@ fn emit_ai_error(app: &AppHandle, conversation_id: i64, error: &str) {
     );
 }
 
+/// P1：把跨网络 chunk 的字节流按 `\n` 切成【完整行】再交给上层解析。
+///
+/// reqwest `bytes_stream()` 的 chunk 边界既不对齐 UTF-8 字符、也不对齐行边界：
+/// - 逐 chunk `String::from_utf8_lossy` 会把被切开的多字节字（如中文）变成 U+FFFD 且无法复原；
+/// - 逐 chunk `str::lines()` 会把被切成两半的行整条丢弃（Ollama NDJSON 丢 token）。
+///
+/// 正确做法：用 `Vec<u8>` 缓冲累积字节，只在遇到完整 `\n` 时才切出整行再 `from_utf8_lossy`
+/// （此时该行必是完整 UTF-8——`\n`=0x0A 不可能落在多字节字内部）。返回本次新凑齐的完整行
+/// （已去掉行尾 `\r`/`\n`）；不完整的尾巴留在 `buffer` 里等下个 chunk。流结束后若 `buffer`
+/// 仍非空，调用方需自行 flush 这段残留（见各流式函数末尾）。
+///
+/// 与本文件 `stream_openai_with_tools` 里已有的 Vec<u8> 缓冲逻辑同源，抽出复用并便于单测。
+fn drain_complete_lines(buffer: &mut Vec<u8>, chunk: &[u8]) -> Vec<String> {
+    buffer.extend_from_slice(chunk);
+    let mut lines = Vec::new();
+    while let Some(pos) = buffer.iter().position(|b| *b == b'\n') {
+        let line_bytes: Vec<u8> = buffer.drain(..=pos).collect();
+        let line = String::from_utf8_lossy(&line_bytes);
+        lines.push(line.trim_end_matches(&['\r', '\n'][..]).to_string());
+    }
+    lines
+}
+
 /// 从用户首条消息生成会话标题：去首尾空白、压缩换行、截断至 24 个字符。
 ///
 /// 超过限制时追加省略号；空串返回空串（调用方据此跳过重命名）。
@@ -914,15 +937,16 @@ impl AiService {
 
         let mut stream = response.bytes_stream();
         let mut full_response = String::new();
+        // P1：按 \n 字节切完整行再解码，避免多字节字被 chunk 边界切成 U+FFFD / 丢行。
+        let mut buffer: Vec<u8> = Vec::new();
         loop {
             tokio::select! {
                 chunk = stream.next() => {
                     match chunk {
                         Some(Ok(bytes)) => {
-                            let text = String::from_utf8_lossy(&bytes);
-                            for line in text.lines() {
+                            for line in drain_complete_lines(&mut buffer, &bytes) {
                                 if line.is_empty() { continue; }
-                                if let Ok(data) = serde_json::from_str::<Value>(line) {
+                                if let Ok(data) = serde_json::from_str::<Value>(&line) {
                                     if let Some(content) = data["message"]["content"].as_str() {
                                         full_response.push_str(content);
                                         emitter.emit_token(content);
@@ -943,6 +967,19 @@ impl AiService {
                 _ = cancel_rx.changed() => {
                     if *cancel_rx.borrow() {
                         return Ok(full_response);
+                    }
+                }
+            }
+        }
+        // P1：flush 末尾无 \n 的残留行（兜底防丢）
+        if !buffer.is_empty() {
+            let line = String::from_utf8_lossy(&buffer);
+            let line = line.trim_end_matches(&['\r', '\n'][..]);
+            if !line.is_empty() {
+                if let Ok(data) = serde_json::from_str::<Value>(line) {
+                    if let Some(content) = data["message"]["content"].as_str() {
+                        full_response.push_str(content);
+                        emitter.emit_token(content);
                     }
                 }
             }
@@ -984,16 +1021,15 @@ impl AiService {
 
         let mut stream = response.bytes_stream();
         let mut full_response = String::new();
-        let mut buffer = String::new();
+        // P1：按 \n 字节切完整行再解码，避免多字节字被 chunk 边界切成 U+FFFD。
+        let mut buffer: Vec<u8> = Vec::new();
         loop {
             tokio::select! {
                 chunk = stream.next() => {
                     match chunk {
                         Some(Ok(bytes)) => {
-                            buffer.push_str(&String::from_utf8_lossy(&bytes));
-                            while let Some(pos) = buffer.find('\n') {
-                                let line = buffer[..pos].trim().to_string();
-                                buffer = buffer[pos + 1..].to_string();
+                            for line in drain_complete_lines(&mut buffer, &bytes) {
+                                let line = line.trim();
                                 if line.is_empty() || line == "data: [DONE]" { continue; }
                                 if let Some(json_str) = line.strip_prefix("data: ") {
                                     if let Ok(data) = serde_json::from_str::<Value>(json_str) {
@@ -1015,6 +1051,21 @@ impl AiService {
                 _ = cancel_rx.changed() => {
                     if *cancel_rx.borrow() {
                         return Ok(full_response);
+                    }
+                }
+            }
+        }
+        // P1：flush 末尾无 \n 的残留 SSE 行
+        if !buffer.is_empty() {
+            let line = String::from_utf8_lossy(&buffer);
+            let line = line.trim();
+            if !line.is_empty() && line != "data: [DONE]" {
+                if let Some(json_str) = line.strip_prefix("data: ") {
+                    if let Ok(data) = serde_json::from_str::<Value>(json_str) {
+                        if let Some(content) = data["choices"][0]["delta"]["content"].as_str() {
+                            full_response.push_str(content);
+                            emitter.emit_token(content);
+                        }
                     }
                 }
             }
@@ -1335,6 +1386,8 @@ impl AiService {
         let mut full_response = String::new();
         let started = std::time::Instant::now();
         let mut first_chunk = true;
+        // P1：按 \n 字节切完整行再解码，避免多字节字被 chunk 边界切成 U+FFFD / 丢行。
+        let mut buffer: Vec<u8> = Vec::new();
 
         loop {
             tokio::select! {
@@ -1344,10 +1397,9 @@ impl AiService {
                             if std::mem::take(&mut first_chunk) {
                                 log::info!("[Ollama] 首个响应字节到达，耗时 {:?}（Ollama 已开始返回）", started.elapsed());
                             }
-                            let text = String::from_utf8_lossy(&bytes);
-                            for line in text.lines() {
+                            for line in drain_complete_lines(&mut buffer, &bytes) {
                                 if line.is_empty() { continue; }
-                                if let Ok(data) = serde_json::from_str::<Value>(line) {
+                                if let Ok(data) = serde_json::from_str::<Value>(&line) {
                                     if let Some(content) = data["message"]["content"].as_str() {
                                         full_response.push_str(content);
                                         emit_ai_token(app, conversation_id, content);
@@ -1369,6 +1421,20 @@ impl AiService {
                     if *cancel_rx.borrow() {
                         let _ = app.emit("ai:done", conversation_id);
                         return Ok(full_response);
+                    }
+                }
+            }
+        }
+
+        // P1：flush 末尾无 \n 的残留行（兜底防丢最后一行）
+        if !buffer.is_empty() {
+            let line = String::from_utf8_lossy(&buffer);
+            let line = line.trim_end_matches(&['\r', '\n'][..]);
+            if !line.is_empty() {
+                if let Ok(data) = serde_json::from_str::<Value>(line) {
+                    if let Some(content) = data["message"]["content"].as_str() {
+                        full_response.push_str(content);
+                        emit_ai_token(app, conversation_id, content);
                     }
                 }
             }
@@ -1422,19 +1488,17 @@ impl AiService {
 
         let mut stream = response.bytes_stream();
         let mut full_response = String::new();
-        let mut buffer = String::new();
+        // P1：按 \n 字节切完整行再解码，避免多字节字被 chunk 边界切成 U+FFFD。
+        let mut buffer: Vec<u8> = Vec::new();
 
         loop {
             tokio::select! {
                 chunk = stream.next() => {
                     match chunk {
                         Some(Ok(bytes)) => {
-                            buffer.push_str(&String::from_utf8_lossy(&bytes));
                             // SSE 格式：data: {...}\n\n
-                            while let Some(pos) = buffer.find('\n') {
-                                let line = buffer[..pos].trim().to_string();
-                                buffer = buffer[pos + 1..].to_string();
-
+                            for line in drain_complete_lines(&mut buffer, &bytes) {
+                                let line = line.trim();
                                 if line.is_empty() || line == "data: [DONE]" {
                                     continue;
                                 }
@@ -1461,6 +1525,24 @@ impl AiService {
                     if *cancel_rx.borrow() {
                         let _ = app.emit("ai:done", conversation_id);
                         return Ok(full_response);
+                    }
+                }
+            }
+        }
+
+        // P1：flush 末尾无 \n 的残留 SSE 行（兜底）
+        if !buffer.is_empty() {
+            let line = String::from_utf8_lossy(&buffer);
+            let line = line.trim();
+            if !line.is_empty() && line != "data: [DONE]" {
+                if let Some(json_str) = line.strip_prefix("data: ") {
+                    if let Ok(data) = serde_json::from_str::<Value>(json_str) {
+                        if let Some(content) =
+                            data["choices"][0]["delta"]["content"].as_str()
+                        {
+                            full_response.push_str(content);
+                            emit_ai_token(app, conversation_id, content);
+                        }
                     }
                 }
             }
@@ -3193,8 +3275,7 @@ fn truncate_for_attachment(text: &str, limit: usize) -> (String, bool) {
         count - limit,
         limit
     );
-    // 用 .as_str() 明确走 String + &str：rhai 依赖的 smartstring 也给 String 加了
-    // Add<SmartString> impl，裸 `kept + &tail`(String+&String) 会因多候选而歧义。
+    // 用 .as_str() 明确走 String + &str（String + &String 也合法，但 as_str 更直白无歧义）
     (kept + tail.as_str(), true)
 }
 
@@ -3567,5 +3648,86 @@ mod strip_pseudo_tool_calls_tests {
         // 不应留下连续 3+ 空行
         assert!(!out.contains("\n\n\n"), "残留连续空行：{:?}", out);
         assert!(out.contains('A') && out.contains('B'));
+    }
+}
+
+/// P1 回归：流式解码的按字节缓冲行切分（`drain_complete_lines`）。
+/// 覆盖"整行被 chunk 切开"和"多字节中文字被 chunk 边界切开"两类会丢 token / 出乱码的场景。
+#[cfg(test)]
+mod stream_line_buffer_tests {
+    use super::drain_complete_lines;
+
+    #[test]
+    fn splits_multiple_complete_lines_in_one_chunk() {
+        let mut buf = Vec::new();
+        let lines = drain_complete_lines(&mut buf, b"a\nbb\nccc\n");
+        assert_eq!(lines, vec!["a", "bb", "ccc"]);
+        assert!(buf.is_empty(), "全部以 \\n 结尾时不应有残留");
+    }
+
+    #[test]
+    fn keeps_incomplete_trailing_line_in_buffer() {
+        let mut buf = Vec::new();
+        let lines = drain_complete_lines(&mut buf, b"done\nhalf");
+        assert_eq!(lines, vec!["done"]);
+        // "half" 无换行 → 留在 buffer 等下一个 chunk，不能提前吐出
+        assert_eq!(buf, b"half");
+    }
+
+    #[test]
+    fn reassembles_line_split_across_chunks() {
+        let mut buf = Vec::new();
+        assert!(drain_complete_lines(&mut buf, b"data: {\"a\":").is_empty());
+        let lines = drain_complete_lines(&mut buf, b"1}\n");
+        assert_eq!(lines, vec!["data: {\"a\":1}"]);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn trims_crlf_line_endings() {
+        let mut buf = Vec::new();
+        let lines = drain_complete_lines(&mut buf, b"hello\r\nworld\r\n");
+        assert_eq!(lines, vec!["hello", "world"]);
+    }
+
+    /// 核心回归：一个 3 字节中文字被 chunk 边界切成两半时，旧代码逐 chunk
+    /// `from_utf8_lossy` 会得到 U+FFFD 替换字符且无法复原；新实现按字节累积后完整还原。
+    #[test]
+    fn reassembles_multibyte_char_split_across_chunks() {
+        let s = "你好世界"; // 每字 3 字节
+        let bytes = s.as_bytes();
+        // 在第一个字 "你" 的中间（第 2 字节后）切开
+        let (head, tail) = bytes.split_at(2);
+
+        let mut buf = Vec::new();
+        assert!(drain_complete_lines(&mut buf, head).is_empty());
+        let mut rest = tail.to_vec();
+        rest.push(b'\n');
+        let lines = drain_complete_lines(&mut buf, &rest);
+
+        assert_eq!(lines, vec!["你好世界"]);
+        assert!(
+            !lines[0].contains('\u{FFFD}'),
+            "多字节字被切开后不应出现 U+FFFD 替换字符"
+        );
+        assert!(buf.is_empty());
+    }
+
+    /// Ollama NDJSON 场景：整行 JSON 在多字节字内部被切成两段，
+    /// 拼回后仍是可正常反序列化的完整行（旧代码两段都丢 → 丢 token）。
+    #[test]
+    fn ndjson_line_split_midchar_is_parseable() {
+        let full = "{\"message\":{\"content\":\"中文\"},\"done\":false}\n";
+        let bytes = full.as_bytes();
+        // 在 "中"（E4 B8 AD）的第 1 字节后切开
+        let cut = full.find('中').unwrap() + 1;
+
+        let mut buf = Vec::new();
+        assert!(drain_complete_lines(&mut buf, &bytes[..cut]).is_empty());
+        let lines = drain_complete_lines(&mut buf, &bytes[cut..]);
+
+        assert_eq!(lines.len(), 1);
+        let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(v["message"]["content"], "中文");
     }
 }

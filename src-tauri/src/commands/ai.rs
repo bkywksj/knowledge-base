@@ -211,11 +211,16 @@ pub async fn send_ai_message(
         attachments.as_deref().unwrap_or(&[]),
     );
 
-    // 创建取消信号
+    // 创建取消信号。P2：Arc<Sender> 存活于本命令作用域直到流结束，避免被同会话后续
+    // insert 覆盖后 drop 导致旧流 Receiver 空转；注册进该会话的 Vec 而非覆盖单值。
     let (cancel_tx, cancel_rx) = watch::channel(false);
+    let cancel_tx = std::sync::Arc::new(cancel_tx);
     {
         let mut cancel_map = state.ai_cancel.lock().map_err(|e| e.to_string())?;
-        cancel_map.insert(conversation_id, cancel_tx);
+        cancel_map
+            .entry(conversation_id)
+            .or_default()
+            .push(cancel_tx.clone());
     }
 
     let db = &state.db;
@@ -226,10 +231,15 @@ pub async fn send_ai_message(
         AiService::chat_stream(app, db, conversation_id, &final_message, use_rag, cancel_rx).await
     };
 
-    // 清理取消信号
+    // 清理取消信号：只移除本次自己的 Sender（按 Arc 指针相等），不误删同会话其他在途流。
     {
         let mut cancel_map = state.ai_cancel.lock().map_err(|e| e.to_string())?;
-        cancel_map.remove(&conversation_id);
+        if let Some(senders) = cancel_map.get_mut(&conversation_id) {
+            senders.retain(|t| !std::sync::Arc::ptr_eq(t, &cancel_tx));
+            if senders.is_empty() {
+                cancel_map.remove(&conversation_id);
+            }
+        }
     }
 
     result.map_err(|e| e.to_string())
@@ -242,8 +252,11 @@ pub fn cancel_ai_generation(
     conversation_id: i64,
 ) -> Result<(), String> {
     let cancel_map = state.ai_cancel.lock().map_err(|e| e.to_string())?;
-    if let Some(tx) = cancel_map.get(&conversation_id) {
-        let _ = tx.send(true);
+    // 对该会话所有在途流式生成发取消信号
+    if let Some(senders) = cancel_map.get(&conversation_id) {
+        for tx in senders {
+            let _ = tx.send(true);
+        }
     }
     Ok(())
 }
@@ -261,11 +274,12 @@ pub async fn ai_write_assist(
     context: Option<String>,
 ) -> Result<(), String> {
     let (cancel_tx, cancel_rx) = watch::channel(false);
+    let cancel_tx = std::sync::Arc::new(cancel_tx);
 
-    // 用固定 key -1 作为写作辅助的取消信号
+    // 用固定 key -1 作为写作辅助的取消信号（P2：同上，注册进 Vec 且存活至结束）
     {
         let mut cancel_map = state.ai_cancel.lock().map_err(|e| e.to_string())?;
-        cancel_map.insert(-1, cancel_tx);
+        cancel_map.entry(-1).or_default().push(cancel_tx.clone());
     }
 
     let db = &state.db;
@@ -281,7 +295,12 @@ pub async fn ai_write_assist(
 
     {
         let mut cancel_map = state.ai_cancel.lock().map_err(|e| e.to_string())?;
-        cancel_map.remove(&-1);
+        if let Some(senders) = cancel_map.get_mut(&-1) {
+            senders.retain(|t| !std::sync::Arc::ptr_eq(t, &cancel_tx));
+            if senders.is_empty() {
+                cancel_map.remove(&-1);
+            }
+        }
     }
 
     result.map_err(|e| e.to_string())
@@ -304,8 +323,10 @@ pub async fn ai_suggest_prompt(
 #[tauri::command]
 pub fn cancel_ai_write_assist(state: State<'_, AppState>) -> Result<(), String> {
     let cancel_map = state.ai_cancel.lock().map_err(|e| e.to_string())?;
-    if let Some(tx) = cancel_map.get(&-1) {
-        let _ = tx.send(true);
+    if let Some(senders) = cancel_map.get(&-1) {
+        for tx in senders {
+            let _ = tx.send(true);
+        }
     }
     Ok(())
 }
