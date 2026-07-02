@@ -1844,51 +1844,6 @@ fn default_enabled() -> bool {
     true
 }
 
-// ─── #8 Phase 2: 脚本插件（Rhai 文本转换脚本）─────────────────────
-
-/// 一个用户自建的脚本插件。当前 kind 只有 `transform`：接收字符串 input，返回字符串输出。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Script {
-    pub id: i64,
-    /// 脚本名（展示用）
-    pub name: String,
-    pub description: String,
-    /// 脚本类型，当前恒为 "transform"
-    pub kind: String,
-    /// 触发范围："selection"（作用于选中文本）/ "note"（整篇）——仅前端归类用
-    pub trigger: String,
-    /// Rhai 源码
-    pub code: String,
-    pub enabled: bool,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-/// 创建/更新脚本时前端传入的 payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ScriptInput {
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default = "default_script_kind")]
-    pub kind: String,
-    #[serde(default = "default_script_trigger")]
-    pub trigger: String,
-    #[serde(default)]
-    pub code: String,
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
-}
-
-fn default_script_kind() -> String {
-    "transform".into()
-}
-fn default_script_trigger() -> String {
-    "selection".into()
-}
-
 // ─── 语音识别（ASR）─────────────────────────────
 //
 // 抽象一层 AsrProvider，先实现阿里云 DashScope（qwen3-asr-flash-filetrans / paraformer-v2）。

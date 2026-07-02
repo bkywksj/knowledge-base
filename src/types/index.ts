@@ -1309,31 +1309,6 @@ export interface McpServerInput {
   enabled?: boolean;
 }
 
-// ─── #8 Phase 2: 脚本插件（Rhai 文本转换）─────────────────────
-
-export interface Script {
-  id: number;
-  name: string;
-  description: string;
-  /** 当前恒为 "transform" */
-  kind: string;
-  /** "selection"（作用于选中文本）/ "note"（整篇） */
-  trigger: string;
-  code: string;
-  enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ScriptInput {
-  name: string;
-  description?: string;
-  kind?: string;
-  trigger?: string;
-  code?: string;
-  enabled?: boolean;
-}
-
 // ─── 语音识别（ASR）─────────────────────────────
 
 /** ASR 服务商。当前只支持阿里云 DashScope；后续接入新厂商时在这里加值。 */

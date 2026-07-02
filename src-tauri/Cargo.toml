@@ -85,9 +85,6 @@ encoding_rs = "0.8"
 # kb-core: 共享的 MCP server 实现（KbDb + KbServer + 27 工具），
 # 主应用在进程内 spawn KbServer，让自家 AI 对话页通过 MCP 协议消费同一套工具
 kb-core = { path = "kb-core" }
-# #8 Phase 2 脚本插件：Rhai 嵌入式脚本引擎（纯 Rust，默认无文件/网络/系统访问 = 天然沙箱）。
-# sync 特性让 Engine/AST 满足 Send+Sync，便于放进 tauri State 跨线程复用。
-rhai = { version = "1", features = ["sync"] }
 # rmcp client：in-memory transport 调用同进程 KbServer（双端通用）
 # transport-child-process 仅桌面端用（spawn 外部 MCP server），移到 target.desktop
 rmcp = { version = "1.5", features = ["client"] }

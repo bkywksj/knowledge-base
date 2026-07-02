@@ -72,8 +72,6 @@ import type {
   CreateProjectInput,
   UpdateProjectInput,
   DataviewRow,
-  Script,
-  ScriptInput,
   PromptTemplate,
   PromptTemplateInput,
   PlanTodayRequest,
@@ -1094,23 +1092,6 @@ export const ocrApi = {
   /** 识别扫描件 PDF（逐页渲染 + OCR + 拼接）；maxPages 缺省 30 */
   pdf: (path: string, maxPages?: number) =>
     invoke<string>("ocr_pdf", { path, maxPages: maxPages ?? null }),
-};
-
-/** #8 Phase 2 脚本插件 API（Rhai 文本转换脚本） */
-export const scriptApi = {
-  list: () => invoke<Script[]>("script_list"),
-  create: (input: ScriptInput) => invoke<Script>("script_create", { input }),
-  update: (id: number, input: ScriptInput) =>
-    invoke<Script>("script_update", { id, input }),
-  delete: (id: number) => invoke<boolean>("script_delete", { id }),
-  setEnabled: (id: number, enabled: boolean) =>
-    invoke<void>("script_set_enabled", { id, enabled }),
-  /** 试运行任意脚本代码（编辑器「试运行」用） */
-  runPreview: (code: string, input: string) =>
-    invoke<string>("script_run_preview", { code, input }),
-  /** 按 id 跑已保存脚本，对 input 做转换 */
-  run: (id: number, input: string) =>
-    invoke<string>("script_run", { id, input }),
 };
 
 /** 项目 API（v41）——任务的工作流容器 + 甘特图的根 */

@@ -55,7 +55,6 @@ import { AnnotationButton } from "./AnnotationButton";
 import { TableButton } from "./TableButton";
 import { CompareClipboardButton } from "./CompareClipboardButton";
 import { CompareNotesButton } from "./CompareNotesButton";
-import { ScriptRunButton } from "./ScriptRunButton";
 import { parseEmbedUrl, SUPPORTED_PROVIDERS } from "./embedVideoProviders";
 import { useFormatPainter } from "./useFormatPainter";
 
@@ -528,12 +527,6 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
         icon: null,
         title: "对比其他笔记",
         customRender: () => <CompareNotesButton editor={editor} noteId={noteId} />,
-      },
-      {
-        // #8 Phase 2：对选中文本运行脚本（Rhai 文本转换）
-        icon: null,
-        title: "运行脚本",
-        customRender: () => <ScriptRunButton editor={editor} />,
       },
     ],
     // 颜色 / 字号 / 行高

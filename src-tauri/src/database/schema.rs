@@ -1877,24 +1877,10 @@ fn migrate_v44_to_v45(conn: &Connection) -> Result<(), AppError> {
 }
 
 fn migrate_v47_to_v48(conn: &Connection) -> Result<(), AppError> {
-    log::info!("数据库迁移: v47 -> v48 (#8 Phase 2 脚本插件 scripts)");
-
-    // 脚本插件（Rhai 文本转换脚本）。kind 预留扩展（当前只有 transform：input 字符串 → 输出字符串）。
-    // code 是 Rhai 源码；trigger 供前端归类（selection = 作用于选中文本 / note = 整篇）。
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS scripts (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            name        TEXT NOT NULL,
-            description TEXT NOT NULL DEFAULT '',
-            kind        TEXT NOT NULL DEFAULT 'transform',
-            trigger     TEXT NOT NULL DEFAULT 'selection',
-            code        TEXT NOT NULL DEFAULT '',
-            enabled     INTEGER NOT NULL DEFAULT 1,
-            created_at  DATETIME DEFAULT (datetime('now','localtime')),
-            updated_at  DATETIME DEFAULT (datetime('now','localtime'))
-        );
-        CREATE INDEX IF NOT EXISTS idx_scripts_enabled ON scripts(enabled, name);",
-    )?;
+    // v48 原为「Rhai 脚本插件 scripts 表」，该功能已撤销（与内置 AI 文本转换重叠、
+    // 价值边际）。版本号**保留 48 不回退**——否则装过 dev v48 的库会「版本高于应用」报错。
+    // 空迁移即可：装过旧 dev 版的库里残留的 scripts 表无害（不再被任何代码引用），新库不建表。
+    log::info!("数据库迁移: v47 -> v48 (脚本插件已撤销，空迁移占位)");
 
     set_version(conn, 48)?;
     Ok(())
