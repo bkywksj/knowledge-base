@@ -44,6 +44,7 @@ import {
   Copy,
   ClipboardCopy,
   GitCompare,
+  Hash,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ColumnsType } from "antd/es/table";
@@ -1101,6 +1102,20 @@ function DesktopNoteListPage() {
           navigator.clipboard
             .writeText(`[[${note.title}]]`)
             .then(() => message.success("已复制"))
+            .catch((err) => message.error(String(err)));
+        },
+      },
+      {
+        // 复制笔记数字 ID：给外部 agent / MCP 用，拿到 ID 后直接 get_note(id)，
+        // 省去"搜标题/搜内容"的耗 token 步骤。与左侧 NotesPanel 的同名菜单一致。
+        key: "copy-note-id",
+        label: "复制笔记 ID",
+        icon: <Hash size={13} />,
+        onClick: () => {
+          noteCtx.close();
+          navigator.clipboard
+            .writeText(String(note.id))
+            .then(() => message.success(`已复制 ID：${note.id}`))
             .catch((err) => message.error(String(err)));
         },
       },
