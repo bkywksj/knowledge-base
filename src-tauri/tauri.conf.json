@@ -55,7 +55,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["resources/pdfium/*", "resources/ocr/RapidOCR-json.exe", "resources/ocr/models/*"],
+    "resources": ["resources/pdfium/*", "resources/ocr/RapidOCR-json*", "resources/ocr/models/*"],
     "fileAssociations": [
       {
         "ext": ["md", "markdown"],

@@ -53,6 +53,20 @@ impl OcrEngine {
             .ok_or_else(|| "OCR 引擎路径无父目录".to_string())?
             .to_path_buf();
 
+        // 跨平台：Tauri 把二进制作为 resource 拷到安装目录时，Linux/macOS 上可能不带可执行位，
+        // 直接 spawn 会 "Permission denied"。启动前确保 +x（幂等，已可执行则无副作用）。
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = std::fs::metadata(exe_path) {
+                let mut perm = meta.permissions();
+                if perm.mode() & 0o111 == 0 {
+                    perm.set_mode(perm.mode() | 0o755);
+                    let _ = std::fs::set_permissions(exe_path, perm);
+                }
+            }
+        }
+
         let mut cmd = Command::new(exe_path);
         cmd.current_dir(&engine_dir)
             .arg("--models=models")

@@ -700,19 +700,24 @@ pub fn run() {
                     Err(e) => log::warn!("PDFium 资源路径解析失败: {}", e),
                 }
 
-                // #9 本地 OCR 引擎路径解析（RapidOCR-json sidecar，桌面端）。
-                // 解析成功且文件存在才注入 Some；缺失时 OCR 命令会报"引擎不可用"。
+                // #9 本地 OCR 引擎路径解析（RapidOCR-json sidecar，桌面端，跨平台）。
+                // RapidOCR-json 三平台协议一致，仅二进制文件名不同：Windows 带 .exe，mac/Linux 无扩展名。
+                // 各平台只需把对应二进制放进 resources/ocr/ 即可（当前仓库仅含 Windows exe，
+                // mac/Linux 二进制见 resources/ocr/README.md）。解析不到 / 文件缺失 → OCR 优雅禁用。
+                #[cfg(target_os = "windows")]
+                const OCR_ENGINE: &str = "resources/ocr/RapidOCR-json.exe";
+                #[cfg(not(target_os = "windows"))]
+                const OCR_ENGINE: &str = "resources/ocr/RapidOCR-json";
                 let ocr_exe = app
                     .path()
-                    .resolve(
-                        "resources/ocr/RapidOCR-json.exe",
-                        tauri::path::BaseDirectory::Resource,
-                    )
+                    .resolve(OCR_ENGINE, tauri::path::BaseDirectory::Resource)
                     .ok()
                     .filter(|p| p.exists());
                 match &ocr_exe {
                     Some(p) => log::info!("[ocr] 本地 OCR 引擎就绪: {}", p.display()),
-                    None => log::info!("[ocr] 本地 OCR 引擎未随包分发（OCR 功能不可用）"),
+                    None => log::info!(
+                        "[ocr] 本地 OCR 引擎未随包分发（当前平台无 RapidOCR-json 二进制，OCR 功能不可用）"
+                    ),
                 }
                 services::ocr::set_engine_path(ocr_exe);
             }
