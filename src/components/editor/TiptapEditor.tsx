@@ -94,9 +94,18 @@ function isTableMarkdownSerializable(node: any): boolean {
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const hasSpan = (c: any) => c.attrs.colspan > 1 || c.attrs.rowspan > 1;
+  // 单元格只有是「单个段落」时才能塞进 GFM 管道语法。
+  // - childCount > 1：多段落，管道语法表达不了（原版 tiptap-markdown 已判）。
+  // - childCount === 1 但首子非 paragraph：代码块 / 列表 / 引用 / 嵌套表格等块级内容。
+  //   尤其**代码块**的 ``` 围栏和换行会直接撑破 `| … |` 单行结构，存出的 markdown
+  //   表格损坏、重开后 markdown-it 还原不回来（表格错乱 / 代码丢失）。
+  // 这两类一律判为「不可 markdown 序列化」→ 回退 HTML 序列化（html:true 下可完整往返）。
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cellNotInlineOnly = (c: any) =>
+    c.childCount > 1 || (c.firstChild != null && c.firstChild.type.name !== "paragraph");
   if (
     cellsOf(firstRow).some(
-      (c) => c.type.name !== "tableHeader" || hasSpan(c) || c.childCount > 1,
+      (c) => c.type.name !== "tableHeader" || hasSpan(c) || cellNotInlineOnly(c),
     )
   ) {
     return false;
@@ -104,7 +113,7 @@ function isTableMarkdownSerializable(node: any): boolean {
   for (let i = 1; i < rows.length; i++) {
     if (
       cellsOf(rows[i]).some(
-        (c) => c.type.name === "tableHeader" || hasSpan(c) || c.childCount > 1,
+        (c) => c.type.name === "tableHeader" || hasSpan(c) || cellNotInlineOnly(c),
       )
     ) {
       return false;
