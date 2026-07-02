@@ -8,8 +8,16 @@ import { noteApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 
 export function TabBar() {
-  const { tabs, activeId, closeTab, closeOtherTabs, closeTabsToRight, getDraft, clearDraft } =
-    useTabsStore();
+  const {
+    tabs,
+    activeId,
+    closeTab,
+    closeOtherTabs,
+    closeTabsToRight,
+    closeAllTabs,
+    getDraft,
+    clearDraft,
+  } = useTabsStore();
   const navigate = useNavigate();
   const location = useLocation();
   const { token } = antdTheme.useToken();
@@ -120,12 +128,38 @@ export function TabBar() {
       label: "关闭右侧",
       disabled: tabs.findIndex((t) => t.id === id) >= tabs.length - 1,
     },
+    { type: "divider" },
+    { key: "close-all", label: "关闭全部", disabled: tabs.length === 0 },
   ];
+
+  /** 关闭全部：清空所有 tab；若正在看某笔记则跳回列表。有未保存草稿时先确认。 */
+  const handleCloseAll = useCallback(() => {
+    const doIt = () => {
+      const viewingNote = location.pathname.startsWith("/notes/");
+      closeAllTabs();
+      tabRefs.current.clear();
+      if (viewingNote) navigate("/notes");
+    };
+    const hasDirty = tabs.some((t) => t.dirty);
+    if (hasDirty) {
+      Modal.confirm({
+        title: "关闭全部标签页",
+        content: "有标签页存在未保存的修改，关闭全部会丢弃这些草稿。是否继续？",
+        okText: "全部关闭",
+        okButtonProps: { danger: true },
+        cancelText: "取消",
+        onOk: doIt,
+      });
+    } else {
+      doIt();
+    }
+  }, [tabs, closeAllTabs, navigate, location.pathname]);
 
   function onMenuClick(id: number, key: string) {
     if (key === "close") handleClose(id);
     else if (key === "close-others") closeOtherTabs(id);
     else if (key === "close-right") closeTabsToRight(id);
+    else if (key === "close-all") handleCloseAll();
   }
 
   return (
