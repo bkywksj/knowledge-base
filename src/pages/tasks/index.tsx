@@ -495,15 +495,10 @@ function DesktopTasksPage() {
     }
   }
 
-  // 日历/看板/甘特需要横向铺满（原 max-w-4xl 在全屏下两侧留白、日历挤成小块）；
-  // 列表/四象限保持窄栏更利于阅读
-  const wideView =
-    viewMode === "calendar" || viewMode === "kanban" || viewMode === "gantt";
-
+  // 全部视图统一：全宽 + 两侧 16px(px-4) 内边距，边界一致；不再按视图切窄/宽栏，
+  // 避免切视图时容器宽度变化导致右上角按钮群位置跳动。
   return (
-    <div
-      className={`${wideView ? "max-w-none" : "max-w-4xl"} mx-auto h-full flex flex-col min-h-0`}
-    >
+    <div className="w-full h-full flex flex-col min-h-0 px-4">
       {/* 标题栏：标题随 SidePanel 选择动态变化，操作栏只留视图模式 + AI + 新建
           顶部头(标题 + 搜索) flex-shrink-0 永不滚动；下面列表区单独可滚 */}
       <div className="flex items-end justify-between mb-2 flex-shrink-0">
@@ -542,18 +537,8 @@ function DesktopTasksPage() {
           </Text>
         </div>
         <div className="flex items-center gap-2">
-          <Segmented
-            size="small"
-            value={viewMode}
-            onChange={(v) => setViewMode(v as ViewMode)}
-            options={[
-              { label: "列表", value: "list" },
-              { label: "看板", value: "kanban" },
-              { label: "四象限", value: "quadrant" },
-              { label: "日历", value: "calendar" },
-              { label: "甘特图", value: "gantt" },
-            ]}
-          />
+          {/* 视图相关的次要按钮放在 Segmented 左侧：这样 Segmented(视图切换) 与
+              添加待办 锚定在最右侧，切换视图时它们的位置不动，只有左侧的次要按钮进出。 */}
           {viewMode === "gantt" && (
             <Button
               size="small"
@@ -566,6 +551,7 @@ function DesktopTasksPage() {
           )}
           {viewMode === "list" && (
             <Button
+              size="small"
               icon={multiSelect ? <IconX size={14} /> : <ListChecks size={14} />}
               onClick={() => {
                 if (multiSelect) {
@@ -581,6 +567,18 @@ function DesktopTasksPage() {
               {multiSelect ? "退出多选" : "多选"}
             </Button>
           )}
+          <Segmented
+            size="small"
+            value={viewMode}
+            onChange={(v) => setViewMode(v as ViewMode)}
+            options={[
+              { label: "列表", value: "list" },
+              { label: "看板", value: "kanban" },
+              { label: "四象限", value: "quadrant" },
+              { label: "日历", value: "calendar" },
+              { label: "甘特图", value: "gantt" },
+            ]}
+          />
           <NewTodoButton
             onSaved={() => {
               loadTasks();
