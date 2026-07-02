@@ -1556,18 +1556,23 @@ export function TiptapEditor({
         }
         return false;
       },
-      // 复制纯文本(text/plain)清洗：摘掉字号/颜色/缩进/对齐等"仅编辑器内可视"的样式后
-      // 再走 markdown 序列化。保留有序列表序号等格式，但纯文本不再出现 <span>/<p data-indent>
-      // 源码。text/html 通道与存盘(getMarkdown)不经此路径，样式照常保留 / 持久。
+      // 复制纯文本(text/plain)：输出**真正的纯文字**，不带任何 Markdown 标记。
+      // 用户诉求——从编辑器复制加粗文字，粘到记事本应是「内容」而非「**内容**」。
+      // 之前误用 markdown serializer，导致粗体→`**x**`、斜体→`*x*`、标题→`# x` 露出源码。
+      // 现改用 ProseMirror 的 textBetween 直接抽文字（块间 \n\n 分隔），标记全部剥离。
+      // 富文本格式（加粗等）由 text/html 通道承载——粘到 Word/飞书仍识别加粗，两不误。
+      // 仍先经 stripVisualStylesForPlainText 归位缩进/对齐（textBetween 只取文本内容，
+      // 不受节点属性影响，但保留清洗以防未来叶子节点文本表示依赖属性）。
       // 显式标注 `: string` 返回类型 —— 否则箭头体里读 editor.storage 会让 editor 的
       // 类型推断陷入自引用环（TS7022/7023）。
       clipboardTextSerializer: (slice): string => {
         const cleaned = stripVisualStylesForPlainText(slice.content);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const serializer = (editor.storage as any)?.markdown?.serializer;
-        if (serializer) return String(serializer.serialize(cleaned));
-        // 兜底：markdown 序列化器未就绪时退回纯文本（仍是干净文本、无样式）
-        return cleaned.textBetween(0, cleaned.size, "\n\n");
+        // leafText: 给图片/公式等叶子节点一个占位文本表示，避免整块丢失
+        return cleaned.textBetween(0, cleaned.size, "\n\n", (leaf) => {
+          const t = leaf.type.name;
+          if (t === "hardBreak") return "\n";
+          return "";
+        });
       },
       handlePaste: (_view, event) => {
         // 三种主要场景：
