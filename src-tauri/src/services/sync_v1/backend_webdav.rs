@@ -68,24 +68,41 @@ impl SyncBackendImpl for WebdavBackend {
                 Ok(()) => Ok(()),
                 Err(e) => {
                     let msg = e.to_string();
-                    // 飞牛 NAS（fnOS）/ 群晖等经公网反向代理暴露 WebDAV 时，反代或上游常对
-                    // MOVE 方法返回 405/501/502（坚果云 / Nextcloud 这类标准 WebDAV 则正常）。
-                    // 这种"服务器不支持 MOVE"的场景，降级成直接 PUT 覆盖 manifest.json
-                    // （即 tauri-cc 一直在用的非原子写法），保证这类 NAS 也能完成同步。
-                    if is_move_unsupported(&msg) {
-                        log::warn!(
-                            "[sync_v1] WebDAV MOVE 不被支持（{}），降级为直接 PUT manifest.json",
-                            msg.lines().next().unwrap_or("")
-                        );
-                        let put_res = self.client.upload_bytes(MANIFEST_FILENAME, bytes).await;
-                        // 不论降级 PUT 成功与否，都尽量清掉临时文件，避免远端堆积无主 .tmp
-                        let _ = self.client.delete_file(&tmp_name).await;
-                        put_res
+                    // 两类"MOVE 换名失败、但可安全降级为直接 PUT 覆盖 manifest.json"的场景：
+                    //   1) is_move_unsupported：飞牛 NAS（fnOS）/ 群晖等经公网反向代理暴露
+                    //      WebDAV 时，反代或上游对 MOVE 方法返回 405/501/502/400。
+                    //   2) is_move_dest_exists：坚果云不遵守 `Overwrite: T` —— 目标已存在时
+                    //      MOVE 直接返回 409 DuplicateName（"The object on path
+                    //      /manifest.json existed"）。首推能成（目标不存在），之后每次推送
+                    //      manifest.json 已存在就必挂在这。
+                    // 两者都降级成直接 PUT 覆盖 manifest.json（即 tauri-cc 一直在用的写法）：
+                    // 坚果云 PUT 支持原地覆盖，且传输不完整时不会提交半截文件，对小体积
+                    // manifest 是安全的原子写终态。
+                    let downgrade_reason = if is_move_dest_exists(&msg) {
+                        Some("目标已存在且服务器不支持 MOVE 覆盖（坚果云式 409 DuplicateName）")
+                    } else if is_move_unsupported(&msg) {
+                        Some("服务器不支持 MOVE 方法")
                     } else {
-                        // 认证失败 / 网络错误等非"MOVE 不兼容"问题：清理 tmp 后原样上报
-                        // （清不掉也只是远端多一个无主文件，下次 GC 可以扫）
-                        let _ = self.client.delete_file(&tmp_name).await;
-                        Err(e)
+                        None
+                    };
+                    match downgrade_reason {
+                        Some(reason) => {
+                            log::warn!(
+                                "[sync_v1] WebDAV MOVE 换名失败（{}：{}），降级为直接 PUT manifest.json",
+                                reason,
+                                msg.lines().next().unwrap_or("")
+                            );
+                            let put_res = self.client.upload_bytes(MANIFEST_FILENAME, bytes).await;
+                            // 不论降级 PUT 成功与否，都尽量清掉临时文件，避免远端堆积无主 .tmp
+                            let _ = self.client.delete_file(&tmp_name).await;
+                            put_res
+                        }
+                        None => {
+                            // 认证失败 / 网络错误等非"可降级"问题：清理 tmp 后原样上报
+                            // （清不掉也只是远端多一个无主文件，下次 GC 可以扫）
+                            let _ = self.client.delete_file(&tmp_name).await;
+                            Err(e)
+                        }
                     }
                 }
             }
@@ -295,6 +312,25 @@ pub(crate) fn is_move_unsupported(msg: &str) -> bool {
         || msg.contains("Bad Request")
 }
 
+/// 错误信息看着像"MOVE 目标已存在、服务器拒绝覆盖"吗？
+///
+/// 坚果云的 WebDAV **不遵守 `Overwrite: T`**：当 MOVE 的目标文件已存在时，不覆盖，
+/// 而是返回 `409 Conflict` + `<s:exception>DuplicateName</s:exception>`（消息形如
+/// "The object on path /manifest.json existed"）。
+/// 因为 manifest 原子写是「PUT 到 .tmp → MOVE 改名到 manifest.json」，首次推送目标不存在
+/// 能成功，之后每次 manifest.json 都已存在就必挂在 409 —— 命中即降级为直接 PUT 覆盖
+/// （见 `write_manifest`）。
+///
+/// 说明：`manifest.json` 固定位于基目录根下、父目录用户已建好，故 MOVE 到它的 409
+/// 基本只可能是"目标已存在"；即便个别服务器的 409 另有他因（如目标父目录缺失），降级
+/// PUT 会先 `ensure_dir` 再写，同样能正确处理，不会掩盖真实错误。
+pub(crate) fn is_move_dest_exists(msg: &str) -> bool {
+    msg.contains("DuplicateName")
+        || msg.contains("existed")
+        || msg.contains("409")
+        || msg.contains("Conflict")
+}
+
 /// 从 PROPFIND href 列表提取附件 hash（纯函数，便于单测）
 ///
 /// 规则：跳过目录（href 以 `/` 结尾）、跳过 `_` 开头的特殊文件、跳过 manifest.json；
@@ -369,7 +405,20 @@ mod tests {
         assert!(is_move_unsupported("MOVE a -> b 失败 (400 Bad Request): "));
         // 认证失败不应被误判为"降级"（move_file 已先把它识别成认证错误）
         assert!(!is_move_unsupported("认证失败，请检查用户名/密码"));
-        // 普通成功语义之外的 409 冲突等，不属于"MOVE 不支持"
+        // 普通成功语义之外的 409 冲突等，不属于"MOVE 不支持"（走 is_move_dest_exists 分支）
         assert!(!is_move_unsupported("MOVE a -> b 失败 (409 Conflict): "));
+    }
+
+    #[test]
+    fn move_dest_exists_detection() {
+        // 坚果云实测：目标已存在 → 409 DuplicateName，应判定为"目标已存在"触发降级 PUT
+        assert!(is_move_dest_exists(
+            "MOVE manifest.json.tmp.098a465c63d444aa97c5fac106e41c34 -> manifest.json 失败 (409 Conflict): <?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?><d:error xmlns:d=\"DAV:\" xmlns:s=\"http://ns.jianguoyun.com\"><s:exception>DuplicateName</s:exception><s:message>The object on path /manifest.json existed</s:message></d:error>"
+        ));
+        // 只带 409 Conflict、不带 body 的实现也应命中
+        assert!(is_move_dest_exists("MOVE a -> b 失败 (409 Conflict): "));
+        // 认证失败 / 临时 5xx 不属于"目标已存在"，不应命中（避免误吞真实错误）
+        assert!(!is_move_dest_exists("认证失败，请检查用户名/密码"));
+        assert!(!is_move_dest_exists("MOVE a -> b 失败 (502 Bad Gateway): Bad Gateway"));
     }
 }

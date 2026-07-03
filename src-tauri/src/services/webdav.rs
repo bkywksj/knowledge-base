@@ -286,9 +286,12 @@ impl WebDavClient {
     ///
     /// 用于 manifest 原子写：先 PUT 到 `manifest.json.tmp.<uuid>`、再 MOVE 到 `manifest.json`，
     /// 中途断网最多留一个 .tmp.* 文件，永远不会出现"半截 manifest.json"。
-    /// 主流 WebDAV server（坚果云/Nextcloud/Cloudreve/Apache mod_dav）都支持。
     ///
     /// `Overwrite: T` 让目标已存在时直接覆盖（manifest 这场景就是要覆盖）。
+    ///
+    /// ⚠️ 坚果云不遵守 `Overwrite: T`：目标已存在时不覆盖、直接回 409 DuplicateName。
+    /// 这类"MOVE 拒绝覆盖"由调用方 `backend_webdav::write_manifest` 捕获后降级为直接 PUT
+    /// （见 `is_move_dest_exists`），故本函数只需把 409 如实上报，不在此特殊处理。
     pub async fn move_file(&self, from: &str, to: &str) -> Result<(), AppError> {
         let dest_url = self.file_url(to);
         let resp = self
