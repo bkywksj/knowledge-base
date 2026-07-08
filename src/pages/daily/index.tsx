@@ -342,8 +342,7 @@ function DesktopDailyPage() {
             variant="borderless"
             size="small"
             format={(v) => formatDateCN(v.format("YYYY-MM-DD"))}
-            // 未来日期不能选（日记是对过去/当下的记录）
-            disabledDate={(d) => d.isAfter(dayjs().endOf("day"))}
+            // 允许选未来日期：支持提前给某天规划 / 预写日记（后端 validate_date 只校验格式，不拦未来）
             style={{ fontWeight: 600, padding: "0 4px" }}
             // 用户在日选模式下翻月 → 拉新月份的"有日记"日期集合
             onPanelChange={(d, mode) => {

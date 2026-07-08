@@ -13,7 +13,7 @@ interface Props {
   today: string;
   /** 当月已有日记的日期集合 yyyy-mm-dd */
   datesWithEntry: Set<string>;
-  /** 点击格子；未来日已被组件内部拦截，回调不会被触发 */
+  /** 点击格子（含未来日：支持提前规划 / 预写日记） */
   onSelectDate: (date: string) => void;
   /** 右键格子；hasEntry 用于决定外部菜单要不要显示「删除日记」 */
   onContextMenuDate?: (
@@ -42,12 +42,13 @@ function buildGrid(year: number, month: number): Dayjs[] {
  * DailyMonthCalendar —— 侧栏内嵌紧凑月视图。
  *
  * 视觉状态优先级（从高到低）：
- *   1. 未来日 → 禁用、灰色不可点（与主区 DatePicker 的 disabledDate 保持一致）
- *   2. 今天 → 主色实底 + 白字
- *   3. 选中（且非今天） → 主色描边 + 主色字
- *   4. 有日记（且非今天/选中） → 主色弱底 + 主色字
- *   5. 当月普通日 → 默认色
- *   6. 非当月（用于补齐 6 周网格的上月末/下月初） → 弱化色
+ *   1. 今天 → 主色实底 + 白字
+ *   2. 选中（且非今天） → 主色描边 + 主色字
+ *   3. 有日记（且非今天/选中） → 主色弱底 + 主色字
+ *   4. 当月普通日 → 默认色
+ *   5. 非当月（用于补齐 6 周网格的上月末/下月初） → 弱化色
+ *
+ * 未来日期同样可点（提前规划 / 预写日记），与主区 DatePicker 一致放开限制。
  */
 export function DailyMonthCalendar({
   year,
@@ -60,7 +61,6 @@ export function DailyMonthCalendar({
 }: Props) {
   const { token } = antdTheme.useToken();
   const grid = useMemo(() => buildGrid(year, month), [year, month]);
-  const todayDayjs = useMemo(() => dayjs(today), [today]);
 
   return (
     <div className="px-2 pb-2 shrink-0">
@@ -97,19 +97,14 @@ export function DailyMonthCalendar({
           const sameMonth = d.month() === month - 1 && d.year() === year;
           const isToday = ymd === today;
           const isSelected = ymd === selectedDate;
-          const isFuture = d.isAfter(todayDayjs, "day");
           const hasEntry = datesWithEntry.has(ymd);
 
           let bg = "transparent";
           let color = sameMonth ? token.colorText : token.colorTextQuaternary;
           let outline: string | undefined;
-          let cursor = "pointer";
           let weight = 400;
 
-          if (isFuture) {
-            color = token.colorTextQuaternary;
-            cursor = "not-allowed";
-          } else if (isToday) {
+          if (isToday) {
             bg = token.colorPrimary;
             color = "#fff";
             weight = 600;
@@ -127,19 +122,9 @@ export function DailyMonthCalendar({
             <button
               key={ymd}
               type="button"
-              disabled={isFuture}
-              onClick={() => {
-                if (isFuture) return;
-                onSelectDate(ymd);
-              }}
-              onContextMenu={(e) => {
-                if (isFuture) {
-                  e.preventDefault();
-                  return;
-                }
-                onContextMenuDate?.(e, ymd, hasEntry);
-              }}
-              title={isFuture ? "未来日期不可选" : ymd}
+              onClick={() => onSelectDate(ymd)}
+              onContextMenu={(e) => onContextMenuDate?.(e, ymd, hasEntry)}
+              title={ymd}
               className="flex items-center justify-center transition"
               style={{
                 aspectRatio: "1 / 1",
@@ -153,8 +138,7 @@ export function DailyMonthCalendar({
                 borderRadius: 6,
                 border: "none",
                 padding: 0,
-                cursor,
-                opacity: isFuture ? 0.45 : 1,
+                cursor: "pointer",
               }}
             >
               {d.date()}
