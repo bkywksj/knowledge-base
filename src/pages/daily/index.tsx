@@ -9,6 +9,7 @@ import {
   Badge,
   message,
   Spin,
+  Tooltip,
   theme as antdTheme,
 } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
@@ -18,12 +19,14 @@ import {
   ChevronRight,
   Save,
   Sparkles,
+  ListTree,
 } from "lucide-react";
 import { CloseCircleFilled } from "@ant-design/icons";
 import { configApi, dailyApi, noteApi, templateApi } from "@/lib/api";
 import { todayYmd } from "@/lib/utils";
 import { MicButton } from "@/components/MicButton";
 import { TiptapEditor } from "@/components/editor";
+import { EditorOutline } from "@/components/editor/EditorOutline";
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { useAppStore } from "@/store";
 import { useAllFeaturesEnabled } from "@/hooks/useFeatureEnabled";
@@ -83,6 +86,27 @@ function DesktopDailyPage() {
   // 正在加载的月份集合（去重并发请求；失败会从这里删除允许重试）
   const loadingMonthsRef = useRef<Set<string>>(new Set());
   const { token } = antdTheme.useToken();
+
+  // ── 大纲（与笔记编辑器 notes/editor.tsx 同款实现，桌面日记也能看目录）──
+  // editor 实例来自 TiptapEditor 的 onEditorReady；editorBodyRef 作 IntersectionObserver 的滚动根。
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [editorInstance, setEditorInstance] = useState<any | null>(null);
+  const editorBodyRef = useRef<HTMLDivElement | null>(null);
+  const outlineVisible = useAppStore((s) => s.outlineVisible);
+  const toggleOutline = useAppStore((s) => s.toggleOutline);
+  // 大纲停靠位置（'right' 默认 / 'left'）：与笔记编辑器共用同一 store 偏好
+  const outlinePosition = useAppStore((s) => s.outlinePosition);
+  // 大纲宽度：与笔记编辑器共用同一 localStorage 键，两处宽度记忆一致
+  const OUTLINE_DEFAULT_WIDTH = 170;
+  const [outlineWidth, setOutlineWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem("editor.outlineWidth"));
+    return Number.isFinite(saved) && saved >= 140 ? saved : OUTLINE_DEFAULT_WIDTH;
+  });
+  const outlineDragRef = useRef<{
+    startX: number;
+    startWidth: number;
+    latest: number;
+  } | null>(null);
 
   const isToday = date === todayStr();
   // "AI 规划今日"按钮依赖 ai + tasks 两个模块同时启用（按钮产物是任务，靠 AI 生成）
@@ -382,6 +406,13 @@ function DesktopDailyPage() {
               AI 规划今日
             </Button>
           )}
+          <Tooltip title={outlineVisible ? "隐藏大纲" : "显示大纲"}>
+            <Button
+              type={outlineVisible ? "primary" : "default"}
+              icon={<ListTree size={16} />}
+              onClick={toggleOutline}
+            />
+          </Tooltip>
           <Button
             type="primary"
             icon={<Save size={16} />}
@@ -405,8 +436,25 @@ function DesktopDailyPage() {
         }}
       />
 
-      {/* 可滚动的编辑主体 */}
-      <div className="editor-body">
+      {/* 可滚动的编辑主体（大纲打开时变 grid 两列：正文 | 6px 分隔 | 大纲） */}
+      <div
+        className="editor-body"
+        ref={editorBodyRef}
+        data-outline={outlineVisible ? "on" : undefined}
+        data-outline-pos={outlineVisible ? outlinePosition : undefined}
+        style={
+          outlineVisible
+            ? {
+                // 覆盖 CSS 里固定的 170px：左置时 大纲 | 6px | 1fr；右置时反之。
+                // DOM 顺序固定为 内容→分隔条→大纲，左置由 CSS order 调换视觉次序。
+                gridTemplateColumns:
+                  outlinePosition === "left"
+                    ? `${outlineWidth}px 6px minmax(0, 1fr)`
+                    : `minmax(0, 1fr) 6px ${outlineWidth}px`,
+              }
+            : undefined
+        }
+      >
         <div className="editor-content-area">
           {loading ? (
             <div className="flex items-center justify-center flex-1">
@@ -491,10 +539,71 @@ function DesktopDailyPage() {
                     message.error(`打开 AI 失败：${e}`);
                   }
                 }}
+                onEditorReady={setEditorInstance}
               />
             </>
           )}
         </div>
+
+        {/* 大纲拖拽分隔条：6px 宽，col-resize（与笔记编辑器同款逻辑，
+            共用 editor.outlineWidth 记忆宽度，双击还原默认） */}
+        {outlineVisible && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="拖动调整大纲宽度（双击还原默认）"
+            className="editor-outline-splitter"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              outlineDragRef.current = {
+                startX: e.clientX,
+                startWidth: outlineWidth,
+                latest: outlineWidth,
+              };
+              const handleMove = (ev: MouseEvent) => {
+                const ref = outlineDragRef.current;
+                if (!ref) return;
+                // 右置：分隔条在大纲左缘，向左拖 → 变宽；左置方向相反
+                const delta =
+                  outlinePosition === "left"
+                    ? ev.clientX - ref.startX
+                    : ref.startX - ev.clientX;
+                const next = Math.max(140, Math.min(480, ref.startWidth + delta));
+                ref.latest = next;
+                setOutlineWidth(next);
+              };
+              const handleUp = () => {
+                window.removeEventListener("mousemove", handleMove);
+                window.removeEventListener("mouseup", handleUp);
+                const ref = outlineDragRef.current;
+                if (ref) {
+                  localStorage.setItem("editor.outlineWidth", String(ref.latest));
+                  outlineDragRef.current = null;
+                }
+              };
+              window.addEventListener("mousemove", handleMove);
+              window.addEventListener("mouseup", handleUp);
+            }}
+            onDoubleClick={() => {
+              setOutlineWidth(OUTLINE_DEFAULT_WIDTH);
+              localStorage.setItem(
+                "editor.outlineWidth",
+                String(OUTLINE_DEFAULT_WIDTH),
+              );
+            }}
+          />
+        )}
+
+        {/* 大纲面板：sticky 跟随滚动；标题数 < 2 时 EditorOutline 内部自显空态提示 */}
+        {outlineVisible && (
+          <aside className="editor-outline-aside">
+            <EditorOutline
+              editor={editorInstance}
+              scrollRoot={editorBodyRef.current}
+              onHide={toggleOutline}
+            />
+          </aside>
+        )}
       </div>
       {/* 伴生 AI 抽屉：仅在日记 note 已存在时挂载（NoteAiDrawer 需要确切 noteId） */}
       {note && (
