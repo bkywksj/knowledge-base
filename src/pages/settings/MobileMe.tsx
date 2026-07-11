@@ -145,13 +145,17 @@ export function MobileMe() {
       {/* 头部 banner */}
       <div className="bg-gradient-to-br from-[#1677FF] to-blue-700 px-5 pt-4 pb-12 text-white">
         <div className="flex items-start gap-4">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white/20 text-2xl backdrop-blur">
-            🦊
+          <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl bg-white/20 backdrop-blur">
+            <img
+              src="/app-icon.png"
+              alt="知识库"
+              className="h-full w-full object-cover"
+            />
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-xl font-bold">抓蛙师</h2>
+            <h2 className="text-xl font-bold">知识库</h2>
             <p className="mt-0.5 text-sm text-blue-100">
-              知识库 · 共 {stats?.total_notes ?? 0} 篇
+              个人知识库 · 共 {stats?.total_notes ?? 0} 篇
             </p>
             <div className="mt-2 flex flex-wrap gap-2 text-xs">
               <span className="rounded bg-white/20 px-2 py-0.5">

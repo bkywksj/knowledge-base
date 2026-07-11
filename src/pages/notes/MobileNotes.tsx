@@ -1,10 +1,13 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, Pin, Plus, MoreHorizontal } from "lucide-react";
-import { noteApi } from "@/lib/api";
+import { message } from "antd";
+import { Search, Pin, Plus, MoreHorizontal, Copy, Trash2 } from "lucide-react";
+import { noteApi, trashApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import type { Note } from "@/types";
 import { relativeTime } from "@/lib/utils";
+import { useLongPress } from "@/hooks/useLongPress";
+import { ActionSheet, type ActionSheetItem } from "@/components/mobile/ActionSheet";
 
 /**
  * 移动端笔记列表（设计稿：output/UI原型/2026-05-04_知识库移动端App/01-notes.html）
@@ -26,6 +29,8 @@ export function MobileNotes() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  // 长按唤起的动作面板：null = 关闭，非 null = 对该笔记操作
+  const [sheetNote, setSheetNote] = useState<Note | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -49,6 +54,54 @@ export function MobileNotes() {
 
   const pinned = notes.filter((n) => n.is_pinned);
   const others = notes.filter((n) => !n.is_pinned);
+
+  // 长按动作面板的操作项（复用桌面右键的核心动作：置顶 / 复制 ID / 删除）
+  const sheetItems: ActionSheetItem[] = sheetNote
+    ? [
+        {
+          key: "pin",
+          label: sheetNote.is_pinned ? "取消置顶" : "置顶",
+          icon: <Pin size={20} />,
+          onClick: async () => {
+            try {
+              await noteApi.togglePin(sheetNote.id);
+              message.success(sheetNote.is_pinned ? "已取消置顶" : "已置顶");
+              await load();
+            } catch (e) {
+              message.error(String(e));
+            }
+          },
+        },
+        {
+          key: "copy-id",
+          label: "复制笔记 ID",
+          icon: <Copy size={20} />,
+          onClick: () => {
+            // 与桌面 NotesPanel 一致：给外部 agent / MCP 用，拿到 ID 直接 get_note(id)
+            navigator.clipboard
+              .writeText(String(sheetNote.id))
+              .then(() => message.success(`已复制 ID：${sheetNote.id}`))
+              .catch(() => message.error("复制失败"));
+          },
+        },
+        {
+          key: "delete",
+          label: "删除",
+          icon: <Trash2 size={20} />,
+          danger: true,
+          onClick: async () => {
+            // 软删到回收站（可在 /trash 恢复），无需二次确认
+            try {
+              await trashApi.softDelete(sheetNote.id);
+              message.success("已移到回收站");
+              await load();
+            } catch (e) {
+              message.error(String(e));
+            }
+          },
+        },
+      ]
+    : [];
 
   return (
     <div className="text-slate-800">
@@ -109,7 +162,8 @@ export function MobileNotes() {
                   <NoteCard
                     key={note.id}
                     note={note}
-                    onClick={() => navigate(`/notes/${note.id}`)}
+                    onOpen={() => navigate(`/notes/${note.id}`)}
+                    onLongPress={() => setSheetNote(note)}
                   />
                 ))}
               </>
@@ -122,7 +176,8 @@ export function MobileNotes() {
                   <NoteCard
                     key={note.id}
                     note={note}
-                    onClick={() => navigate(`/notes/${note.id}`)}
+                    onOpen={() => navigate(`/notes/${note.id}`)}
+                    onLongPress={() => setSheetNote(note)}
                   />
                 ))}
               </>
@@ -130,6 +185,14 @@ export function MobileNotes() {
           </>
         )}
       </div>
+
+      {/* 长按笔记卡片唤起的底部操作面板 */}
+      <ActionSheet
+        open={sheetNote !== null}
+        title={sheetNote?.title || "未命名笔记"}
+        items={sheetItems}
+        onClose={() => setSheetNote(null)}
+      />
     </div>
   );
 }
@@ -149,7 +212,15 @@ function SectionLabel({
   );
 }
 
-function NoteCard({ note, onClick }: { note: Note; onClick: () => void }) {
+function NoteCard({
+  note,
+  onOpen,
+  onLongPress,
+}: {
+  note: Note;
+  onOpen: () => void;
+  onLongPress: () => void;
+}) {
   // 笔记预览：去掉 HTML 标签，截 80 字
   const preview = (note.content || "")
     .replace(/<[^>]+>/g, " ")
@@ -157,10 +228,15 @@ function NoteCard({ note, onClick }: { note: Note; onClick: () => void }) {
     .trim()
     .slice(0, 80);
 
+  // 轻点进入编辑，长按唤起动作面板（滑动/滚动不误触）
+  const longPress = useLongPress(onLongPress, { onClick: onOpen });
+
   return (
-    <button
-      onClick={onClick}
-      className="block w-full px-4 mb-2 text-left active:opacity-80 transition-opacity"
+    <div
+      {...longPress}
+      role="button"
+      className="block w-full cursor-pointer select-none px-4 mb-2 text-left active:opacity-80 transition-opacity"
+      style={{ WebkitTouchCallout: "none" }}
     >
       <div className="rounded-2xl bg-white p-4">
         <div className="flex items-start justify-between gap-2">
@@ -178,6 +254,6 @@ function NoteCard({ note, onClick }: { note: Note; onClick: () => void }) {
           <span className="ml-auto">{relativeTime(note.updated_at)}</span>
         </div>
       </div>
-    </button>
+    </div>
   );
 }

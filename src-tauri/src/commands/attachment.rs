@@ -10,9 +10,13 @@
 use tauri::State;
 
 use crate::error::AppError;
-use crate::models::{AttachmentInfo, ExcelPreviewData, ExcelSheetData, TextPreviewData};
+use crate::models::{AttachmentInfo, TextPreviewData};
+// Excel 预览类型 + 解析器仅桌面端：calamine 在 Android target 编译失败（见 services/mod.rs）
+#[cfg(desktop)]
+use crate::models::{ExcelPreviewData, ExcelSheetData};
 use crate::services::asset_path;
 use crate::services::attachment::AttachmentService;
+#[cfg(desktop)]
 use crate::services::excel_parser;
 use crate::state::AppState;
 
@@ -90,6 +94,9 @@ fn resolve_attachment_path(state: &AppState, rel: &str) -> Result<std::path::Pat
 ///
 /// 内部复用 `excel_parser::read_workbook`，只把 markdown 字段丢掉、保留结构。
 /// 输入是**相对 data_dir 的 POSIX 路径**（笔记 content 里 kb-asset:// 后那段）。
+///
+/// 仅桌面端：依赖 calamine（Android target 编译失败）。移动端不注册此 command。
+#[cfg(desktop)]
 #[tauri::command]
 pub fn preview_excel_attachment(
     state: State<'_, AppState>,

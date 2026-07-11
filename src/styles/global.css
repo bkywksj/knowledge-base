@@ -2538,3 +2538,21 @@ body,
   border: 1px solid var(--ant-color-border, #e5e7eb);
   padding: 0.3em 0.6em;
 }
+
+/* ── 移动端底部动作面板（ActionSheet）动画 ── */
+@keyframes kbFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes kbSheetUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}

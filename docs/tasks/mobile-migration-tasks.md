@@ -395,6 +395,107 @@
 
 ---
 
+### Phase 5 · 移动端可用性打磨（Android 优先 · 轻量伴侣端）
+
+> **2026-07-09 新方向（用户拍板）**：桌面端已较完善，转攻移动端。经多 agent 盘点 + 实读核实，
+> 移动端现状是"已跑通的 Android 双轨制 MVP"（14 个 Mobile* 页 + 底部 Tab + CI + 自更新，
+> Phase 0-4 大体覆盖"让移动端存在"）。Phase 5 目标是"让移动端**好用**"。
+>
+> **决策**：① 平台 = **先把 Android 做扎实**（iOS 整体延后，见 T-M005/016/018）
+> ② 定位 = **轻量伴侣端**（查看/搜索/速记/日记/AI 问答/待办勾选为主；图谱/桌面看板甘特/
+> 外部 MCP/Excel/Word/S3/多窗口 只做**优雅降级**不做移动实现）③ 首批 4 项：T-M022~T-M026。
+>
+> 顺序：T-M022（打底，横切）→ T-M023（防破版）→ T-M024（编辑）→ T-M025/026（功能）。
+
+#### T-M022 · 触屏交互层（长按菜单 / ActionSheet / 左滑 / 热区 / 键盘回避）
+
+- **状态**：`in_progress` · 开工：2026-07-10 · 增量 1 + 2 + 3 完成
+- **价值**：⭐⭐⭐⭐⭐（移动可用性 ROI 最高）  成本：中
+- **背景**：桌面 143 处 `onContextMenu` 在触屏无法触发；移动页操作要么丢失要么塞常驻按钮
+- **完成情况（增量 1，两个可复用原语 + 旗舰列表示范）**：
+  - [x] `src/hooks/useLongPress.ts` —— Pointer Events 长按 Hook（500ms 阈值 / 移动>10px 判滚动取消 / 抑制随后 tap / 震动反馈 / 压系统长按菜单）
+  - [x] `src/components/mobile/ActionSheet.tsx` —— 底部动作面板（滑出动画 / ≥56px 热区 / 安全区 / 点遮罩关闭），取代桌面坐标锚定 Dropdown
+  - [x] global.css 加 `kbFadeIn` / `kbSheetUp` 关键帧
+  - [x] `MobileNotes` 笔记卡片：长按 → 面板（置顶 / 复制 ID / 删除到回收站，接真实 API）
+- **完成情况（增量 2，铺开到其余列表）**：
+  - [x] `MobileTasks` 任务行：长按 → 面板（标记完成/未完成 / 编辑详情 / 删除（含二次确认，任务删除永久无回收站））。checkbox 独立不受影响
+  - [x] `MobileTrash` 普通行：长按 → 面板（还原 / 永久删除）——补齐普通行缺失的"永久删除"入口
+  - [x] **有理由地跳过**：MobileTags（已有点调色盘图标内联展开改色/删除/重命名，长按冗余）/ MobileCards（全屏单卡复习流，非列表）/ MobileDaily（日历格+单日预览，无列表项）
+  - [x] 两次 tsc 均通过；桌面端零影响（纯新增 + 仅改移动页）
+- **完成情况（增量 3，键盘回避）**：
+  - [x] `src/hooks/useKeyboardInset.ts` —— visualViewport 算软键盘高度（阈值 60px 滤抖动），返回底部 inset；桌面/不支持环境恒 0 安全降级
+  - [x] 应用到两个 `fixed inset-0` 全屏重输入页：`MobileAiChat`（输入栏）+ `MobileNoteEditor`（底部 Markdown 工具栏）—— 根容器加 `paddingBottom={inset}` 把整列顶到键盘之上
+  - [x] 列表/菜单页（MobileHome 搜索、quick-create URL 输入）在滚动流中，浏览器聚焦自动滚入视野，无需处理
+  - [x] tsc 通过
+- **未做（后续增量）**：
+  - [ ] 列表项左滑 reveal 操作（iOS 风格）—— **需真机调手势消歧/回弹，留到真机会话做**
+  - [ ] 点击热区统一 ≥44px 审计
+  - [ ] 真机验证长按/滚动不误触、长按后抬手不误关面板、键盘回避顶栏不抖
+
+#### T-M023 · 补缺失页面的移动壳（防破版）
+
+- **状态**：`pending`
+- **价值**：⭐⭐⭐⭐  成本：中
+- **背景**：`graph` / `prompts` / `push` / `hidden` / `about` / `feature-toggle` 在手机上直接落桌面 UI 会破版（feature-toggle 实际已有 MobileFeatureToggle，需核对接线）
+- **子任务**：
+  - [ ] 新建 MobilePrompts（AI 提示词，高频）/ MobileHidden / MobileAbout
+  - [ ] `graph`（G6 图谱）/ `push`（定时推送弹窗）给"请在桌面端使用"降级占位卡
+  - [ ] 核对 feature-toggle / about 的 isMobile 分流是否已接
+
+#### T-M024 · 移动编辑器轻量增强
+
+- **状态**：`pending`
+- **价值**：⭐⭐⭐⭐  成本：中
+- **背景**：`MobileNoteEditor` 目前是纯 textarea + Markdown 源码模式（T-M008 完成的 MVP）
+- **子任务**（不追桌面 TipTap 全功能）：
+  - [ ] 图片插入（拍照/相册，plugin-dialog + `save_note_image`）
+  - [ ] 代码块 / 引用 / 待办 快捷按钮
+  - [ ] 工具栏可横滑，热区加大
+
+#### T-M025 · 云端 OCR 兜底（移动端）
+
+- **状态**：`pending`
+- **价值**：⭐⭐⭐  成本：中
+- **背景**：本地 RapidOCR sidecar 移动端跑不了（已 cfg gate）；"拍照识字"是手机高频
+- **子任务**：
+  - [ ] 移动端 `#[cfg(not(desktop))]` 分支走云 OCR API（百度/阿里/腾讯任一）
+  - [ ] 前端拍照 → 云 OCR → 文本入笔记/日记
+  - [ ] 与桌面本地 OCR 共用同一前端入口，按平台分流
+
+#### T-M026 · 移动端后台 / 定时同步
+
+- **状态**：`in_progress` · 2026-07-10 一键同步 + 通知已落地
+- **价值**：⭐⭐⭐⭐  成本：中
+- **背景**：T-M014 已实现手动 WebDAV 同步；自动调度器是 `#[cfg(desktop)]`
+- **现状复核**：进度条**早已存在**（`MobileSync.tsx` BackendCard busy 时按 `sync_v1:progress` 事件渲染 phase+current/total+百分比条），本轮无需重做
+- **完成情况**：
+  - [x] "一键同步"（push→pull 串行，先推后拉）：BackendCard 顶部主按钮，复用现有进度条；原推/拉降为「仅推送/仅拉取」次级按钮
+  - [x] 系统通知：`src/lib/notify.ts`（isPermissionGranted→requestPermission→sendNotification，永不抛错降级）；**仅一键同步完成/失败时发**（单向推拉保持 toast）
+  - [x] AndroidManifest 加 `POST_NOTIFICATIONS`（Android 13+ 必需）；tsc 通过
+  - [x] 插件/capability/SDK 均已就绪（notification plugin lib.rs:532 / mobile.json notification:default / @tauri-apps/plugin-notification 2.3.3）
+- **未做（后续增量）**：
+  - [ ] 断网时 disable 同步按钮（navigator.onLine 监听）
+  - [ ] 进阶：Android WorkManager 定时后台 WebDAV（真·自动同步，工作量大，单独评估）
+  - [ ] 真机验证一键同步串行 + 通知授权弹框 + 后台可见
+
+#### T-M027 · S3 同步移动端支持（解除 rust-s3/openssl 阻塞）
+
+- **状态**：`in_progress` · 2026-07-10 后端+前端已落地，Android cargo check 通过
+- **价值**：⭐⭐⭐⭐  成本：中
+- **根因（cargo tree 确诊）**：`rust-s3 0.34 → hyper-tls → native-tls → openssl-sys`（**硬依赖，不在任何 feature 后**），Android NDK 无 openssl 编不过；任何 feature 组合都救不了 0.34
+- **方案（ADR）**：换 **rusty-s3 0.10**（纯 SigV4 签名库，零 HTTP/TLS 依赖）生成 presigned URL，由项目**现有全局 reqwest**（rustls，移动端已验证）执行 → 彻底摆脱 openssl，且与 WebDAV 共用一套 HTTP 栈
+- **完成情况**：
+  - [x] Cargo.toml：移除 desktop-only `rust-s3`；`rusty-s3 = "0.10"` 加到共享依赖
+  - [x] 重写 `backend_s3.rs`（275行）：put/get/delete/head 用 rusty-s3 签名 + reqwest 执行；list 用 ListObjectsV2 + parse_response 分页；复用 `http_client::shared()` + `runtime::block_on`
+  - [x] 解除 cfg gate：`sync_v1/mod.rs`（backend_s3 模块声明）+ `backend.rs`（create_backend 分发，删掉 desktop/mobile 双 arm 合一）
+  - [x] 前端 `MobileSync`：加类型选择器（WebDAV / S3）+ S3 字段（endpoint/region/bucket/accessKey/secretKey/prefix，与后端 parse_auth 对齐）；分享改用通用 `exportSyncBackend`
+  - [x] **验证**：桌面 cargo check exit 0；**Android target cargo check exit 0**；`cargo tree --target aarch64 -i openssl-sys` = 无匹配（openssl 彻底消失）；tsc 通过
+  - [x] 覆盖面：AWS S3 / 阿里云 OSS / 腾讯云 COS / Cloudflare R2 / MinIO（path-style + 自定义 endpoint）
+- **未做**：
+  - [ ] 真机验证 S3 连接/推拉（需用户填一个真实 S3/R2/MinIO 凭据测）
+
+---
+
 ## 阶段进度看板
 
 | Phase | 任务数 | 完成数 | 状态 |
@@ -404,7 +505,8 @@
 | Phase 2 移植绿区 | 6 | 4 | `in_progress` (T-M006/008/009/010 ✅，T-M007/011 待) |
 | Phase 3 黄区适配 | 4 | 3 | `in_progress` (T-M013/014 一期 + T-M015 全部 ✅，T-M012 PDFium 待) |
 | Phase 4 平台特化 | 6 | 0 | `in_progress` (T-M019 本地签名链路 ✅ / T-M020 android.yml debug APK ✅ / T-M021 前后端 ✅；CI release 接入、iOS、Intent 待) |
-| **合计** | **22** | **12** | — |
+| Phase 5 可用性打磨 | 6 | 0 | `in_progress` (T-M022 增量1-3 + T-M026 一键同步/通知 + T-M027 S3 移动端 均已落地待真机验证) |
+| **合计** | **28** | **12** | — |
 
 ---
 
@@ -467,3 +569,28 @@ Phase 4 (依赖 Phase 3)
   
   **进度从 1/21 → 12/21**。剩余主要工作：T-M005 iOS（阻塞需 Mac）、T-M007 桌面项隐藏、
   T-M011 图谱、T-M012 PDFium、T-M016~T-M020 平台特化（Android 签名 / iOS / Intent / CI）
+- **2026-07-09** 新方向：桌面端已较完善，转攻移动端。多 agent 盘点 + 实读核实后定性
+  "已跑通的 Android 双轨制 MVP"。用户拍板：Android 优先（iOS 延后）+ 轻量伴侣端定位。
+  新增 **Phase 5 可用性打磨**（T-M022~T-M026）：触屏交互层 / 补缺失页移动壳 / 编辑器增强 /
+  云 OCR / 后台同步
+- **2026-07-10** ✅ T-M022 增量 1：`useLongPress` Hook + `ActionSheet` 底部动作面板两个可复用
+  原语，在 `MobileNotes` 落地（长按笔记卡 → 置顶/复制 ID/删除到回收站，接真实 API）；
+  global.css 加滑出动画；tsc 通过。桌面端零影响（纯新增 + 仅改移动页）
+- **2026-07-10** ✅ T-M022 增量 2：长按菜单铺开到 `MobileTasks`（完成切换/编辑/删除）+
+  `MobileTrash` 普通行（还原/永久删除）；MobileTags/Cards/Daily 各有理由地跳过；tsc 通过
+- **2026-07-10** ✅ T-M022 增量 3：键盘回避 `useKeyboardInset`（visualViewport）应用到
+  `MobileAiChat` + `MobileNoteEditor` 两个全屏编辑器，键盘弹出顶起底部输入/工具栏；tsc 通过。
+  剩左滑（留真机会话）+ 热区审计 + 真机验证
+- **2026-07-10** 🔧 修复移动端 target 构建回归（`tauri android dev` 编译失败，5 error）——
+  桌面专属代码泄漏到移动端未 cfg gate（非本轮前端改动，是此前桌面会话引入、移动端平时不编没暴露）：
+  ① `commands/attachment.rs` excel_parser 导入 + `preview_excel_attachment`（calamine 桌面专属）加 `#[cfg(desktop)]`
+  ② `lib.rs` `build_chinese_app_menu`（`tauri::menu` 桌面专属）加 `#[cfg(desktop)]` + generate_handler 里 preview_excel_attachment 注册加 gate
+  ③ `commands/system.rs` `export_diagnostics` 的 `desktop_dir()`（移动端 PathResolver 无此方法）拆 `#[cfg(desktop)]`/`#[cfg(not(desktop))]` 双分支
+  Android target `cargo check` + 桌面 `cargo check` 均 exit 0。
+- **2026-07-10** ✅ **真机验证启动成功**：Xiaomi 15Ultra（aarch64），`tauri android dev` 装机+启动 OK，
+  Vite dev server 192.168.31.116:1421，进程存活无白屏。手机原有 1.8.1 版数据保留（`adb install -r -d` 覆盖，未卸载）。
+  等用户真机点测长按菜单 + 键盘回避手感
+- **2026-07-10** ✅ T-M026 一键同步 + 系统通知落地（进度条早已存在，复用）；AndroidManifest 加 POST_NOTIFICATIONS
+- **2026-07-10** ✅ **T-M027 S3 移动端支持**：cargo tree 确诊 rust-s3 0.34 硬拉 openssl（hyper-tls→native-tls）；
+  换 rusty-s3 0.10（纯签名）+ 现有 reqwest（rustls）重写 backend_s3.rs，解除所有 S3 的 cfg gate，前端加 S3 表单。
+  Android cargo check exit 0 + openssl 从依赖树消失。桌面 cargo check 亦通过（S3 桌面端也切到新实现）

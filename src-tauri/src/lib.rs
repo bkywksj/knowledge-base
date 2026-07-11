@@ -16,7 +16,8 @@ use state::AppState;
 use tauri::{Emitter, Manager, WindowEvent};
 
 /// 构建 macOS 风格的中文应用菜单（仅 macOS 实际挂载；Windows/Linux 默认不显示 menu bar）。
-/// 抽成普通函数（不带 cfg）是为了让 Windows/Linux 也能编译验证语法。
+/// 桌面三平台都能编译验证语法；移动端（Android/iOS）无 `tauri::menu`（menu feature 桌面专属），故 cfg gate。
+#[cfg(desktop)]
 #[allow(dead_code)]
 fn build_chinese_app_menu(
     handle: &tauri::AppHandle,
@@ -851,7 +852,9 @@ pub fn run() {
             }
 
             // 自动同步调度器
-            // 仅桌面端：移动端按 T-M014 改"手动同步按钮"，且 sync_v1_scheduler 依赖 rust-s3
+            // 仅桌面端：移动端按 T-M014/T-M026 走"手动同步 + 一键同步按钮"，后台常驻定时
+            // 任务在移动端受系统限制（需 WorkManager 另做），故调度器暂桌面专属。
+            // 注：S3 backend 本身已跨平台（rusty-s3，见 backend_s3.rs），此处 gate 与 S3 无关。
             #[cfg(desktop)]
             {
                 let app_handle_sched = app.handle().clone();
@@ -1168,6 +1171,7 @@ pub fn run() {
             commands::attachment::save_note_attachment_from_path,
             commands::attachment::delete_note_attachments,
             commands::attachment::get_attachments_dir,
+            #[cfg(desktop)]
             commands::attachment::preview_excel_attachment,
             commands::attachment::preview_text_attachment,
             // 模板模块

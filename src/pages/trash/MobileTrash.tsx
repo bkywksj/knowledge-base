@@ -13,6 +13,8 @@ import { Modal, message } from "antd";
 import { trashApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import type { Note } from "@/types";
+import { useLongPress } from "@/hooks/useLongPress";
+import { ActionSheet, type ActionSheetItem } from "@/components/mobile/ActionSheet";
 
 /**
  * 移动端回收站（设计稿：13-trash.html）
@@ -49,6 +51,8 @@ export function MobileTrash() {
   const [items, setItems] = useState<Note[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  // 长按普通行唤起的动作面板
+  const [sheetNote, setSheetNote] = useState<Note | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -121,6 +125,25 @@ export function MobileTrash() {
   const expiring = items.filter((n) => daysUntilCleanup(n.updated_at) < 7);
   const normal = items.filter((n) => daysUntilCleanup(n.updated_at) >= 7);
 
+  // 长按动作面板：还原 / 永久删除（普通行原本只有"还原"快捷键）
+  const sheetItems: ActionSheetItem[] = sheetNote
+    ? [
+        {
+          key: "restore",
+          label: "还原",
+          icon: <RotateCcw size={20} />,
+          onClick: () => handleRestore(sheetNote),
+        },
+        {
+          key: "permanent",
+          label: "永久删除",
+          icon: <Trash size={20} />,
+          danger: true,
+          onClick: () => handlePermanentDelete(sheetNote),
+        },
+      ]
+    : [];
+
   return (
     <div className="flex h-full flex-col text-slate-800">
       {/* 顶栏 */}
@@ -187,6 +210,7 @@ export function MobileTrash() {
                       key={n.id}
                       note={n}
                       onRestore={() => handleRestore(n)}
+                      onLongPress={() => setSheetNote(n)}
                     />
                   ))}
                 </div>
@@ -213,6 +237,14 @@ export function MobileTrash() {
           </button>
         </footer>
       )}
+
+      {/* 长按回收站条目唤起的底部操作面板 */}
+      <ActionSheet
+        open={sheetNote !== null}
+        title={sheetNote?.title || "未命名笔记"}
+        items={sheetItems}
+        onClose={() => setSheetNote(null)}
+      />
     </div>
   );
 }
@@ -290,18 +322,26 @@ function ExpiringCard({
 function RegularRow({
   note,
   onRestore,
+  onLongPress,
 }: {
   note: Note;
   onRestore: () => void;
+  onLongPress: () => void;
 }) {
   const remain = daysUntilCleanup(note.updated_at);
+  // 长按条目正文区唤起动作面板（还原/永久删除）；右侧"还原"按钮独立保留
+  const longPress = useLongPress(onLongPress);
   return (
     <div className="px-4 py-3">
       <div className="flex items-start gap-3">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100">
           <FileText size={16} className="text-slate-400" />
         </div>
-        <div className="min-w-0 flex-1">
+        <div
+          {...longPress}
+          className="min-w-0 flex-1 select-none"
+          style={{ WebkitTouchCallout: "none" }}
+        >
           <h3 className="truncate text-sm font-medium text-slate-900">
             {note.title || "未命名笔记"}
           </h3>

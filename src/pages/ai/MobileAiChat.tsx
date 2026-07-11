@@ -15,6 +15,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { aiChatApi, aiModelApi } from "@/lib/api";
 import type { AiConversation, AiMessage, AiModel } from "@/types";
 import { MobileAiModelModal } from "@/components/ai/MobileAiModelModal";
+import { useKeyboardInset } from "@/hooks/useKeyboardInset";
 
 /**
  * 移动端 AI 对话页（设计稿：07-ai-chat.html）
@@ -36,6 +37,7 @@ export function MobileAiChat() {
   const navigate = useNavigate();
   const { id: idParam } = useParams<{ id: string }>();
   const convId = Number(idParam);
+  const keyboardInset = useKeyboardInset(); // 键盘弹出时顶起输入栏，避免遮挡
 
   const [conv, setConv] = useState<AiConversation | null>(null);
   const [model, setModel] = useState<AiModel | null>(null);
@@ -219,7 +221,10 @@ export function MobileAiChat() {
   return (
     <div
       className="fixed inset-0 flex flex-col bg-slate-50 z-50"
-      style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
+      style={{
+        paddingTop: "env(safe-area-inset-top, 0px)",
+        paddingBottom: keyboardInset,
+      }}
     >
       {/* 顶栏 */}
       <header className="flex h-12 items-center justify-between border-b border-slate-200 bg-white px-2 shrink-0">

@@ -20,6 +20,7 @@ import ReactMarkdown from "react-markdown";
 import { noteApi, aiChatApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import type { Note } from "@/types";
+import { useKeyboardInset } from "@/hooks/useKeyboardInset";
 
 /**
  * 移动端笔记编辑页（设计稿：02-note-edit.html）
@@ -59,6 +60,7 @@ export function MobileNoteEditor() {
   const navigate = useNavigate();
   const { id: idParam } = useParams<{ id: string }>();
   const noteId = Number(idParam);
+  const keyboardInset = useKeyboardInset(); // 键盘弹出时顶起底部工具栏，避免遮挡
 
   const [note, setNote] = useState<Note | null>(null);
   const [title, setTitle] = useState("");
@@ -287,7 +289,10 @@ export function MobileNoteEditor() {
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col bg-white"
-      style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
+      style={{
+        paddingTop: "env(safe-area-inset-top, 0px)",
+        paddingBottom: keyboardInset,
+      }}
     >
       {/* 顶栏 */}
       <header className="flex h-12 items-center justify-between border-b border-slate-200 bg-white px-2 shrink-0">

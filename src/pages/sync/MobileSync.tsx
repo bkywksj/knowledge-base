@@ -12,16 +12,19 @@ import {
   Pencil,
   Share2,
   Download,
+  RefreshCw,
 } from "lucide-react";
 import { ShareConfigModal } from "@/components/config-share/ShareConfigModal";
 import { ImportConfigModal } from "@/components/config-share/ImportConfigModal";
-import { exportWebDavBackend, type Envelope } from "@/lib/configShare";
-import { Modal, Form, Input, message } from "antd";
+import { exportSyncBackend, type Envelope } from "@/lib/configShare";
+import { Modal, Form, Input, Segmented, message } from "antd";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { syncV1Api } from "@/lib/api";
+import { notifySystem } from "@/lib/notify";
 import { useAppStore } from "@/store";
 import type {
   SyncBackend,
+  SyncBackendKind,
   SyncV1ProgressEvent,
   WebDavConfig,
 } from "@/types";
@@ -40,11 +43,30 @@ import { relativeTime } from "@/lib/utils";
  * 桌面端零影响：MobileSync 只通过 /sync 路由触达，且桌面端入口在 settings/SyncSettings 里走另一套。
  */
 
-interface WebDavForm {
+/** 统一承载 WebDAV + S3 两种后端的表单字段（按 kind 显示对应字段） */
+interface BackendForm {
   name: string;
+  // WebDAV
   url: string;
   username: string;
   password: string;
+  // S3（endpoint/region/bucket/accessKey/secretKey/prefix，与后端 parse_auth 对齐）
+  endpoint: string;
+  region: string;
+  bucket: string;
+  accessKey: string;
+  secretKey: string;
+  prefix: string;
+}
+
+/** S3 后端 configJson 结构（与桌面 SyncV1Section + 后端 parse_auth 对齐） */
+interface S3Config {
+  endpoint?: string;
+  region?: string;
+  bucket?: string;
+  accessKey?: string;
+  secretKey?: string;
+  prefix?: string;
 }
 
 export function MobileSync() {
@@ -55,7 +77,9 @@ export function MobileSync() {
   const [progress, setProgress] = useState<SyncV1ProgressEvent | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [form] = Form.useForm<WebDavForm>();
+  // 当前编辑的后端类型（WebDAV / S3），决定表单显示哪组字段
+  const [formKind, setFormKind] = useState<SyncBackendKind>("webdav");
+  const [form] = Form.useForm<BackendForm>();
   // 配置分享 / 导入
   const [shareEnv, setShareEnv] = useState<Envelope | null>(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -95,46 +119,91 @@ export function MobileSync() {
 
   function openAdd() {
     setEditingId(null);
+    setFormKind("webdav");
     form.resetFields();
     form.setFieldsValue({
       name: "WebDAV",
       url: "https://",
       username: "",
       password: "",
+      endpoint: "https://",
+      region: "auto",
+      bucket: "",
+      accessKey: "",
+      secretKey: "",
+      prefix: "",
     });
     setEditorOpen(true);
   }
 
   function openEdit(b: SyncBackend) {
-    let cfg: WebDavConfig = { url: "", username: "" };
-    try {
-      cfg = JSON.parse(b.configJson) as WebDavConfig;
-    } catch {
-      // 静默失败：表单显示空值
-    }
+    const kind = (b.kind as SyncBackendKind) ?? "webdav";
     setEditingId(b.id);
-    form.setFieldsValue({
-      name: b.name,
-      url: cfg.url ?? "",
-      username: cfg.username ?? "",
-      password: "",
-    });
+    setFormKind(kind);
+    if (kind === "s3") {
+      let cfg: S3Config = {};
+      try {
+        cfg = JSON.parse(b.configJson) as S3Config;
+      } catch {
+        // 静默失败：表单显示空值
+      }
+      form.setFieldsValue({
+        name: b.name,
+        endpoint: cfg.endpoint ?? "",
+        region: cfg.region ?? "auto",
+        bucket: cfg.bucket ?? "",
+        accessKey: cfg.accessKey ?? "",
+        secretKey: "", // 留空 = 不修改
+        prefix: cfg.prefix ?? "",
+      });
+    } else {
+      let cfg: WebDavConfig = { url: "", username: "" };
+      try {
+        cfg = JSON.parse(b.configJson) as WebDavConfig;
+      } catch {
+        // 静默失败：表单显示空值
+      }
+      form.setFieldsValue({
+        name: b.name,
+        url: cfg.url ?? "",
+        username: cfg.username ?? "",
+        password: "", // 留空 = 不修改
+      });
+    }
     setEditorOpen(true);
   }
 
   async function submitForm() {
     try {
       const values = await form.validateFields();
-      const cfg: WebDavConfig = {
-        url: values.url.trim(),
-        username: values.username,
-        ...(values.password ? { password: values.password } : {}),
-      };
-      const input = {
-        kind: "webdav" as const,
-        name: values.name.trim(),
-        configJson: JSON.stringify(cfg),
-      };
+      let input;
+      if (formKind === "s3") {
+        // 编辑时 secretKey 留空 = 保留原密钥（后端按 configJson 缺失字段处理）
+        const cfg: S3Config = {
+          endpoint: values.endpoint.trim(),
+          region: (values.region || "auto").trim(),
+          bucket: values.bucket.trim(),
+          accessKey: values.accessKey.trim(),
+          ...(values.secretKey ? { secretKey: values.secretKey } : {}),
+          prefix: (values.prefix || "").trim(),
+        };
+        input = {
+          kind: "s3" as const,
+          name: values.name.trim(),
+          configJson: JSON.stringify(cfg),
+        };
+      } else {
+        const cfg: WebDavConfig = {
+          url: values.url.trim(),
+          username: values.username,
+          ...(values.password ? { password: values.password } : {}),
+        };
+        input = {
+          kind: "webdav" as const,
+          name: values.name.trim(),
+          configJson: JSON.stringify(cfg),
+        };
+      }
       if (editingId !== null) {
         await syncV1Api.updateBackend(editingId, input);
         message.success("已更新");
@@ -199,6 +268,35 @@ export function MobileSync() {
     }
   }
 
+  // 一键同步：先推后拉（先把本地新改动传上去，再合并远端），串行复用同一进度条。
+  // 完成/失败都发系统通知（用户常"点完切走"，需后台可见结果）。
+  async function syncAll(id: number) {
+    setBusyId(id);
+    setProgress(null);
+    try {
+      const p = await syncV1Api.push(id);
+      const q = await syncV1Api.pull(id);
+      const summary =
+        `上传 ${p.uploaded} · 下载 ${q.downloaded}` +
+        (p.deletedRemote + q.deletedLocal > 0
+          ? ` · 删除 ${p.deletedRemote + q.deletedLocal}`
+          : "") +
+        (q.conflicts > 0 ? ` · ${q.conflicts} 冲突` : "") +
+        (p.errors.length > 0 ? ` · ${p.errors.length} 错误` : "");
+      message.success(`同步完成：${summary}`);
+      void notifySystem("同步完成", summary);
+      useAppStore.getState().bumpNotesRefresh();
+      await load();
+    } catch (e) {
+      const reason = String(e);
+      message.error(`同步失败: ${reason}`);
+      void notifySystem("同步失败", reason.slice(0, 120));
+    } finally {
+      setBusyId(null);
+      setProgress(null);
+    }
+  }
+
   function remove(b: SyncBackend) {
     Modal.confirm({
       title: `删除「${b.name}」？`,
@@ -255,8 +353,8 @@ export function MobileSync() {
       <div className="flex items-start gap-2 border-b border-blue-200 bg-blue-50 px-4 py-2.5 shrink-0">
         <CloudUpload size={16} className="mt-0.5 shrink-0 text-blue-600" />
         <p className="text-xs leading-relaxed text-blue-800">
-          移动端只支持手动同步，建议每次记录后手动 ↑推送，需要时再 ↓拉取。
-          仅支持 WebDAV（移动端不支持 S3）。
+          移动端手动同步，建议每次记录后「一键同步」。支持 WebDAV 与 S3
+          （AWS / 阿里云 OSS / 腾讯云 COS / R2 / MinIO）。
         </p>
       </div>
 
@@ -268,7 +366,9 @@ export function MobileSync() {
           <div className="flex flex-col items-center gap-2 px-4 py-16 text-slate-400">
             <CloudUpload size={40} className="text-slate-300" />
             <span className="text-sm">还没有配置同步</span>
-            <span className="text-xs text-slate-300">点右上 + 添加 WebDAV</span>
+            <span className="text-xs text-slate-300">
+              点右上 + 添加 WebDAV / S3
+            </span>
           </div>
         ) : (
           <div className="space-y-3">
@@ -282,12 +382,13 @@ export function MobileSync() {
                     ? progress
                     : null
                 }
+                onSyncAll={() => syncAll(b.id)}
                 onPush={() => push(b.id)}
                 onPull={() => pull(b.id)}
                 onTest={() => testConn(b.id)}
                 onEdit={() => openEdit(b)}
                 onDelete={() => remove(b)}
-                onShare={() => setShareEnv(exportWebDavBackend(b))}
+                onShare={() => setShareEnv(exportSyncBackend(b))}
               />
             ))}
           </div>
@@ -296,7 +397,13 @@ export function MobileSync() {
 
       {/* 添加 / 编辑 Modal */}
       <Modal
-        title={editingId === null ? "添加 WebDAV 同步" : "编辑同步"}
+        title={
+          editingId === null
+            ? formKind === "s3"
+              ? "添加 S3 同步"
+              : "添加 WebDAV 同步"
+            : "编辑同步"
+        }
         open={editorOpen}
         onOk={submitForm}
         onCancel={() => setEditorOpen(false)}
@@ -305,37 +412,85 @@ export function MobileSync() {
         destroyOnClose
       >
         <Form form={form} layout="vertical" preserve={false}>
+          {/* 类型选择：仅新增时可切换（编辑已存在后端不改类型，避免 configJson 结构错位） */}
+          {editingId === null && (
+            <Form.Item label="类型">
+              <Segmented
+                block
+                value={formKind}
+                onChange={(v) => setFormKind(v as SyncBackendKind)}
+                options={[
+                  { label: "WebDAV", value: "webdav" },
+                  { label: "S3 / 对象存储", value: "s3" },
+                ]}
+              />
+            </Form.Item>
+          )}
+
           <Form.Item
             name="name"
             label="名称"
             rules={[{ required: true, message: "请输入名称" }]}
           >
-            <Input placeholder="如：坚果云 / Nextcloud" />
+            <Input placeholder={formKind === "s3" ? "如：R2 / MinIO / 阿里云" : "如：坚果云 / Nextcloud"} />
           </Form.Item>
-          <Form.Item
-            name="url"
-            label="WebDAV 地址"
-            rules={[{ required: true, message: "请输入完整 URL" }]}
-          >
-            <Input placeholder="https://dav.jianguoyun.com/dav/knowledge_base" />
-          </Form.Item>
-          <Form.Item
-            name="username"
-            label="用户名"
-            rules={[{ required: true, message: "请输入用户名" }]}
-          >
-            <Input placeholder="账号 / 邮箱" />
-          </Form.Item>
-          <Form.Item
-            name="password"
-            label="应用密码"
-            tooltip="坚果云需在「账户信息 → 安全选项」生成第三方应用密码"
-            rules={
-              editingId === null ? [{ required: true, message: "请输入密码" }] : []
-            }
-          >
-            <Input.Password placeholder={editingId === null ? "" : "留空 = 不修改密码"} />
-          </Form.Item>
+
+          {formKind === "s3" ? (
+            <>
+              <Form.Item
+                name="endpoint"
+                label="Endpoint"
+                tooltip="AWS: https://s3.<region>.amazonaws.com；R2: https://<账户ID>.r2.cloudflarestorage.com；阿里云 OSS / MinIO 填各自地址"
+                rules={[{ required: true, message: "请输入 endpoint" }]}
+              >
+                <Input placeholder="https://<账户ID>.r2.cloudflarestorage.com" />
+              </Form.Item>
+              <Form.Item name="bucket" label="Bucket" rules={[{ required: true, message: "请输入 bucket" }]}>
+                <Input placeholder="桶名" />
+              </Form.Item>
+              <Form.Item name="region" label="Region" tooltip="不确定填 auto（R2）或 us-east-1">
+                <Input placeholder="auto" />
+              </Form.Item>
+              <Form.Item name="accessKey" label="Access Key" rules={[{ required: true, message: "请输入 Access Key" }]}>
+                <Input placeholder="Access Key ID" autoComplete="off" />
+              </Form.Item>
+              <Form.Item
+                name="secretKey"
+                label="Secret Key"
+                rules={editingId === null ? [{ required: true, message: "请输入 Secret Key" }] : []}
+              >
+                <Input.Password placeholder={editingId === null ? "Secret Access Key" : "留空 = 不修改"} autoComplete="off" />
+              </Form.Item>
+              <Form.Item name="prefix" label="路径前缀（可选）" tooltip="在 bucket 内做隔离，如 kb/；留空放桶根">
+                <Input placeholder="kb/" />
+              </Form.Item>
+            </>
+          ) : (
+            <>
+              <Form.Item
+                name="url"
+                label="WebDAV 地址"
+                rules={[{ required: true, message: "请输入完整 URL" }]}
+              >
+                <Input placeholder="https://dav.jianguoyun.com/dav/knowledge_base" />
+              </Form.Item>
+              <Form.Item
+                name="username"
+                label="用户名"
+                rules={[{ required: true, message: "请输入用户名" }]}
+              >
+                <Input placeholder="账号 / 邮箱" />
+              </Form.Item>
+              <Form.Item
+                name="password"
+                label="应用密码"
+                tooltip="坚果云需在「账户信息 → 安全选项」生成第三方应用密码"
+                rules={editingId === null ? [{ required: true, message: "请输入密码" }] : []}
+              >
+                <Input.Password placeholder={editingId === null ? "" : "留空 = 不修改密码"} />
+              </Form.Item>
+            </>
+          )}
         </Form>
       </Modal>
 
@@ -370,6 +525,7 @@ function BackendCard({
   backend,
   busy,
   progress,
+  onSyncAll,
   onPush,
   onPull,
   onTest,
@@ -380,6 +536,7 @@ function BackendCard({
   backend: SyncBackend;
   busy: boolean;
   progress: SyncV1ProgressEvent | null;
+  onSyncAll: () => void;
   onPush: () => void;
   onPull: () => void;
   onTest: () => void;
@@ -454,21 +611,30 @@ function BackendCard({
         </div>
       )}
 
-      {/* 操作按钮 */}
-      <div className="mt-3 grid grid-cols-2 gap-2">
+      {/* 一键同步（主操作）：先推后拉 */}
+      <button
+        onClick={onSyncAll}
+        disabled={busy}
+        className="mt-3 flex h-11 w-full items-center justify-center gap-1.5 rounded-lg bg-[#1677FF] text-sm font-semibold text-white active:scale-[0.98] transition-transform disabled:opacity-50"
+      >
+        <RefreshCw size={16} className={busy ? "animate-spin" : ""} /> 一键同步
+      </button>
+
+      {/* 单向操作（次级）：分别推/拉 */}
+      <div className="mt-2 grid grid-cols-2 gap-2">
         <button
           onClick={onPush}
           disabled={busy}
-          className="flex h-10 items-center justify-center gap-1 rounded-lg bg-[#1677FF] text-sm font-medium text-white active:scale-95 transition-transform disabled:opacity-50"
+          className="flex h-9 items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-600 active:bg-slate-50 disabled:opacity-50"
         >
-          <CloudUpload size={14} /> 推送
+          <CloudUpload size={13} /> 仅推送
         </button>
         <button
           onClick={onPull}
           disabled={busy}
-          className="flex h-10 items-center justify-center gap-1 rounded-lg bg-slate-100 text-sm font-medium text-slate-700 active:bg-slate-200 disabled:opacity-50"
+          className="flex h-9 items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-600 active:bg-slate-50 disabled:opacity-50"
         >
-          <CloudDownload size={14} /> 拉取
+          <CloudDownload size={13} /> 仅拉取
         </button>
       </div>
       <div className="mt-2 grid grid-cols-4 gap-2">

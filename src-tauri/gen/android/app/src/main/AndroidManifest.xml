@@ -8,6 +8,9 @@
     <!-- 语音录入 / 语音识别：getUserMedia 录音需要 RECORD_AUDIO（同上，需在 manifest 声明才能运行时申请） -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- 同步完成系统通知：Android 13+（API 33）发通知需声明 POST_NOTIFICATIONS，
+         并在运行时申请（tauri-plugin-notification 的 requestPermission 触发系统弹框） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 没摄像头的设备也允许安装（required=false） -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />

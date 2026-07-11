@@ -192,12 +192,17 @@ pub fn export_diagnostics(app: tauri::AppHandle) -> Result<String, String> {
         .ok()
         .map(|d| d.join("crash"));
 
-    // 输出位置：优先桌面，回退下载目录，再回退数据目录
+    // 输出位置：桌面端优先桌面，回退下载目录，再回退数据目录
+    #[cfg(desktop)]
     let out_base = app
         .path()
         .desktop_dir()
         .or_else(|_| app.path().download_dir())
         .or_else(|_| crate::framework_app_data_dir(&app))
+        .map_err(|e| format!("无法确定诊断包输出目录: {e}"))?;
+    // 移动端无 desktop_dir（PathResolver 不提供）；沙盒环境直接落应用数据目录
+    #[cfg(not(desktop))]
+    let out_base = crate::framework_app_data_dir(&app)
         .map_err(|e| format!("无法确定诊断包输出目录: {e}"))?;
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     let zip_path = out_base.join(format!("知识库-诊断包-{stamp}.zip"));

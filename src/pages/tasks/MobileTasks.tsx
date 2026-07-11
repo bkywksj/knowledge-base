@@ -1,8 +1,21 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, Filter, Flame, Calendar, Plus } from "lucide-react";
+import { Modal, message } from "antd";
+import {
+  Search,
+  Filter,
+  Flame,
+  Calendar,
+  Plus,
+  CheckCircle2,
+  Circle,
+  Pencil,
+  Trash2,
+} from "lucide-react";
 import { taskApi } from "@/lib/api";
 import type { Task } from "@/types";
+import { useLongPress } from "@/hooks/useLongPress";
+import { ActionSheet, type ActionSheetItem } from "@/components/mobile/ActionSheet";
 
 /**
  * 移动端待办（设计稿：08-tasks.html）
@@ -24,6 +37,8 @@ export function MobileTasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<GroupKey | "all">("all");
+  // 长按唤起的动作面板
+  const [sheetTask, setSheetTask] = useState<Task | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -80,6 +95,56 @@ export function MobileTasks() {
       console.error("toggle task failed:", e);
     }
   }
+
+  // 删除任务（永久，无回收站 → 二次确认）
+  function confirmDeleteTask(task: Task) {
+    Modal.confirm({
+      title: `删除「${task.title}」？`,
+      content: "任务删除后不可恢复。",
+      okText: "删除",
+      okType: "danger",
+      cancelText: "取消",
+      onOk: async () => {
+        try {
+          await taskApi.delete(task.id);
+          message.success("已删除");
+          await load();
+        } catch (e) {
+          message.error(String(e));
+        }
+      },
+    });
+  }
+
+  // 长按动作面板操作项
+  const sheetItems: ActionSheetItem[] = sheetTask
+    ? [
+        {
+          key: "toggle",
+          label: sheetTask.status === 1 ? "标记为未完成" : "标记为完成",
+          icon:
+            sheetTask.status === 1 ? (
+              <Circle size={20} />
+            ) : (
+              <CheckCircle2 size={20} />
+            ),
+          onClick: () => toggleTask(sheetTask),
+        },
+        {
+          key: "edit",
+          label: "编辑详情",
+          icon: <Pencil size={20} />,
+          onClick: () => navigate(`/task-detail/${sheetTask.id}`),
+        },
+        {
+          key: "delete",
+          label: "删除",
+          icon: <Trash2 size={20} />,
+          danger: true,
+          onClick: () => confirmDeleteTask(sheetTask),
+        },
+      ]
+    : [];
 
   return (
     <div className="text-slate-800">
@@ -158,7 +223,7 @@ export function MobileTasks() {
                     text={`今日 · ${todayTasks.length} 项`}
                     color="text-red-600"
                   />
-                  <Group tasks={todayTasks} onToggle={toggleTask} onOpen={(t) => navigate(`/task-detail/${t.id}`)} />
+                  <Group tasks={todayTasks} onToggle={toggleTask} onOpen={(t) => navigate(`/task-detail/${t.id}`)} onLongPress={setSheetTask} />
                 </>
               )}
 
@@ -171,7 +236,7 @@ export function MobileTasks() {
                     text="本周"
                     color="text-orange-600"
                   />
-                  <Group tasks={weekTasks} onToggle={toggleTask} onOpen={(t) => navigate(`/task-detail/${t.id}`)} />
+                  <Group tasks={weekTasks} onToggle={toggleTask} onOpen={(t) => navigate(`/task-detail/${t.id}`)} onLongPress={setSheetTask} />
                 </>
               )}
 
@@ -179,7 +244,7 @@ export function MobileTasks() {
             {activeTab === "all" && noDateTasks.length > 0 && (
               <>
                 <SectionHeader text={`其它 · ${noDateTasks.length} 项`} />
-                <Group tasks={noDateTasks} onToggle={toggleTask} onOpen={(t) => navigate(`/task-detail/${t.id}`)} />
+                <Group tasks={noDateTasks} onToggle={toggleTask} onOpen={(t) => navigate(`/task-detail/${t.id}`)} onLongPress={setSheetTask} />
               </>
             )}
 
@@ -188,12 +253,20 @@ export function MobileTasks() {
               doneTasks.length > 0 && (
                 <>
                   <SectionHeader text={`已完成 · ${doneTasks.length} 项`} />
-                  <Group tasks={doneTasks} onToggle={toggleTask} onOpen={(t) => navigate(`/task-detail/${t.id}`)} faded />
+                  <Group tasks={doneTasks} onToggle={toggleTask} onOpen={(t) => navigate(`/task-detail/${t.id}`)} onLongPress={setSheetTask} faded />
                 </>
               )}
           </>
         )}
       </div>
+
+      {/* 长按任务唤起的底部操作面板 */}
+      <ActionSheet
+        open={sheetTask !== null}
+        title={sheetTask?.title}
+        items={sheetItems}
+        onClose={() => setSheetTask(null)}
+      />
     </div>
   );
 }
@@ -246,11 +319,13 @@ function Group({
   tasks,
   onToggle,
   onOpen,
+  onLongPress,
   faded,
 }: {
   tasks: Task[];
   onToggle: (task: Task) => void;
   onOpen: (task: Task) => void;
+  onLongPress: (task: Task) => void;
   faded?: boolean;
 }) {
   return (
@@ -261,6 +336,7 @@ function Group({
           task={task}
           onToggle={onToggle}
           onOpen={onOpen}
+          onLongPress={onLongPress}
           faded={faded}
         />
       ))}
@@ -272,15 +348,22 @@ function TaskRow({
   task,
   onToggle,
   onOpen,
+  onLongPress,
   faded,
 }: {
   task: Task;
   onToggle: (task: Task) => void;
   onOpen: (task: Task) => void;
+  onLongPress: (task: Task) => void;
   faded?: boolean;
 }) {
   const due = task.due_date ? new Date(task.due_date) : null;
   const overdue = due && due.getTime() < Date.now() && task.status === 0;
+
+  // 长按任务文本区唤起动作面板；轻点仍进详情。checkbox 独立不受影响
+  const longPress = useLongPress(() => onLongPress(task), {
+    onClick: () => onOpen(task),
+  });
 
   return (
     <div className={`px-4 py-3 ${faded ? "opacity-50" : ""}`}>
@@ -291,9 +374,11 @@ function TaskRow({
           onChange={() => onToggle(task)}
           className="mt-0.5 h-5 w-5 shrink-0 rounded"
         />
-        <button
-          onClick={() => onOpen(task)}
-          className="flex-1 min-w-0 text-left active:opacity-60"
+        <div
+          {...longPress}
+          role="button"
+          className="flex-1 min-w-0 select-none text-left active:opacity-60"
+          style={{ WebkitTouchCallout: "none" }}
         >
           <div
             className={`text-sm ${
@@ -330,7 +415,7 @@ function TaskRow({
               )}
             </div>
           )}
-        </button>
+        </div>
       </div>
     </div>
   );
