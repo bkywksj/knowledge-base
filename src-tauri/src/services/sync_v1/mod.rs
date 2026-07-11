@@ -16,9 +16,8 @@ pub mod backend;
 pub mod backend_local;
 pub mod conflicts;
 pub mod lock;
-// rust-s3 0.34 强引入 openssl，移动端编译失败；S3 backend 仅桌面端启用
-// 移动端按 T-M014 暂只支持 local + webdav backend
-#[cfg(desktop)]
+// S3 backend（T-M026 起桌面/移动端统一可用）：改用 rusty-s3 纯签名 + 全局 reqwest 执行，
+// 不再依赖 rust-s3 的 openssl，Android 也能编译。
 pub mod backend_s3;
 pub mod backend_webdav;
 pub mod manifest;

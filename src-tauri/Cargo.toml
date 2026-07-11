@@ -48,9 +48,10 @@ tauri-plugin-process = "2"
 # 系统证书池靠 rustls-native-certs 加载，避免迁移成本）
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "rustls-tls-native-roots"] }
 tokio = { version = "1", features = ["sync", "fs", "io-util", "rt", "rt-multi-thread"] }
-# T-024b S3 协议 backend：rust-s3 0.34 即使开 tokio-rustls-tls 也强制带 native-tls/openssl
-# 链接，移动端 NDK 不带 OpenSSL 编译失败 → 整段移到 target.desktop dependencies
-# 移动端按 T-M014 计划改"手动同步 + 仅 WebDAV/local"，等 rust-s3 修了 features 隔离再启用
+# S3 协议 backend（T-024b / T-M026）：改用 rusty-s3（纯 Rust SigV4 签名库，零 HTTP/TLS 依赖），
+# 由上面的 reqwest（rustls，移动端已验证可用）执行签名后的请求 → 桌面/移动端统一，彻底摆脱
+# rust-s3 0.34 硬拉 hyper-tls→native-tls→openssl 导致 Android NDK 编不过的问题。
+rusty-s3 = "0.10"
 tokio-util = { version = "0.7", features = ["io"] }
 futures = "0.3"
 tauri-plugin-dialog = "2"
@@ -104,8 +105,6 @@ tauri-plugin-global-shortcut = "2"
 pdfium-render = "0.8"
 # rmcp 桌面端额外能力：spawn 外部 MCP server 子进程（移动端 fork/spawn 受限）
 rmcp = { version = "1.5", features = ["transport-child-process"] }
-# rust-s3 S3 协议 backend：rust-s3 0.34 强引入 openssl，移动端编译失败
-rust-s3 = { version = "0.34", default-features = false, features = ["tokio-rustls-tls"] }
 # Excel / ODS 解析（calamine 在 Android target 编译失败，先桌面端独享；
 # 移动端按 T-M013 改单文件导入流程后再决策）
 calamine = "0.28"

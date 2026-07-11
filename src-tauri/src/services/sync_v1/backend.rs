@@ -198,7 +198,7 @@ pub fn create_backend(auth: BackendAuth) -> Result<Box<dyn SyncBackendImpl>, App
         } => Ok(Box::new(super::backend_webdav::WebdavBackend::new(
             &url, &username, &password,
         ))),
-        #[cfg(desktop)]
+        // S3 backend（T-M026 起桌面/移动端统一：rusty-s3 签名 + 全局 reqwest 执行）
         BackendAuth::S3 {
             endpoint,
             region,
@@ -214,11 +214,6 @@ pub fn create_backend(auth: BackendAuth) -> Result<Box<dyn SyncBackendImpl>, App
             &secret_key,
             &prefix,
         )?)),
-        // 移动端 S3 backend 暂不支持（rust-s3 0.34 强引入 openssl）
-        #[cfg(mobile)]
-        BackendAuth::S3 { .. } => Err(crate::error::AppError::Custom(
-            "移动端暂不支持 S3 同步，请使用 WebDAV 或本地路径 backend".into(),
-        )),
     }
 }
 
