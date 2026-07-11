@@ -25,6 +25,34 @@ export function toKbAsset(rel: string): string {
 }
 
 /**
+ * 附件**链接（link mark）**专用：拼一个已 percent-encode 的 `kb-asset://` URL，用作 markdown 链接 href。
+ *
+ * 为什么不能直接复用 `toKbAsset`：
+ *   图片/视频是**节点**（attrs.src），markdown 序列化由各自的自定义 serializer（如 FigureExtension）
+ *   负责编码；而附件是普通 **link mark**，序列化走 prosemirror-markdown 的 `state.esc()` —— 它只反斜杠
+ *   转义 markdown 符号，**不 percent-encode、也不转义空格**。于是文件名含空格（如 `HDPE VD钙奶富邦`）时，
+ *   序列化出的 `[..](kb-asset://.../HDPE VD..dwg)` 因 URL 含**裸空格**不符合 CommonMark 链接目标规范，
+ *   重新打开/同步拉回时链接解析失败降级成纯文本；同时 Rust `attachment_scan` 的正则遇空白截断，
+ *   导致该附件永远漏同步。
+ *
+ * 解法：在拼 href 时就逐段 percent-encode（空格→`%20`、圆括号→`%28/%29`、中文→`%E4..`，保留 `/`），
+ * 落盘后是合法 URL。渲染/点击端 `parseKbAsset` 已做 `decodeURIComponent` 还原，Rust `extract_local_refs`
+ * 也已 `url_decode` —— 与图片/视频既有的「序列化编码、消费端解码」约定完全一致。
+ */
+export function toKbAssetHref(rel: string): string {
+  if (rel.startsWith(KB_ASSET_SCHEME)) return rel;
+  const clean = rel.replace(/^\/+/, "");
+  const encoded = clean
+    .split("/")
+    // encodeURIComponent 不编码 ()，但它们同样会破坏 markdown 链接目标 → 手动补编码
+    .map((seg) =>
+      encodeURIComponent(seg).replace(/[()]/g, (c) => (c === "(" ? "%28" : "%29")),
+    )
+    .join("/");
+  return `${KB_ASSET_SCHEME}${encoded}`;
+}
+
+/**
  * 解析 `kb-asset://...` 提取相对路径；非 kb-asset 协议返回 null。
  *
  * 必须 decodeURIComponent：tiptap-markdown 序列化时会把 `![](kb-asset://中文.png)` 编码成

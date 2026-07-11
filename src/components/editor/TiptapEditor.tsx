@@ -196,7 +196,7 @@ import { message, Modal, Input } from "antd";
 import { theme as antdTheme } from "antd";
 import { SUPPORTED_PROVIDERS } from "./embedVideoProviders";
 import { attachmentApi, imageApi, systemApi, videoApi } from "@/lib/api";
-import { parseKbAsset, resolveAssetSrc, toKbAsset, KB_ASSET_SCHEME } from "@/lib/assetUrl";
+import { parseKbAsset, resolveAssetSrc, toKbAsset, toKbAssetHref, KB_ASSET_SCHEME } from "@/lib/assetUrl";
 import { useAppStore } from "@/store";
 import { keyboardEventToAccel } from "@/lib/shortcuts/registry";
 import {
@@ -1267,8 +1267,10 @@ export function TiptapEditor({
       for (const r of results) {
         if (r.ok) {
           const label = `📎 ${r.info.fileName} (${humanSize(r.info.size)})`;
-          // info.path 已是相对 data_dir 的 POSIX 路径；存 kb-asset:// 让 content 跨数据目录可移植
-          const href = toKbAsset(r.info.path);
+          // info.path 已是相对 data_dir 的 POSIX 路径；存 kb-asset:// 让 content 跨数据目录可移植。
+          // 用 toKbAssetHref（percent-encode）而非 toKbAsset：附件是 link mark，序列化不编码 URL，
+          // 文件名含空格会破坏 markdown 链接（重开降级成纯文本 + 漏同步）。见 assetUrl.ts 注释。
+          const href = toKbAssetHref(r.info.path);
           nodes.push({
             type: "text",
             text: label,

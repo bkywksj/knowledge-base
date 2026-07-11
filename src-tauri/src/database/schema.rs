@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 48;
+pub const SCHEMA_VERSION: i32 = 49;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -78,6 +78,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             45 => migrate_v45_to_v46(conn)?,
             46 => migrate_v46_to_v47(conn)?,
             47 => migrate_v47_to_v48(conn)?,
+            48 => migrate_v48_to_v49(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -1943,4 +1944,148 @@ fn migrate_v45_to_v46(conn: &Connection) -> Result<(), AppError> {
 
     set_version(conn, 46)?;
     Ok(())
+}
+
+/// 把 content 里所有 `kb-asset://` URL 中的**裸空白**（空格 / Tab）percent-encode。
+///
+/// 返回 `(新内容, 是否有改动)`。幂等：URL 里没有裸空白（本就干净或已编码）时原样返回。
+///
+/// 背景见 `migrate_v48_to_v49` 文档。这里抽成纯函数便于单测（无 DB 依赖）。
+///
+/// 正则从 `kb-asset://` 起，吃到 URL 边界（引号 / 反引号 / `)` / `]` / `<>` / 换行）为止。
+/// **故意不排除 `\s`** —— 正是要把中间的裸空格捕进来再编码。边界字符覆盖两种承载形态：
+/// markdown 链接 `[txt](kb-asset://…)`（止于 `)`）与 HTML `<img src="kb-asset://…">`（止于 `"`）。
+fn encode_kb_asset_whitespace(content: &str) -> (String, bool) {
+    use regex::Regex;
+    use std::sync::OnceLock;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r#"kb-asset://[^"'`)\]<>\r\n]*"#)
+            .expect("正则字面量恒定，编译失败属于代码 BUG")
+    });
+
+    let mut changed = false;
+    let new = re.replace_all(content, |caps: &regex::Captures<'_>| -> String {
+        let m = caps.get(0).map(|x| x.as_str()).unwrap_or("");
+        if m.contains(' ') || m.contains('\t') {
+            changed = true;
+            m.replace(' ', "%20").replace('\t', "%09")
+        } else {
+            m.to_string()
+        }
+    });
+    (new.into_owned(), changed)
+}
+
+/// v48 -> v49: 修复附件链接 `kb-asset://` URL 里的裸空格
+///
+/// 历史 Bug：批量/工具栏插入附件时，前端把 `[📎 文件名 (大小)](kb-asset://<相对路径>)` 作为
+/// **link mark** 写入。link mark 的 markdown 序列化走 prosemirror-markdown 的 `state.esc()`，
+/// 它**不 percent-encode、也不转义空格**。于是文件名含空格（如 `220ml瓶型（HDPE VD钙奶富邦）.dwg`）
+/// 时，落盘 `.md`/DB 里的 URL 带着**裸空格**：
+///   1. 重新打开笔记 / 同步拉回时，markdown-it 按 CommonMark 解析 —— 未用 `<>` 包裹的链接目标
+///      不能含空格 → 链接解析失败 → 整条以**原始文本**暴露（用户可见的坏链接）。
+///   2. Rust `sync_v1::attachment_scan` 的 `re_kb_asset` 正则遇空白即截断 → 抓到的路径不完整
+///      → 磁盘找不到该文件 → 该附件**永远漏同步**。
+///
+/// 前端已在插入时改用 `toKbAssetHref`（percent-encode）根治新数据；本迁移做**存量清洗**：
+/// 把已存 content 里 `kb-asset://` URL 中的裸空格 / Tab 编码为 `%20` / `%09`。编码后：
+///   - markdown 链接目标合法 → 重开正常渲染成附件链接；
+///   - 消费端 `parseKbAsset`（前端）/ `url_decode`（Rust 扫描）都会解码还原 → 打开 / 同步都正常。
+///
+/// 顺带把改动过的笔记 `attachment_scan_at` 置空，强制下次 push 前重扫，让修好的附件被同步索引到。
+/// 幂等：无裸空格的笔记不改（`encode_kb_asset_whitespace` 返回 changed=false）。
+///
+/// ⚠️ 已知边界：若文件名本身含 ASCII 半角括号 `)`，正则会在该 `)` 处提前截断（markdown 链接语义
+/// 本就无法表达这种文件名）—— 属极少见情形，本迁移不处理，保持最小改动。
+fn migrate_v48_to_v49(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v48 -> v49 (修复附件链接 kb-asset:// URL 裸空格)");
+
+    let mut stmt = conn
+        .prepare("SELECT id, content FROM notes WHERE content IS NOT NULL AND content != ''")?;
+    let rows: Vec<(i64, String)> = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+        .filter_map(|r| r.ok())
+        .collect();
+    drop(stmt);
+
+    log::info!("[v49] 扫描 {} 条笔记里的 kb-asset:// URL", rows.len());
+
+    let mut touched = 0usize;
+    let tx = conn.unchecked_transaction()?;
+    for (id, content) in &rows {
+        let (new_content, changed) = encode_kb_asset_whitespace(content);
+        if changed {
+            tx.execute(
+                "UPDATE notes SET content = ?1, attachment_scan_at = NULL WHERE id = ?2",
+                rusqlite::params![new_content, id],
+            )?;
+            touched += 1;
+        }
+    }
+    tx.commit()?;
+
+    log::info!("[v49] 修复完成：{} 条笔记的附件链接 URL 空格已编码", touched);
+
+    set_version(conn, 49)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn v49_encodes_space_in_attachment_link() {
+        let content = "前文 [📎 220ml瓶型（HDPE VD钙奶富邦）.dwg (210.8 KB)](kb-asset://kb_assets/attachments/43/220ml瓶型（HDPE VD钙奶富邦）.dwg) 后文";
+        let (out, changed) = encode_kb_asset_whitespace(content);
+        assert!(changed, "含裸空格应判定为有改动");
+        // URL 里的空格已被编码
+        assert!(
+            out.contains("kb-asset://kb_assets/attachments/43/220ml瓶型（HDPE%20VD钙奶富邦）.dwg"),
+            "URL 空格应编码为 %20；实际：{out}"
+        );
+        // 链接文本里的空格（(210.8 KB) 那处）不在 URL 内，不该被动
+        assert!(out.contains("(210.8 KB)"), "链接文本不应被改动：{out}");
+    }
+
+    #[test]
+    fn v49_encodes_space_in_html_img_src() {
+        let content = r#"<img src="kb-asset://kb_assets/images/1/my photo.png" alt="x">"#;
+        let (out, changed) = encode_kb_asset_whitespace(content);
+        assert!(changed);
+        assert!(out.contains(r#"kb-asset://kb_assets/images/1/my%20photo.png"#), "实际：{out}");
+    }
+
+    #[test]
+    fn v49_idempotent_on_clean_url() {
+        // 已编码 / 无空格 → 不改动
+        let content = "![](kb-asset://kb_assets/attachments/1/a%20b.dwg) 和 <img src=\"kb-asset://kb_assets/images/2/clean.png\">";
+        let (out, changed) = encode_kb_asset_whitespace(content);
+        assert!(!changed, "无裸空格不应改动");
+        assert_eq!(out, content);
+
+        // 对编码结果再跑一遍（模拟迁移二次执行）仍不变
+        let (out2, changed2) = encode_kb_asset_whitespace(&out);
+        assert!(!changed2);
+        assert_eq!(out2, out);
+    }
+
+    #[test]
+    fn v49_does_not_touch_non_kb_asset_urls() {
+        // 普通外链里的空格不归本迁移管（也不该动）
+        let content = "[链接](https://example.com/a b) 和普通文本 有 空格";
+        let (out, changed) = encode_kb_asset_whitespace(content);
+        assert!(!changed);
+        assert_eq!(out, content);
+    }
+
+    #[test]
+    fn v49_multiple_refs_in_one_note() {
+        let content = "[a](kb-asset://kb_assets/attachments/1/x y.zip) [b](kb-asset://kb_assets/attachments/1/p q.pdf)";
+        let (out, changed) = encode_kb_asset_whitespace(content);
+        assert!(changed);
+        assert!(out.contains("x%20y.zip"), "{out}");
+        assert!(out.contains("p%20q.pdf"), "{out}");
+    }
 }

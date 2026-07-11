@@ -46,7 +46,7 @@ import {
   Search,
 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { toKbAsset } from "@/lib/assetUrl";
+import { toKbAsset, toKbAssetHref } from "@/lib/assetUrl";
 import { attachmentApi, imageApi, videoApi } from "@/lib/api";
 import { MicButton } from "@/components/MicButton";
 import { insertVideoTimestamp } from "./VideoTimestamp";
@@ -297,8 +297,10 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
       try {
         const info = await attachmentApi.saveFromPath(effectiveNoteId, filePath);
         const label = `📎 ${info.fileName} (${formatSize(info.size)})`;
-        // info.path 是相对 data_dir 的 POSIX 路径；存 kb-asset:// 跨数据目录可移植
-        const href = toKbAsset(info.path);
+        // info.path 是相对 data_dir 的 POSIX 路径；存 kb-asset:// 跨数据目录可移植。
+        // 用 toKbAssetHref（percent-encode）：附件链接的 URL 不经序列化编码，文件名含空格
+        // 会破坏 markdown 链接（重开降级成纯文本 + 漏同步）。见 assetUrl.ts 注释。
+        const href = toKbAssetHref(info.path);
         nodes.push({ type: "text", text: label, marks: [{ type: "link", attrs: { href } }] });
         nodes.push({ type: "text", text: "\n" });
       } catch (e) {
