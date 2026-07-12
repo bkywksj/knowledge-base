@@ -14,7 +14,7 @@ import {
 import { Tags, NotebookText, Edit3, Trash2 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { tagApi } from "@/lib/api";
-import { stripHtml, relativeTime } from "@/lib/utils";
+import { contentToPreview, relativeTime } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { TagColorPicker } from "@/components/TagColorPicker";
 import { useAppStore } from "@/store";
@@ -256,7 +256,7 @@ function DesktopTagsPage() {
                               marginTop: 2,
                             }}
                           >
-                            {stripHtml(note.content).slice(0, 100)}
+                            {contentToPreview(note.content).slice(0, 100)}
                           </Paragraph>
                         ) : null}
                       </div>

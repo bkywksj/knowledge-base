@@ -74,7 +74,8 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useTabsStore } from "@/store/tabs";
 import { useAppStore } from "@/store";
-import { stripHtml, relativeTime } from "@/lib/utils";
+import { contentToPreview, relativeTime, extractFirstImageSrc } from "@/lib/utils";
+import { resolveAssetSrc, parseKbAsset, isEncryptedAsset } from "@/lib/assetUrl";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { NewNoteButton } from "@/components/NewNoteButton";
 import { createBlankAndOpen } from "@/lib/noteCreator";
@@ -86,6 +87,49 @@ import type { Note, PageResult, Folder, Tag as NoteTag } from "@/types";
 const { Title, Text, Paragraph } = Typography;
 
 type ViewMode = "list" | "card" | "timeline";
+
+/**
+ * 从笔记正文取第一张图片并解析成可直接喂 `<img>` 的 URL（卡片缩略图用）。
+ * - `kb-asset://` 明文图 → resolveAssetSrc 拼 asset 协议 URL
+ * - `.enc` 加密图 → 返回 null（需异步解密取 Blob，卡片缩略图不值得，跳过只显文字）
+ * - 外链 http/https/data/blob（含旧式 convertFileSrc 绝对 URL）→ 原样返回
+ * 其他（相对路径等）→ null
+ */
+function resolveThumbUrl(content: string, dataDir: string | null): string | null {
+  const src = extractFirstImageSrc(content);
+  if (!src) return null;
+  const rel = parseKbAsset(src);
+  if (rel) {
+    if (isEncryptedAsset(rel)) return null;
+    return resolveAssetSrc(src, dataDir);
+  }
+  return /^(https?:|data:|blob:)/i.test(src) ? src : null;
+}
+
+/**
+ * 卡片右侧缩略图。加载失败（图片被删 / data_dir 迁移导致旧绝对 URL 失效）时自行隐藏，
+ * 让文字列撑满，绝不在卡片里露出裂图占位符。点击事件不拦截，冒泡到 Card 打开笔记。
+ */
+function NoteCardThumb({ src }: { src: string }) {
+  const [ok, setOk] = useState(true);
+  if (!ok) return null;
+  return (
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      onError={() => setOk(false)}
+      style={{
+        width: 72,
+        height: 72,
+        flexShrink: 0,
+        objectFit: "cover",
+        borderRadius: 8,
+        alignSelf: "flex-start",
+      }}
+    />
+  );
+}
 
 /**
  * 自定义排序模式下用的 antd Table 行：把每个 <tr> 包成 @dnd-kit/sortable 节点。
@@ -571,6 +615,9 @@ function DesktopNoteListPage() {
   const [folderMap, setFolderMap] = useState<Map<number, string>>(new Map());
   // 原始文件夹树，供"目录"列的 Popover 选择器用
   const [folders, setFolders] = useState<Folder[]>([]);
+
+  // 卡片缩略图把 kb-asset:// 相对路径拼成 asset URL 需要 data_dir
+  const dataDir = useAppStore((s) => s.instanceInfo?.dataDir ?? null);
 
   // 依赖全局 foldersRefreshTick：Sidebar 新建/改名/删文件夹后自动重建 id→name 映射
   const foldersRefreshTick = useAppStore((s) => s.foldersRefreshTick);
@@ -1297,14 +1344,28 @@ function DesktopNoteListPage() {
   // 时间线分组（缓存）
   const dateGroups = useMemo(() => groupByDate(data.items), [data.items]);
 
-  // 笔记纯文本预览（缓存：仅当 data.items 变化才重算 stripHtml，避免每次 render 都跑）
+  // 笔记纯文本预览（缓存：仅当 data.items 变化才重算，避免每次 render 都跑）
+  // 用 contentToPreview 而非 stripHtml：笔记是 Markdown，需剥掉图片/链接等语法噪声，
+  // 否则 `![](kb-asset://…)` 的图片地址会原样堆进预览。
   const notePreviews = useMemo(() => {
     const map = new Map<number, string>();
     for (const n of data.items) {
-      map.set(n.id, n.content ? stripHtml(n.content) : "");
+      map.set(n.id, n.content ? contentToPreview(n.content) : "");
     }
     return map;
   }, [data.items]);
+
+  // 卡片模式缩略图（缓存：data.items 或 data_dir 变化才重算）：取每篇笔记正文第一张图，
+  // 解析成可显示 URL。无图 / 加密图 / 解析失败的笔记不入表，卡片退回纯文字。
+  const noteThumbs = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const n of data.items) {
+      if (!n.content) continue;
+      const url = resolveThumbUrl(n.content, dataDir);
+      if (url) map.set(n.id, url);
+    }
+    return map;
+  }, [data.items, dataDir]);
 
   // ─── 虚拟滚动（卡片视图） ────────────────────
   // 将笔记按 3 列分行
@@ -1694,24 +1755,47 @@ function DesktopNoteListPage() {
                                   },
                                 }}
                               >
-                                <div className="flex items-center gap-1 mb-1">
-                                  <Title
-                                    level={5}
-                                    ellipsis
-                                    style={{ marginBottom: 0, fontSize: 13, flex: 1 }}
-                                  >
-                                    {note.title}
-                                  </Title>
-                                  <NoteDecorators note={note} warningColor={token.colorWarning} />
-                                </div>
-                                <Paragraph
-                                  type="secondary"
-                                  ellipsis={{ rows: 3 }}
-                                  style={{ fontSize: 11, flex: 1, marginBottom: 6 }}
+                                {/* 上半区：左侧标题+预览文字，右侧缩略图（有图才显示） */}
+                                <div
+                                  style={{
+                                    flex: 1,
+                                    display: "flex",
+                                    gap: 8,
+                                    overflow: "hidden",
+                                  }}
                                 >
-                                  {notePreviews.get(note.id) || "暂无内容"}
-                                </Paragraph>
-                                <div className="flex items-center justify-between">
+                                  <div
+                                    style={{
+                                      flex: 1,
+                                      minWidth: 0,
+                                      display: "flex",
+                                      flexDirection: "column",
+                                      overflow: "hidden",
+                                    }}
+                                  >
+                                    <div className="flex items-center gap-1 mb-1">
+                                      <Title
+                                        level={5}
+                                        ellipsis
+                                        style={{ marginBottom: 0, fontSize: 13, flex: 1 }}
+                                      >
+                                        {note.title}
+                                      </Title>
+                                      <NoteDecorators note={note} warningColor={token.colorWarning} />
+                                    </div>
+                                    <Paragraph
+                                      type="secondary"
+                                      ellipsis={{ rows: 3 }}
+                                      style={{ fontSize: 11, flex: 1, marginBottom: 0 }}
+                                    >
+                                      {notePreviews.get(note.id) || "暂无内容"}
+                                    </Paragraph>
+                                  </div>
+                                  {noteThumbs.get(note.id) && (
+                                    <NoteCardThumb src={noteThumbs.get(note.id)!} />
+                                  )}
+                                </div>
+                                <div className="flex items-center justify-between mt-1.5">
                                   <Text type="secondary" style={{ fontSize: 10 }}>
                                     {relativeTime(note.updated_at)}
                                     {note.word_count > 0 && ` · ${note.word_count} 字`}
