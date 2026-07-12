@@ -11,12 +11,41 @@
 //!   2. 输出到 stderr（dev 控制台 / 命令行启动时可见）；
 //!   3. Windows 下弹一个原生 `MessageBoxW`，告知用户崩溃发生 + 日志位置（杜绝静默闪退）。
 
+use std::cell::Cell;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// 防止 hook 自身再 panic 造成无限递归（写盘 / 弹窗内部万一失败时）。
 static IN_HOOK: AtomicBool = AtomicBool::new(false);
+
+thread_local! {
+    /// 本线程当前是否处于"预期 panic 会被 catch_unwind 接住"的区域。
+    /// 为 true 时，全局 panic hook 只降级为一条 warn 日志，**不弹崩溃对话框、不写 crash 日志**——
+    /// 因为这类 panic（如 pdf-extract 对不支持资源直接 `panic!`）已由上层兜底恢复，并非真崩溃。
+    static EXPECTED_PANIC: Cell<bool> = const { Cell::new(false) };
+}
+
+/// 在"预期 panic 可被接住"的语义下执行 `f`：期间**本线程**发生的 panic 不会触发崩溃弹窗 /
+/// crash 日志（hook 只记一条 warn），并被 `catch_unwind` 接住，以 `Err` 返回。
+///
+/// 用于像 `pdf-extract` 这类"用 `panic!` 表达未实现 / 不支持"、且已由上层（PDFium fallback 等）
+/// 兜底的第三方调用——避免一份坏 PDF 触发的可恢复 panic 弹出吓人的"程序需要关闭"对话框。
+///
+/// 说明：全局 panic hook 在 panic 展开的**最开始**就执行，**早于** `catch_unwind` 捕获；
+/// 因此必须用这个线程级标志显式告诉 hook“这个 panic 是预期可恢复的”。用 thread-local 而非全局
+/// 标志，保证只静默**当前线程**该区域内的 panic，不误伤其它线程的真实崩溃。
+pub fn catch_expected_panic<F, T>(f: F) -> std::thread::Result<T>
+where
+    F: FnOnce() -> T,
+{
+    let prev = EXPECTED_PANIC.with(|c| c.replace(true));
+    // AssertUnwindSafe：调用方负责保证 f 捕获的状态在 panic 后不会被以不一致状态复用。
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    // 还原为进入前的值（支持嵌套调用）。此时 hook 已在 catch_unwind 内部跑完。
+    EXPECTED_PANIC.with(|c| c.set(prev));
+    result
+}
 
 /// 安装全局 panic hook。
 ///
@@ -25,6 +54,24 @@ static IN_HOOK: AtomicBool = AtomicBool::new(false);
 pub fn install(crash_dir: PathBuf) {
     let prev_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        // 预期可恢复 panic（catch_expected_panic 区域内，如 pdf-extract 兜底）：
+        // 只降级为一条 warn 日志，绝不弹崩溃对话框 / 不写 crash 日志——它会被上层 catch_unwind
+        // 接住，应用并不会真的崩溃。放在最前面，避免为可恢复 panic 白跑 force_capture 回溯。
+        if EXPECTED_PANIC.with(|c| c.get()) {
+            let payload = info.payload();
+            let msg = payload
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "<无法识别的 panic 负载>".to_string());
+            let loc = info
+                .location()
+                .map(|l| format!("{}:{}", l.file(), l.line()))
+                .unwrap_or_else(|| "<未知位置>".to_string());
+            log::warn!("已捕获可恢复 panic（catch_unwind 兜底，非崩溃）: {msg} @ {loc}");
+            return;
+        }
+
         // 重入保护：hook 内部若再 panic，直接返回，避免递归爆栈。
         if IN_HOOK.swap(true, Ordering::SeqCst) {
             return;

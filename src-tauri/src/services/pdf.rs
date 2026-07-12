@@ -463,12 +463,28 @@ pub fn render_pdf_to_pngs(
     Ok(out)
 }
 
-/// 用 `catch_unwind` 包裹 pdf_extract::extract_text，把 panic 也转成普通错误返回
+/// 桌面端：走 `crash_handler::catch_expected_panic`，把这次 pdf-extract 的 panic 标记为
+/// "预期可恢复"，避免全局 crash hook 为它弹出"程序需要关闭"对话框、误报成崩溃。
+#[cfg(desktop)]
+fn catch_pdf_panic<F: FnOnce() -> R, R>(f: F) -> std::thread::Result<R> {
+    crate::crash_handler::catch_expected_panic(f)
+}
+
+/// 移动端：未安装自定义 panic hook（install 是 desktop-only），不存在崩溃弹窗问题，
+/// 直接用标准 `catch_unwind` 接住 panic 即可。
+#[cfg(mobile)]
+fn catch_pdf_panic<F: FnOnce() -> R, R>(f: F) -> std::thread::Result<R> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+}
+
+/// 用 `catch_unwind` 包裹 pdf_extract::extract_text，把 panic 也转成普通错误返回。
+///
+/// pdf-extract 0.9 对不支持的资源（如 ExtGState）/ 字体编码会直接 `panic!`，这类 panic 是预期
+/// 可恢复的（下游还有 PDFium fallback 兜底）。经 `catch_pdf_panic` 接住后转成 `Err` 返回，
+/// 桌面端同时抑制全局 crash hook 的误报弹窗。
 fn safe_extract_text(path: &Path) -> Result<String, String> {
     let path = path.to_path_buf();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        pdf_extract::extract_text(&path)
-    }));
+    let result = catch_pdf_panic(|| pdf_extract::extract_text(&path));
     match result {
         Ok(Ok(s)) => Ok(s),
         Ok(Err(e)) => Err(e.to_string()),
