@@ -68,9 +68,16 @@ export const HIDDEN_UNLOCK_TTL_MS = 10 * 60 * 1000;
  * 值是稳定 ID，写入 store 持久化；实际 CSS font-family 链通过 EDITOR_FONT_STACKS 查表，
  * 包含若干 fallback，用户系统未装首选字体时自动退回下一项，不会变成"乱码方块"。
  */
-export type EditorFontFamily = "system" | "sans" | "serif" | "kaiti" | "mono";
+export type EditorFontPreset = "system" | "sans" | "serif" | "kaiti" | "mono";
 
-export const EDITOR_FONT_LABELS: Record<EditorFontFamily, string> = {
+/**
+ * 字体族偏好：预设 ID，或用户从系统已装字体里自选 / 手动输入的**任意字体名**
+ * （后者按 {@link resolveEditorFontStack} 解析成「字体名 + 通用 fallback」）。
+ * `(string & {})` 既保留预设 ID 的补全提示，又放开任意字符串。
+ */
+export type EditorFontFamily = EditorFontPreset | (string & {});
+
+export const EDITOR_FONT_LABELS: Record<EditorFontPreset, string> = {
   system: "系统默认",
   sans: "无衬线（黑体）",
   serif: "衬线（宋体）",
@@ -78,7 +85,7 @@ export const EDITOR_FONT_LABELS: Record<EditorFontFamily, string> = {
   mono: "等宽（编程字体）",
 };
 
-export const EDITOR_FONT_STACKS: Record<EditorFontFamily, string> = {
+export const EDITOR_FONT_STACKS: Record<EditorFontPreset, string> = {
   // system 留空 → 不写 CSS 变量，编辑器继承全局默认
   system: "",
   sans: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", "Source Han Sans SC", "Noto Sans SC", "Helvetica Neue", Arial, sans-serif',
@@ -86,6 +93,30 @@ export const EDITOR_FONT_STACKS: Record<EditorFontFamily, string> = {
   kaiti: '"LXGW WenKai", "LXGW WenKai Screen", KaiTi, STKaiti, "Source Han Serif SC", serif',
   mono: '"JetBrains Mono", "Fira Code", "Cascadia Code", "Source Code Pro", Consolas, "Courier New", monospace',
 };
+
+/**
+ * 自选字体统一 fallback 链：用户选的字体排第一，未装时依次退回通用中英文无衬线，
+ * 绝不落到"乱码方块"。尾链与预设 sans 保持一致的观感。
+ */
+export const EDITOR_CUSTOM_FONT_FALLBACK =
+  '-apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", "Source Han Sans SC", "Noto Sans SC", sans-serif';
+
+/**
+ * 把「字体族偏好」解析成实际写入 CSS 的 font-family 值。
+ * - 预设 ID（含 system，其 stack 为空串 → 继承全局默认）→ 查 {@link EDITOR_FONT_STACKS}
+ * - 任意其它字符串 → 视为用户自选字体名，加引号包裹 + 追加通用 fallback（防未装乱码）
+ *
+ * 空 / 非法输入返回空串（调用方据此移除 CSS 变量，回到全局默认）。
+ */
+export function resolveEditorFontStack(family: EditorFontFamily): string {
+  if (Object.prototype.hasOwnProperty.call(EDITOR_FONT_STACKS, family)) {
+    return EDITOR_FONT_STACKS[family as EditorFontPreset];
+  }
+  const name = String(family ?? "").trim();
+  if (!name) return "";
+  // CSS 字体名含空格 / 中文需引号包裹；剔除内部引号与反斜杠，防破坏语法
+  return `"${name.replace(/["\\]/g, "")}", ${EDITOR_CUSTOM_FONT_FALLBACK}`;
+}
 
 export const EDITOR_FONT_SIZE_OPTIONS = [12, 13, 14, 15, 16, 18, 20, 22] as const;
 export const EDITOR_LINE_HEIGHT_OPTIONS = [1.4, 1.5, 1.6, 1.8, 2.0] as const;
@@ -1004,7 +1035,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   removeRecentSearch: (q) =>
     set((s) => ({ recentSearches: s.recentSearches.filter((x) => x !== q) })),
   clearRecentSearches: () => set({ recentSearches: [] }),
-  setEditorFontFamily: (family) => set({ editorFontFamily: family }),
+  setEditorFontFamily: (family) =>
+    set({
+      // 放开为任意字体名：预设 ID 或用户自选/手输的系统字体名；空则回退 system
+      editorFontFamily:
+        typeof family === "string" && family.trim() ? family.trim() : "system",
+    }),
   setEditorFontSize: (size) => {
     // clamp 到合法预设范围 [12, 22]，防止外部 set 写脏数据
     const clamped = Math.max(12, Math.min(22, Math.round(size)));
@@ -1243,7 +1279,7 @@ export function applyEditorTypography(state: {
   editorCodeFontSize: number;
 }) {
   const root = document.documentElement;
-  const stack = EDITOR_FONT_STACKS[state.editorFontFamily];
+  const stack = resolveEditorFontStack(state.editorFontFamily);
   if (stack) {
     root.style.setProperty("--editor-font-family", stack);
   } else {
@@ -1475,7 +1511,8 @@ export async function loadThemeFromStore() {
 
     // 恢复编辑器字体偏好
     const ef = await store.get<EditorFontFamily>("editorFontFamily");
-    if (ef && ef in EDITOR_FONT_STACKS) {
+    // 任意非空字符串都合法：预设 ID 或用户自选的字体名
+    if (typeof ef === "string" && ef.trim()) {
       useAppStore.getState().setEditorFontFamily(ef);
     }
     const fs = await store.get<number>("editorFontSize");

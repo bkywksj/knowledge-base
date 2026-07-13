@@ -111,6 +111,11 @@ calamine = "0.28"
 # T-020 笔记导出为 Word（docx-rs 在 Android target 编译失败，先桌面端独享；
 # 移动端按 T-M013 后再决策）
 docx-rs = "0.4"
+# 系统字体枚举：设置页「正文字体」让用户从本机已装字体里自选任意字体（所见即所得）。
+# 只做枚举、不做光栅化：Windows=DirectWrite / macOS=CoreText / Linux=fontconfig，
+# 纯平台原生 API，无 freetype C 依赖（契合本项目一贯避开 C 依赖的取向）。
+# 移动端无对应后端（font-enumeration 不支持 Android），故仅桌面端引入。
+font-enumeration = "0.9"
 
 # ─── Windows 专属：panic hook 的原生错误对话框（MessageBoxW）────────────────
 # 仅链接 user32 的 MessageBoxW，体积开销极小；不依赖 tauri dialog 插件

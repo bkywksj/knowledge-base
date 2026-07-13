@@ -117,6 +117,12 @@ export const systemApi = {
   getDashboardStats: () => invoke<DashboardStats>("get_dashboard_stats"),
   getWritingTrend: (days?: number) =>
     invoke<DailyWritingStat[]>("get_writing_trend", { days }),
+  /**
+   * 枚举本机已安装的所有字体族名（去重 + 排序），供设置页「正文字体」自选。
+   * 仅桌面端注册；移动端该 Command 不存在，invoke 会 reject —— 调用方 catch 后
+   * 回退到「预设 + 手动输入字体名」。
+   */
+  listSystemFonts: () => invoke<string[]>("list_system_fonts"),
   /** 把笔记 content 里的 `kb-asset://...` 后那段相对路径还原成 OS 绝对路径。
    * 用于附件链接点击 → opener 打开（opener 必须传绝对路径）。 */
   resolveAssetAbsolute: (rel: string) =>

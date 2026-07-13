@@ -960,6 +960,9 @@ pub fn run() {
             commands::system::clear_theme_bg,
             commands::system::path_exists,
             commands::system::export_diagnostics,
+            // 系统字体枚举（设置页自选字体，仅桌面端）
+            #[cfg(desktop)]
+            commands::font::list_system_fonts,
             // 配置模块
             commands::config::get_all_config,
             commands::config::get_config,

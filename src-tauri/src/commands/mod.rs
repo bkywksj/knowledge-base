@@ -8,6 +8,9 @@ pub mod daily;
 pub mod dataview;
 pub mod data_dir;
 pub mod export;
+// 系统字体枚举仅桌面端可用（font-enumeration 无 Android 后端）
+#[cfg(desktop)]
+pub mod font;
 pub mod folders;
 pub mod hidden_pin;
 pub mod image;

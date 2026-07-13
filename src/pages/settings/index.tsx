@@ -46,7 +46,9 @@ import {
   AUTO_SAVE_DELAY_OPTIONS,
   LAYOUT_PRESETS,
   suggestUiScale,
+  resolveEditorFontStack,
   type EditorFontFamily,
+  type EditorFontPreset,
   type EditorRuleLines,
   type LayoutPresetId,
 } from "@/store";
@@ -503,6 +505,56 @@ function DesktopSettingsPage() {
   const setEditorLineHeight = useAppStore((s) => s.setEditorLineHeight);
   const setEditorCodeFontSize = useAppStore((s) => s.setEditorCodeFontSize);
   const resetEditorTypography = useAppStore((s) => s.resetEditorTypography);
+  // 系统已安装字体（供「正文字体」自选）。仅桌面端有 list_system_fonts；
+  // 移动端 / 枚举失败时保持空数组 → UI 回退到「预设 + 手动输入字体名」。
+  const [systemFonts, setSystemFonts] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    systemApi
+      .listSystemFonts()
+      .then((fonts) => {
+        if (alive) setSystemFonts(fonts);
+      })
+      .catch(() => {
+        /* 移动端无此 Command / 枚举失败：静默，回退手输 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  // 当前字体是否为自选（非预设）——决定无系统字体列表时是否回填手输框
+  const isCustomFont = !Object.prototype.hasOwnProperty.call(
+    EDITOR_FONT_LABELS,
+    editorFontFamily,
+  );
+  // 「正文字体」下拉选项：预设分组 +（枚举成功时）系统字体分组，各项用该字体自身预览
+  const fontSelectOptions = useMemo(() => {
+    const preset = (Object.keys(EDITOR_FONT_LABELS) as EditorFontPreset[]).map(
+      (key) => ({
+        value: key as string,
+        searchText: `${EDITOR_FONT_LABELS[key]} ${key}`,
+        label: (
+          <span style={{ fontFamily: EDITOR_FONT_STACKS[key] || undefined }}>
+            {EDITOR_FONT_LABELS[key]}
+          </span>
+        ),
+      }),
+    );
+    const system = systemFonts.map((name) => {
+      const safe = name.replace(/["\\]/g, "");
+      return {
+        value: name,
+        searchText: name,
+        label: <span style={{ fontFamily: `"${safe}"` }}>{name}</span>,
+      };
+    });
+    return system.length > 0
+      ? [
+          { label: "预设", options: preset },
+          { label: `系统字体（${system.length}）`, options: system },
+        ]
+      : [{ label: "预设", options: preset }];
+  }, [systemFonts]);
   // 编辑器版面偏好（阅读列宽 / 纸张 / 纹理 / 首行缩进）
   const editorReadingWidth = useAppStore((s) => s.editorReadingWidth);
   const editorPaper = useAppStore((s) => s.editorPaper);
@@ -1708,28 +1760,54 @@ function DesktopSettingsPage() {
           <div>
             <div>正文字体</div>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              用户系统未装首选字体时自动 fallback 到下一项，不会出错
+              {systemFonts.length > 0
+                ? "可搜索本机已装的任意字体；未装首选时自动 fallback，不会出错"
+                : "未装首选字体时自动 fallback 到下一项，不会出错"}
             </Text>
           </div>
-          <Select
-            value={editorFontFamily}
-            onChange={(v) => setEditorFontFamily(v as EditorFontFamily)}
-            style={{ width: 220 }}
-            options={(Object.keys(EDITOR_FONT_LABELS) as EditorFontFamily[]).map(
-              (key) => ({
-                value: key,
-                label: (
-                  <span
-                    style={{
-                      fontFamily: EDITOR_FONT_STACKS[key] || undefined,
-                    }}
-                  >
-                    {EDITOR_FONT_LABELS[key]}
-                  </span>
-                ),
-              }),
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              alignItems: "flex-end",
+            }}
+          >
+            <Select
+              value={editorFontFamily}
+              onChange={(v) => setEditorFontFamily(v as EditorFontFamily)}
+              style={{ width: 260 }}
+              showSearch
+              // 按字体名 / 预设中文名过滤。option 为分组联合类型，窄化到叶子选项形状
+              filterOption={(input, option) => {
+                const opt = option as
+                  | { searchText?: string; value?: string }
+                  | undefined;
+                const t = String(opt?.searchText ?? opt?.value ?? "");
+                return t.toLowerCase().includes(input.trim().toLowerCase());
+              }}
+              options={fontSelectOptions}
+            />
+            {/* 枚举不可用（移动端 / 失败）时的兜底：手动输入任意字体名 */}
+            {systemFonts.length === 0 && (
+              <Input
+                size="small"
+                allowClear
+                style={{ width: 260 }}
+                placeholder="或手动输入字体名，回车应用"
+                defaultValue={isCustomFont ? String(editorFontFamily) : ""}
+                onPressEnter={(e) =>
+                  setEditorFontFamily(
+                    (e.target as HTMLInputElement).value.trim() || "system",
+                  )
+                }
+                onBlur={(e) => {
+                  const v = e.target.value.trim();
+                  if (v) setEditorFontFamily(v);
+                }}
+              />
             )}
-          />
+          </div>
         </div>
 
         <div
@@ -1929,7 +2007,7 @@ function DesktopSettingsPage() {
               background: "var(--ant-color-fill-quaternary, #fafafa)",
               border: "1px solid var(--ant-color-border-secondary, #f0f0f0)",
               borderRadius: 6,
-              fontFamily: EDITOR_FONT_STACKS[editorFontFamily] || undefined,
+              fontFamily: resolveEditorFontStack(editorFontFamily) || undefined,
               fontSize: editorFontSize,
               lineHeight: editorLineHeight,
             }}
