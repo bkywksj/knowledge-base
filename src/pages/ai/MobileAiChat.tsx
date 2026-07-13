@@ -55,6 +55,12 @@ export function MobileAiChat() {
   useEffect(() => {
     convIdRef.current = convId;
   }, [convId]);
+  // streaming 的同步镜像：setStreaming 异步，连点发送时旧闭包读到 streaming=false 会重复发送。
+  // sendingRef 在 send() 里同步置位做「渲染前」再入锁；done/error 复位 streaming 后由下面 effect 回落。
+  const sendingRef = useRef(false);
+  useEffect(() => {
+    sendingRef.current = streaming;
+  }, [streaming]);
 
   // 自动滚到底
   function scrollToBottom() {
@@ -137,7 +143,9 @@ export function MobileAiChat() {
 
   async function send() {
     const text = input.trim();
-    if (!text || !convId || streaming) return;
+    // sendingRef 是 streaming 的同步镜像，挡住「按钮还没翻成停止」时的重复发送
+    if (!text || !convId || sendingRef.current) return;
+    sendingRef.current = true;
     setInput("");
     setStreaming(true);
     setStreamingText("");
@@ -157,6 +165,7 @@ export function MobileAiChat() {
       await aiChatApi.sendMessage(convId, text);
     } catch (e) {
       setStreaming(false);
+      sendingRef.current = false;
       message.error(`发送失败: ${e}`);
     }
   }

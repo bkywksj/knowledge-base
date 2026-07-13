@@ -46,6 +46,10 @@ export function NoteAiDrawer({
   const [streaming, setStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [loading, setLoading] = useState(false);
+  // streaming 的同步镜像：setStreaming 是异步的，狂点发送 / 连按 Enter 时旧闭包仍读到
+  // streaming=false 会重复发送同一句话。sendingRef 在 handleSend 里同步置位，用它做「渲染前」
+  // 的再入锁；done/error 把 streaming 复位后由下面的 useEffect 同步回落。
+  const sendingRef = useRef(false);
   // 当前挂载的"选段引用"：发送下一条消息时会拼到消息开头作为上下文，发完清掉
   const [pendingContext, setPendingContext] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -139,8 +143,15 @@ export function NoteAiDrawer({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingText]);
 
+  // streaming 复位后把同步锁一并回落（done/error 事件里只改了 state）
+  useEffect(() => {
+    sendingRef.current = streaming;
+  }, [streaming]);
+
   const handleSend = useCallback(async () => {
-    if (!conv || !input.trim() || streaming) return;
+    // sendingRef 是 streaming 的同步镜像，挡住「按钮还没翻成停止」时的重复发送
+    if (!conv || !input.trim() || sendingRef.current) return;
+    sendingRef.current = true;
     const userQuestion = input.trim();
     // 有挂载的选段就拼到问题前面作为引用块，让 AI 能看到具体讨论对象
     const finalText = pendingContext
@@ -168,6 +179,7 @@ export function NoteAiDrawer({
       await aiChatApi.sendMessage(conv.id, finalText, false, false);
     } catch (e) {
       setStreaming(false);
+      sendingRef.current = false;
       message.error(`发送失败: ${e}`);
     }
   }, [conv, input, streaming, pendingContext]);
@@ -257,6 +269,30 @@ export function NoteAiDrawer({
             {messages.map((msg) => (
               <MiniBubble key={msg.id} msg={msg} token={token} />
             ))}
+            {/* 首 token 到达前的「正在分析」占位：让用户区分 AI 在思考 vs 卡死 */}
+            {streaming && !streamingText && (
+              <div className="flex gap-2 mb-3">
+                <div
+                  className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-xs font-bold"
+                  style={{
+                    background: token.colorPrimaryBg,
+                    color: token.colorPrimary,
+                  }}
+                >
+                  AI
+                </div>
+                <div
+                  className="px-2.5 py-1.5 rounded-lg text-sm flex items-center gap-2"
+                  style={{
+                    background: token.colorBgContainer,
+                    color: token.colorTextTertiary,
+                  }}
+                >
+                  <RefreshCw size={13} className="animate-spin" />
+                  <span>AI 正在分析…</span>
+                </div>
+              </div>
+            )}
             {streaming && streamingText && (
               <div className="flex gap-2 mb-3">
                 <div

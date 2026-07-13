@@ -606,6 +606,11 @@ function DesktopAiChatPage() {
     const raw = textOverride ?? inputText;
     const text = raw.trim();
     if (!text || !activeConvId || streaming) return;
+    // 同步防重入：setStreamingConvId 是异步的，在 React 把「发送」按钮翻成「停止」、
+    // 输入框置灰之前，用户狂点发送 / 连按 Enter 会带着 streaming=false 的旧闭包重复进来，
+    // 造成同一句话被连发十几遍。streamingConvIdRef 上一次发送时已同步标记为本会话 id，
+    // 用它挡住这些「渲染前」的重复发送（state 尚未翻转，但 ref 已经是最新值）。
+    if (streamingConvIdRef.current === activeConvId) return;
     if (!textOverride) setInputText("");
     // 直接同步 ref：紧接着可能就有 ai:token 事件进来，得让 handler 立刻知道当前流式会话是谁
     streamingConvIdRef.current = activeConvId;
@@ -1145,7 +1150,38 @@ function DesktopAiChatPage() {
                   同口径），避免最后一轮模型退化输出的 XML/围栏标签直接秀给用户 */}
               {streaming && (() => {
                 const cleanText = stripPseudoToolCalls(streamingText);
-                if (!cleanText && streamingSkillCalls.length === 0) return null;
+                // 首 token / 首个工具调用到达前，用「正在分析」占位气泡替代空白，
+                // 让用户能明确区分「AI 在思考」和「卡死了」——尤其本地 Ollama + 智能模式下
+                // 首次 prompt-eval 可能要等数十秒甚至几分钟，没有指示会被误判为无响应而狂点重发。
+                if (!cleanText && streamingSkillCalls.length === 0) {
+                  return (
+                    <div className="flex gap-3 mb-4">
+                      <div
+                        className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-bold"
+                        style={{
+                          background: token.colorPrimaryBg,
+                          color: token.colorPrimary,
+                        }}
+                      >
+                        AI
+                      </div>
+                      <div
+                        className="px-3 py-2 rounded-lg text-sm flex items-center gap-2"
+                        style={{
+                          background: token.colorBgContainer,
+                          color: token.colorTextSecondary,
+                        }}
+                      >
+                        <Loader2
+                          size={14}
+                          className="animate-spin"
+                          style={{ color: token.colorPrimary }}
+                        />
+                        <span>AI 正在分析…</span>
+                      </div>
+                    </div>
+                  );
+                }
                 return (
                   <div className="flex gap-3 mb-4">
                     <div
