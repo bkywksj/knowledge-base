@@ -173,6 +173,7 @@ pub fn push<R: Runtime, E: Emitter<R>>(
     // T-S030/T-S031：非 tombstone 笔记收集后用 batch_put_notes 一次性并发上传
     struct PendingUpload {
         note_id: i64,
+        stable_id: String,
         remote_path: String,
         body: String,
         content_hash: String,
@@ -284,6 +285,7 @@ pub fn push<R: Runtime, E: Emitter<R>>(
 
         pending.push(PendingUpload {
             note_id,
+            stable_id: entry.stable_id.clone(),
             remote_path: entry.remote_path.clone(),
             body: body_to_upload,
             content_hash: entry.content_hash.clone(),
@@ -297,6 +299,17 @@ pub fn push<R: Runtime, E: Emitter<R>>(
     // P1-1：标记批量上传是否因远端不可用 / 限流而硬中止；中止时下面会跳过 manifest 写入，
     // 避免 merge(local) 把未成功上传的 entry 也写进远端 manifest（宣告不存在的 .md）。
     let mut upload_aborted = false;
+    // Critical 修复：记录本轮"单条上传失败"的笔记 stable_id 与附件 hash。
+    // 写 manifest 时把它们从 local 视图剔除 —— manifest 是「提交点」，只能宣告确已落到远端的内容。
+    // 否则：失败的 .md/附件仍被写进远端 manifest，对端 pull 会报"文件丢失"；更糟的是
+    // diff_manifests 只比 manifest 里的 content_hash（不看 sync_remote_state），远端 manifest 一旦
+    // 已含该 hash，本端下一轮 push 就不再把它列入 to_push → 该 .md 永远不会重传 → 笔记永久残缺
+    // （仅当用户日后又编辑该笔记、hash 变了才会触发重传）。剔除后本轮 manifest 保持诚实，
+    // 且失败笔记仍留在 to_push，下一轮自动重传，恢复自愈。
+    let mut failed_note_stable_ids: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    let mut failed_attachment_hashes: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     if !pending.is_empty() {
         let total = pending.len();
         let _ = emitter.emit(
@@ -374,6 +387,8 @@ pub fn push<R: Runtime, E: Emitter<R>>(
                         if super::backend_webdav::is_transient_server_err(&msg) {
                             chunk_had_5xx = true;
                         }
+                        // Critical 修复：本条没成功落到远端 → 记下 stable_id，写 manifest 时剔除
+                        failed_note_stable_ids.insert(p.stable_id.clone());
                         result.errors.push(format!("上传失败 {}: {}", p.title, msg));
                     }
                 }
@@ -441,11 +456,15 @@ pub fn push<R: Runtime, E: Emitter<R>>(
         // 上传
         match backend.put_attachment(&att.sha256_hex, &bytes) {
             Ok(_) => result.attachments_uploaded += 1,
-            Err(e) => result.errors.push(format!(
-                "上传附件 {} 失败: {}",
-                short_hash(&att.sha256_hex),
-                e
-            )),
+            Err(e) => {
+                // Critical 修复：附件没落到远端 → 记下 hash，写 manifest 时剔除该附件项
+                failed_attachment_hashes.insert(att.sha256_hex.clone());
+                result.errors.push(format!(
+                    "上传附件 {} 失败: {}",
+                    short_hash(&att.sha256_hex),
+                    e
+                ));
+            }
         }
     }
 
@@ -492,6 +511,25 @@ pub fn push<R: Runtime, E: Emitter<R>>(
         task_categories: vec![],
     };
 
+    // Critical 修复：写 manifest 用的本地视图 —— 剔除本轮上传失败的笔记 / 附件。
+    // 无失败时零拷贝直接借用 local；有失败时 clone 一份再 retain 过滤。
+    let local_for_manifest: std::borrow::Cow<'_, SyncManifestV1> =
+        if failed_note_stable_ids.is_empty() && failed_attachment_hashes.is_empty() {
+            std::borrow::Cow::Borrowed(&local)
+        } else {
+            log::warn!(
+                "[sync_v1] push backend {}: {} 篇笔记 / {} 个附件上传失败，已从本轮远端 manifest 排除（下一轮 push 自动重传）",
+                backend_id,
+                failed_note_stable_ids.len(),
+                failed_attachment_hashes.len()
+            );
+            std::borrow::Cow::Owned(manifest_excluding_failed(
+                &local,
+                &failed_note_stable_ids,
+                &failed_attachment_hashes,
+            ))
+        };
+
     const MANIFEST_WRITE_MAX_ATTEMPTS: u32 = 3;
     let mut last_err: Option<String> = None;
     if upload_aborted {
@@ -516,8 +554,8 @@ pub fn push<R: Runtime, E: Emitter<R>>(
                 break;
             }
         };
-        // 2) merge + write
-        let merged = manifest::merge_manifests(&local, &remote_now);
+        // 2) merge + write（用剔除失败项后的本地视图，manifest 只宣告已落远端的内容）
+        let merged = manifest::merge_manifests(&local_for_manifest, &remote_now);
         if let Err(e) = backend.write_manifest(&merged) {
             last_err = Some(format!("写远端 manifest 失败: {}", e));
             break;
@@ -622,6 +660,24 @@ fn short_hash(hash: &str) -> String {
 #[allow(dead_code)]
 const _MARKER: () = ();
 
+/// Critical 修复辅助（纯函数，便于单测）：从本地 manifest 视图剔除本轮"上传失败"的
+/// 笔记（按 stable_id）与附件（按 hash），得到一份"只宣告已落远端内容"的 manifest。
+///
+/// 之所以必须剔除：manifest 是同步的提交点，`diff_manifests` 只比 manifest 里的 content_hash、
+/// 不看 sync_remote_state。一旦把没上传成功的 .md/附件写进远端 manifest，对端 pull 会报文件丢失，
+/// 且本端下一轮 push 因"远端 manifest 已含该 hash"不再重传 → 永久残缺。剔除后失败项仍留在
+/// to_push，下一轮自动补传。
+fn manifest_excluding_failed(
+    local: &SyncManifestV1,
+    failed_notes: &std::collections::HashSet<String>,
+    failed_atts: &std::collections::HashSet<String>,
+) -> SyncManifestV1 {
+    let mut m = local.clone();
+    m.entries.retain(|e| !failed_notes.contains(&e.stable_id));
+    m.attachments.retain(|a| !failed_atts.contains(&a.hash));
+    m
+}
+
 /// manifest 写后校验用的轻量 fingerprint —— 把所有 entry 按 stable_id 排序后串接
 /// `<id>=<content_hash>;`，再加 attachments 的 hash 列表。返回结果用 sha256 hex 简化对比。
 ///
@@ -721,5 +777,69 @@ mod tests {
         let base_fp = manifest_entries_fingerprint(&base);
         assert_ne!(base_fp, manifest_entries_fingerprint(&plus_entry));
         assert_ne!(base_fp, manifest_entries_fingerprint(&plus_att));
+    }
+
+    // ───────── Critical 修复：manifest 剔除上传失败项 ─────────
+
+    use std::collections::HashSet;
+
+    fn set(items: &[&str]) -> HashSet<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// 失败的笔记 stable_id 应从 manifest.entries 剔除，其余保留
+    #[test]
+    fn excludes_failed_notes_from_manifest() {
+        let local = manifest(
+            vec![entry("a", "h1"), entry("b", "h2"), entry("c", "h3")],
+            vec!["x", "y"],
+        );
+        let out = manifest_excluding_failed(&local, &set(&["b"]), &HashSet::new());
+        let ids: Vec<&str> = out.entries.iter().map(|e| e.stable_id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "c"], "b 上传失败应被剔除");
+        // 附件未失败 → 原样保留
+        assert_eq!(out.attachments.len(), 2);
+    }
+
+    /// 失败的附件 hash 应从 manifest.attachments 剔除，笔记不受影响
+    #[test]
+    fn excludes_failed_attachments_from_manifest() {
+        let local = manifest(vec![entry("a", "h1")], vec!["x", "y", "z"]);
+        let out = manifest_excluding_failed(&local, &HashSet::new(), &set(&["y"]));
+        let hashes: Vec<&str> = out.attachments.iter().map(|a| a.hash.as_str()).collect();
+        assert_eq!(hashes, vec!["x", "z"], "附件 y 上传失败应被剔除");
+        assert_eq!(out.entries.len(), 1, "笔记不受附件失败影响");
+    }
+
+    /// 无失败项 → 内容与输入完全一致（等价于零剔除）
+    #[test]
+    fn excludes_nothing_when_no_failures() {
+        let local = manifest(vec![entry("a", "h1"), entry("b", "h2")], vec!["x"]);
+        let out = manifest_excluding_failed(&local, &HashSet::new(), &HashSet::new());
+        assert_eq!(out.entries.len(), 2);
+        assert_eq!(out.attachments.len(), 1);
+        // fingerprint 一致 = 内容集合未变
+        assert_eq!(
+            manifest_entries_fingerprint(&out),
+            manifest_entries_fingerprint(&local)
+        );
+    }
+
+    /// 笔记 + 附件同时失败：两者都剔除
+    #[test]
+    fn excludes_failed_notes_and_attachments_together() {
+        let local = manifest(
+            vec![entry("a", "h1"), entry("b", "h2")],
+            vec!["x", "y"],
+        );
+        let out = manifest_excluding_failed(&local, &set(&["a"]), &set(&["x"]));
+        assert_eq!(
+            out.entries.iter().map(|e| e.stable_id.as_str()).collect::<Vec<_>>(),
+            vec!["b"]
+        );
+        assert_eq!(
+            out.attachments.iter().map(|a| a.hash.as_str()).collect::<Vec<_>>(),
+            vec!["y"]
+        );
     }
 }

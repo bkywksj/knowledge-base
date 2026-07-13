@@ -275,6 +275,16 @@ export function MobileSync() {
     setProgress(null);
     try {
       const p = await syncV1Api.push(id);
+      // High-3：push 有失败条目（弱网下单条上传失败）→ 不继续 pull。
+      // 后端已保证 manifest 只宣告成功上传的内容，但本地仍有改动没传上去；此时拉取远端只会
+      // 让"本地未传完"的状态更难判断，也给不了用户明确的重试信号。停在这里、提示重试更稳。
+      if (p.errors.length > 0) {
+        const summary = `上传 ${p.uploaded} · ${p.errors.length} 项失败，已暂停拉取，请重试`;
+        message.warning(`同步未完成：${summary}`);
+        void notifySystem("同步未完成", summary);
+        await load();
+        return;
+      }
       const q = await syncV1Api.pull(id);
       const summary =
         `上传 ${p.uploaded} · 下载 ${q.downloaded}` +

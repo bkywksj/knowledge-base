@@ -29,8 +29,9 @@ impl WebDavClient {
         let auth =
             base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", username, password));
         Self {
-            // 复用全局 reqwest Client，避免每次 push/pull 都重建连接池 + TLS 会话
-            client: crate::services::http_client::shared(),
+            // 复用 WebDAV 专用 reqwest Client（带 connect/read 超时）：既避免每次 push/pull 都
+            // 重建连接池 + TLS 会话，又防止移动端弱网下同步请求永久挂起、command 永不返回。
+            client: crate::services::http_client::shared_webdav(),
             base_url: url.trim_end_matches('/').to_string(),
             auth_header: format!("Basic {}", auth),
         }

@@ -15,6 +15,18 @@ use reqwest::Client;
 
 static SHARED: OnceLock<Client> = OnceLock::new();
 static SHARED_NO_PROXY: OnceLock<Client> = OnceLock::new();
+static SHARED_WEBDAV: OnceLock<Client> = OnceLock::new();
+
+/// WebDAV 连接（TCP + TLS 握手）超时。移动网络切换 / 半开连接下，若不设此值，
+/// reqwest 默认**无限等待**建连，整个同步 command 永不返回、前端一直卡"同步中"。
+const WEBDAV_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// WebDAV "两次读之间"的空闲超时（每收到一段响应体就重置）。
+///
+/// 用 `read_timeout` 而非整请求 `timeout`：附件上传/下载可能是几十 MB、本身耗时很长，
+/// 用总时长会误杀正常的大文件传输；而 `read_timeout` 只在"连接卡死、长时间一个字节都不动"
+/// 时才触发 → 既能识别死连接，又不打断"慢但活着"的大文件传输。移动端弱网必备。
+const WEBDAV_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Ollama 流式响应"两次读之间"的空闲超时。
 ///
@@ -31,6 +43,21 @@ const OLLAMA_READ_TIMEOUT: Duration = Duration::from_secs(600);
 /// 全局复用的 reqwest Client，自动走系统代理（reqwest 默认读 `HTTP_PROXY` 等环境变量）。
 pub fn shared() -> &'static Client {
     SHARED.get_or_init(Client::new)
+}
+
+/// WebDAV 同步专用 Client：带 connect / read 空闲超时，避免移动端弱网下同步请求永久挂起。
+///
+/// 独立于 `shared()`：`shared()` 供 AI 流式回复等场景用（那里不能设总超时、也不该被 WebDAV 的
+/// 超时策略影响），故 WebDAV 单开一个池。自动走系统代理（reqwest 默认读环境变量），
+/// 与 `shared()` 行为一致，只是多了超时约束。构建失败时降级回退到无超时 Client（不至于让同步不可用）。
+pub fn shared_webdav() -> &'static Client {
+    SHARED_WEBDAV.get_or_init(|| {
+        Client::builder()
+            .connect_timeout(WEBDAV_CONNECT_TIMEOUT)
+            .read_timeout(WEBDAV_READ_TIMEOUT)
+            .build()
+            .unwrap_or_else(|_| Client::new())
+    })
 }
 
 /// 不走系统代理的 Client，用于 Ollama 等本地/内网服务。
