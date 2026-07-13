@@ -9,7 +9,7 @@ members = ["kb-core", "mcp"]
 
 [package]
 name = "knowledge_base"
-version = "1.20.0"
+version = "1.30.0"
 description = "本地知识库桌面应用 - 全文搜索、双向链接、知识图谱"
 authors = ["抓蛙师"]
 edition = "2021"
