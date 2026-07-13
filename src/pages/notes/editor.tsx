@@ -669,6 +669,75 @@ function sanitizeTitlePaste(raw: string): string {
   return raw.replace(/\s+/g, " ").trim();
 }
 
+/**
+ * 编辑器滚动位置缓存（按 noteId）——内容锚点式，抗图片 / 公式渐进布局。
+ *
+ * 为什么不用纯像素 scrollTop：切回笔记时 TipTap 会 setContent 重建正文，图片(kb-asset://)、
+ * 公式、视频等异步渐进布局，恢复那一刻 scrollHeight 常还没到位；且目标位置「上方」的图片加载
+ * 后会把内容整体下移 → 同一像素值对应的内容变了（用户反馈"有时位置不一样"）。改为记录视口顶部
+ * 所在的「顶层块（段落 / 标题 / 图片…）序号 + 该块顶到视口顶的偏移」，切回后把同一个块滚回原偏移，
+ * 跟着内容走。top 像素值仅作 .ProseMirror 尚未就绪时的兜底。放模块级以跨组件重挂载存活。
+ */
+interface EditorScrollAnchor {
+  /** 视口顶部所在的顶层块在 .ProseMirror 子节点中的序号 */
+  index: number;
+  /** 该块顶边相对滚动容器顶边的偏移（通常 ≤ 0：已滚入该块内部多少像素） */
+  delta: number;
+  /** 兜底：离开时的绝对 scrollTop（.ProseMirror 不可用时用） */
+  top: number;
+}
+const editorScrollPositions = new Map<number, EditorScrollAnchor>();
+
+/** 取 .ProseMirror 的顶层块子节点（正文各段落 / 标题 / 图片等）。 */
+function getEditorBlocks(container: HTMLElement): HTMLElement[] {
+  const pm = container.querySelector<HTMLElement>(".ProseMirror");
+  if (!pm) return [];
+  return Array.from(pm.children) as HTMLElement[];
+}
+
+/** 记录当前视口顶部对应的内容锚点（离开笔记前调用）。 */
+function captureEditorScrollAnchor(container: HTMLElement): EditorScrollAnchor {
+  const top = container.scrollTop;
+  const blocks = getEditorBlocks(container);
+  const cTop = container.getBoundingClientRect().top;
+  // 第一个「底边已越过视口顶」的块 = 视口顶部所在（或紧邻其下）的块
+  for (let i = 0; i < blocks.length; i++) {
+    const r = blocks[i].getBoundingClientRect();
+    if (r.bottom - cTop > 0) {
+      return { index: i, delta: r.top - cTop, top };
+    }
+  }
+  return { index: Math.max(0, blocks.length - 1), delta: 0, top };
+}
+
+/**
+ * 按锚点把对应块滚回原偏移。返回 true=已按锚点定位成功；false=正文还没渲染出块（需重试）。
+ */
+function applyEditorScrollAnchor(
+  container: HTMLElement,
+  anchor: EditorScrollAnchor,
+): boolean {
+  const pm = container.querySelector<HTMLElement>(".ProseMirror");
+  if (!pm || pm.children.length === 0) {
+    // 正文尚未渲染出任何块：先用像素兜底占位，返回 false 让调用方继续重试锚点
+    container.scrollTop = anchor.top;
+    return false;
+  }
+  // 直接按 index 取块，避免每次 Array.from(pm.children) 的 O(N) 构建
+  const block = pm.children.item(
+    Math.min(anchor.index, pm.children.length - 1),
+  ) as HTMLElement | null;
+  if (!block) {
+    container.scrollTop = anchor.top;
+    return false;
+  }
+  // 先读后写，位移 < 1px 不写 —— 减少无谓的 scrollTop 写入与后续布局失效
+  const cTop = container.getBoundingClientRect().top;
+  const adjust = block.getBoundingClientRect().top - cTop - anchor.delta;
+  if (Math.abs(adjust) >= 1) container.scrollTop += adjust;
+  return true;
+}
+
 function DesktopNoteEditorPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -807,6 +876,69 @@ function DesktopNoteEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteId]);
 
+  // 恢复某篇笔记的滚动位置（在其正文加载完成后调用，见 loadData）。
+  // 用内容锚点定位。为避免卡顿：不再用 ResizeObserver 高频 reassert（那会在图片/公式渐进
+  // 布局期把「读 getBoundingClientRect → 写 scrollTop」放大成布局抖动），改为在切换后离散地
+  // 校正少数几次（首帧 + 80/200/450/800ms），覆盖本地图片渐进加载窗口，成本极低。
+  // loadSeqRef 守卫：期间用户又切走则放弃；用户一动即停，绝不和用户操作打架。
+  const restoreScrollForNote = useCallback((targetId: number) => {
+    const el = editorBodyRef.current;
+    if (!el) return;
+    const anchor = editorScrollPositions.get(targetId);
+    // 无记录（首次打开该笔记）→ 回到顶部，不做后续校正
+    if (!anchor) {
+      el.scrollTop = 0;
+      return;
+    }
+
+    let stopped = false;
+    const timers: number[] = [];
+
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      for (const t of timers) clearTimeout(t);
+      el.removeEventListener("wheel", onUserScroll);
+      el.removeEventListener("touchmove", onUserScroll);
+      el.removeEventListener("keydown", onUserScroll);
+    };
+
+    // 用户一旦主动滚动 / 翻页，立即停止自动校正。只监听 wheel/touchmove/keydown（用户输入）——
+    // 我们自己的程序化 scrollTop 修改不触发这三者，不会误判为"用户滚动"而自我取消。
+    function onUserScroll() {
+      stop();
+    }
+
+    const correctOnce = () => {
+      if (stopped) return;
+      if (loadSeqRef.current !== targetId) {
+        stop(); // 已切到别的笔记
+        return;
+      }
+      const node = editorBodyRef.current;
+      if (!node) {
+        stop();
+        return;
+      }
+      applyEditorScrollAnchor(node, anchor);
+    };
+
+    el.addEventListener("wheel", onUserScroll, { passive: true });
+    el.addEventListener("touchmove", onUserScroll, { passive: true });
+    el.addEventListener("keydown", onUserScroll);
+
+    // 首帧再校正：restoreScrollForNote 在 loadData 里同步调用时 React/TipTap 尚未把新正文提交到
+    // DOM，推迟到下一帧才作用在新内容上；随后几次定时校正吸收图片渐进布局带来的高度变化。
+    requestAnimationFrame(() => {
+      if (stopped) return;
+      correctOnce();
+      for (const d of [80, 200, 450, 800]) {
+        timers.push(window.setTimeout(correctOnce, d));
+      }
+      timers.push(window.setTimeout(stop, 1000)); // 收尾：撤监听
+    });
+  }, []);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     loadSeqRef.current = noteId; // 标记当前活跃笔记，供后台元数据加载做竞态守卫
@@ -840,6 +972,8 @@ function DesktopNoteEditorPage() {
       }
       // 正文已就绪，立即放行渲染（编辑器先挂起来）。
       setLoading(false);
+      // 正文就绪后恢复上次浏览的滚动位置（切回同一篇笔记不再回到开头）
+      restoreScrollForNote(noteId);
 
       // ── 次要元数据：标签 / 文件夹 / 笔记标签 / 反链 ──
       // 非关键路径，后台并行加载；失败只告警不影响正文。竞态由 cancelled 守卫拦截，
@@ -865,11 +999,23 @@ function DesktopNoteEditorPage() {
       navigate("/notes");
       setLoading(false);
     }
-  }, [noteId, navigate, openTab, getDraft, clearDraft, setTabDirty]);
+  }, [noteId, navigate, openTab, getDraft, clearDraft, setTabDirty, restoreScrollForNote]);
 
   useEffect(() => {
     if (id) loadData();
   }, [id, loadData]);
+
+  // ── 保持浏览位置（A/B 之 B）：切 tab / 跳转离开当前笔记前，记下滚动位置 ──
+  // cleanup 用「离开的那篇」noteId 闭包执行，此刻内容尚未被下一篇替换，scrollTop 真实有效。
+  useEffect(() => {
+    return () => {
+      const el = editorBodyRef.current;
+      if (el && Number.isFinite(noteId)) {
+        editorScrollPositions.set(noteId, captureEditorScrollAnchor(el));
+      }
+    };
+  }, [noteId]);
+
 
   // 订阅全局 folders/tags tick：侧边栏/标签页 CRUD 后局部刷新下拉选项，
   // 无需关闭重开 tab。用 ref 跳过首次渲染，避免与 loadData 重复请求。
@@ -1780,7 +1926,10 @@ function DesktopNoteEditorPage() {
     setTabDirty(noteId, true);
   }
 
-  if (loading) {
+  // spinner 只在「冷启动首次加载」（还没有任何笔记内容）时整屏显示。
+  // 切换已打开的 tab 时 note 仍是上一篇（非空）→ 不闪 spinner，编辑器保持挂载、
+  // 正文就绪后原地替换 + 恢复滚动位置，消除"重新加载"观感。
+  if (loading && !note) {
     return (
       <div className="editor-page">
         <div className="flex items-center justify-center flex-1">
