@@ -119,6 +119,11 @@ git push github master       # GitHub 主（CI 触发源 + 海外镜像）
 | `caps` | Capabilities 权限配置 |
 | `deps` | 依赖更新 |
 
+### 多行提交信息
+
+首选：Write 一个 UTF-8 无 BOM 文件 → `git commit -F <文件>`（用后删，shell 无关、中文不乱码）。
+🔴 `@'...'@` 是 PowerShell here-string，只能在 PowerShell 工具用；放进 Bash 会在 message 头尾各粘一行 `@`。
+
 ---
 
 ## 发布流程（CI 全自动模式）
