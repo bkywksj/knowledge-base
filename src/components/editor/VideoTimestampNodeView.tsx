@@ -14,7 +14,9 @@ import { jumpToVideoTimestamp } from "./VideoTimestamp";
 export function VideoTimestampNodeView({ node }: NodeViewProps) {
   const videoId: string = String(node.attrs.videoId ?? "");
   const seconds: number = Number(node.attrs.seconds ?? 0);
+  const endSeconds: number = Number(node.attrs.endSeconds ?? 0);
   const label: string = String(node.attrs.label ?? "");
+  const isRange = endSeconds > seconds;
 
   const [exists, setExists] = useState(true);
 
@@ -35,8 +37,11 @@ export function VideoTimestampNodeView({ node }: NodeViewProps) {
 
   const displayText = useMemo(() => {
     if (!exists) return label || "📹 视频已删除";
-    return label || `📹 ${formatTime(seconds)}`;
-  }, [exists, label, seconds]);
+    if (label) return label;
+    return isRange
+      ? `📹 ${formatTime(seconds)}→${formatTime(endSeconds)}`
+      : `📹 ${formatTime(seconds)}`;
+  }, [exists, label, seconds, endSeconds, isRange]);
 
   function handleClick(e: React.MouseEvent) {
     e.preventDefault();
@@ -45,20 +50,27 @@ export function VideoTimestampNodeView({ node }: NodeViewProps) {
       message.warning("绑定的视频已被删除");
       return;
     }
-    const result = jumpToVideoTimestamp(videoId, seconds);
+    const result = jumpToVideoTimestamp(videoId, seconds, document, endSeconds);
     if (!result.ok) {
       message.warning(`跳转失败：${result.reason ?? "unknown"}`);
     }
   }
 
+  const titleText = exists
+    ? isRange
+      ? `播放 ${formatTime(seconds)}→${formatTime(endSeconds)}（到终点自动暂停）`
+      : `跳转到 ${formatTime(seconds)}`
+    : "视频已删除";
+
   return (
     <NodeViewWrapper
       as="span"
-      className={`video-ts-chip${exists ? "" : " video-ts-chip-broken"}`}
+      className={`video-ts-chip${isRange ? " video-ts-chip-range" : ""}${exists ? "" : " video-ts-chip-broken"}`}
       data-video-id={videoId}
       data-seconds={seconds}
+      data-end-seconds={isRange ? endSeconds : undefined}
       onClick={handleClick}
-      title={exists ? `跳转到 ${formatTime(seconds)}` : "视频已删除"}
+      title={titleText}
     >
       {displayText}
     </NodeViewWrapper>

@@ -32,6 +32,8 @@ declare module "@tiptap/core" {
         videoId: string;
         seconds: number;
         label: string;
+        /** 区间终点秒数；> seconds 时为「A→B 区间时间戳」，否则为单点 */
+        endSeconds?: number;
       }) => ReturnType;
     };
   }
@@ -69,6 +71,19 @@ export const VideoTimestamp = Node.create<VideoTimestampOptions>({
         renderHTML: (attrs) => ({
           "data-seconds": String(attrs.seconds ?? 0),
         }),
+      },
+      // 区间终点秒数；> seconds 时为「A→B 区间」，0 表示单点（不写属性以保持旧数据兼容）
+      endSeconds: {
+        default: 0,
+        parseHTML: (el) => {
+          const raw = (el as HTMLElement).getAttribute("data-end-seconds") ?? "0";
+          const n = parseInt(raw, 10);
+          return Number.isFinite(n) ? n : 0;
+        },
+        renderHTML: (attrs) => {
+          const n = Number(attrs.endSeconds ?? 0);
+          return n > 0 ? { "data-end-seconds": String(n) } : {};
+        },
       },
       label: {
         default: "",
@@ -110,6 +125,7 @@ export const VideoTimestamp = Node.create<VideoTimestampOptions>({
             attrs: {
               videoId: options.videoId,
               seconds: options.seconds,
+              endSeconds: options.endSeconds ?? 0,
               label: options.label,
             },
           }),
@@ -120,7 +136,7 @@ export const VideoTimestamp = Node.create<VideoTimestampOptions>({
 /** 工具栏 / VideoNode 调用：插入时间戳节点 + 后跟一个空格便于继续输入 */
 export function insertVideoTimestamp(
   editor: Editor,
-  options: { videoId: string; seconds: number; label: string },
+  options: { videoId: string; seconds: number; label: string; endSeconds?: number },
 ): void {
   editor
     .chain()
@@ -128,7 +144,7 @@ export function insertVideoTimestamp(
     .insertContent([
       {
         type: "videoTimestamp",
-        attrs: options,
+        attrs: { ...options, endSeconds: options.endSeconds ?? 0 },
       },
       { type: "text", text: " " },
     ])
@@ -145,6 +161,7 @@ export function jumpToVideoTimestamp(
   videoId: string,
   seconds: number,
   rootEl: HTMLElement | Document = document,
+  endSeconds = 0,
 ): { ok: boolean; reason?: string } {
   if (!videoId) return { ok: false, reason: "missing videoId" };
   const block = rootEl.querySelector<HTMLElement>(`[data-video-id="${cssEscape(videoId)}"]`);
@@ -153,6 +170,13 @@ export function jumpToVideoTimestamp(
   if (!video) return { ok: false, reason: "video element missing" };
 
   block.scrollIntoView({ behavior: "smooth", block: "center" });
+
+  // 先清掉上一次可能残留的区间自动暂停监听（切换 chip / 单点跳转时避免旧监听误触发）
+  clearRangeStop(video);
+  // 区间模式：终点 > 起点时，装 timeupdate 监听，播到 B 自动暂停
+  const isRange = endSeconds > seconds;
+  if (isRange) installRangeStop(video, endSeconds);
+
   try {
     video.currentTime = Math.max(0, seconds);
     void video.play().catch(() => {
@@ -176,6 +200,33 @@ export function jumpToVideoTimestamp(
   block.setAttribute("data-highlight", "true");
   window.setTimeout(() => block.removeAttribute("data-highlight"), 1200);
   return { ok: true };
+}
+
+/** 视频元素上挂载的区间自动暂停监听（挂在元素本身，供切换/单点跳转时清理，避免多监听叠加） */
+interface RangeStopVideo extends HTMLVideoElement {
+  __kbRangeStop?: (() => void) | null;
+}
+
+/** 移除该视频上已装的区间自动暂停监听（若有） */
+function clearRangeStop(video: HTMLVideoElement): void {
+  const v = video as RangeStopVideo;
+  if (v.__kbRangeStop) {
+    v.removeEventListener("timeupdate", v.__kbRangeStop);
+    v.__kbRangeStop = null;
+  }
+}
+
+/** 给视频装「播放到 endSeconds 自动暂停」监听：到点即 pause 并自我卸载 */
+function installRangeStop(video: HTMLVideoElement, endSeconds: number): void {
+  const v = video as RangeStopVideo;
+  const stop = () => {
+    if (v.currentTime >= endSeconds) {
+      v.pause();
+      clearRangeStop(v);
+    }
+  };
+  v.__kbRangeStop = stop;
+  v.addEventListener("timeupdate", stop);
 }
 
 /** 简易 CSS.escape polyfill（id 限定 base36，不含特殊字符；安全起见仍走一遍） */

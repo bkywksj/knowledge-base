@@ -1963,6 +1963,24 @@ body,
   border-color: color-mix(in srgb, var(--ant-color-text, #000) 15%, transparent);
   text-decoration: line-through;
 }
+/* A→B 区间时间戳：用紫色区分于单点（蓝色），数字等宽避免跳动 */
+.video-ts-chip-range {
+  background: color-mix(in srgb, #722ed1 12%, transparent);
+  color: #722ed1;
+  border-color: color-mix(in srgb, #722ed1 32%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.video-ts-chip-range:hover {
+  background: color-mix(in srgb, #722ed1 22%, transparent);
+}
+[data-theme-category="dark"] .video-ts-chip-range {
+  color: #b37feb;
+}
+/* 加区间「两次打点」进行中：起点按钮 + 取消 X 成组 */
+.tiptap-video-range-pending {
+  display: inline-flex;
+  align-items: center;
+}
 
 [data-theme-category="dark"] .tiptap-video-block {
   border-color: color-mix(in srgb, var(--ant-color-text, #fff) 12%, transparent);

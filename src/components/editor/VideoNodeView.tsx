@@ -11,7 +11,7 @@
 import { useMemo, useRef, useState, type ChangeEvent } from "react";
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import { Button, Input, Tooltip, message } from "antd";
-import { MapPin, Pencil, Check, X } from "lucide-react";
+import { MapPin, Pencil, Check, X, Scissors } from "lucide-react";
 import { insertVideoTimestamp } from "./VideoTimestamp";
 
 export function VideoNodeView({ node, updateAttributes, editor, getPos }: NodeViewProps) {
@@ -21,6 +21,8 @@ export function VideoNodeView({ node, updateAttributes, editor, getPos }: NodeVi
 
   const [editingLabel, setEditingLabel] = useState(false);
   const [labelInput, setLabelInput] = useState(label);
+  // 区间时间戳「两次打点」的待定起点：null=未开始；数字=已记起点 A，等第二次点记终点 B
+  const [rangeStart, setRangeStart] = useState<number | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   /** 自动编号：本节点在 doc 中是第几个 video（从 1 开始） */
@@ -70,6 +72,51 @@ export function VideoNodeView({ node, updateAttributes, editor, getPos }: NodeVi
       label: `📹 ${displayLabel} · ${formatTime(seconds)}`,
     });
     message.success(`已插入时间戳：${formatTime(seconds)}`);
+  }
+
+  /**
+   * 区间时间戳「两次打点」：
+   *  - 第一次点击：记当前播放位置为起点 A
+   *  - 第二次点击：记当前播放位置为终点 B，插入 A→B 区间 chip（点它会从 A 播到 B 自动暂停）
+   * 终点早于起点时自动对调容错；终点==起点时提示。
+   */
+  function handleAddRange() {
+    const v = videoRef.current;
+    if (!v) {
+      message.error("视频还未加载，请稍后再试");
+      return;
+    }
+    if (!id) {
+      message.error("视频缺少 ID，请重新插入视频");
+      return;
+    }
+    const now = Math.floor(v.currentTime);
+
+    // 第一次点击：记起点
+    if (rangeStart === null) {
+      setRangeStart(now);
+      message.info(`已标记区间起点 ${formatTime(now)}，播到终点后再点一次`);
+      return;
+    }
+
+    // 第二次点击：记终点并插入区间
+    let start = rangeStart;
+    let end = now;
+    if (end === start) {
+      message.warning("终点与起点相同，请播放一段后再标记终点");
+      return;
+    }
+    if (end < start) {
+      [start, end] = [end, start]; // 终点在起点前 → 对调容错
+    }
+    insertVideoTimestamp(editor, {
+      videoId: id,
+      seconds: start,
+      endSeconds: end,
+      label: `📹 ${displayLabel} · ${formatTime(start)}→${formatTime(end)}`,
+    });
+    message.success(`已插入区间：${formatTime(start)}→${formatTime(end)}`);
+    setRangeStart(null);
   }
 
   // 阻止 toolbar mousedown 把焦点给 ProseMirror（点选项时光标乱跳）
@@ -128,6 +175,40 @@ export function VideoNodeView({ node, updateAttributes, editor, getPos }: NodeVi
                 加时间戳
               </Button>
             </Tooltip>
+            {rangeStart === null ? (
+              <Tooltip title="🎬 标记区间起点，播到终点后再点一次，生成 A→B 区间时间戳">
+                <Button
+                  size="small"
+                  type="text"
+                  icon={<Scissors size={14} />}
+                  onClick={handleAddRange}
+                >
+                  加区间
+                </Button>
+              </Tooltip>
+            ) : (
+              <span className="tiptap-video-range-pending">
+                <Tooltip title={`起点已记 ${formatTime(rangeStart)}，播到终点后点此结束`}>
+                  <Button
+                    size="small"
+                    type="text"
+                    danger
+                    icon={<Scissors size={14} />}
+                    onClick={handleAddRange}
+                  >
+                    标记终点（{formatTime(rangeStart)}→）
+                  </Button>
+                </Tooltip>
+                <Tooltip title="取消区间标记">
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={<X size={14} />}
+                    onClick={() => setRangeStart(null)}
+                  />
+                </Tooltip>
+              </span>
+            )}
           </>
         )}
       </div>
