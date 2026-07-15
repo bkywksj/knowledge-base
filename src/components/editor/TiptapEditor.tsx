@@ -94,15 +94,21 @@ function isTableMarkdownSerializable(node: any): boolean {
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const hasSpan = (c: any) => c.attrs.colspan > 1 || c.attrs.rowspan > 1;
-  // 单元格只有是「单个段落」时才能塞进 GFM 管道语法。
+  // 单元格只有是「单个段落且不含管道符」时才能塞进 GFM 管道语法。
   // - childCount > 1：多段落，管道语法表达不了（原版 tiptap-markdown 已判）。
   // - childCount === 1 但首子非 paragraph：代码块 / 列表 / 引用 / 嵌套表格等块级内容。
   //   尤其**代码块**的 ``` 围栏和换行会直接撑破 `| … |` 单行结构，存出的 markdown
   //   表格损坏、重开后 markdown-it 还原不回来（表格错乱 / 代码丢失）。
-  // 这两类一律判为「不可 markdown 序列化」→ 回退 HTML 序列化（html:true 下可完整往返）。
+  // - 文本含管道符 `|`：GFM 里 `|` 是列分隔符，prosemirror-markdown 默认不转义它
+  //   （未配 escapeExtraCharacters），单元格里的 `|` 会被当成新列 → 表格错位。代码中的
+  //   `||`（逻辑或）/ 位运算 `|` 尤其常见。含 `|` 的 cell 一律走 HTML 回退。
+  // 这三类一律判为「不可 markdown 序列化」→ 回退 HTML 序列化（html:true 下可完整往返；
+  // 回退路径的空行截断问题已用 &#10; 修复，安全）。
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cellNotInlineOnly = (c: any) =>
-    c.childCount > 1 || (c.firstChild != null && c.firstChild.type.name !== "paragraph");
+    c.childCount > 1 ||
+    (c.firstChild != null && c.firstChild.type.name !== "paragraph") ||
+    (typeof c.textContent === "string" && c.textContent.includes("|"));
   if (
     cellsOf(firstRow).some(
       (c) => c.type.name !== "tableHeader" || hasSpan(c) || cellNotInlineOnly(c),
@@ -151,7 +157,20 @@ const TableWithMarkdown = Table.extend({
             htmlAllowed
           ) {
             const html = getHTMLFromFragment(Fragment.from(node), node.type.schema);
-            state.write(html);
+            // 🔴 关键：把回退 HTML 里的字面换行全部换成 &#10;（HTML 数字字符引用），
+            // 使整段 <table> HTML 成为「单行、无空行」的一块。
+            //
+            // 为什么必须这么做：单元格里放代码块 / 多行内容时，<pre> 文本会带真实换行，
+            // 代码里只要有一个空行（如函数体前的空行），markdown-it 会按 CommonMark
+            // 「HTML 块(type 6，由 <table> 起始)遇空行即终止」的规则，在那个空行处**提前
+            // 结束** <table> 块，后半段被当普通 Markdown 重新解析 —— 4 空格缩进行变成缩进
+            // 代码块、横幅行变成段落，一段表格内容被拆成「代码+文本+代码」。实测复现无误。
+            //
+            // &#10; 在 <pre> 渲染时仍是换行，Tiptap 用 DOMParser 读回也解码回 \n，
+            // 因此代码/多行内容无损往返；而源码层面已无字面换行 → markdown-it 视为单个
+            // 完整 HTML 块，不再被拦腰截断。
+            const singleLineHtml = html.replace(/\r\n?|\n/g, "&#10;");
+            state.write(singleLineHtml);
             state.closeBlock(node);
             return;
           }
@@ -222,6 +241,73 @@ import { Columns, Column } from "./Columns";
 import "tippy.js/dist/tippy.css";
 
 const lowlight = createLowlight(common);
+
+/**
+ * 启发式判断一段"纯文本"像不像代码，用于粘贴时决定是否包成代码块。
+ *
+ * 目标是**高精确率**：宁可漏判（当普通文本走默认粘贴），也不要把用户想要的 Markdown 正文
+ * 误判成代码块。判定顺序：
+ *  1. 必须多行——单行一律不处理。
+ *  2. 强代码信号（缩进结构 / 代码 token 行占比高）命中 → 直接判是。
+ *     这一步要**先于** markdown 排除：C 注释横幅 ` * xxx` 会被 CommonMark 误当无序列表项，
+ *     不能因这种误判把明显是代码的内容放走。
+ *  3. borderline：若整体更像 markdown 文档（大量 #/>/表格/有序列表/围栏行）→ 判否，尊重
+ *     markdown 粘贴；否则按较弱的缩进/token 信号收尾判定。
+ */
+function looksLikeCode(text: string): boolean {
+  const lines = text.split(/\r?\n/);
+  const nonEmpty = lines.filter((l) => l.trim().length > 0);
+  if (lines.length < 2 || nonEmpty.length < 2) return false;
+
+  // 缩进行：制表符 或 ≥2 空格 起头且有实际内容
+  const indented = nonEmpty.filter((l) => /^(\t| {2,})\S/.test(l)).length;
+  // 代码符号：行尾分号 / 花括号、C 注释 /* */ //
+  const codeSymbol = /[;{}]\s*$|[{}]|\/\*|\*\/|\/\//;
+  // 代码关键字 / 运算符
+  const codeKeyword =
+    /=>|->|::|==|!=|>=|<=|&&|\|\||#include|#define|\bfunction\b|\breturn\b|\bdef\s|\bclass\s|\bconst\s|\blet\s|\bvar\s|\bimport\s|\bpublic\b|\bprivate\b|\bvoid\b|\bif\s*\(|\bfor\s*\(|\bwhile\s*\(|\bswitch\s*\(/;
+  const tokenLines = nonEmpty.filter(
+    (l) => codeSymbol.test(l) || codeKeyword.test(l),
+  ).length;
+  const indentRatio = indented / nonEmpty.length;
+  const tokenRatio = tokenLines / nonEmpty.length;
+
+  // 强代码：缩进结构明显 或 代码符号/关键字密集
+  if (indentRatio >= 0.4 || tokenRatio >= 0.5) return true;
+
+  // markdown 文档特征（标题/引用/表格/有序列表/围栏）。故意不含无序列表 `* ` —— 会与
+  // C 注释横幅 ` * ` 混淆；真无序列表本就缺代码信号，会在下面自然判否。
+  const mdDoc = nonEmpty.filter(
+    (l) => /^\s{0,3}(#{1,6}\s|>\s|\d+\.\s|\|)/.test(l) || /^\s*```/.test(l),
+  ).length;
+  if (mdDoc / nonEmpty.length >= 0.3) return false;
+
+  return (
+    indentRatio >= 0.25 ||
+    tokenRatio >= 0.35 ||
+    (indented >= 2 && tokenLines >= 2)
+  );
+}
+
+/**
+ * 用 lowlight.highlightAuto 猜代码语言；relevance 太低时返回 null（交给代码块 NodeView
+ * 的防抖自动识别去"建议"，避免写死一个错误语言导致高亮更乱）。
+ */
+function detectCodeLanguage(text: string): string | null {
+  try {
+    const res = lowlight.highlightAuto(text) as {
+      data?: { language?: string };
+      relevance?: number;
+    };
+    const lang = res.data?.language;
+    if (lang && (res.relevance ?? 0) >= 5 && lowlight.listLanguages().includes(lang)) {
+      return lang;
+    }
+  } catch {
+    // 检测失败静默
+  }
+  return null;
+}
 
 /**
  * T-011 自定义 markdown → Math 节点迁移
@@ -1651,11 +1737,45 @@ export function TiptapEditor({
         // Tauri WebView 加载不了（CSP / 防盗链）→ 破图且不落本地。这里不拦截（仍走默认插入），
         // 下一拍把这些远程图抓回本地、改写 src 为 kb-asset://。
         const plainText = dt?.getData("text/plain") ?? "";
-        if (/!\[[^\]]*\]\(\s*(https?:\/\/|data:image\/)/i.test(plainText)) {
+        const isMarkdownImageText = /!\[[^\]]*\]\(\s*(https?:\/\/|data:image\/)/i.test(
+          plainText,
+        );
+        if (isMarkdownImageText) {
           setTimeout(() => {
             void localizeRemoteImagesInEditor(editor);
           }, 0);
           // 注意：不 return，继续走 ProseMirror 默认逻辑把 markdown 解析插入
+        }
+
+        // 场景 F：纯文本代码 → 包成代码块，绕开 markdown 往返。
+        // 背景：笔记以 Markdown 存储，纯文本代码当普通文本粘贴时，4 空格缩进会被 CommonMark
+        // 当成缩进代码块、行首 `*` 当成列表 —— 保存往返后一段被拆成"代码+文本+代码"。
+        // 触发条件（保守，防误伤）：设置开启 + 剪贴板无富文本 HTML（有 HTML 说明是富文本粘贴，
+        // 尊重原格式）+ 不是 markdown 图片文本 + 启发式判定像代码。
+        if (
+          useAppStore.getState().pasteCodeAsBlock &&
+          !html.trim() &&
+          !isMarkdownImageText &&
+          plainText.trim().length > 0 &&
+          looksLikeCode(plainText)
+        ) {
+          // 归一化换行 + 去掉整体尾部空白，避免代码块末尾多一空行
+          const code = plainText.replace(/\r\n?/g, "\n").replace(/\s+$/, "");
+          const language = detectCodeLanguage(code);
+          editor
+            .chain()
+            .focus()
+            .insertContent({
+              type: "codeBlock",
+              attrs: { language },
+              content: [{ type: "text", text: code }],
+            })
+            .run();
+          message.success({
+            content: "已识别为代码并粘贴为代码块（Ctrl+Z 撤销）",
+            duration: 2,
+          });
+          return true;
         }
 
         return false;

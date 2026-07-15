@@ -372,6 +372,14 @@ interface AppStore {
   autoSaveEnabled: boolean;
   /** 自动保存防抖延迟（毫秒，持久化） */
   autoSaveDelay: number;
+  /**
+   * 粘贴多行"代码样文本"时自动识别并包成代码块（持久化）。
+   * 背景：笔记正文以 Markdown 存储，保存 = HTML→MD→HTML 往返。把 C/JS 等代码当普通文本
+   * 粘贴时，4 空格缩进会被 CommonMark 当成缩进代码块、行首 `*` 被当成列表 —— 一段被拆碎。
+   * 开启后：仅当剪贴板是纯文本（无富文本 HTML）且启发式判定像代码时，直接插入代码块，
+   * 绕开 markdown 解析，缩进/星号原样保留。默认开启；关掉则恢复"纯文本走 markdown 解析"。
+   */
+  pasteCodeAsBlock: boolean;
   /** 打开笔记时的默认查看模式（持久化）。'edit' = 编辑模式（默认），'read' = 阅读模式（隐藏工具栏，不可编辑） */
   defaultViewMode: "edit" | "read";
   /** 待办模块默认视图（列表/看板/四象限/日历/甘特）：打开待办页时的初始视图，持久化 */
@@ -588,6 +596,8 @@ interface AppStore {
   setAutoSaveEnabled: (on: boolean) => void;
   /** 设置自动保存防抖延迟（毫秒，会 clamp 到 [500, 30000]） */
   setAutoSaveDelay: (ms: number) => void;
+  /** 切换/设置"粘贴代码自动包成代码块"开关 */
+  setPasteCodeAsBlock: (on: boolean) => void;
   /** 设置默认查看模式（edit / read） */
   setDefaultViewMode: (mode: "edit" | "read") => void;
   setTasksDefaultView: (
@@ -776,6 +786,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   uiScaleUserSet: false,
   autoSaveEnabled: false,
   autoSaveDelay: AUTO_SAVE_DELAY_DEFAULT,
+  pasteCodeAsBlock: true,
   defaultViewMode: "edit",
   tasksDefaultView: "list",
   outlineVisible: true,
@@ -1088,6 +1099,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ uiScale: suggestUiScale(), uiScaleUserSet: false });
   },
   setAutoSaveEnabled: (on) => set({ autoSaveEnabled: !!on }),
+  setPasteCodeAsBlock: (on) => set({ pasteCodeAsBlock: !!on }),
   setAutoSaveDelay: (ms) => {
     const clamped = Math.max(500, Math.min(30000, Math.round(Number(ms) || AUTO_SAVE_DELAY_DEFAULT)));
     set({ autoSaveDelay: clamped });
@@ -1580,6 +1592,11 @@ export async function loadThemeFromStore() {
     if (typeof ase === "boolean") {
       useAppStore.getState().setAutoSaveEnabled(ase);
     }
+    // 恢复"粘贴代码自动包代码块"偏好（默认开启，老用户升级后无此键 → 保持默认 true）
+    const pcab = await store.get<boolean>("pasteCodeAsBlock");
+    if (typeof pcab === "boolean") {
+      useAppStore.getState().setPasteCodeAsBlock(pcab);
+    }
     const asd = await store.get<number>("autoSaveDelay");
     if (typeof asd === "number" && Number.isFinite(asd)) {
       useAppStore.getState().setAutoSaveDelay(asd);
@@ -1700,6 +1717,7 @@ export async function saveThemeToStore() {
       uiScaleUserSet,
       autoSaveEnabled,
       autoSaveDelay,
+      pasteCodeAsBlock,
       defaultViewMode,
       tasksDefaultView,
       outlineVisible,
@@ -1740,6 +1758,7 @@ export async function saveThemeToStore() {
     await store.set("uiScaleUserSet", uiScaleUserSet);
     await store.set("autoSaveEnabled", autoSaveEnabled);
     await store.set("autoSaveDelay", autoSaveDelay);
+    await store.set("pasteCodeAsBlock", pasteCodeAsBlock);
     await store.set("defaultViewMode", defaultViewMode);
     await store.set("tasksDefaultView", tasksDefaultView);
     await store.set("outlineVisible", outlineVisible);

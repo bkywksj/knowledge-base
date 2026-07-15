@@ -634,6 +634,10 @@ function DesktopSettingsPage() {
   const setAutoSaveEnabled = useAppStore((s) => s.setAutoSaveEnabled);
   const setAutoSaveDelay = useAppStore((s) => s.setAutoSaveDelay);
 
+  // 粘贴代码自动包成代码块偏好
+  const pasteCodeAsBlock = useAppStore((s) => s.pasteCodeAsBlock);
+  const setPasteCodeAsBlock = useAppStore((s) => s.setPasteCodeAsBlock);
+
   // 默认查看模式（打开笔记时默认是"编辑"还是"阅读"）
   const defaultViewMode = useAppStore((s) => s.defaultViewMode);
   const setDefaultViewMode = useAppStore((s) => s.setDefaultViewMode);
@@ -2099,6 +2103,22 @@ function DesktopSettingsPage() {
               value: ms,
               label: `${(ms / 1000).toFixed(ms % 1000 === 0 ? 0 : 1)} 秒${ms === 1500 ? "（默认）" : ""}`,
             }))}
+          />
+        </div>
+        <div
+          className="flex items-center justify-between py-1 mt-2"
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
+        >
+          <div>
+            <div>粘贴代码自动识别为代码块</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              粘贴多行"像代码"的纯文本时，自动包成代码块，避免笔记保存往返（HTML↔Markdown）
+              时缩进/星号被当成 markdown 语法拆碎。仅对无格式的纯文本生效，富文本粘贴不受影响。
+            </Text>
+          </div>
+          <Switch
+            checked={pasteCodeAsBlock}
+            onChange={setPasteCodeAsBlock}
           />
         </div>
       </Card>
