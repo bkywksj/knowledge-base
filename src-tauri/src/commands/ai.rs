@@ -554,13 +554,16 @@ pub fn archive_ai_conversation_to_note(
         .filter(|s| !s.is_empty())
         .unwrap_or(conv.title);
 
-    // markdown 包成 <p>…</p> 简单 HTML 让 Tiptap 显示出来；编辑器开 Markdown 解析后会自动渲染
-    let html = format!("<p>{}</p>", md.replace('\n', "<br/>"));
-
+    // 直接把拼好的 markdown 作为笔记正文落库。
+    // Tiptap 加载笔记时走 tiptap-markdown 的 setContent（markdown-it 解析），
+    // 传裸 markdown 才会渲染成标题/表格/分割线等。
+    // 【历史坑】旧实现把 md 包成 `<p>…<br/>…</p>` 再存：markdown-it（html:true）会把
+    // 以 <p> 开头的内容当作原始 HTML 块整段透传，导致里面的 `##`/`|`/`---` 全部
+    // 以源码字面显示（编辑器里看到一片 markdown 源码）。去掉 HTML 包裹即修复。
     let note = db
         .create_note(&NoteInput {
             title: final_title,
-            content: html,
+            content: md,
             folder_id,
         })
         .map_err(|e| e.to_string())?;
