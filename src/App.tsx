@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { ConfigProvider, theme, App as AntdApp, message } from "antd";
+import GlobalNativeTooltip from "@/components/GlobalNativeTooltip";
 import zhCN from "antd/locale/zh_CN";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -167,6 +168,7 @@ function App() {
           {IS_MAIN_WINDOW && <TaskReminderListener />}
         </ErrorBoundary>
       </AntdApp>
+      <GlobalNativeTooltip />
     </ConfigProvider>
   );
 }

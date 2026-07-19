@@ -241,3 +241,15 @@ function ItemList() {
 | 不考虑深色模式 | 使用 CSS 变量 + prefers-color-scheme |
 | 使用绝对像素布局 | 使用 flexbox/grid 响应式布局 |
 | 组件过大不拆分 | 按功能拆分为 < 200 行的小组件 |
+
+
+## 悬停提示统一（原生 title → AntD Tooltip）
+
+🔴 **本项目全站禁用浏览器原生 `title` 黄条**。`src/App.tsx` 挂了全局 `src/components/GlobalNativeTooltip.tsx`：
+捕获阶段监听 hover，把**任意元素的 `title`** 一次性「借走」存到 `data-native-title`（浏览器从此不弹黄条）+ 补 `aria-label`，
+再用**受控 AntD Tooltip** 在该元素矩形上渲染同款深色气泡（跟随主题，150ms 延迟防扫过狂闪）。
+
+- 只作用于「带 title 特性的 DOM 元素」；AntD 自己的 Tooltip/Modal/Drawer 触发器上没有 `title` 特性 → **零冲突、零布局改动**。
+- **新写交互提示：直接给元素加 `title="文案"` 即可自动升级成气泡**（面向未来，不用逐个手包 `<Tooltip>`）。
+- 需要**富文本 / 受控 open / 动态文案**时才显式用 AntD `<Tooltip>`（`placement` + `mouseEnterDelay={0.2}`）。
+- ❌ 别再留原生黄条，也别逐个手包 Tooltip。
