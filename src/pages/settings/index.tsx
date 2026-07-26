@@ -393,6 +393,11 @@ function DesktopSettingsPage() {
   const [startMinimized, setStartMinimized] = useState(false);
   const [autostartLoading, setAutostartLoading] = useState(false);
   const [startMinimizedLoading, setStartMinimizedLoading] = useState(false);
+  // 文件夹自动导入：配置存 app_config，后台 folder_watch 循环每 5 秒读一次
+  const [watchEnabled, setWatchEnabled] = useState(false);
+  const [watchDir, setWatchDir] = useState("");
+  const [watchTargetFolder, setWatchTargetFolder] = useState<number | null>(null);
+  const [watchDeleteSource, setWatchDeleteSource] = useState(false);
   // 关闭按钮行为：ask=每次询问 / minimize=最小化到托盘 / exit=直接退出
   const [closeAction, setCloseAction] = useState<"ask" | "minimize" | "exit">(
     "ask",
@@ -733,6 +738,23 @@ function DesktopSettingsPage() {
         .get("start_minimized")
         .then((v) => setStartMinimized(v === "1"))
         .catch(() => {});
+      // 文件夹自动导入（4 个键都可能不存在 → catch 掉走默认值）
+      configApi
+        .get("folder_watch_enabled")
+        .then((v) => setWatchEnabled(v === "1"))
+        .catch(() => {});
+      configApi
+        .get("folder_watch_dir")
+        .then((v) => setWatchDir(v ?? ""))
+        .catch(() => {});
+      configApi
+        .get("folder_watch_target_folder_id")
+        .then((v) => setWatchTargetFolder(v ? Number(v) : null))
+        .catch(() => {});
+      configApi
+        .get("folder_watch_delete_source")
+        .then((v) => setWatchDeleteSource(v === "1"))
+        .catch(() => {});
       configApi
         .get("window.close_action")
         .then((v) => {
@@ -802,6 +824,27 @@ function DesktopSettingsPage() {
       message.error(`设置失败: ${e}`);
     } finally {
       setAutostartLoading(false);
+    }
+  }
+
+  // ─── 文件夹自动导入 ───────────────────────────────
+  /** 统一写配置 + 更新本地 state；后台循环每 5 秒读一次，改完即生效，无需重启 */
+  async function saveWatchConfig(key: string, value: string, apply: () => void) {
+    try {
+      await configApi.set(key, value);
+      apply();
+    } catch (e) {
+      message.error(`保存失败: ${e}`);
+    }
+  }
+
+  async function handlePickWatchDir() {
+    try {
+      const picked = await open({ directory: true, multiple: false });
+      if (typeof picked !== "string") return;
+      await saveWatchConfig("folder_watch_dir", picked, () => setWatchDir(picked));
+    } catch (e) {
+      message.error(`选择目录失败: ${e}`);
     }
   }
 
@@ -2297,6 +2340,99 @@ function DesktopSettingsPage() {
             <Button onClick={handleImportPdfs}>导入 PDF</Button>
             <Button onClick={handleImportWord}>导入 Word</Button>
           </Space>
+        </div>
+
+        {/* 文件夹自动导入：盯住一个目录，新落地的 .md 自动进库 */}
+        <div className="mt-4 pt-3" style={{ borderTop: "1px solid #f0f0f0" }}>
+          <div className="flex items-center justify-between">
+            <div>
+              <div style={{ fontSize: 14 }}>文件夹自动导入</div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                盯住一个目录，新出现的 .md 自动进库，不用每次手动扫描；
+                浏览器剪藏插件把网页存成 Markdown 落到这里就能直接入库。
+                已导入的文件被外部改动后会自动同步到原笔记。
+              </Text>
+            </div>
+            <Switch
+              checked={watchEnabled}
+              onChange={(next) =>
+                saveWatchConfig("folder_watch_enabled", next ? "1" : "0", () =>
+                  setWatchEnabled(next),
+                )
+              }
+            />
+          </div>
+
+          {watchEnabled && (
+            <div className="mt-3 pl-3" style={{ borderLeft: "2px solid #f0f0f0" }}>
+              <div className="flex items-center gap-2 py-1 flex-wrap">
+                <span className="text-xs shrink-0" style={{ color: "#8c8c8c" }}>
+                  监听目录
+                </span>
+                <Input
+                  size="small"
+                  readOnly
+                  value={watchDir}
+                  placeholder="未选择（点右侧按钮选一个文件夹）"
+                  style={{ flex: 1, minWidth: 220 }}
+                />
+                <Button size="small" onClick={handlePickWatchDir}>
+                  选择目录
+                </Button>
+                {watchDir && (
+                  <Button
+                    size="small"
+                    type="text"
+                    danger
+                    onClick={() =>
+                      saveWatchConfig("folder_watch_dir", "", () => setWatchDir(""))
+                    }
+                  >
+                    清空
+                  </Button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 py-1 flex-wrap">
+                <span className="text-xs shrink-0" style={{ color: "#8c8c8c" }}>
+                  导入到
+                </span>
+                <Select
+                  size="small"
+                  placeholder="未分类"
+                  allowClear
+                  style={{ width: 220 }}
+                  value={watchTargetFolder}
+                  onChange={(v) =>
+                    saveWatchConfig(
+                      "folder_watch_target_folder_id",
+                      v == null ? "" : String(v),
+                      () => setWatchTargetFolder(v ?? null),
+                    )
+                  }
+                  options={flattenFolders(folders)}
+                />
+              </div>
+
+              <div className="flex items-center justify-between py-1">
+                <div>
+                  <div style={{ fontSize: 13 }}>导入后删除源文件</div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    开启后目录会保持干净（剪藏插件当"收件箱"用）；关闭则保留源文件，
+                    之后改动它还能继续同步回笔记
+                  </Text>
+                </div>
+                <Switch
+                  checked={watchDeleteSource}
+                  onChange={(next) =>
+                    saveWatchConfig("folder_watch_delete_source", next ? "1" : "0", () =>
+                      setWatchDeleteSource(next),
+                    )
+                  }
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {importing && importProgress && (

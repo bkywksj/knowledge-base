@@ -22,6 +22,7 @@ pub mod export_html;
 #[cfg(desktop)]
 pub mod export_word;
 pub mod folder;
+pub mod folder_watch;
 pub mod hash;
 pub mod hidden_pin;
 pub mod http_client;

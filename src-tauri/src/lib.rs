@@ -874,6 +874,17 @@ pub fn run() {
                 services::task_reminder::run_reminder_loop(app_handle_reminder).await;
             });
 
+            // 文件夹自动导入：盯住用户指定目录，新落地的 .md 自动进库
+            // （浏览器剪藏插件把网页存成 Markdown 后不用再手动导入）。
+            // 默认关闭，循环里读 app_config 判断，没开启就空转。
+            #[cfg(desktop)]
+            {
+                let app_handle_watch = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    services::folder_watch::run_folder_watch_loop(app_handle_watch).await;
+                });
+            }
+
             // 定时推送调度器（独立于待办提醒，骨架同源）
             let app_handle_push = app.handle().clone();
             tauri::async_runtime::spawn(async move {
