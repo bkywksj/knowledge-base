@@ -322,6 +322,10 @@ pub struct AiConversation {
     /// RAG 检索范围限定到某文件夹（含所有子孙文件夹）。
     /// None = 全库检索；Some(folder_id) = "对此文件夹问 AI" 发起的范围会话。
     pub scope_folder_id: Option<i64>,
+    /// 角色预设：指向 prompt_templates 的一条提示词（v50 引入）。
+    /// None = 不套角色；设了则每轮把该提示词追加到 system prompt 末尾。
+    #[serde(default)]
+    pub preset_id: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }

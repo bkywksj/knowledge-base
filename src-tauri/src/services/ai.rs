@@ -1183,13 +1183,25 @@ impl AiService {
         // 4. 构建历史消息并发送（支持自动重试递减历史）
         let history = db.list_ai_messages(conversation_id)?;
 
+        // 角色预设（v50）：查一次复用给所有重试轮次；查不到就当没设
+        let preset = db
+            .get_conversation_preset_prompt(conversation_id)
+            .ok()
+            .flatten();
+
         // 尝试不同的历史长度：20 → 10 → 4 → 0（仅当前消息）
         let max_history_attempts = [20usize, 10, 4, 0];
         let mut last_error = None;
 
         for &max_hist in &max_history_attempts {
-            let messages =
-                Self::build_messages(&model, &history, &rag_context, &attached_context, max_hist);
+            let messages = Self::build_messages(
+                &model,
+                &history,
+                &rag_context,
+                &attached_context,
+                max_hist,
+                preset.as_deref(),
+            );
 
             log::info!(
                 "AI Request: model={}, messages={}, max_history={}",
@@ -1267,6 +1279,8 @@ impl AiService {
         rag_context: &str,
         attached_context: &str,
         max_history: usize,
+        // 角色预设正文（v50）；调用方从会话查好传进来，这里保持纯函数不碰 db
+        preset: Option<&str>,
     ) -> Vec<Value> {
         let mut messages = Vec::new();
 
@@ -1290,6 +1304,12 @@ impl AiService {
                  请直接回答「未在笔记中找到相关内容」，不要从无关笔记里拼凑答案。\n\n",
             );
             system_prompt.push_str(rag_context);
+        }
+        // 角色预设（v50）：放在检索上下文之后，只影响语气与视角，
+        // 不覆盖"只根据已知信息作答"这条底线
+        if let Some(preset) = preset.filter(|p| !p.trim().is_empty()) {
+            system_prompt.push_str("\n\n【角色设定】\n");
+            system_prompt.push_str(preset);
         }
 
         // Claude 使用 system 字段，OpenAI/Ollama 使用 system role message
@@ -1666,6 +1686,17 @@ impl AiService {
         } else {
             std::borrow::Cow::Borrowed(system_prompt)
         };
+
+        // 角色预设（v50）：必须追加在**工具说明之后** —— 放前面会被模型当成主指令，
+        // 冲淡"先 search_notes 再回答"的工具使用约束，智能模式容易退化成瞎编。
+        let system_prompt: std::borrow::Cow<'_, str> =
+            match db.get_conversation_preset_prompt(conversation_id) {
+                Ok(Some(preset)) => std::borrow::Cow::Owned(format!(
+                    "{system_prompt}\n\n【角色设定】\n{preset}\n\
+                     （角色设定影响语气与视角，但不改变上面的工具使用原则。）"
+                )),
+                _ => system_prompt,
+            };
 
         let mut messages: Vec<Value> = vec![json!({
             "role": "system",

@@ -42,7 +42,15 @@ import { CloseCircleFilled } from "@ant-design/icons";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useNavigate, useLocation } from "react-router-dom";
-import { aiChatApi, aiModelApi, noteApi, aiAttachmentApi, folderApi, dailyApi } from "@/lib/api";
+import {
+  aiChatApi,
+  aiModelApi,
+  noteApi,
+  aiAttachmentApi,
+  folderApi,
+  dailyApi,
+  promptApi,
+} from "@/lib/api";
 import { useAppStore } from "@/store";
 import type {
   AiConversation,
@@ -53,6 +61,7 @@ import type {
   Folder,
   MessageAttachment,
   Note,
+  PromptTemplate,
   SkillCall,
 } from "@/types";
 import { AttachmentChip } from "@/components/ai/AttachmentChip";
@@ -186,6 +195,19 @@ function DesktopAiChatPage() {
   // 附加笔记（A 方向）：当前对话的 attached_note_ids 对应的完整笔记对象
   const [attachedNotes, setAttachedNotes] = useState<Note[]>([]);
   const [attachOpen, setAttachOpen] = useState(false);
+  /**
+   * 角色预设（v50）：复用提示词库（设置 → 提示词）里的条目当"系统角色"。
+   * 选中后由后端在每轮请求把该提示词追加到 system prompt 末尾——
+   * 前端只负责选，不参与拼接。
+   */
+  const [presets, setPresets] = useState<PromptTemplate[]>([]);
+  useEffect(() => {
+    promptApi
+      .list(true)
+      .then(setPresets)
+      .catch(() => setPresets([]));
+  }, []);
+
   // 文件夹范围（scope_folder_id）：AI 页"附加文件夹"按钮 → 选文件夹 → 限定 RAG 检索范围
   const [scopeModalOpen, setScopeModalOpen] = useState(false);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -1241,6 +1263,42 @@ function DesktopAiChatPage() {
                       onClick={handleClearScope}
                     />
                   </span>
+                </div>
+              )}
+
+              {/* 角色预设：给本会话套一个身份（复用提示词库），换角色不影响已有消息 */}
+              {activeConvId != null && presets.length > 0 && (
+                <div className="flex items-center gap-1.5 mb-2">
+                  <span
+                    className="text-xs shrink-0"
+                    style={{ color: token.colorTextSecondary }}
+                  >
+                    🎭 角色
+                  </span>
+                  <Select
+                    size="small"
+                    allowClear
+                    placeholder="默认助手"
+                    style={{ minWidth: 160 }}
+                    value={
+                      conversations.find((c) => c.id === activeConvId)?.preset_id ??
+                      undefined
+                    }
+                    onChange={async (v) => {
+                      try {
+                        await aiChatApi.setPreset(activeConvId, v ?? null);
+                        await loadConversations();
+                      } catch (e) {
+                        message.error(`设置角色失败：${e}`);
+                      }
+                    }}
+                    options={presets.map((p) => ({
+                      value: p.id,
+                      label: p.title,
+                      title: p.description || p.prompt.slice(0, 60),
+                    }))}
+                    title="给本会话套一个角色；角色只影响语气与视角，不改变检索与工具使用规则"
+                  />
                 </div>
               )}
 

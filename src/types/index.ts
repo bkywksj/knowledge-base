@@ -262,6 +262,8 @@ export interface AiConversation {
   attached_note_ids: number[];
   /** RAG 检索范围限定到某文件夹（含子孙）；null = 全库。「对此文件夹问 AI」发起时带上 */
   scope_folder_id: number | null;
+  /** 角色预设：提示词库里的一条（prompt_templates.id）；null = 不套角色 */
+  preset_id: number | null;
   created_at: string;
   updated_at: string;
 }

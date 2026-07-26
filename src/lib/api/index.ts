@@ -539,6 +539,12 @@ export const aiChatApi = {
       scopeFolderId,
     }),
   /**
+   * 设置/清除对话的角色预设（提示词库里的一条）；presetId 传 null 取消角色。
+   * 预设正文由后端在每轮请求时追加到 system prompt 末尾，前端不用自己拼。
+   */
+  setPreset: (conversationId: number, presetId: number | null) =>
+    invoke<void>("set_ai_conversation_preset", { conversationId, presetId }),
+  /**
    * B 方向：把整个对话归档成笔记。title 为空时取对话当前标题；
    * folder_id 为空时落到根。返回新建的 Note。
    */

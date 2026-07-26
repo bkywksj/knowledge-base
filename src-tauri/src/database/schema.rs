@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 49;
+pub const SCHEMA_VERSION: i32 = 50;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -79,6 +79,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             46 => migrate_v46_to_v47(conn)?,
             47 => migrate_v47_to_v48(conn)?,
             48 => migrate_v48_to_v49(conn)?,
+            49 => migrate_v49_to_v50(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2028,6 +2029,28 @@ fn migrate_v48_to_v49(conn: &Connection) -> Result<(), AppError> {
     log::info!("[v49] 修复完成：{} 条笔记的附件链接 URL 空格已编码", touched);
 
     set_version(conn, 49)?;
+    Ok(())
+}
+
+/// v49 -> v50：AI 对话支持「角色预设」
+///
+/// 给 ai_conversations 加 preset_id，指向 prompt_templates 里的一条提示词。
+/// 对话每次请求时把该提示词追加到 system prompt 末尾，于是同一个模型可以按
+/// 「代码审查员 / 文案编辑 / 学习助教」等不同角色回答，而不用每轮重复交代身份。
+///
+/// 不加外键约束：SQLite 的 ALTER TABLE ADD COLUMN 对外键支持有限，而且提示词被删后
+/// 让 preset_id 悬空反而更安全 —— 读取时走 JOIN，查不到就当没设预设，不会让对话打不开。
+fn migrate_v49_to_v50(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v49 -> v50 (AI 对话角色预设)");
+
+    let has_col = conn
+        .prepare("SELECT preset_id FROM ai_conversations LIMIT 1")
+        .is_ok();
+    if !has_col {
+        conn.execute_batch("ALTER TABLE ai_conversations ADD COLUMN preset_id INTEGER;")?;
+    }
+
+    set_version(conn, 50)?;
     Ok(())
 }
 

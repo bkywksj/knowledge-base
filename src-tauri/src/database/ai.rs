@@ -27,8 +27,8 @@ const AI_MODEL_COLS: &str =
 
 /// 把一行 ai_conversations 查询结果转成 AiConversation
 ///
-/// 列顺序约定（v46 起 7 列）：
-///   id, title, model_id, attached_note_ids, scope_folder_id, created_at, updated_at
+/// 列顺序约定（v50 起 8 列）：
+///   id, title, model_id, attached_note_ids, scope_folder_id, preset_id, created_at, updated_at
 fn row_to_ai_conversation(row: &rusqlite::Row) -> rusqlite::Result<AiConversation> {
     let attached_json: String = row.get(3)?;
     // 反序列化失败回退空数组（防御性：旧数据 / 手动改坏的情况下不让查询炸）
@@ -39,13 +39,14 @@ fn row_to_ai_conversation(row: &rusqlite::Row) -> rusqlite::Result<AiConversatio
         model_id: row.get(2)?,
         attached_note_ids,
         scope_folder_id: row.get(4)?,
-        created_at: row.get(5)?,
-        updated_at: row.get(6)?,
+        preset_id: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
     })
 }
 
 const AI_CONV_COLS: &str =
-    "id, title, model_id, attached_note_ids, scope_folder_id, created_at, updated_at";
+    "id, title, model_id, attached_note_ids, scope_folder_id, preset_id, created_at, updated_at";
 
 #[cfg(test)]
 mod tests {
@@ -429,6 +430,61 @@ impl Database {
             )));
         }
         Ok(())
+    }
+
+    /// 设置对话的角色预设（v50）。preset_id = None 表示取消角色，恢复默认助手身份。
+    ///
+    /// 不校验 preset_id 是否存在：提示词可能在设置后被删掉，读取时走 JOIN 查不到就当没设，
+    /// 不会让对话打不开。
+    pub fn set_conversation_preset(
+        &self,
+        conversation_id: i64,
+        preset_id: Option<i64>,
+    ) -> Result<(), AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let affected = conn.execute(
+            "UPDATE ai_conversations
+                 SET preset_id = ?1,
+                     updated_at = datetime('now', 'localtime')
+             WHERE id = ?2",
+            rusqlite::params![preset_id, conversation_id],
+        )?;
+        if affected == 0 {
+            return Err(AppError::NotFound(format!(
+                "对话 {} 不存在",
+                conversation_id
+            )));
+        }
+        Ok(())
+    }
+
+    /// 取对话当前角色预设的提示词正文（供拼 system prompt 用）。
+    ///
+    /// 没设预设、预设被删、或提示词已停用 → 返回 None，调用方按"无角色"处理。
+    pub fn get_conversation_preset_prompt(
+        &self,
+        conversation_id: i64,
+    ) -> Result<Option<String>, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "SELECT p.prompt
+               FROM ai_conversations c
+               JOIN prompt_templates p ON p.id = c.preset_id
+              WHERE c.id = ?1 AND p.enabled = 1",
+        )?;
+        let found = stmt
+            .query_row(rusqlite::params![conversation_id], |r| {
+                r.get::<_, String>(0)
+            })
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+        Ok(found)
     }
 
     /// 设置对话的 RAG 文件夹范围（"对此文件夹问 AI"在对话里随时改）。

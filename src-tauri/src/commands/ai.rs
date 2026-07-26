@@ -170,6 +170,20 @@ pub fn set_ai_conversation_scope_folder(
         .map_err(|e| e.to_string())
 }
 
+/// 设置对话的角色预设（AI 页顶部"角色"下拉）。
+/// preset_id = None 取消角色，恢复默认助手身份。
+#[tauri::command]
+pub fn set_ai_conversation_preset(
+    state: State<'_, AppState>,
+    conversation_id: i64,
+    preset_id: Option<i64>,
+) -> Result<(), String> {
+    state
+        .db
+        .set_conversation_preset(conversation_id, preset_id)
+        .map_err(|e| e.to_string())
+}
+
 // ─── AI 消息 Commands ────────────────────────
 
 /// 获取对话消息列表
