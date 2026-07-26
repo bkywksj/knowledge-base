@@ -15,7 +15,8 @@ import { Table } from "@tiptap/extension-table";
 import { TableRow } from "@tiptap/extension-table-row";
 import { TableCell } from "@tiptap/extension-table-cell";
 import { TableHeader } from "@tiptap/extension-table-header";
-import { Fragment } from "@tiptap/pm/model";
+import { Fragment, type Node as PMNode } from "@tiptap/pm/model";
+import type { EditorView } from "@tiptap/pm/view";
 import { getHTMLFromFragment, mergeAttributes } from "@tiptap/core";
 import { TextAlign } from "@tiptap/extension-text-align";
 import { Color } from "@tiptap/extension-color";
@@ -24,6 +25,12 @@ import Subscript from "@tiptap/extension-subscript";
 import { FigureImage } from "./FigureExtension";
 import { ImageLightbox } from "./ImageLightbox";
 import { HeadingFold, HEADING_FOLD_REFRESH, HEADING_FOLD_KEY } from "./HeadingFold";
+import {
+  HeadingNumber,
+  HEADING_NUMBER_KEY,
+  HEADING_NUMBER_REFRESH,
+  getHeadingNumberMap,
+} from "./HeadingNumber";
 import { SearchAndReplace } from "./SearchAndReplace";
 import { SearchReplaceBar } from "./SearchReplaceBar";
 import { calcEditorStats } from "@/lib/textStats";
@@ -741,6 +748,34 @@ const PLAIN_TEXT_NODE_ATTR_RESETS: Record<string, unknown> = {
   textAlign: "left",
   lineHeight: null,
 };
+/**
+ * 按文档顺序取出「当前选区覆盖到的标题」的自动编号。
+ *
+ * 标题编号是 Decoration（不在 doc 里），复制时 slice 里没有它，也没有 pos 可查；
+ * 所以从 view.state.selection 反查 —— 复制动作发生时选区就是被复制的范围，
+ * 两边的标题顺序天然一一对应。
+ *
+ * 返回空数组表示"无需注入编号"（编号功能关闭 / 选区里没有标题），
+ * 调用方据此走原来的纯文本路径，行为零变化。
+ */
+function collectSelectedHeadingLabels(view: EditorView): string[] {
+  try {
+    const byPos = getHeadingNumberMap(view.state);
+    if (byPos.size === 0) return [];
+    const { from, to } = view.state.selection;
+    const out: string[] = [];
+    view.state.doc.nodesBetween(from, to, (node: PMNode, pos: number) => {
+      if (node.type.name !== "heading") return true;
+      // 没编号的标题（层级范围外 / 已手写编号）占一个空位，保证顺序对齐
+      out.push(byPos.get(pos) ?? "");
+      return false;
+    });
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 function stripVisualStylesForPlainText(fragment: Fragment): Fragment {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const children: any[] = [];
@@ -1576,6 +1611,20 @@ export function TiptapEditor({
         },
         maxLevel: 3,
       }),
+      // 标题自动编号（1 / 1.1 / 1.1.1）。纯显示层：走 Decoration，不写进 doc / .md。
+      // 必须放在 HeadingFold 之后：两者都在 heading 起始位挂 widget，靠 side 值分先后
+      // （chevron -1 挂最左，编号 -0.5 紧随其后）。
+      HeadingNumber.configure({
+        getEnabled: () => useAppStore.getState().editorHeadingNumber,
+        getOptions: () => {
+          const s = useAppStore.getState();
+          return {
+            format: s.editorHeadingNumberFormat,
+            startLevel: s.editorHeadingNumberStartLevel,
+            skipManual: s.editorHeadingNumberSkipManual,
+          };
+        },
+      }),
       // Markdown 序列化/反序列化：setContent 吃 Markdown，editor.storage.markdown.getMarkdown() 吐 Markdown
       Markdown.configure({
         html: true,               // 允许内联 HTML 片段（表格等复杂结构）
@@ -1662,14 +1711,32 @@ export function TiptapEditor({
       // 不受节点属性影响，但保留清洗以防未来叶子节点文本表示依赖属性）。
       // 显式标注 `: string` 返回类型 —— 否则箭头体里读 editor.storage 会让 editor 的
       // 类型推断陷入自引用环（TS7022/7023）。
-      clipboardTextSerializer: (slice): string => {
+      clipboardTextSerializer: (slice, view): string => {
         const cleaned = stripVisualStylesForPlainText(slice.content);
         // leafText: 给图片/公式等叶子节点一个占位文本表示，避免整块丢失
-        return cleaned.textBetween(0, cleaned.size, "\n\n", (leaf) => {
-          const t = leaf.type.name;
-          if (t === "hardBreak") return "\n";
-          return "";
+        const leafText = (leaf: PMNode) => (leaf.type.name === "hardBreak" ? "\n" : "");
+
+        // 标题自动编号是 Decoration，默认复制不走（用户反馈"编号不能随文本一起复制"）。
+        // 这里把编号补进 text/plain：粘到 Word / 记事本 / 微信时编号跟着走。
+        // ⚠️ 只补 text/plain，text/html 通道保持干净 —— 否则在本编辑器内复制粘贴时
+        //    编号会变成正文文字，再被自动编号叠一层（"1 1 标题"）。
+        const labels = collectSelectedHeadingLabels(view);
+        if (labels.length === 0) {
+          return cleaned.textBetween(0, cleaned.size, "\n\n", leafText);
+        }
+        const parts: string[] = [];
+        let li = 0;
+        cleaned.forEach((node) => {
+          const text = node.textBetween(0, node.content.size, "\n\n", leafText);
+          if (node.type.name === "heading") {
+            const label = labels[li];
+            li += 1;
+            parts.push(label ? `${label} ${text}` : text);
+            return;
+          }
+          parts.push(text);
         });
+        return parts.join("\n\n");
       },
       handlePaste: (_view, event) => {
         // 三种主要场景：
@@ -2180,6 +2247,25 @@ export function TiptapEditor({
       editor.view.state.tr.setMeta(HEADING_FOLD_KEY, HEADING_FOLD_REFRESH),
     );
   }, [editor, noteId, foldedForThisNote]);
+
+  // HeadingNumber：同理——扩展 options 读的是最新 store，但 plugin state 要有 tx 才重算，
+  // 所以设置页改「编号开关 / 格式 / 起始层级 / 跳过手写编号」时主动推一条 meta。
+  const headingNumberOn = useAppStore((s) => s.editorHeadingNumber);
+  const headingNumberFormat = useAppStore((s) => s.editorHeadingNumberFormat);
+  const headingNumberStartLevel = useAppStore((s) => s.editorHeadingNumberStartLevel);
+  const headingNumberSkipManual = useAppStore((s) => s.editorHeadingNumberSkipManual);
+  useEffect(() => {
+    if (!editor) return;
+    editor.view.dispatch(
+      editor.view.state.tr.setMeta(HEADING_NUMBER_KEY, HEADING_NUMBER_REFRESH),
+    );
+  }, [
+    editor,
+    headingNumberOn,
+    headingNumberFormat,
+    headingNumberStartLevel,
+    headingNumberSkipManual,
+  ]);
 
   if (!editor) return null;
 

@@ -460,72 +460,110 @@ body,
   text-indent: 2em;
 }
 
-/* 标题自动编号（1 / 1.1 / 1.1.1）+ 层级彩虹配色：data-editor-heading-number="1" 时生效。
-   纯显示层（CSS counter，不写进 .md），靠源码顺序自动逐级编号。
-   用独立 counter 名 kbh1–kbh6，避免与代码块行号 counter 冲突。 */
-:root[data-editor-heading-number="1"] .editor-content-area .tiptap {
-  counter-reset: kbh1 kbh2 kbh3 kbh4 kbh5 kbh6;
-}
+/* 标题自动编号 + 层级彩虹配色：data-editor-heading-number="1" 时生效。
+
+   ⚠️ 编号文本本身**不再由 CSS counter 生成**，改成 JS 计算 + ProseMirror Decoration
+   （见 components/editor/HeadingNumber.ts、lib/headingNumber.ts）。原因：
+     · ::before 的内容进不了选区/剪贴板 → 复制、导出全丢编号
+     · JS 拿不到 → 大纲面板显示不出编号
+     · 折叠标题时 `.kb-heading-folded { display:none }` 会让被折叠的标题
+       不参与 counter-increment/reset（CSS 规范），于是下级编号不再随上级重置
+   这里只保留 CSS 该干的两件事：层级配色 + 悬挂缩进。
+
+   悬挂缩进（padding-left 与 text-indent 等值反号）：首行仍从原左边界起排（编号在最左），
+   标题换行后第二行与首行**文字**对齐，而不是顶到编号正下方。两者互相抵消，
+   折叠 chevron（margin-left:-22px）的落点与改造前完全一致。 */
 :root[data-editor-heading-number="1"] .editor-content-area .tiptap h1 {
-  counter-increment: kbh1;
-  counter-reset: kbh2 kbh3 kbh4 kbh5 kbh6;
   color: #e8590c;
+  padding-left: 1.5em;
+  text-indent: -1.5em;
 }
 :root[data-editor-heading-number="1"] .editor-content-area .tiptap h2 {
-  counter-increment: kbh2;
-  counter-reset: kbh3 kbh4 kbh5 kbh6;
   color: #e67700;
+  padding-left: 2.4em;
+  text-indent: -2.4em;
 }
 :root[data-editor-heading-number="1"] .editor-content-area .tiptap h3 {
-  counter-increment: kbh3;
-  counter-reset: kbh4 kbh5 kbh6;
   color: #2f9e44;
+  padding-left: 3.2em;
+  text-indent: -3.2em;
 }
 :root[data-editor-heading-number="1"] .editor-content-area .tiptap h4 {
-  counter-increment: kbh4;
-  counter-reset: kbh5 kbh6;
   color: #1971c2;
+  padding-left: 4em;
+  text-indent: -4em;
 }
 :root[data-editor-heading-number="1"] .editor-content-area .tiptap h5 {
-  counter-increment: kbh5;
-  counter-reset: kbh6;
   color: #7048e8;
+  padding-left: 4.8em;
+  text-indent: -4.8em;
 }
 :root[data-editor-heading-number="1"] .editor-content-area .tiptap h6 {
-  counter-increment: kbh6;
   color: #c2255c;
+  padding-left: 5.6em;
+  text-indent: -5.6em;
 }
-:root[data-editor-heading-number="1"] .editor-content-area .tiptap h1::before {
-  content: counter(kbh1) "\2002";
+
+/* 标题被设成居中 / 右对齐时关掉悬挂缩进：居中是按内容盒算的，负 text-indent 会把
+   编号推到容器外。这类标题回退成"编号紧跟文字"，不做悬挂。
+   （TextAlign 扩展把对齐渲染成行内 style，故用属性选择器命中。） */
+:root[data-editor-heading-number="1"]
+  .editor-content-area
+  .tiptap
+  :is(h1, h2, h3, h4, h5, h6)[style*="text-align: center"],
+:root[data-editor-heading-number="1"]
+  .editor-content-area
+  .tiptap
+  :is(h1, h2, h3, h4, h5, h6)[style*="text-align: right"] {
+  padding-left: 0;
+  text-indent: 0;
+}
+
+/* 编号 widget 本体。min-width 让同级编号右侧对齐（"1.1" 与 "1.10" 后的文字不错位），
+   与上面各级 padding-left 相差 0.3em，正好留给 margin-right 做编号与文字的间距。 */
+.kb-hnum {
+  display: inline-block;
+  margin-right: 0.3em;
   font-weight: 700;
   opacity: 0.85;
+  user-select: none;
+  text-indent: 0; /* 不继承标题的负缩进，否则编号自身会被再拉一次 */
 }
-:root[data-editor-heading-number="1"] .editor-content-area .tiptap h2::before {
-  content: counter(kbh1) "." counter(kbh2) "\2002";
-  font-weight: 700;
-  opacity: 0.85;
+.kb-hnum[data-level="1"] { min-width: 1.2em; }
+.kb-hnum[data-level="2"] { min-width: 2.1em; }
+.kb-hnum[data-level="3"] { min-width: 2.9em; font-weight: 600; }
+.kb-hnum[data-level="4"] { min-width: 3.7em; font-weight: 600; }
+.kb-hnum[data-level="5"] { min-width: 4.5em; font-weight: 600; }
+.kb-hnum[data-level="6"] { min-width: 5.3em; font-weight: 600; }
+
+/* 大纲面板里的编号：与正文取自同一份数据（HeadingNumber 插件），
+   tabular-nums 让多位数编号右侧对齐，条目文字不参差。 */
+.editor-outline__num {
+  margin-right: 4px;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
 }
-:root[data-editor-heading-number="1"] .editor-content-area .tiptap h3::before {
-  content: counter(kbh1) "." counter(kbh2) "." counter(kbh3) "\2002";
-  font-weight: 600;
-  opacity: 0.85;
+
+/* 层级引线（data-editor-guide-line="1"）：列表每嵌套一层，该层 ul/ol 自己画一条竖线，
+   天然形成"每级一条"的引导线（Obsidian 同款），无需 JS 也无需知道嵌套深度。
+   任务列表（taskList）没有 marker、缩进规则也不同，竖线位置对不上，排除。 */
+:root[data-editor-guide-line="1"] .editor-content-area .tiptap ul:not([data-type="taskList"]),
+:root[data-editor-guide-line="1"] .editor-content-area .tiptap ol {
+  position: relative;
 }
-:root[data-editor-heading-number="1"] .editor-content-area .tiptap h4::before {
-  content: counter(kbh1) "." counter(kbh2) "." counter(kbh3) "." counter(kbh4) "\2002";
-  font-weight: 600;
-  opacity: 0.85;
-}
-:root[data-editor-heading-number="1"] .editor-content-area .tiptap h5::before {
-  content: counter(kbh1) "." counter(kbh2) "." counter(kbh3) "." counter(kbh4) "."
-    counter(kbh5) "\2002";
-  font-weight: 600;
-  opacity: 0.85;
-}
-:root[data-editor-heading-number="1"] .editor-content-area .tiptap h6::before {
-  content: counter(kbh1) "." counter(kbh2) "." counter(kbh3) "." counter(kbh4) "."
-    counter(kbh5) "." counter(kbh6) "\2002";
-  font-weight: 600;
-  opacity: 0.85;
+:root[data-editor-guide-line="1"]
+  .editor-content-area
+  .tiptap
+  ul:not([data-type="taskList"])::before,
+:root[data-editor-guide-line="1"] .editor-content-area .tiptap ol::before {
+  content: "";
+  position: absolute;
+  left: 0.5em;
+  top: 0.25em;
+  bottom: 0.25em;
+  width: 1px;
+  background: color-mix(in srgb, var(--ant-color-text, #000) 14%, transparent);
+  pointer-events: none;
 }
 
 /* Mermaid 预览块：右上角"全屏"按钮，hover preview 时显形 */

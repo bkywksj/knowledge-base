@@ -3,6 +3,7 @@ import { Store } from "@tauri-apps/plugin-store";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
 import { taskApi, systemApi, folderApi, configApi, appLockApi } from "@/lib/api";
+import type { HeadingNumberFormat } from "@/lib/headingNumber";
 
 /**
  * 读取配置项；不存在时返回 null（避开 configApi.get 的 NotFound Err 抛出）。
@@ -176,6 +177,14 @@ export const EDITOR_LAYOUT_DEFAULTS = {
   ruleLines: "none" as EditorRuleLines,
   firstLineIndent: false,
   headingNumber: false,
+  /** 编号格式：decimal = 1/1.1/1.1.1；chineseOutline = 一、/（一）/1. */
+  headingNumberFormat: "decimal" as HeadingNumberFormat,
+  /** 从第几级标题开始编号（1–6）。设 2 = H1 当文档大标题不编号 */
+  headingNumberStartLevel: 1,
+  /** 标题正文已手写编号（"1.1 公司定位"）时不再叠加自动编号 */
+  headingNumberSkipManual: true,
+  /** 列表 / 大纲的层级引线 */
+  guideLine: false,
 };
 
 /**
@@ -285,6 +294,12 @@ interface AppStore {
   foldersRefreshTick: number;
   /** 标签列表刷新触发器：标签页/编辑器 CRUD 后递增，其他消费者自动重拉 */
   tagsRefreshTick: number;
+  /**
+   * 任务统计刷新触发器：每次 refreshTaskStats() 成功都递增。
+   * 侧边栏计数面板订阅它重拉——不能只订阅 urgentTodoCount，那个值在增删改
+   * 非紧急任务时不会变，计数会停在旧数字。
+   */
+  taskStatsTick: number;
   /** 任务列表刷新触发器：提醒弹窗内动作 / 后台 reminder 触发 advance 后递增，
    * 任务列表页订阅它自动重拉，避免列表显示陈旧状态 */
   tasksListRefreshTick: number;
@@ -347,6 +362,14 @@ interface AppStore {
   editorFirstLineIndent: boolean;
   /** 编辑器标题自动编号（1/1.1/1.1.1）+ 层级彩虹配色（持久化，纯显示层不写进 .md） */
   editorHeadingNumber: boolean;
+  /** 标题编号格式（持久化） */
+  editorHeadingNumberFormat: HeadingNumberFormat;
+  /** 标题编号起始层级 1–6（持久化） */
+  editorHeadingNumberStartLevel: number;
+  /** 标题已手写编号时跳过自动编号（持久化） */
+  editorHeadingNumberSkipManual: boolean;
+  /** 列表 / 大纲层级引线（持久化） */
+  editorGuideLine: boolean;
   /**
    * 编辑器「高亮」快捷键（accelerator 字符串，如 "CommandOrControl+Shift+H"，持久化）。
    *
@@ -384,6 +407,12 @@ interface AppStore {
   defaultViewMode: "edit" | "read";
   /** 待办模块默认视图（列表/看板/四象限/日历/甘特）：打开待办页时的初始视图，持久化 */
   tasksDefaultView: "list" | "kanban" | "quadrant" | "calendar" | "gantt";
+  /**
+   * 日历视图的配色依据（持久化）：
+   * 'priority' = 按紧急度（红/蓝/灰，老行为）；'category' = 按任务分类的自定义色。
+   * 用分类色时更容易一眼分辨"这是哪条线上的事"，紧急度改由左侧竖条粗细/图例补充。
+   */
+  tasksCalendarColorBy: "priority" | "category";
   /** 笔记编辑页：右侧大纲面板是否显示（持久化）。标题数 < 2 时由组件自动隐藏，与此独立 */
   outlineVisible: boolean;
   /** 笔记编辑页：大纲面板停靠位置（持久化）。'right'（默认）/ 'left' */
@@ -586,6 +615,14 @@ interface AppStore {
   /** 切换首行缩进 */
   setEditorFirstLineIndent: (on: boolean) => void;
   setEditorHeadingNumber: (on: boolean) => void;
+  /** 设置标题编号格式 */
+  setEditorHeadingNumberFormat: (format: HeadingNumberFormat) => void;
+  /** 设置标题编号起始层级（1–6，越界自动 clamp） */
+  setEditorHeadingNumberStartLevel: (level: number) => void;
+  /** 切换"跳过已手写编号的标题" */
+  setEditorHeadingNumberSkipManual: (on: boolean) => void;
+  /** 切换列表 / 大纲层级引线 */
+  setEditorGuideLine: (on: boolean) => void;
   /** 设置编辑器高亮快捷键（accelerator 字符串；传空串 = 禁用高亮快捷键） */
   setEditorHighlightShortcut: (accel: string) => void;
   /** 设置全局界面缩放（自动 clamp 到 [UI_SCALE_MIN, UI_SCALE_MAX]，标记用户已手动设置） */
@@ -603,6 +640,8 @@ interface AppStore {
   setTasksDefaultView: (
     v: "list" | "kanban" | "quadrant" | "calendar" | "gantt",
   ) => void;
+  /** 设置日历配色依据（紧急度 / 任务分类） */
+  setTasksCalendarColorBy: (v: "priority" | "category") => void;
   /** 切换大纲面板可见性（persist） */
   toggleOutline: () => void;
   /** 设置大纲面板可见性（persist） */
@@ -762,6 +801,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   foldersRefreshTick: 0,
   tagsRefreshTick: 0,
   tasksListRefreshTick: 0,
+  taskStatsTick: 0,
   urgentTodoCount: 0,
   alwaysOnTop: false,
   activeView: "notes",
@@ -781,6 +821,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   editorRuleLines: EDITOR_LAYOUT_DEFAULTS.ruleLines,
   editorFirstLineIndent: EDITOR_LAYOUT_DEFAULTS.firstLineIndent,
   editorHeadingNumber: EDITOR_LAYOUT_DEFAULTS.headingNumber,
+  editorHeadingNumberFormat: EDITOR_LAYOUT_DEFAULTS.headingNumberFormat,
+  editorHeadingNumberStartLevel: EDITOR_LAYOUT_DEFAULTS.headingNumberStartLevel,
+  editorHeadingNumberSkipManual: EDITOR_LAYOUT_DEFAULTS.headingNumberSkipManual,
+  editorGuideLine: EDITOR_LAYOUT_DEFAULTS.guideLine,
   editorHighlightShortcut: EDITOR_HIGHLIGHT_SHORTCUT_DEFAULT,
   uiScale: UI_SCALE_DEFAULT,
   uiScaleUserSet: false,
@@ -789,6 +833,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   pasteCodeAsBlock: true,
   defaultViewMode: "edit",
   tasksDefaultView: "list",
+  tasksCalendarColorBy: "priority",
   outlineVisible: true,
   outlinePosition: "right",
   notesCollapsedFolderKeys: [],
@@ -880,7 +925,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   refreshTaskStats: async () => {
     try {
       const stats = await taskApi.stats();
-      set({ urgentTodoCount: stats.urgentTodo });
+      // 额外自增 taskStatsTick：urgentTodoCount 只在"紧急任务数"变化时才变，
+      // 增删改**非紧急**任务时它纹丝不动，订阅它的侧边栏计数面板就不会重拉，
+      // 于是「全部任务 N」会停在旧数字。tick 每次刷新都变，保证订阅者必然更新。
+      set((s) => ({
+        urgentTodoCount: stats.urgentTodo,
+        taskStatsTick: s.taskStatsTick + 1,
+      }));
     } catch {
       // 静默失败：侧边栏 Badge 不是关键路径
     }
@@ -1078,6 +1129,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       editorRuleLines: EDITOR_LAYOUT_DEFAULTS.ruleLines,
       editorFirstLineIndent: EDITOR_LAYOUT_DEFAULTS.firstLineIndent,
       editorHeadingNumber: EDITOR_LAYOUT_DEFAULTS.headingNumber,
+      editorHeadingNumberFormat: EDITOR_LAYOUT_DEFAULTS.headingNumberFormat,
+      editorHeadingNumberStartLevel: EDITOR_LAYOUT_DEFAULTS.headingNumberStartLevel,
+      editorHeadingNumberSkipManual: EDITOR_LAYOUT_DEFAULTS.headingNumberSkipManual,
+      editorGuideLine: EDITOR_LAYOUT_DEFAULTS.guideLine,
     }),
   setEditorReadingWidth: (w) => {
     const n = Math.round(Number(w) || 0);
@@ -1089,6 +1144,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ editorRuleLines: mode === "lines" || mode === "grid" ? mode : "none" }),
   setEditorFirstLineIndent: (on) => set({ editorFirstLineIndent: !!on }),
   setEditorHeadingNumber: (on) => set({ editorHeadingNumber: !!on }),
+  setEditorHeadingNumberFormat: (format) =>
+    set({
+      editorHeadingNumberFormat:
+        format === "chineseOutline" ? "chineseOutline" : "decimal",
+    }),
+  setEditorHeadingNumberStartLevel: (level) => {
+    const n = Math.round(Number(level) || 1);
+    set({ editorHeadingNumberStartLevel: Math.max(1, Math.min(6, n)) });
+  },
+  setEditorHeadingNumberSkipManual: (on) =>
+    set({ editorHeadingNumberSkipManual: !!on }),
+  setEditorGuideLine: (on) => set({ editorGuideLine: !!on }),
   setEditorHighlightShortcut: (accel) =>
     set({ editorHighlightShortcut: typeof accel === "string" ? accel.trim() : "" }),
   setUiScale: (scale) => {
@@ -1106,6 +1173,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
   setDefaultViewMode: (mode) => set({ defaultViewMode: mode === "read" ? "read" : "edit" }),
   setTasksDefaultView: (v) => set({ tasksDefaultView: v }),
+  setTasksCalendarColorBy: (v) =>
+    set({ tasksCalendarColorBy: v === "category" ? "category" : "priority" }),
   toggleOutline: () => set((s) => ({ outlineVisible: !s.outlineVisible })),
   setOutlineVisible: (visible) => set({ outlineVisible: visible }),
   setOutlinePosition: (pos) => set({ outlinePosition: pos === "left" ? "left" : "right" }),
@@ -1320,6 +1389,7 @@ export function applyEditorLayout(state: {
   editorRuleLines: EditorRuleLines;
   editorFirstLineIndent: boolean;
   editorHeadingNumber: boolean;
+  editorGuideLine: boolean;
 }) {
   const root = document.documentElement;
   if (state.editorReadingWidth > 0) {
@@ -1334,6 +1404,7 @@ export function applyEditorLayout(state: {
     "data-editor-heading-number",
     state.editorHeadingNumber ? "1" : "0",
   );
+  root.setAttribute("data-editor-guide-line", state.editorGuideLine ? "1" : "0");
 }
 
 /**
@@ -1557,6 +1628,22 @@ export async function loadThemeFromStore() {
     if (typeof efi === "boolean") {
       useAppStore.getState().setEditorFirstLineIndent(efi);
     }
+    const ehnf = await store.get<HeadingNumberFormat>("editorHeadingNumberFormat");
+    if (ehnf === "decimal" || ehnf === "chineseOutline") {
+      useAppStore.getState().setEditorHeadingNumberFormat(ehnf);
+    }
+    const ehnsl = await store.get<number>("editorHeadingNumberStartLevel");
+    if (typeof ehnsl === "number") {
+      useAppStore.getState().setEditorHeadingNumberStartLevel(ehnsl);
+    }
+    const ehnsm = await store.get<boolean>("editorHeadingNumberSkipManual");
+    if (typeof ehnsm === "boolean") {
+      useAppStore.getState().setEditorHeadingNumberSkipManual(ehnsm);
+    }
+    const egl = await store.get<boolean>("editorGuideLine");
+    if (typeof egl === "boolean") {
+      useAppStore.getState().setEditorGuideLine(egl);
+    }
     const ehn = await store.get<boolean>("editorHeadingNumber");
     if (typeof ehn === "boolean") {
       useAppStore.getState().setEditorHeadingNumber(ehn);
@@ -1614,6 +1701,10 @@ export async function loadThemeFromStore() {
       tdv === "gantt"
     ) {
       useAppStore.getState().setTasksDefaultView(tdv);
+    }
+    const tccb = await store.get<string>("tasksCalendarColorBy");
+    if (tccb === "priority" || tccb === "category") {
+      useAppStore.getState().setTasksCalendarColorBy(tccb);
     }
 
     // 先恢复"启动默认收起"开关（默认 true）。必须先读它，再决定是否恢复折叠集合：
@@ -1712,6 +1803,10 @@ export async function saveThemeToStore() {
       editorRuleLines,
       editorFirstLineIndent,
       editorHeadingNumber,
+      editorHeadingNumberFormat,
+      editorHeadingNumberStartLevel,
+      editorHeadingNumberSkipManual,
+      editorGuideLine,
       editorHighlightShortcut,
       uiScale,
       uiScaleUserSet,
@@ -1720,6 +1815,7 @@ export async function saveThemeToStore() {
       pasteCodeAsBlock,
       defaultViewMode,
       tasksDefaultView,
+      tasksCalendarColorBy,
       outlineVisible,
       outlinePosition,
       notesCollapsedFolderKeys,
@@ -1753,6 +1849,10 @@ export async function saveThemeToStore() {
     await store.set("editorRuleLines", editorRuleLines);
     await store.set("editorFirstLineIndent", editorFirstLineIndent);
     await store.set("editorHeadingNumber", editorHeadingNumber);
+    await store.set("editorHeadingNumberFormat", editorHeadingNumberFormat);
+    await store.set("editorHeadingNumberStartLevel", editorHeadingNumberStartLevel);
+    await store.set("editorHeadingNumberSkipManual", editorHeadingNumberSkipManual);
+    await store.set("editorGuideLine", editorGuideLine);
     await store.set("editorHighlightShortcut", editorHighlightShortcut);
     await store.set("uiScale", uiScale);
     await store.set("uiScaleUserSet", uiScaleUserSet);
@@ -1761,6 +1861,7 @@ export async function saveThemeToStore() {
     await store.set("pasteCodeAsBlock", pasteCodeAsBlock);
     await store.set("defaultViewMode", defaultViewMode);
     await store.set("tasksDefaultView", tasksDefaultView);
+    await store.set("tasksCalendarColorBy", tasksCalendarColorBy);
     await store.set("outlineVisible", outlineVisible);
     await store.set("outlinePosition", outlinePosition);
     await store.set("notesCollapsedFolderKeys", notesCollapsedFolderKeys);
@@ -1793,7 +1894,7 @@ useAppStore.subscribe((state) => {
   // notesHeadingFolded 摘要：用 entries 数 + 总 anchor 数 简化对比，避免每次 stringify 大对象
   const headingFoldEntries = Object.entries(state.notesHeadingFolded);
   const headingFoldKey = `${headingFoldEntries.length}:${headingFoldEntries.reduce((acc, [, v]) => acc + v.length, 0)}:${headingFoldEntries.map(([k, v]) => `${k}=${v.join(",")}`).join("|")}`;
-  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.autoHideActivityBar}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.editorCodeFontSize}|${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}|${state.editorHeadingNumber}|${state.editorHighlightShortcut}|${state.uiScale}|${state.uiScaleUserSet}|${state.autoSaveEnabled}|${state.autoSaveDelay}|${state.outlineVisible}|${state.outlinePosition}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesShowOnlyFolders}|${state.notesFoldersInitialCollapseDone}|${state.notesCollapseFoldersOnStartup}|${headingFoldKey}|${state.themeOverridesEnabled}|${state.customAccent ?? ""}|${state.customBgImage ?? ""}|${state.customBgDim}|${state.customBgBlur}|${state.customBgFit}|${state.defaultViewMode}|${state.tasksDefaultView}`;
+  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.autoHideActivityBar}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.editorCodeFontSize}|${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}|${state.editorHeadingNumber}|${state.editorHeadingNumberFormat}|${state.editorHeadingNumberStartLevel}|${state.editorHeadingNumberSkipManual}|${state.editorGuideLine}|${state.editorHighlightShortcut}|${state.uiScale}|${state.uiScaleUserSet}|${state.autoSaveEnabled}|${state.autoSaveDelay}|${state.outlineVisible}|${state.outlinePosition}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesShowOnlyFolders}|${state.notesFoldersInitialCollapseDone}|${state.notesCollapseFoldersOnStartup}|${headingFoldKey}|${state.themeOverridesEnabled}|${state.customAccent ?? ""}|${state.customBgImage ?? ""}|${state.customBgDim}|${state.customBgBlur}|${state.customBgFit}|${state.defaultViewMode}|${state.tasksDefaultView}|${state.tasksCalendarColorBy}`;
   if (key !== _prevPersistKey) {
     _prevPersistKey = key;
     saveThemeToStore();
@@ -1813,7 +1914,7 @@ useAppStore.subscribe((state) => {
 // 编辑器版面偏好变化时实时同步到 :root（变量 + data 属性），无需刷新
 let _prevLayoutKey = "";
 useAppStore.subscribe((state) => {
-  const key = `${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}|${state.editorHeadingNumber}`;
+  const key = `${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}|${state.editorHeadingNumber}|${state.editorGuideLine}`;
   if (key !== _prevLayoutKey) {
     _prevLayoutKey = key;
     applyEditorLayout(state);

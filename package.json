@@ -13,7 +13,9 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "build:mcp": "node scripts/build-mcp.mjs",
-    "build:mcp:debug": "node scripts/build-mcp.mjs --debug"
+    "build:mcp:debug": "node scripts/build-mcp.mjs --debug",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@ant-design/icons": "^6.1.0",
@@ -99,6 +101,7 @@
     "tailwindcss": "^4.2.1",
     "terser": "^5.46.1",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitest": "^4.1.10"
   }
 }

@@ -566,6 +566,25 @@ function DesktopSettingsPage() {
   const setEditorRuleLines = useAppStore((s) => s.setEditorRuleLines);
   const setEditorFirstLineIndent = useAppStore((s) => s.setEditorFirstLineIndent);
   const setEditorHeadingNumber = useAppStore((s) => s.setEditorHeadingNumber);
+  // 标题编号细项（格式 / 起始层级 / 是否跳过手写编号）+ 层级引线
+  const editorHeadingNumberFormat = useAppStore((s) => s.editorHeadingNumberFormat);
+  const editorHeadingNumberStartLevel = useAppStore(
+    (s) => s.editorHeadingNumberStartLevel,
+  );
+  const editorHeadingNumberSkipManual = useAppStore(
+    (s) => s.editorHeadingNumberSkipManual,
+  );
+  const editorGuideLine = useAppStore((s) => s.editorGuideLine);
+  const setEditorHeadingNumberFormat = useAppStore(
+    (s) => s.setEditorHeadingNumberFormat,
+  );
+  const setEditorHeadingNumberStartLevel = useAppStore(
+    (s) => s.setEditorHeadingNumberStartLevel,
+  );
+  const setEditorHeadingNumberSkipManual = useAppStore(
+    (s) => s.setEditorHeadingNumberSkipManual,
+  );
+  const setEditorGuideLine = useAppStore((s) => s.setEditorGuideLine);
 
   // 全局界面缩放
   const uiScale = useAppStore((s) => s.uiScale);
@@ -1957,13 +1976,85 @@ function DesktopSettingsPage() {
           <div>
             <div>标题自动编号 + 彩虹色</div>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              给 H1–H6 标题自动编号（1 / 1.1 / 1.1.1）并按层级配色。仅显示效果，不写入笔记内容（导出 .md 不含编号）。
+              给 H1–H6 标题自动编号（1 / 1.1 / 1.1.1）并按层级配色。仅显示效果，不写入笔记内容（导出 .md 不含编号）；复制到其他软件时编号会跟着走。
             </Text>
           </div>
           <Switch
             checked={editorHeadingNumber}
             onChange={setEditorHeadingNumber}
           />
+        </div>
+
+        {/* 编号细项：只在开启编号时展开，避免设置页常态臃肿 */}
+        {editorHeadingNumber && (
+          <div
+            className="mt-2 pl-3"
+            style={{ borderLeft: "2px solid #f0f0f0" }}
+          >
+            <div className="flex items-center justify-between py-1">
+              <div>
+                <div style={{ fontSize: 13 }}>编号格式</div>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  阿拉伯数字逐级累积，或中文公文式分级符号
+                </Text>
+              </div>
+              <Select
+                size="small"
+                style={{ width: 190 }}
+                value={editorHeadingNumberFormat}
+                onChange={setEditorHeadingNumberFormat}
+                options={[
+                  { value: "decimal", label: "1 / 1.1 / 1.1.1" },
+                  { value: "chineseOutline", label: "一、/（一）/ 1." },
+                ]}
+              />
+            </div>
+
+            <div className="flex items-center justify-between py-1">
+              <div>
+                <div style={{ fontSize: 13 }}>从第几级开始编号</div>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  H1 常用作文档大标题时，可从 H2 起编号
+                </Text>
+              </div>
+              <Select
+                size="small"
+                style={{ width: 190 }}
+                value={editorHeadingNumberStartLevel}
+                onChange={setEditorHeadingNumberStartLevel}
+                options={[1, 2, 3].map((n) => ({
+                  value: n,
+                  label: `从 H${n} 开始`,
+                }))}
+              />
+            </div>
+
+            <div className="flex items-center justify-between py-1">
+              <div>
+                <div style={{ fontSize: 13 }}>标题已有编号时不重复叠加</div>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  AI 生成或从 Word 粘来的标题常自带「1.1」「一、」，开启后不再叠一层编号
+                </Text>
+              </div>
+              <Switch
+                checked={editorHeadingNumberSkipManual}
+                onChange={setEditorHeadingNumberSkipManual}
+              />
+            </div>
+          </div>
+        )}
+
+        <div
+          className="flex items-center justify-between py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div>
+            <div>层级引线</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              给多级列表和文档大纲画出层级竖线，嵌套关系一眼可见
+            </Text>
+          </div>
+          <Switch checked={editorGuideLine} onChange={setEditorGuideLine} />
         </div>
 
         <div

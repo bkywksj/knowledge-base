@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { theme as antdTheme } from "antd";
 import { EyeOff, ListTree } from "lucide-react";
+import { getHeadingNumberMap } from "./HeadingNumber";
+import { useAppStore } from "@/store";
 
 /**
  * EditorOutline —— 笔记编辑页右侧大纲面板。
@@ -22,6 +24,11 @@ interface OutlineItem {
   pos: number;
   level: number;
   text: string;
+  /**
+   * 正文里显示的自动编号（"1.2.3" / "（一）"）；null = 该标题没有编号。
+   * 与正文共用 HeadingNumber 插件算出的同一份数据，不会出现"正文有编号大纲没有"。
+   */
+  label: string | null;
   /** 用于 IntersectionObserver 配对：editor.view.nodeDOM(pos) 拿到的 HTMLElement */
   el: HTMLElement | null;
 }
@@ -37,6 +44,7 @@ interface Props {
 
 export function EditorOutline({ editor, scrollRoot, onHide }: Props) {
   const { token } = antdTheme.useToken();
+  const guideLine = useAppStore((s) => s.editorGuideLine);
   const [items, setItems] = useState<OutlineItem[]>([]);
   const [activePos, setActivePos] = useState<number | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -45,6 +53,8 @@ export function EditorOutline({ editor, scrollRoot, onHide }: Props) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const collect = useMemo(() => (ed: any): OutlineItem[] => {
     const list: OutlineItem[] = [];
+    // 正文编号表（HeadingNumber 插件算好的）；编号关闭时是空表，大纲自然也不显示编号
+    const byPos = getHeadingNumberMap(ed.state);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ed.state.doc.descendants((node: any, pos: number) => {
       if (node.type.name === "heading") {
@@ -52,6 +62,7 @@ export function EditorOutline({ editor, scrollRoot, onHide }: Props) {
           pos,
           level: node.attrs.level ?? 1,
           text: node.textContent || "(无标题)",
+          label: byPos.get(pos) ?? null,
           el: null, // 后面在 useEffect 里补
         });
         return false; // 不下钻 heading 内部
@@ -251,14 +262,23 @@ export function EditorOutline({ editor, scrollRoot, onHide }: Props) {
               className="editor-outline__item"
               data-active={isActive || undefined}
               style={{
-                paddingLeft: 8 + Math.max(0, it.level - 1) * 12,
+                paddingLeft: 8,
+                // 缩进改用 marginLeft，把左边框让出来当层级引线：同级条目连续排列时
+                // 这些 1px 边框会连成一条竖线（Obsidian 同款）。关引线时用透明边框占位，
+                // 保证开/关状态下条目左边界不跳动。
+                marginLeft: Math.max(0, it.level - 1) * 12,
+                borderLeft:
+                  it.level > 1
+                    ? `1px solid ${guideLine ? token.colorBorderSecondary : "transparent"}`
+                    : undefined,
                 color: isActive ? token.colorPrimary : token.colorTextSecondary,
                 fontWeight: isActive ? 600 : 400,
                 background: isActive ? `${token.colorPrimary}14` : "transparent",
               }}
               onClick={() => handleJump(it)}
-              title={it.text}
+              title={it.label ? `${it.label} ${it.text}` : it.text}
             >
+              {it.label && <span className="editor-outline__num">{it.label}</span>}
               {it.text || "(无标题)"}
             </li>
           );

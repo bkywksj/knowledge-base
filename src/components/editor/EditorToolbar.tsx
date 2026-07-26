@@ -44,7 +44,9 @@ import {
   Columns4,
   ChevronDown,
   Search,
+  ListX,
 } from "lucide-react";
+import { hasManualNumber, stripManualNumber } from "@/lib/headingNumber";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toKbAsset, toKbAssetHref } from "@/lib/assetUrl";
 import { attachmentApi, imageApi, videoApi } from "@/lib/api";
@@ -976,6 +978,39 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
         title: "清除格式",
         action: () =>
           editor.chain().focus().unsetAllMarks().clearNodes().run(),
+      },
+      {
+        icon: <ListX size={15} />,
+        // AI 生成 / 从 Word 粘来的文档，标题正文里常自带"1.1"「一、」这类编号，
+        // 与本软件的自动编号叠加就成了「1.1.1 1.1 公司定位」。一键清掉手写的那层，
+        // 之后交给自动编号统一管理。一次 transaction 完成，Ctrl+Z 可整体撤销。
+        title: "清除标题内手写编号（1.1 / 一、/ 第一章）",
+        action: () => {
+          const { state, view } = editor;
+          const tr = state.tr;
+          let count = 0;
+          state.doc.descendants((node, pos) => {
+            if (node.type.name !== "heading") return true;
+            // 只认标题第一个 text 子节点：编号一定在开头，按 text 长度算删除区间才精确
+            // （标题里可能夹着行内公式 / 图片，用 textContent 算偏移会删错位置）
+            const first = node.firstChild;
+            if (!first?.isText || !first.text) return false;
+            if (!hasManualNumber(first.text)) return false;
+            const stripped = stripManualNumber(first.text);
+            if (stripped === first.text) return false;
+            const removed = first.text.length - stripped.length;
+            const from = tr.mapping.map(pos + 1);
+            tr.delete(from, from + removed);
+            count += 1;
+            return false;
+          });
+          if (count === 0) {
+            message.info("没有找到自带编号的标题");
+            return;
+          }
+          view.dispatch(tr);
+          message.success(`已清除 ${count} 个标题的手写编号`);
+        },
       },
       ...(onOpenSearch
         ? [
