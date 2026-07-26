@@ -51,13 +51,12 @@ pub fn sync_import_from_file(
 ) -> Result<SyncManifest, String> {
     let db_path = resolve_db_path(&state.data_dir);
     let db_path_str = db_path.to_string_lossy().into_owned();
-    let history_id = state
-        .db
-        .sync_history_begin("import")
-        .map_err(|e| e.to_string())?;
+    // 开始时间先记着 —— 历史记录要等 db 替换 + reopen 之后才能写进**新库**
+    // （否则写在旧库里，随替换一起消失，见 sync_history_record_done 的说明）
+    let started_at = now_local_string();
 
     // 必须先释放 db 文件占用，否则 Windows 上 SQLite 的 mmap 会让
-    // apply 阶段 fs::File::create(app.db) 报 ERROR_USER_MAPPED_FILE (1224)
+    // apply 阶段替换 app.db 时报 ERROR_USER_MAPPED_FILE (1224)
     let _ = state.db.release();
 
     let result = SyncService::import_from_file(
@@ -85,7 +84,7 @@ pub fn sync_import_from_file(
         }
     }
 
-    record_manifest_history(&state, history_id, &result);
+    record_manifest_history(&state, "import", &started_at, &result);
     result.map_err(|e| e.to_string())
 }
 
@@ -148,13 +147,11 @@ pub async fn sync_webdav_pull(
     let db_path = resolve_db_path(&state.data_dir);
     let db_path_str = db_path.to_string_lossy().into_owned();
 
-    let history_id = state
-        .db
-        .sync_history_begin("pull")
-        .map_err(|e| e.to_string())?;
+    // 同 sync_import_from_file：历史记录延后到 reopen 之后写新库
+    let started_at = now_local_string();
 
     // 同 sync_import_from_file：必须先释放 db 文件占用，否则 Windows mmap 会让
-    // apply 阶段 fs::File::create(app.db) 报 ERROR_USER_MAPPED_FILE (1224)
+    // apply 阶段替换 app.db 时报 ERROR_USER_MAPPED_FILE (1224)
     let _ = state.db.release();
 
     let result = SyncService::webdav_pull(
@@ -185,7 +182,7 @@ pub async fn sync_webdav_pull(
         }
     }
 
-    record_manifest_history(&state, history_id, &result);
+    record_manifest_history(&state, "pull", &started_at, &result);
     result.map_err(|e| e.to_string())
 }
 
@@ -362,22 +359,39 @@ fn record_history(
     }
 }
 
+/// 本地时间戳，格式与 SQLite `datetime('now','localtime')` 一致，便于同列排序比较
+fn now_local_string() -> String {
+    chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+/// 记录一次"会替换 app.db"的同步（导入 / WebDAV 恢复）的历史。
+///
+/// 必须在 `db.reopen()` **之后**调用：此时连接指向的才是替换后的新库。
+/// 用 `sync_history_record_done` 一次性插入完整行（而不是 begin/finish 两段式），
+/// 否则 begin 写在旧库、finish 写在新库，记录会静默丢失。
 fn record_manifest_history(
     state: &AppState,
-    history_id: i64,
+    direction: &str,
+    started_at: &str,
     result: &Result<SyncManifest, crate::error::AppError>,
 ) {
-    match result {
+    let outcome = match result {
         Ok(m) => {
             let stats_json = serde_json::to_string(&m.stats).unwrap_or_else(|_| "{}".into());
-            let _ = state
+            state
                 .db
-                .sync_history_finish(history_id, true, None, &stats_json);
+                .sync_history_record_done(direction, started_at, true, None, &stats_json)
         }
-        Err(e) => {
-            let _ = state
-                .db
-                .sync_history_finish(history_id, false, Some(&e.to_string()), "{}");
-        }
+        Err(e) => state.db.sync_history_record_done(
+            direction,
+            started_at,
+            false,
+            Some(&e.to_string()),
+            "{}",
+        ),
+    };
+    if let Err(e) = outcome {
+        // 历史记录只是审计信息，写失败不该影响导入结果本身
+        log::warn!("[sync] 写入同步历史失败（不影响导入结果）: {}", e);
     }
 }

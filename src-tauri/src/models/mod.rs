@@ -712,6 +712,19 @@ pub struct SyncManifest {
     /// `Option`：None = 老版本导出（在引入校验之前），按宽容模式放行 + 日志告警。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_dev: Option<bool>,
+    /// 导出时 `app.db` 的 `PRAGMA user_version`（= `database::schema::SCHEMA_VERSION`）。
+    ///
+    /// **为什么必须有**：`schema_version` 字段管的是 ZIP 包**格式**版本（恒为 1），跟数据库结构无关。
+    /// 在引入本字段之前，导入端对"包里 app.db 的库结构版本"零校验，于是：
+    /// - 导入**更高**版本的库 → 本次能用，但**下次启动** `schema::migrate` 直接返回
+    ///   "数据库版本高于应用支持的版本" → `Database::init` 失败 → **应用再也起不来**
+    /// - 导入**更低**版本的库 → 当前会话所有查询撞 "no such column"，要重启才自愈
+    ///
+    /// 现在导入端会拿它做前置拦截（高版本直接拒绝导入），并在替换后自动跑迁移升级低版本库。
+    /// `Option`：None = 老版本导出的包（无此字段），此时改为从解出来的 db 文件实读
+    /// `user_version` 兜底校验（见 `SyncService::verify_sqlite_snapshot`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub db_user_version: Option<i32>,
 }
 
 /// 同步数据统计

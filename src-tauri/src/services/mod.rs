@@ -9,6 +9,7 @@ pub mod converter;
 pub mod crypto;
 pub mod daily;
 pub mod data_dir;
+pub mod db_recovery;
 // 紧急待办全屏窗口仅桌面端（移动端无多窗口概念）
 #[cfg(desktop)]
 pub mod emergency_window;

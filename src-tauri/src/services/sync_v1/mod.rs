@@ -27,3 +27,38 @@ pub mod push;
 pub mod runtime;
 
 pub use manifest::compute_local_manifest;
+
+/// 截断 hash 用于日志 / 进度消息（前 8 位足以辨识）。
+///
+/// **必须按 `chars()` 而不是字节切片**：pull 端的 hash 来自**远端 manifest**（其他设备写的 JSON，
+/// 不完全可信）。一旦远端被篡改 / 损坏，hash 里混进非 ASCII 字符，`&s[..8]` 就会切在 UTF-8
+/// 字符中间直接 panic —— 而 Tauri Command 里的 panic 会让整个进程崩溃（表现为"同步时闪退"）。
+/// 用 `chars().take(8)` 对任意输入都安全。
+pub(crate) fn short_hash(hash: &str) -> String {
+    hash.chars().take(8).collect()
+}
+
+#[cfg(test)]
+mod short_hash_tests {
+    use super::short_hash;
+
+    #[test]
+    fn truncates_ascii_hash() {
+        assert_eq!(short_hash("0123456789abcdef"), "01234567");
+    }
+
+    #[test]
+    fn keeps_short_input_as_is() {
+        assert_eq!(short_hash("abc"), "abc");
+        assert_eq!(short_hash(""), "");
+    }
+
+    /// 核心回归：非 ASCII 输入不得 panic（字节切片版本会在这里炸）
+    #[test]
+    fn does_not_panic_on_multibyte_input() {
+        assert_eq!(short_hash("中文哈希值内容够长"), "中文哈希值内容够");
+        assert_eq!(short_hash("中文"), "中文");
+        // 混合：4 字节 emoji + ASCII
+        assert_eq!(short_hash("🔒ab"), "🔒ab");
+    }
+}

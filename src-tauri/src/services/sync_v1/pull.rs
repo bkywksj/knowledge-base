@@ -63,6 +63,27 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
         }
     };
 
+    // manifest 格式版本检查（向后兼容闸门）：
+    // 远端 manifest 版本高于本端能理解的 → 说明对端用的是更新版应用，格式可能新增/改变了字段语义。
+    // 用旧逻辑硬解析可能悄悄丢字段、甚至把远端数据错误地应用到本地（比 pull 失败更糟）。
+    // 处理：不动本地任何数据，直接返回一条 errors 提示用户升级（前端会 modal.warning 弹出来）。
+    // 反向（远端版本更低）是正常的向后兼容场景，照常处理。
+    if remote.manifest_version > SyncManifestV1::VERSION {
+        log::warn!(
+            "[sync_v1] backend {} 远端 manifest 版本 {} 高于本端支持的 {}，跳过本次 pull",
+            backend_id,
+            remote.manifest_version,
+            SyncManifestV1::VERSION
+        );
+        result.errors.push(format!(
+            "远端同步数据的格式版本（v{}）高于当前应用支持的版本（v{}）。\
+             本次拉取已跳过以免损坏本地数据 —— 请先把本机应用升级到最新版本再同步。",
+            remote.manifest_version,
+            SyncManifestV1::VERSION
+        ));
+        return Ok(result);
+    }
+
     // hash 算法兼容性检查（v1 → v2 升级）：
     // 远端 manifest 不带 hash_algo（旧客户端写的）且有内容 → 当前的 v2 公式与远端不一致，
     // diff 会把所有笔记误判为变更。处理：清空本机 sync_remote_state（防止误判跳过），
@@ -181,7 +202,7 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
                     total: total_dl,
                     message: format!(
                         "下载附件 {} ({} bytes)",
-                        &att.hash[..att.hash.len().min(8)],
+                        super::short_hash(&att.hash),
                         att.size
                     ),
                 },
@@ -215,7 +236,7 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
                             result.errors.push(format!(
                                 "拒绝可疑附件路径 {} (hash {})",
                                 rel,
-                                &att.hash[..att.hash.len().min(8)]
+                                super::short_hash(&att.hash)
                             ));
                             continue;
                         }
@@ -252,11 +273,11 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
                 }
                 Ok(None) => result.errors.push(format!(
                     "远端 manifest 有附件 {} 但 get_attachment 返回空",
-                    &att.hash[..att.hash.len().min(8)]
+                    super::short_hash(&att.hash)
                 )),
                 Err(e) => result.errors.push(format!(
                     "下载附件 {} 失败: {}",
-                    &att.hash[..att.hash.len().min(8)],
+                    super::short_hash(&att.hash),
                     e
                 )),
             }

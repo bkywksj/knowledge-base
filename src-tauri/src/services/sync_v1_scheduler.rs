@@ -22,7 +22,7 @@ use std::time::Duration;
 use chrono::{Local, NaiveDateTime};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::models::SyncBackend;
+use crate::models::{SyncBackend, SyncPullResult, SyncPushResult};
 use crate::services::sync_v1;
 use crate::state::AppState;
 
@@ -117,13 +117,22 @@ async fn run_backend_sync(app: &AppHandle, backend_id: i64) {
 
     // 先 pull
     let pull_app = app.clone();
-    let pull_outcome: Result<(String, usize), String> =
+    let pull_outcome: Result<SyncPullResult, String> =
         tauri::async_runtime::spawn_blocking(move || run_pull_blocking(&pull_app, backend_id))
             .await
             .unwrap_or_else(|e| Err(format!("pull task panic: {}", e)));
 
     let encrypted_skipped = match &pull_outcome {
-        Ok((_, n)) => *n,
+        Ok(r) => {
+            log::info!(
+                "[sync-v1-scheduler] backend #{} pull 完成: 下载 {} / 删本地 {} / 冲突 {}",
+                backend_id,
+                r.downloaded,
+                r.deleted_local,
+                r.conflicts
+            );
+            r.encrypted_skipped
+        }
         Err(e) => {
             log::warn!(
                 "[sync-v1-scheduler] backend #{} pull 失败: {}（跳过 push，等下个周期）",
@@ -137,17 +146,19 @@ async fn run_backend_sync(app: &AppHandle, backend_id: i64) {
 
     // pull 成功才 push（否则可能把过期数据推给远端）
     let push_app = app.clone();
-    let push_outcome: Result<String, String> =
+    let push_outcome: Result<SyncPushResult, String> =
         tauri::async_runtime::spawn_blocking(move || run_push_blocking(&push_app, backend_id))
             .await
             .unwrap_or_else(|e| Err(format!("push task panic: {}", e)));
 
     match push_outcome {
-        Ok(summary) => {
+        Ok(r) => {
             log::info!(
-                "[sync-v1-scheduler] backend #{} 双向同步完成: {}",
+                "[sync-v1-scheduler] backend #{} 双向同步完成: 上传 {} / 跳过 {} / 错误 {}",
                 backend_id,
-                summary
+                r.uploaded,
+                r.skipped,
+                r.errors.len()
             );
             emit_result(app, backend_id, true, None, encrypted_skipped);
         }
@@ -170,9 +181,16 @@ async fn run_backend_sync(app: &AppHandle, backend_id: i64) {
 
 /// 同步阻塞 pull：在 spawn_blocking 上下文里运行，可安全调用 sync_v1::pull
 ///
-/// 返回 `(摘要, encrypted_skipped)` —— 后者透传给 emit_result，让前端能在后台同步完成后
-/// 弹"X 篇加密笔记未同步"提示（见 SyncPullResult.encrypted_skipped）。
-fn run_pull_blocking(app: &AppHandle, backend_id: i64) -> Result<(String, usize), String> {
+/// 返回完整的 [`SyncPullResult`] —— 调度器自己格式化摘要，
+/// `commands::sync_v1::sync_v1_pull` 则把它整个透传给前端（两处共用同一份实现，
+/// 避免前台 Command 再写一遍"取配置 → 建 backend → 调 pull"的流程而漏掉 spawn_blocking）。
+///
+/// **必须在 `spawn_blocking` 上下文里调用**：内部是同步阻塞 IO（网络 + SQLite），
+/// 直接在 tokio worker / 主线程上跑会卡住整个 UI。
+pub(crate) fn run_pull_blocking(
+    app: &AppHandle,
+    backend_id: i64,
+) -> Result<SyncPullResult, String> {
     let state = app.state::<AppState>();
     let cfg = state
         .db
@@ -203,15 +221,14 @@ fn run_pull_blocking(app: &AppHandle, backend_id: i64) -> Result<(String, usize)
         app, // AppHandle 自身实现 Emitter
     )
     .map_err(|e| e.to_string())?;
-    let summary = format!(
-        "下载 {} / 删本地 {} / 冲突 {}",
-        r.downloaded, r.deleted_local, r.conflicts
-    );
-    Ok((summary, r.encrypted_skipped))
+    Ok(r)
 }
 
-/// 同步阻塞 push
-fn run_push_blocking(app: &AppHandle, backend_id: i64) -> Result<String, String> {
+/// 同步阻塞 push（约束同 [`run_pull_blocking`]：只能在 `spawn_blocking` 上下文里调）
+pub(crate) fn run_push_blocking(
+    app: &AppHandle,
+    backend_id: i64,
+) -> Result<SyncPushResult, String> {
     let state = app.state::<AppState>();
     let cfg = state
         .db
@@ -235,12 +252,7 @@ fn run_push_blocking(app: &AppHandle, backend_id: i64) -> Result<String, String>
         app,
     )
     .map_err(|e| e.to_string())?;
-    Ok(format!(
-        "上传 {} / 跳过 {} / 错误 {}",
-        r.uploaded,
-        r.skipped,
-        r.errors.len()
-    ))
+    Ok(r)
 }
 
 /// emit 同步结果给前端（设置页 SyncV1Section 监听，失败时弹 toast 提示）

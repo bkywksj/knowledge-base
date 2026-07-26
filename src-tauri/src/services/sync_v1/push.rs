@@ -84,6 +84,21 @@ pub fn push<R: Runtime, E: Emitter<R>>(
     );
     let mut remote_opt = backend.read_manifest()?;
 
+    // manifest 格式版本检查（与 pull 同款闸门，但 push 侧后果更严重）：
+    // 远端版本更高说明对端是更新版应用。本端 push 最后要 merge + **覆写**远端 manifest，
+    // 用旧结构体 merge 会把新版本才有的字段整片抹掉 —— 等于本端一次推送就把对端的数据降级了。
+    // 处理：直接报错中止本次 push，一个字节都不写远端。
+    if let Some(ref m) = remote_opt {
+        if m.manifest_version > SyncManifestV1::VERSION {
+            return Err(AppError::Custom(format!(
+                "远端同步数据的格式版本（v{}）高于当前应用支持的版本（v{}）。\
+                 已中止推送以免覆盖并损坏其他设备的数据 —— 请先把本机应用升级到最新版本。",
+                m.manifest_version,
+                SyncManifestV1::VERSION
+            )));
+        }
+    }
+
     // hash 算法兼容性检查（v1 → v2 升级）：
     // 远端 manifest 是旧客户端写的（无 hash_algo 字段），diff 会把所有笔记误判为变更。
     // 处理：清空本机 sync_remote_state，把远端视为"空 manifest" → 走全量首次推送路径，
@@ -647,14 +662,9 @@ pub fn push<R: Runtime, E: Emitter<R>>(
     Ok(result)
 }
 
-/// 截断 hash 用于日志/事件消息（前 8 位足以辨识）
-fn short_hash(hash: &str) -> String {
-    if hash.len() >= 8 {
-        hash[..8].to_string()
-    } else {
-        hash.to_string()
-    }
-}
+/// 截断 hash 用于日志/事件消息（前 8 位足以辨识）。
+/// 复用 `sync_v1::short_hash`（按 char 截断，非 ASCII 输入也不会 panic）。
+use super::short_hash;
 
 /// 让未引用的常量不报警告（暂留给 pull 用）
 #[allow(dead_code)]

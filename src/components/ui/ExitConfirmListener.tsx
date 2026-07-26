@@ -6,6 +6,24 @@ import { exit } from "@tauri-apps/plugin-process";
 import { useTabsStore, type NoteTab } from "@/store/tabs";
 import { noteApi, syncV1Api } from "@/lib/api";
 
+/** 单个 backend 推送的等待上限 */
+const PER_BACKEND_TIMEOUT_MS = 15_000;
+/** 整个退出同步阶段的等待上限（兜底，防止 backend 数量多时累加成很长的等待） */
+const TOTAL_EXIT_SYNC_TIMEOUT_MS = 30_000;
+
+/**
+ * 给 promise 套一个超时。超时只是**不再等**，并不会取消后端仍在跑的任务
+ * （数据都还在本地，下次启动会自动补同步），所以超时按"本次没推成功"处理即可。
+ */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label}超时（${ms / 1000}s）`)), ms),
+    ),
+  ]);
+}
+
 /**
  * 退出前对所有启用的同步后端做一次 push。
  * Why：保证最后一次本地修改进了远端，下次在别的设备 pull 时不会丢这部分。
@@ -15,23 +33,41 @@ import { noteApi, syncV1Api } from "@/lib/api";
  * 2. 任何一个 backend 失败都返回错误信息，由调用方决定是否阻断退出（弹"强制退出"）
  *    而不是默默吞掉，否则离线场景下用户感知不到丢数据风险
  * 3. 每个 backend 单独 try/catch，一个失败不影响其他成功
+ * 4. **必须有超时**：调用方是先 `window.hide()` 再跑这里的。若某个 backend 卡住
+ *    （弱网下 WebDAV 读超时 60s × N 个文件），用户看到的是"窗口没了但进程还在"，
+ *    此时再点图标启动，新进程会被单实例锁挡回去 —— 体感就是"软件打不开了"。
+ *    超时后走失败分支（把窗口重新显示出来让用户选），保证进程一定有个确定的去向。
  */
 async function pushAllOnExit(): Promise<{ ok: number; errors: string[] }> {
   let ok = 0;
   const errors: string[] = [];
+  const deadline = Date.now() + TOTAL_EXIT_SYNC_TIMEOUT_MS;
   try {
-    const backends = await syncV1Api.listBackends();
+    const backends = await withTimeout(
+      syncV1Api.listBackends(),
+      5_000,
+      "读取同步源列表",
+    );
     const enabled = backends.filter((b) => b.enabled);
     for (const b of enabled) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        errors.push(`${b.name}: 退出同步总时长已超限，本次未推送`);
+        continue;
+      }
       try {
-        await syncV1Api.push(b.id);
+        await withTimeout(
+          syncV1Api.push(b.id),
+          Math.min(PER_BACKEND_TIMEOUT_MS, remaining),
+          `推送「${b.name}」`,
+        );
         ok++;
       } catch (e) {
-        errors.push(`${b.name}: ${e}`);
+        errors.push(`${b.name}: ${e instanceof Error ? e.message : e}`);
       }
     }
   } catch (e) {
-    errors.push(`读取后端列表失败: ${e}`);
+    errors.push(`读取后端列表失败: ${e instanceof Error ? e.message : e}`);
   }
   return { ok, errors };
 }
@@ -89,14 +125,24 @@ export function ExitConfirmListener() {
       // 隐藏失败不阻断后台同步流程
     }
 
-    const { errors } = await pushAllOnExit();
+    // 窗口此刻是隐藏的 —— 从这里到"要么 exit、要么把窗口显示回来"之间**不允许有任何
+    // 逃逸路径**，否则进程会停在"看不见窗口但还占着单实例锁"的状态，用户再点图标启动
+    // 会被锁挡回去，体感就是软件打不开。pushAllOnExit 内部已全量 catch + 超时，
+    // 这里再包一层兜底，任何意外都归入 errors 走"显示窗口"分支。
+    let errors: string[];
+    try {
+      ({ errors } = await pushAllOnExit());
+    } catch (e) {
+      errors = [`退出同步异常: ${e instanceof Error ? e.message : e}`];
+    }
+
     if (errors.length === 0) {
       // errors 为空（含无配置 ok=0）即视为通过，不阻塞退出
       await exit(0);
       return;
     }
 
-    // 同步失败：重新显示窗口，让用户决定强制退出还是回去手动处理
+    // 同步失败 / 超时：重新显示窗口，让用户决定强制退出还是回去手动处理
     try {
       const w = getCurrentWindow();
       await w.show();

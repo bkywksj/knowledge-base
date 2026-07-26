@@ -108,7 +108,19 @@ impl Database {
     /// 实现要点：
     /// - 整个过程持有 Mutex，序列化所有读写，保证导入瞬间不会有并发查询拿到不一致数据
     /// - 重建后必须重跑 PRAGMA（init 里那一套）；不跑会丢 WAL/foreign_keys 等设置
-    /// - 不跑 schema::migrate：导入的 db 已经是同版本/更高版本，跑 migrate 反而可能改坏
+    /// - **必须跑 `schema::migrate`**：见下方说明
+    ///
+    /// ## 为什么一定要跑迁移
+    ///
+    /// 这里曾经刻意**不跑** migrate，理由是"导入的 db 已经是同版本/更高版本"。
+    /// 这个前提是错的 —— 用户恢复**半年前的老备份**是最常见的场景。老库缺少后续版本新增的
+    /// 列 / 表，reopen 之后当前会话的所有查询会直接撞 `no such column`，界面全线报错，
+    /// 必须重启应用才能自愈（重启时 `init` 才会跑 migrate 补上）。
+    ///
+    /// 跑 migrate 是安全的：`schema::migrate` 是幂等的递增迁移，同版本库进去等于 no-op；
+    /// 而**更高**版本的库根本走不到这里 —— 导入端在替换文件前就已经拦截了
+    /// （见 `SyncService::verify_sqlite_snapshot`），所以 migrate 里那条
+    /// "版本高于应用支持" 的分支在此路径下不会触发。
     pub fn reopen(&self, db_path: &str) -> Result<(), AppError> {
         let mut guard = self
             .conn
@@ -126,6 +138,18 @@ impl Database {
         new_conn.pragma_update(None, "mmap_size", 33_554_432_i64)?;
         new_conn.pragma_update(None, "temp_store", "MEMORY")?;
         new_conn.busy_timeout(std::time::Duration::from_secs(5))?;
+
+        // 把导入进来的老库升到当前 schema（幂等；同版本 = no-op）
+        let before = schema::get_version(&new_conn)?;
+        schema::migrate(&new_conn)?;
+        let after = schema::get_version(&new_conn)?;
+        if before != after {
+            log::info!(
+                "[db] 热重载时把导入的数据库从 schema v{} 迁移到 v{}",
+                before,
+                after
+            );
+        }
 
         *guard = new_conn;
         log::info!("[db] 已热重载数据库连接: {}", db_path);

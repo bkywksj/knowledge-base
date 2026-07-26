@@ -25,6 +25,11 @@ const MANIFEST_FILE: &str = "manifest.json";
 const DB_FILE_IN_ZIP: &str = "app.db";
 const SETTINGS_FILE_IN_ZIP: &str = "settings.json";
 
+/// 导入前自动备份现有数据库的文件名后缀：`app.db.bak-20260727-153000`
+const DB_BACKUP_SUFFIX: &str = ".bak-";
+/// 滚动保留的自动备份份数（超出的删最旧）
+const DB_BACKUP_KEEP: usize = 3;
+
 pub struct SyncService;
 
 impl SyncService {
@@ -127,6 +132,9 @@ impl SyncService {
             stats: stats.clone(),
             // 标记当前 build 类型，import 端做强一致性校验
             is_dev: Some(cfg!(debug_assertions)),
+            // 记录库结构版本，让导入端能在替换文件**之前**判断兼容性
+            // （避免导入高版本库后应用下次直接起不来）
+            db_user_version: Some(crate::database::schema::SCHEMA_VERSION),
         };
         let manifest_json = serde_json::to_string_pretty(&manifest)?;
         zip.start_file(MANIFEST_FILE, opt)?;
@@ -211,6 +219,20 @@ impl SyncService {
             )));
         }
 
+        // 数据库结构版本前置校验（快速失败，此时还没解压任何东西、更没碰 app.db）。
+        // 注意 `schema_version` 管的是 ZIP 包格式（恒为 1），跟库结构无关 —— 必须单独看这一项。
+        // 老包没有该字段（None）→ 这里放行，后面用解出来的 db 文件实读 user_version 兜底。
+        if let Some(v) = manifest.db_user_version {
+            if v > crate::database::schema::SCHEMA_VERSION {
+                return Err(AppError::Custom(format!(
+                    "该备份来自更新版本的应用（数据库结构 v{}，当前应用支持 v{}）。\
+                     强行导入会导致应用下次启动时无法打开数据库 —— 请先把本机应用升级到最新版本再恢复。",
+                    v,
+                    crate::database::schema::SCHEMA_VERSION
+                )));
+            }
+        }
+
         // dev/prod 一致性校验：包里的 is_dev 必须和当前 build 匹配，
         // 防止 dev 包污染 prod 实例（资产路径前缀不同会造成无法读取的孤儿数据）。
         // is_dev 字段为 None = 老版本导出（在引入校验之前），按"宽容兼容"放行 + 日志告警。
@@ -254,6 +276,21 @@ impl SyncService {
             }
         }
 
+        // app.db 的落地策略（本次改造核心）：
+        //
+        // 旧实现直接 `fs::File::create(app.db)` 就地截断再边解压边写。只要中途出任何问题
+        // （ZIP 损坏 / 磁盘满 / 进程被杀 / 断电），用户的 app.db 就变成一个半截文件 →
+        // 下次启动 `Database::init` 失败 → setup 返回 Err → 应用直接 exit(1)，**再也打不开**，
+        // 而且没有任何备份可回滚。
+        //
+        // 现在改成"写临时文件 → 校验 → 备份原库 → 原子替换"：在 rename 那一刻之前，
+        // 用户原来的 app.db 一个字节都没被动过，任何中途失败都只损失临时文件。
+        // 用 `.sync-tmp-` 前缀命名：万一进程在替换前被杀，残留文件会被启动期的
+        // `cleanup_orphan_temp_files` 自动收走，不会攒垃圾。
+        let db_tmp_path = data_dir.join(".sync-tmp-import-db");
+        let _ = fs::remove_file(&db_tmp_path);
+        let mut db_extracted = false;
+
         // 展开 ZIP 所有文件
         for i in 0..archive.len() {
             let mut file = archive
@@ -280,8 +317,9 @@ impl SyncService {
 
             let target = match name.as_str() {
                 n if n == DB_FILE_IN_ZIP => {
-                    // app.db 写入到传入的 db_path（可能是 dev- 前缀）
-                    db_path.to_path_buf()
+                    // 先落到临时文件，校验通过后才原子替换真正的 db_path（可能是 dev- 前缀）
+                    db_extracted = true;
+                    db_tmp_path.clone()
                 }
                 n if n == SETTINGS_FILE_IN_ZIP => data_dir.join(settings_file_name()),
                 other => {
@@ -310,7 +348,23 @@ impl SyncService {
             }
 
             let mut out = fs::File::create(&target)?;
-            std::io::copy(&mut file, &mut out)?;
+            // 显式 flush + sync：copy 只保证写进了内核缓冲。后面马上要 rename 顶替真库，
+            // 必须先确保字节真的落盘，否则断电时会出现"rename 已生效但内容还没写完"的空/半截库。
+            if let Err(e) = std::io::copy(&mut file, &mut out).and_then(|_| {
+                out.flush()?;
+                out.sync_all()
+            }) {
+                let _ = fs::remove_file(&db_tmp_path);
+                return Err(e.into());
+            }
+        }
+
+        // ── app.db 原子替换（只有包里确实含 app.db 时才走）
+        if db_extracted {
+            if let Err(e) = Self::commit_db_replacement(db_path, &db_tmp_path) {
+                // 失败时临时文件已在内部清理；用户原库**完全没被动过**，直接把错误抛给前端
+                return Err(e);
+            }
         }
 
         // 同步完成后清理失效的 WebDAV 加密密码条目
@@ -318,6 +372,166 @@ impl SyncService {
         Self::cleanup_invalid_webdav_passwords(db_path);
 
         Ok(manifest)
+    }
+
+    /// 校验临时库 → 备份现有库 → 清 WAL → 原子替换。任一步失败都保证**原库不变**。
+    ///
+    /// 这是整条导入链路里唯一会动用户 `app.db` 的地方，顺序不能调换：
+    /// 1. **先校验**：临时库能打开、`quick_check` 通过、含 `notes` 表、`user_version` 不超过本应用支持的版本。
+    ///    校验不过 → 直接失败，绝不拿一个坏库去顶替好库。
+    /// 2. **再备份**：现有 `app.db` 复制成 `app.db.bak-<时间戳>`，滚动保留最近
+    ///    [`DB_BACKUP_KEEP`] 份。用户误点"覆盖导入"冲掉数据时，这是唯一的后悔药。
+    /// 3. **清 `-wal` / `-shm`**：WAL 模式下这两个文件与 db 主文件是一套。只换 db 主文件而留下
+    ///    旧 WAL，SQLite 下次打开会把旧 WAL 的页回放到新库上 → **数据库损坏**。
+    ///    （正常情况 `Database::release()` 关连接时 SQLite 会自行清掉，但只有它是最后一个连接时才成立；
+    ///    本项目存在 kb-mcp sidecar 也连同一个库的场景，所以必须显式删。）
+    /// 4. **最后 rename**：同目录内 rename 是原子的，要么新库生效要么原库原封不动，不存在中间态。
+    fn commit_db_replacement(db_path: &Path, tmp_path: &Path) -> Result<(), AppError> {
+        // 1. 校验新库
+        let new_version = match Self::verify_sqlite_snapshot(tmp_path) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = fs::remove_file(tmp_path);
+                return Err(e);
+            }
+        };
+        log::info!(
+            "[sync] 待导入数据库校验通过（schema v{}），准备替换 {}",
+            new_version,
+            db_path.display()
+        );
+
+        // 2. 备份现有库（首次导入时可能还没有库，跳过即可）
+        if db_path.exists() {
+            match Self::backup_existing_db(db_path) {
+                Ok(bak) => log::info!("[sync] 已备份现有数据库 → {}", bak.display()),
+                Err(e) => {
+                    // 备份失败就**不允许**继续覆盖 —— 没有后悔药的覆盖是不可接受的
+                    let _ = fs::remove_file(tmp_path);
+                    return Err(AppError::Custom(format!(
+                        "导入前备份现有数据库失败，已中止导入（原数据未受影响）: {}",
+                        e
+                    )));
+                }
+            }
+        }
+
+        // 3. 清理旧 WAL / SHM（见上方说明；不存在时 remove_file 报错可忽略）
+        for suffix in ["-wal", "-shm"] {
+            let mut p = db_path.as_os_str().to_os_string();
+            p.push(suffix);
+            let side = std::path::PathBuf::from(p);
+            if side.exists() {
+                match fs::remove_file(&side) {
+                    Ok(_) => log::info!("[sync] 已清理 {}", side.display()),
+                    Err(e) => {
+                        let _ = fs::remove_file(tmp_path);
+                        return Err(AppError::Custom(format!(
+                            "清理 {} 失败，已中止导入（原数据未受影响）。\
+                             常见原因：另一个进程（如 kb-mcp）正打开着数据库，请关闭后重试: {}",
+                            side.display(),
+                            e
+                        )));
+                    }
+                }
+            }
+        }
+
+        // 4. 原子替换
+        if let Err(e) = fs::rename(tmp_path, db_path) {
+            let _ = fs::remove_file(tmp_path);
+            return Err(AppError::Custom(format!(
+                "替换数据库文件失败，已中止导入（原数据未受影响）: {}",
+                e
+            )));
+        }
+        Ok(())
+    }
+
+    /// 校验一个待导入的 SQLite 文件是否可用，返回它的 `user_version`。
+    ///
+    /// 可用性判据复用 [`db_recovery::probe_sqlite`](crate::services::db_recovery::probe_sqlite)
+    /// （只读打开 → 读 schema → 确认含 `notes` 表 → 实读 notes 数据页；
+    /// 之所以不用 `PRAGMA quick_check`，见那边的说明 —— FTS5 表在只读连接上会误报）。
+    ///
+    /// 在此基础上多加一道版本闸门：`user_version` 高于本应用的
+    /// [`SCHEMA_VERSION`](crate::database::schema::SCHEMA_VERSION) 就拒绝。
+    /// 这是对老备份包（manifest 无 `db_user_version` 字段）和 manifest 被篡改的双重兜底 ——
+    /// **以库文件里的真实值为准**。
+    fn verify_sqlite_snapshot(path: &Path) -> Result<i32, AppError> {
+        let version = crate::services::db_recovery::probe_sqlite(path).map_err(|e| {
+            AppError::Custom(format!(
+                "备份包中的数据库不可用（文件可能已损坏或不是本应用的数据库）: {}",
+                e
+            ))
+        })?;
+        if version > crate::database::schema::SCHEMA_VERSION {
+            return Err(AppError::Custom(format!(
+                "该备份来自更新版本的应用（数据库结构 v{}，当前应用支持 v{}）。\
+                 强行导入会导致应用下次启动时无法打开数据库 —— 请先把本机应用升级到最新版本再恢复。",
+                version,
+                crate::database::schema::SCHEMA_VERSION
+            )));
+        }
+        Ok(version)
+    }
+
+    /// 把现有 db 复制一份为 `<db 文件名>.bak-<yyyyMMdd-HHmmss>`，并滚动清理超出保留数的旧备份。
+    ///
+    /// 用**复制**而不是 rename：rename 会让 db_path 在替换前短暂不存在，若之后的步骤失败，
+    /// 用户就处在"原库已经不在原位"的状态。复制则保证原库始终在原位，直到最后一步 rename 才被顶替。
+    fn backup_existing_db(db_path: &Path) -> Result<std::path::PathBuf, AppError> {
+        let file_name = db_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| AppError::Custom("数据库路径异常，无法生成备份名".into()))?;
+        let dir = db_path
+            .parent()
+            .ok_or_else(|| AppError::Custom("数据库路径异常，无法定位所在目录".into()))?;
+
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+        let backup = dir.join(format!("{}{}{}", file_name, DB_BACKUP_SUFFIX, stamp));
+        fs::copy(db_path, &backup)?;
+
+        Self::prune_old_db_backups(dir, file_name);
+        Ok(backup)
+    }
+
+    /// 只保留最近 [`DB_BACKUP_KEEP`] 份备份，更旧的删掉（防止反复导入把磁盘撑满）。
+    ///
+    /// 时间戳格式 `%Y%m%d-%H%M%S` 保证字典序 == 时间序，直接按文件名排序即可。
+    /// 清理失败只 warn：留几个多余备份远好过让导入流程失败。
+    fn prune_old_db_backups(dir: &Path, db_file_name: &str) {
+        let prefix = format!("{}{}", db_file_name, DB_BACKUP_SUFFIX);
+        let entries = match fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(e) => {
+                log::warn!("[sync] 清理旧数据库备份：读取目录失败 {}", e);
+                return;
+            }
+        };
+        let mut backups: Vec<std::path::PathBuf> = entries
+            .flatten()
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|s| s.to_str())
+                    .map(|n| n.starts_with(&prefix))
+                    .unwrap_or(false)
+            })
+            .collect();
+        if backups.len() <= DB_BACKUP_KEEP {
+            return;
+        }
+        backups.sort();
+        let drop_count = backups.len() - DB_BACKUP_KEEP;
+        for old in backups.into_iter().take(drop_count) {
+            match fs::remove_file(&old) {
+                Ok(_) => log::info!("[sync] 清理旧数据库备份: {}", old.display()),
+                Err(e) => log::warn!("[sync] 清理旧数据库备份 {} 失败: {}", old.display(), e),
+            }
+        }
     }
 
     /// 扫描 app_config 中所有 sync.webdav_pw_enc.* 条目，
@@ -948,6 +1162,397 @@ mod tests {
         assert_eq!(SyncService::get_backup_password(&db).unwrap(), None);
     }
 
+    // ─── 原子导入：校验 / 备份 / WAL 清理 / 版本闸门 ─────────────────────────
+
+    /// 造一个测试用的 data_dir，返回路径
+    fn mk_tmp_dir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "kb-atomic-{}-{}",
+            tag,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// 用给定标题建一个真实库文件并释放句柄
+    fn mk_db(path: &Path, title: &str) {
+        use crate::models::NoteInput;
+        let db = Database::init(&path.to_string_lossy()).unwrap();
+        db.create_note(&NoteInput {
+            title: title.into(),
+            content: "c".into(),
+            folder_id: None,
+        })
+        .unwrap();
+        db.release().ok();
+        drop(db);
+    }
+
+    /// 打包一个只含 app.db（+ manifest）的快照 ZIP
+    fn mk_snapshot_zip(src_db: &Path, db_user_version: Option<i32>) -> Vec<u8> {
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut zip = ZipWriter::new(Cursor::new(&mut buf));
+            let opt = SimpleFileOptions::default();
+            let manifest = SyncManifest {
+                schema_version: 1,
+                device: "t".into(),
+                exported_at: "x".into(),
+                app_version: "t".into(),
+                scope: SyncScope {
+                    notes: true,
+                    images: false,
+                    pdfs: false,
+                    sources: false,
+                    settings: false,
+                },
+                stats: SyncStats::default(),
+                is_dev: None, // None → 跳过 dev/prod 校验，专注测本次逻辑
+                db_user_version,
+            };
+            zip.start_file(MANIFEST_FILE, opt).unwrap();
+            zip.write_all(serde_json::to_string(&manifest).unwrap().as_bytes())
+                .unwrap();
+            zip.start_file(DB_FILE_IN_ZIP, opt).unwrap();
+            let bytes = fs::read(src_db).unwrap();
+            zip.write_all(&bytes).unwrap();
+            zip.finish().unwrap();
+        }
+        buf
+    }
+
+    fn note_titles_at(db_path: &Path) -> Vec<String> {
+        let db = Database::init(&db_path.to_string_lossy()).unwrap();
+        let out = {
+            let conn = db.conn_lock().unwrap();
+            let mut stmt = conn.prepare("SELECT title FROM notes").unwrap();
+            stmt.query_map([], |r| r.get::<_, String>(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        db.release().ok();
+        drop(db);
+        out
+    }
+
+    /// 正常导入：数据被替换 + **自动生成了 .bak 备份**
+    #[test]
+    fn import_replaces_db_and_creates_backup() {
+        let dir = mk_tmp_dir("ok");
+        let src = dir.join("src.db");
+        mk_db(&src, "来自备份包");
+        let zip = mk_snapshot_zip(&src, Some(crate::database::schema::SCHEMA_VERSION));
+
+        let dest = dir.join("app.db");
+        mk_db(&dest, "原有数据");
+
+        SyncService::apply_snapshot_from_reader(
+            &dir,
+            &dest,
+            Cursor::new(&zip),
+            SyncImportMode::Overwrite,
+        )
+        .unwrap();
+
+        assert_eq!(note_titles_at(&dest), vec!["来自备份包".to_string()]);
+
+        let has_backup = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().starts_with("app.db.bak-"));
+        assert!(has_backup, "导入前必须自动备份原库");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 包里的 app.db 是损坏文件 → 拒绝导入，且**原库完好无损**
+    #[test]
+    fn import_rejects_corrupt_db_and_keeps_original_intact() {
+        let dir = mk_tmp_dir("corrupt");
+        let dest = dir.join("app.db");
+        mk_db(&dest, "宝贵的原始数据");
+
+        // 手工造一个含垃圾 app.db 的 ZIP
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut zip = ZipWriter::new(Cursor::new(&mut buf));
+            let opt = SimpleFileOptions::default();
+            let manifest = SyncManifest {
+                schema_version: 1,
+                device: "t".into(),
+                exported_at: "x".into(),
+                app_version: "t".into(),
+                scope: SyncScope {
+                    notes: true,
+                    images: false,
+                    pdfs: false,
+                    sources: false,
+                    settings: false,
+                },
+                stats: SyncStats::default(),
+                is_dev: None,
+                db_user_version: None,
+            };
+            zip.start_file(MANIFEST_FILE, opt).unwrap();
+            zip.write_all(serde_json::to_string(&manifest).unwrap().as_bytes())
+                .unwrap();
+            zip.start_file(DB_FILE_IN_ZIP, opt).unwrap();
+            zip.write_all(b"NOT-A-SQLITE-FILE-AT-ALL").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let res = SyncService::apply_snapshot_from_reader(
+            &dir,
+            &dest,
+            Cursor::new(&buf),
+            SyncImportMode::Overwrite,
+        );
+        assert!(res.is_err(), "损坏的 app.db 必须被拒绝");
+
+        // 关键断言：原库一点没坏
+        assert_eq!(
+            note_titles_at(&dest),
+            vec!["宝贵的原始数据".to_string()],
+            "导入失败后原库必须完好"
+        );
+        // 临时文件不应残留
+        assert!(!dir.join(".sync-tmp-import-db").exists(), "临时文件应已清理");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// manifest 声明的 db 版本高于本应用 → 在解压前就拦下（否则导入后应用下次起不来）
+    #[test]
+    fn import_rejects_newer_db_version_from_manifest() {
+        let dir = mk_tmp_dir("newer-manifest");
+        let src = dir.join("src.db");
+        mk_db(&src, "来自未来版本");
+        let zip = mk_snapshot_zip(&src, Some(crate::database::schema::SCHEMA_VERSION + 5));
+
+        let dest = dir.join("app.db");
+        mk_db(&dest, "原有数据");
+
+        let res = SyncService::apply_snapshot_from_reader(
+            &dir,
+            &dest,
+            Cursor::new(&zip),
+            SyncImportMode::Overwrite,
+        );
+        let err = res.unwrap_err().to_string();
+        assert!(
+            err.contains("更新版本") && err.contains("升级"),
+            "错误信息应引导用户升级应用，实际: {}",
+            err
+        );
+        assert_eq!(
+            note_titles_at(&dest),
+            vec!["原有数据".to_string()],
+            "被拒绝的导入不得改动原库"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 老包（manifest 无 db_user_version）但库文件本身是高版本 → 靠实读 user_version 兜底拦截
+    #[test]
+    fn import_rejects_newer_db_version_by_probing_file() {
+        let dir = mk_tmp_dir("newer-file");
+        let src = dir.join("src.db");
+        mk_db(&src, "高版本库");
+        // 手工把 user_version 顶到超过当前应用支持
+        {
+            let conn = rusqlite::Connection::open(&src).unwrap();
+            conn.pragma_update(
+                None,
+                "user_version",
+                crate::database::schema::SCHEMA_VERSION + 7,
+            )
+            .unwrap();
+        }
+        let zip = mk_snapshot_zip(&src, None); // 老包：manifest 里没有版本字段
+
+        let dest = dir.join("app.db");
+        mk_db(&dest, "原有数据");
+
+        let res = SyncService::apply_snapshot_from_reader(
+            &dir,
+            &dest,
+            Cursor::new(&zip),
+            SyncImportMode::Overwrite,
+        );
+        assert!(res.is_err(), "即使 manifest 没声明版本，也要靠实读库文件拦下");
+        assert_eq!(note_titles_at(&dest), vec!["原有数据".to_string()]);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 导入必须清掉旧的 -wal / -shm：新库配旧 WAL 会被 SQLite 回放成损坏库
+    #[test]
+    fn import_clears_stale_wal_and_shm() {
+        let dir = mk_tmp_dir("wal");
+        let src = dir.join("src.db");
+        mk_db(&src, "新数据");
+        let zip = mk_snapshot_zip(&src, Some(crate::database::schema::SCHEMA_VERSION));
+
+        let dest = dir.join("app.db");
+        mk_db(&dest, "旧数据");
+        // 伪造遗留的 WAL 三件套（真实场景：kb-mcp 等第二个连接在开着，SQLite 关连接时没清掉）
+        fs::write(dir.join("app.db-wal"), b"stale-wal-content").unwrap();
+        fs::write(dir.join("app.db-shm"), b"stale-shm-content").unwrap();
+
+        SyncService::apply_snapshot_from_reader(
+            &dir,
+            &dest,
+            Cursor::new(&zip),
+            SyncImportMode::Overwrite,
+        )
+        .unwrap();
+
+        assert!(!dir.join("app.db-wal").exists(), "旧 -wal 必须被清理");
+        assert!(!dir.join("app.db-shm").exists(), "旧 -shm 必须被清理");
+        assert_eq!(note_titles_at(&dest), vec!["新数据".to_string()]);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **端到端还原 `sync_import_from_file` 的真实时序**（含 Windows 文件占用）。
+    ///
+    /// 上面那些用例都是直接调 `apply_snapshot_from_reader`，目标 db 文件没有任何进程打开着 ——
+    /// 而线上真实路径是：应用**正开着** `app.db`（SQLite 在 Windows 上持有 mmap + 文件句柄），
+    /// 走 `release()` 放开占用 → 替换文件 → `reopen()` 接回来。
+    ///
+    /// 这个时序是历史故障高发区（`ERROR_USER_MAPPED_FILE` 1224 / `os error 32`），
+    /// 也是本次改造新增"rename 替换 + 删 -wal/-shm"后最需要确认的地方：
+    /// rename 和 remove_file 在 Windows 上都会被残留句柄挡住，纯逻辑单测发现不了。
+    #[test]
+    fn full_import_flow_with_live_db_connection() {
+        use crate::models::NoteInput;
+
+        let dir = mk_tmp_dir("live");
+        let src = dir.join("src.db");
+        mk_db(&src, "备份包里的笔记");
+        let zip = mk_snapshot_zip(&src, Some(crate::database::schema::SCHEMA_VERSION));
+
+        let dest = dir.join("app.db");
+
+        // 1) 模拟"应用正在运行"：真实 Database 打开着目标库并写入数据
+        //    （写入会产生 -wal，正是替换时最容易卡住的那个文件）
+        let db = Database::init(&dest.to_string_lossy()).unwrap();
+        db.create_note(&NoteInput {
+            title: "运行中的原始数据".into(),
+            content: "x".into(),
+            folder_id: None,
+        })
+        .unwrap();
+
+        // 2) 与 commands::sync::sync_import_from_file 同序：先 release 放开文件占用
+        db.release().unwrap();
+
+        // 3) 导入（内部：校验 → 备份 → 删 -wal/-shm → 原子 rename）
+        let manifest = SyncService::apply_snapshot_from_reader(
+            &dir,
+            &dest,
+            Cursor::new(&zip),
+            SyncImportMode::Overwrite,
+        )
+        .expect("在持有过 db 连接的情况下导入不应被文件占用卡住");
+        assert_eq!(manifest.schema_version, 1);
+
+        // 4) reopen 接回真实库（这一步同时会跑 schema 迁移）
+        db.reopen(&dest.to_string_lossy()).unwrap();
+
+        // 5) 连接指向的应当是替换后的新库
+        let titles = {
+            let conn = db.conn_lock().unwrap();
+            let mut stmt = conn.prepare("SELECT title FROM notes").unwrap();
+            stmt.query_map([], |r| r.get::<_, String>(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert_eq!(
+            titles,
+            vec!["备份包里的笔记".to_string()],
+            "reopen 后应读到导入的新数据"
+        );
+
+        // 6) reopen 跑完迁移，版本应是当前版本（老备份升级路径的保证）
+        let version = {
+            let conn = db.conn_lock().unwrap();
+            conn.pragma_query_value(None, "user_version", |r| r.get::<_, i32>(0))
+                .unwrap()
+        };
+        assert_eq!(version, crate::database::schema::SCHEMA_VERSION);
+
+        // 7) 原库已自动备份，用户有后悔药
+        let backups: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("app.db.bak-"))
+            .collect();
+        assert_eq!(backups.len(), 1, "应恰好生成一份备份，实际: {:?}", backups);
+        // 备份里装的必须是**替换前**的数据
+        assert_eq!(
+            note_titles_at(&dir.join(&backups[0])),
+            vec!["运行中的原始数据".to_string()],
+            "备份内容应是导入前的原始数据"
+        );
+
+        db.release().ok();
+        drop(db);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 备份滚动保留：超过 DB_BACKUP_KEEP 份后删最旧的
+    #[test]
+    fn prunes_old_backups_keeping_latest_n() {
+        let dir = mk_tmp_dir("prune");
+        // 造 6 个假备份（时间戳字典序 == 时间序）
+        for i in 1..=6 {
+            fs::write(
+                dir.join(format!("app.db.bak-2026010{}-000000", i)),
+                b"x",
+            )
+            .unwrap();
+        }
+        // 干扰项：前缀相近但不匹配的文件不能被误删
+        fs::write(dir.join("app.db"), b"x").unwrap();
+        fs::write(dir.join("app.db.bakX-20260101-000000"), b"x").unwrap();
+
+        SyncService::prune_old_db_backups(&dir, "app.db");
+
+        let mut left: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("app.db.bak-"))
+            .collect();
+        left.sort();
+        assert_eq!(left.len(), DB_BACKUP_KEEP, "应只保留 {} 份", DB_BACKUP_KEEP);
+        assert_eq!(
+            left,
+            vec![
+                "app.db.bak-20260104-000000",
+                "app.db.bak-20260105-000000",
+                "app.db.bak-20260106-000000"
+            ],
+            "保留的应该是最新的几份"
+        );
+        assert!(dir.join("app.db").exists(), "业务库不得被误删");
+        assert!(
+            dir.join("app.db.bakX-20260101-000000").exists(),
+            "前缀不匹配的文件不得被误删"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// T-S050 Part 2 端到端：明文导出 → 加密导出 → 加密导入还原
     #[test]
     fn export_import_encrypted_roundtrip() {
@@ -1170,6 +1775,7 @@ mod tests {
                 },
                 stats: SyncStats::default(),
                 is_dev: None,
+                db_user_version: None,
             };
             zip.start_file(MANIFEST_FILE, opt).unwrap();
             zip.write_all(serde_json::to_string(&manifest).unwrap().as_bytes())

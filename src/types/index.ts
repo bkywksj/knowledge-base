@@ -780,12 +780,21 @@ export interface RemoteSnapshot {
 
 /** 云端 manifest（快照元信息） */
 export interface SyncManifest {
+  /** 同步包**格式**版本（与数据库结构无关，恒为 1） */
   schemaVersion: number;
   device: string;
   exportedAt: string;
   appVersion: string;
   scope: SyncScope;
   stats: SyncStats;
+  /** 导出端是否为 dev build；导入端据此拒绝跨 dev/prod 导入。老包无此字段 */
+  isDev?: boolean;
+  /**
+   * 导出时 app.db 的 schema 版本（`PRAGMA user_version`）。
+   * 导入端用它做前置拦截：高于当前应用支持的版本直接拒绝，
+   * 否则导入后应用下次启动会打不开数据库。老包无此字段（改由实读库文件兜底校验）。
+   */
+  dbUserVersion?: number;
 }
 
 /** 同步操作结果 */

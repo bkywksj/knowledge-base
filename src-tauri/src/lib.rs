@@ -652,8 +652,21 @@ pub fn run() {
             let db_path = data_dir_root.join(format!("{}app.db", prefix));
             let db_path_str = db_path.to_string_lossy().to_string();
 
-            let db = database::Database::init(&db_path_str)
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            // 数据库打开失败是"应用完全不可用"级别的故障，但**不能**直接 `?` 让 setup 返回 Err ——
+            // 那样只会 exit(1)，用户看到一句错误就没有任何自救手段（历史上整库导入被中断
+            // 写坏 app.db 后就是这个下场）。
+            //
+            // 改为：先尝试自动从导入前的自动备份恢复（`app.db.bak-*`，由 sync 导入流程滚动保留），
+            // 恢复成功就照常启动；实在没救才把损坏库改名留档 + 用空库启动，
+            // 让用户至少能进到界面里做导入 / 反馈，原始损坏文件也还留在磁盘上可送修。
+            let db = match database::Database::init(&db_path_str) {
+                Ok(db) => db,
+                Err(e) => {
+                    log::error!("数据库打开失败: {}（进入恢复流程）", e);
+                    services::db_recovery::recover_or_fresh(&db_path, &e)
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?
+                }
+            };
             log::info!("数据库初始化完成: {}", db_path_str);
 
             // 资产目录均基于 data_dir_root（service 内部仍叫 app_data_dir，语义是"数据根"）。

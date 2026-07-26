@@ -48,6 +48,34 @@ impl Database {
         Ok(())
     }
 
+    /// 一次性写入一条**已完成**的同步记录（begin + finish 合并）。
+    ///
+    /// 专给"整库导入 / WebDAV 恢复"用：这两条链路会把 `app.db` 整个替换掉，
+    /// 若沿用 `begin` → 替换 → `finish` 的写法，`begin` 拿到的 rowid 属于**被替换掉的旧库**，
+    /// 替换后再 `finish` 就是在新库里 UPDATE 一个不存在的 id → 影响 0 行，
+    /// 这条导入历史静默消失（用户在设置页看不到刚做过的恢复记录）。
+    ///
+    /// 改为等替换 + reopen 完成后，用真实的开始时间一次性插进**新库**。
+    pub fn sync_history_record_done(
+        &self,
+        direction: &str,
+        started_at: &str,
+        success: bool,
+        error: Option<&str>,
+        stats_json: &str,
+    ) -> Result<i64, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        conn.execute(
+            "INSERT INTO sync_history (direction, started_at, finished_at, success, error, stats_json)
+             VALUES (?1, ?2, datetime('now', 'localtime'), ?3, ?4, ?5)",
+            params![direction, started_at, success as i32, error, stats_json],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
     /// VACUUM INTO：把当前 DB 完整拷贝到新路径（合并 WAL，脱离锁冲突）
     /// 用于生成"干净的"DB 快照供同步包打包
     pub fn vacuum_into(&self, target_path: &Path) -> Result<(), AppError> {

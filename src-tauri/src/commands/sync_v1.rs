@@ -7,7 +7,7 @@
 //!
 //! 注意：所有 Command 都需要在 lib.rs 的 generate_handler! 注册。
 
-use tauri::{Manager, State, Window};
+use tauri::{Manager, State};
 
 use crate::error::AppError;
 use crate::models::{
@@ -15,6 +15,23 @@ use crate::models::{
 };
 use crate::services::sync_v1::backend;
 use crate::state::AppState;
+
+/// 按 backend id 建出远端实现（读配置 + 解析鉴权）。
+///
+/// 内含 DB 读，且调用方后面紧跟着的都是网络 IO —— 因此**只在 `spawn_blocking` 里调用**。
+fn build_backend(
+    app: &tauri::AppHandle,
+    id: i64,
+) -> Result<Box<dyn backend::SyncBackendImpl>, String> {
+    let state = app.state::<AppState>();
+    let cfg = state
+        .db
+        .get_sync_backend(id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("backend {} 不存在", id))?;
+    let auth = backend::parse_auth(cfg.kind, &cfg.config_json).map_err(|e| e.to_string())?;
+    backend::create_backend(auth).map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 pub fn sync_v1_list_backends(state: State<'_, AppState>) -> Result<Vec<SyncBackend>, String> {
@@ -57,77 +74,66 @@ pub fn sync_v1_delete_backend(state: State<'_, AppState>, id: i64) -> Result<boo
     state.db.delete_sync_backend(id).map_err(|e| e.to_string())
 }
 
-/// 测试连接
+/// 测试连接（网络 IO → async，理由同 [`sync_v1_push`]）
 #[tauri::command]
-pub fn sync_v1_test_connection(state: State<'_, AppState>, id: i64) -> Result<(), String> {
-    let cfg = state
-        .db
-        .get_sync_backend(id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("backend {} 不存在", id))?;
-    let auth = backend::parse_auth(cfg.kind, &cfg.config_json).map_err(|e| e.to_string())?;
-    let backend_impl = backend::create_backend(auth).map_err(|e| e.to_string())?;
-    backend_impl.test_connection().map_err(|e| e.to_string())
+pub async fn sync_v1_test_connection(app: tauri::AppHandle, id: i64) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        build_backend(&app, id)?
+            .test_connection()
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("连接测试任务异常终止: {}", e))?
 }
 
-/// 读远端 manifest（前端调试用）
+/// 读远端 manifest（前端调试用；网络 IO → async）
 #[tauri::command]
-pub fn sync_v1_read_remote_manifest(
-    state: State<'_, AppState>,
+pub async fn sync_v1_read_remote_manifest(
+    app: tauri::AppHandle,
     id: i64,
 ) -> Result<Option<SyncManifestV1>, String> {
-    let cfg = state
-        .db
-        .get_sync_backend(id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("backend {} 不存在", id))?;
-    let auth = backend::parse_auth(cfg.kind, &cfg.config_json).map_err(|e| e.to_string())?;
-    let backend_impl = backend::create_backend(auth).map_err(|e| e.to_string())?;
-    backend_impl.read_manifest().map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        build_backend(&app, id)?
+            .read_manifest()
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("读取远端 manifest 任务异常终止: {}", e))?
 }
 
 /// 推送
+///
+/// **必须是 `async` + `spawn_blocking`**：Tauri 把**非 async** 的 Command 放在**主线程**上执行，
+/// 而 push 内部是重量级同步阻塞流程（全库 manifest 计算 + N 次 WebDAV 往返 + 逐条 DB 写）。
+/// 早期这里写成 `pub fn`，导致点一次同步整个窗口冻结几十秒到几分钟（Windows 会直接标"未响应"）——
+/// 尤其启动自动 pull / 退出前 push 都走这条路，用户体感就是"软件死机 / 打不开"。
+///
+/// 具体流程复用 `sync_v1_scheduler::run_push_blocking`（后台调度器用的同一份），
+/// 避免两处各写一遍"取配置 → 建 backend → 调 push"而其中一处再次漏掉 spawn_blocking。
 #[tauri::command]
-pub fn sync_v1_push(
+pub async fn sync_v1_push(
     state: State<'_, AppState>,
-    window: Window,
     app: tauri::AppHandle,
     id: i64,
 ) -> Result<SyncPushResult, String> {
     // 同步互斥：同一 backend 同时只跑一个 pull/push，防并发互踩（见 services::sync_v1::lock）
+    // guard 在本函数作用域内持有（跨 await），任务结束 / 出错 Drop 时自动释放。
     let _sync_guard = state
         .sync_v1_gate
         .try_acquire(id)
         .ok_or_else(|| "该同步源正在同步中，请等当前同步结束再试".to_string())?;
 
-    let cfg = state
-        .db
-        .get_sync_backend(id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("backend {} 不存在", id))?;
-    let auth = backend::parse_auth(cfg.kind, &cfg.config_json).map_err(|e| e.to_string())?;
-    let backend_impl = backend::create_backend(auth).map_err(|e| e.to_string())?;
-
-    let app_version = app.package_info().version.to_string();
-    let device = hostname_short();
-
-    crate::services::sync_v1::push::push(
-        &state.db,
-        id,
-        backend_impl.as_ref(),
-        &app_version,
-        &device,
-        &state.data_dir,
-        &window,
-    )
-    .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::services::sync_v1_scheduler::run_push_blocking(&app, id)
+    })
+    .await
+    .map_err(|e| format!("推送任务异常终止: {}", e))?
 }
 
-/// 拉取
+/// 拉取（同 [`sync_v1_push`]：async + spawn_blocking，绝不可退回同步 Command）
 #[tauri::command]
-pub fn sync_v1_pull(
+pub async fn sync_v1_pull(
     state: State<'_, AppState>,
-    window: Window,
     app: tauri::AppHandle,
     id: i64,
 ) -> Result<SyncPullResult, String> {
@@ -137,35 +143,11 @@ pub fn sync_v1_pull(
         .try_acquire(id)
         .ok_or_else(|| "该同步源正在同步中，请等当前同步结束再试".to_string())?;
 
-    let cfg = state
-        .db
-        .get_sync_backend(id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("backend {} 不存在", id))?;
-    let auth = backend::parse_auth(cfg.kind, &cfg.config_json).map_err(|e| e.to_string())?;
-    let backend_impl = backend::create_backend(auth).map_err(|e| e.to_string())?;
-
-    let app_version = app.package_info().version.to_string();
-    let device = hostname_short();
-
-    let conflicts_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("sync_conflicts")
-        .join(format!("backend_{}", id));
-
-    crate::services::sync_v1::pull::pull(
-        &state.db,
-        id,
-        backend_impl.as_ref(),
-        &app_version,
-        &device,
-        &conflicts_dir,
-        &state.data_dir,
-        &window,
-    )
-    .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::services::sync_v1_scheduler::run_pull_blocking(&app, id)
+    })
+    .await
+    .map_err(|e| format!("拉取任务异常终止: {}", e))?
 }
 
 /// 后台同步：立即返回，同步（先拉后推）在后台 tokio task 里跑，完成/失败通过 `sync_v1:auto-triggered` 事件回报。
@@ -191,15 +173,19 @@ pub fn sync_v1_trigger_background_sync(
 }
 
 /// 拿当前本地 manifest（调试 / UI 状态展示用）
+///
+/// 全库扫描（notes + folders + tags + attachments + tasks），大库耗时可观 → async。
 #[tauri::command]
-pub fn sync_v1_get_local_manifest(
-    state: State<'_, AppState>,
-    app: tauri::AppHandle,
-) -> Result<SyncManifestV1, String> {
+pub async fn sync_v1_get_local_manifest(app: tauri::AppHandle) -> Result<SyncManifestV1, String> {
     let app_version = app.package_info().version.to_string();
     let device = hostname_short();
-    crate::services::sync_v1::compute_local_manifest(&state.db, &app_version, &device)
-        .map_err(|e: AppError| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        crate::services::sync_v1::compute_local_manifest(&state.db, &app_version, &device)
+            .map_err(|e: AppError| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("计算本地 manifest 任务异常终止: {}", e))?
 }
 
 /// T-S024: 重建附件索引
@@ -211,16 +197,21 @@ pub fn sync_v1_get_local_manifest(
 /// - 用户在设置页点"重建附件索引"按钮（首次启用 V1 同步时建议跑一次）
 /// - 笔记大批量导入后（外部工具导入的笔记 content 已经写好但索引表是空的）
 ///
-/// 性能：O(笔记数 × 资产读取 IO)。1 万条笔记约几秒（取决于附件数和磁盘速度）。
+/// 性能：O(笔记数 × 资产读取 IO)。1 万条笔记约几秒（取决于附件数和磁盘速度）→ 必须 async。
 #[tauri::command]
-pub fn sync_v1_rebuild_attachment_index(state: State<'_, AppState>) -> Result<usize, String> {
-    // 用户主动点"重建附件索引" → 走 force_full（忽略 attachment_scan_at），把所有笔记都重扫一遍。
-    // push 前自动跑的是增量版本（scan_all_active_notes），靠 attachment_scan_at < updated_at 跳过未变更笔记。
-    crate::services::sync_v1::attachment_scan::scan_all_active_notes_force(
-        &state.db,
-        &state.data_dir,
-    )
-    .map_err(|e: AppError| e.to_string())
+pub async fn sync_v1_rebuild_attachment_index(app: tauri::AppHandle) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        // 用户主动点"重建附件索引" → 走 force_full（忽略 attachment_scan_at），把所有笔记都重扫一遍。
+        // push 前自动跑的是增量版本（scan_all_active_notes），靠 attachment_scan_at < updated_at 跳过未变更笔记。
+        crate::services::sync_v1::attachment_scan::scan_all_active_notes_force(
+            &state.db,
+            &state.data_dir,
+        )
+        .map_err(|e: AppError| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("重建附件索引任务异常终止: {}", e))?
 }
 
 /// T-S025: 清理远端孤儿附件
@@ -233,20 +224,21 @@ pub fn sync_v1_rebuild_attachment_index(state: State<'_, AppState>) -> Result<us
 /// 注意：
 /// - Local / S3 / WebDAV 均支持（个别禁用 PROPFIND infinity 的 WebDAV 服务器会自动跳过）
 /// - 远端无 manifest 时为安全起见不删任何东西
+///
+/// 遍历远端全部附件 + 逐个删除 → 大量网络往返，必须 async。
 #[tauri::command]
-pub fn sync_v1_gc_attachments(
-    state: State<'_, AppState>,
+pub async fn sync_v1_gc_attachments(
+    app: tauri::AppHandle,
     id: i64,
 ) -> Result<crate::services::sync_v1::attachment_gc::GcResult, String> {
-    let cfg = state
-        .db
-        .get_sync_backend(id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("backend {} 不存在", id))?;
-    let auth = backend::parse_auth(cfg.kind, &cfg.config_json).map_err(|e| e.to_string())?;
-    let backend_impl = backend::create_backend(auth).map_err(|e| e.to_string())?;
-    crate::services::sync_v1::attachment_gc::gc_attachments(&state.db, backend_impl.as_ref())
-        .map_err(|e: AppError| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        let backend_impl = build_backend(&app, id)?;
+        let state = app.state::<AppState>();
+        crate::services::sync_v1::attachment_gc::gc_attachments(&state.db, backend_impl.as_ref())
+            .map_err(|e: AppError| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("附件清理任务异常终止: {}", e))?
 }
 
 // ─── T-S051: 同步冲突解决 ──────────────────────────────────
