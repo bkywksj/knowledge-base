@@ -536,6 +536,39 @@ body,
 .kb-hnum[data-level="5"] { min-width: 4.5em; font-weight: 600; }
 .kb-hnum[data-level="6"] { min-width: 5.3em; font-weight: 600; }
 
+/* 自带手写编号的标题：不叠加自动编号，但仍占计数位 —— 后面的标题会跳号。
+   给一条很淡的左侧竖线作提示（hover 才显形，平时零干扰），配合 title 气泡说明
+   为什么跳号。不改文字颜色 / 字重，避免和层级彩虹配色打架。
+   悬挂缩进对这类标题不生效（没有编号 widget），所以竖线贴着 padding 左边缘画。 */
+:root[data-editor-heading-number="1"] .editor-content-area .tiptap .kb-hnum-manual {
+  position: relative;
+}
+:root[data-editor-heading-number="1"]
+  .editor-content-area
+  .tiptap
+  .kb-hnum-manual::after {
+  content: "";
+  position: absolute;
+  left: -0.5em;
+  top: 0.15em;
+  bottom: 0.15em;
+  width: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--ant-color-text, #000) 18%, transparent);
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+/* 鼠标进入正文区就显形（而不是精确悬停到标题上）——标题本身有较大的
+   padding-left/负 text-indent，逐个精确 hover 很难命中；进正文即显形更好发现，
+   透明度又足够低，不构成干扰。 */
+:root[data-editor-heading-number="1"]
+  .editor-content-area
+  .tiptap:hover
+  .kb-hnum-manual::after {
+  opacity: 1;
+}
+
 /* 大纲面板里的编号：与正文取自同一份数据（HeadingNumber 插件），
    tabular-nums 让多位数编号右侧对齐，条目文字不参差。 */
 .editor-outline__num {

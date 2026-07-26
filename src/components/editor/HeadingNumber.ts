@@ -60,7 +60,27 @@ function build(
   const decorations: Decoration[] = [];
 
   for (const e of entries) {
-    if (!e.label) continue; // 层级范围外 / 已有手写编号
+    if (!e.label) {
+      // 标题自带手写编号（"1.1 xxx" / "一、xxx"）→ 不叠加自动编号，但它仍占一个
+      // 计数位，所以后面的标题会跳号（1.2 之后直接 1.4）。跳号本身是个有用信号：
+      // "这里有个标题没被自动编号管着"。给它挂个标记，让用户 hover 能看到解释，
+      // 不至于以为编号算错了。
+      //
+      // 用 node decoration 而非 widget：只加 class + title，不往 DOM 里塞额外节点，
+      // 对复制 / 导出 / 选区零影响。
+      const node = e.hasManual ? doc.nodeAt(e.pos) : null;
+      if (node) {
+        decorations.push(
+          Decoration.node(e.pos, e.pos + node.nodeSize, {
+            class: "kb-hnum-manual",
+            title:
+              "此标题自带编号，未纳入自动编号（后续标题会因此跳号）。" +
+              "用工具栏「格式规整 → 清除标题内手写编号」可交还给自动编号管理。",
+          }),
+        );
+      }
+      continue;
+    }
     byPos.set(e.pos, e.label);
     decorations.push(
       Decoration.widget(
