@@ -722,8 +722,13 @@ impl super::Database {
         // 历史教训：
         // - v30 加 category_id 字段时漏改 SELECT，导致 row.get(19)? 抛 InvalidColumnIndex
         // - v32 加 parent_task_id 字段时同样漏改，符号继续退化为"reminder tick 每秒报错"
-        // 修复：补齐 category_id + parent_task_id 两列；只看主任务（parent_task_id IS NULL），
-        // 子任务不参与提醒（步骤本身不是"独立项"，应跟随主任务的提醒）。
+        // 修复：补齐 category_id + parent_task_id 两列。
+        //
+        // 子任务提醒：早期这里带 `AND parent_task_id IS NULL`（子任务不提醒，跟随主任务），
+        // 但 `peek_next_due_at` 从来没有这个条件 —— 两处口径不一致会让调度器被一条
+        // 子任务的时刻唤醒，醒来却查不到任何待提醒任务，随即按同一个（已过期的）时刻
+        // 重新入睡，形成空转。子任务支持单独设时间后（滴答清单同款），改为两处都不过滤：
+        // 没设 remind_before_minutes 的子任务本来就不会命中，老数据零影响。
         let sql = "
             SELECT id, title, description, priority, important, status, due_date,
                    completed_at, created_at, updated_at, remind_before_minutes, reminded_at,
@@ -733,7 +738,6 @@ impl super::Database {
             WHERE status = 0
               AND is_deleted = 0
               AND reminded_at IS NULL
-              AND parent_task_id IS NULL
               AND due_date IS NOT NULL
               AND remind_before_minutes IS NOT NULL
               AND datetime(
@@ -1220,5 +1224,88 @@ mod tests {
             s.urgent_todo, 1,
             "软删任务不应再计入 urgent_todo（侧边栏待办 Badge 的数据源）"
         );
+    }
+
+    /// 构造一条任务入参：可指定截止时间 / 提前提醒分钟 / 父任务。
+    fn task_input(
+        title: &str,
+        due: Option<&str>,
+        remind: Option<i32>,
+        parent: Option<i64>,
+    ) -> CreateTaskInput {
+        CreateTaskInput {
+            title: title.into(),
+            description: None,
+            priority: Some(1),
+            important: None,
+            due_date: due.map(|s| s.to_string()),
+            remind_before_minutes: remind,
+            links: None,
+            repeat_kind: None,
+            repeat_interval: None,
+            repeat_weekdays: None,
+            repeat_until: None,
+            repeat_count: None,
+            source_batch_id: None,
+            category_id: None,
+            parent_task_id: parent,
+            project_id: None,
+            start_date: None,
+        }
+    }
+
+    /// 回归：调度器的"下次唤醒时刻"（peek_next_due_at）与醒来后的实际扫描
+    /// （list_due_reminders）必须对「子任务算不算待提醒」给出一致答案。
+    ///
+    /// 两者曾经不一致：list 带 `AND parent_task_id IS NULL`、peek 没带。后果是调度器
+    /// 被一条子任务的时刻唤醒，醒来却一条都查不到，于是按同一个（已过期的）时刻
+    /// 重新入睡 —— 空转，甚至忙循环烧 CPU。子任务支持单独设时间后这条路径会被真正走到，
+    /// 这个测试把两处口径钉死。
+    #[test]
+    fn peek_and_list_agree_on_subtask_reminders() {
+        let db = fresh();
+        let parent = db
+            .create_task(task_input("主任务", Some("2030-01-01 09:00:00"), Some(0), None))
+            .unwrap();
+        // 只有子任务已经到点；主任务在很远的未来，不会干扰断言
+        db.create_task(task_input(
+            "子任务",
+            Some("2020-01-01 09:00:00"),
+            Some(0),
+            Some(parent),
+        ))
+        .unwrap();
+
+        let base = "09:00:00";
+        let due = db.list_due_reminders(base).unwrap();
+        let next = db.peek_next_due_at(base).unwrap();
+
+        assert!(next.is_some(), "peek 应给出待提醒时刻");
+        assert!(
+            !due.is_empty(),
+            "peek 说有待提醒任务，list 就必须查得到，否则调度器空转"
+        );
+        assert!(
+            due.iter().any(|t| t.title == "子任务"),
+            "设了提醒的子任务应当参与提醒"
+        );
+    }
+
+    /// 没设 remind_before_minutes 的子任务不参与提醒 —— 保证老数据（以及只设了
+    /// 日期没设提醒的子任务）不会突然开始弹通知。
+    #[test]
+    fn subtask_without_reminder_is_ignored() {
+        let db = fresh();
+        let parent = db.create_task(task_input("主任务", None, None, None)).unwrap();
+        db.create_task(task_input(
+            "只有日期的子任务",
+            Some("2020-01-01 09:00:00"),
+            None,
+            Some(parent),
+        ))
+        .unwrap();
+
+        let due = db.list_due_reminders("09:00:00").unwrap();
+        assert!(due.is_empty(), "没设提醒的任务不该被扫成待提醒");
     }
 }

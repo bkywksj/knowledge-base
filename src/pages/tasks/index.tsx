@@ -639,6 +639,7 @@ function DesktopTasksPage() {
           tasks={tasks}
           onRefresh={loadTasks}
           onEdit={setEditing}
+          categoryMap={categoryMap}
           onNewOnDate={(ymd) => {
             setPresetPriority(undefined);
             setPresetImportant(undefined);

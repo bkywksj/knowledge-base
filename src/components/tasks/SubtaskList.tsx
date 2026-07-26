@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { App as AntdApp, Button, Checkbox, Input, Spin, theme as antdTheme } from "antd";
+import {
+  App as AntdApp,
+  Button,
+  Checkbox,
+  DatePicker,
+  Input,
+  Spin,
+  theme as antdTheme,
+} from "antd";
 import type { InputRef } from "antd";
-import { Plus, Trash2 } from "lucide-react";
+import { AlarmClock, Plus, Trash2 } from "lucide-react";
+import dayjs, { type Dayjs } from "dayjs";
 import { taskApi } from "@/lib/api";
 import type { Task } from "@/types";
 import { MicButton } from "@/components/MicButton";
@@ -87,6 +96,30 @@ export function SubtaskList({ parentTaskId, onChanged, compact = false }: Props)
       onChanged?.(done, list.length);
     } catch (e) {
       message.error(`切换状态失败：${e}`);
+    }
+  }
+
+  /**
+   * 给子任务设 / 清截止时间。
+   *
+   * 子任务的时间就是"到点提醒我"（滴答清单同款语义），所以设时间时一并打开准时提醒
+   * （remind_before_minutes=0）；清时间时把提醒一起清掉，不留"没有截止时间却挂着提醒"
+   * 的孤儿状态。主任务那套「日期 + 提前多久提醒」两段式对子任务过重，这里刻意简化。
+   */
+  async function handleSetDue(id: number, v: Dayjs | null) {
+    try {
+      await taskApi.update(
+        id,
+        v
+          ? {
+              due_date: v.second(0).format("YYYY-MM-DD HH:mm:ss"),
+              remind_before_minutes: 0,
+            }
+          : { clear_due_date: true, clear_remind_before_minutes: true },
+      );
+      await refresh();
+    } catch (e) {
+      message.error(`设置时间失败：${e}`);
     }
   }
 
@@ -177,6 +210,26 @@ export function SubtaskList({ parentTaskId, onChanged, compact = false }: Props)
               >
                 {t.title}
               </span>
+              {/* 时间：没设时只露一个小闹钟、hover 该行才显形，平时不打扰阅读；
+                  设了就常驻显示 月-日 时:分，点开可改可清 */}
+              <DatePicker
+                value={t.due_date ? dayjs(t.due_date) : null}
+                onChange={(v) => handleSetDue(t.id, v)}
+                size="small"
+                variant="borderless"
+                format="MM-DD HH:mm"
+                showTime={{ format: "HH:mm", minuteStep: 5 }}
+                placeholder=""
+                allowClear
+                suffixIcon={<AlarmClock size={12} />}
+                className={
+                  t.due_date ? "" : "opacity-0 group-hover:opacity-100 focus-within:opacity-100"
+                }
+                style={{ flex: "none", width: t.due_date ? 132 : 34 }}
+                title={
+                  t.due_date ? `到点提醒：${t.due_date}` : "设置时间（到点提醒）"
+                }
+              />
               <Button
                 type="text"
                 size="small"

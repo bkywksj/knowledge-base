@@ -1,15 +1,29 @@
 import { useMemo, useState } from "react";
-import { theme as antdTheme, App as AntdApp, Button, Tooltip } from "antd";
+import {
+  theme as antdTheme,
+  App as AntdApp,
+  Button,
+  Segmented,
+  Tooltip,
+} from "antd";
 import { ChevronLeft, ChevronRight, Inbox } from "lucide-react";
 import dayjs, { type Dayjs } from "dayjs";
-import type { Task } from "@/types";
+import type { Task, TaskCategory } from "@/types";
 import { taskApi } from "@/lib/api";
+import { useAppStore } from "@/store";
+import { MAX_LANES, layoutWeek, shiftRangeTo, taskRange } from "@/lib/calendarLayout";
 
 interface Props {
   tasks: Task[];
   onRefresh: () => void;
   onEdit: (t: Task) => void;
   onNewOnDate?: (dateYmd: string) => void;
+  /**
+   * 任务分类表（id → 分类）。用于「按分类配色」——只按紧急度上色时，
+   * 同一天的几条任务看不出分属哪条线；分类色能一眼区分。
+   * 不传时「按分类」模式回退成灰色，不会报错。
+   */
+  categoryMap?: Map<number, TaskCategory>;
 }
 
 const WEEKDAY_LABELS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
@@ -32,32 +46,67 @@ function priorityColor(
   return token.colorTextQuaternary;
 }
 
-export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
+/**
+ * 给十六进制色拼上透明度后缀（用作任务条底色）。
+ * 分类色是用户自定义的，万一存的不是 #rrggbb（如 rgba(...)），直接拼后缀会得到
+ * 非法颜色值，这里退回原色而不是渲染出坏样式。
+ */
+function withAlpha(color: string, alphaHex: string) {
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? `${color}${alphaHex}` : color;
+}
+
+/**
+ * 按当前配色依据解析任务的展示色。
+ * - priority：紧急度三色（老行为）
+ * - category：任务分类的自定义色；未分类 / 分类表缺失时退回灰色
+ */
+function resolveTaskColor(
+  t: Task,
+  mode: "priority" | "category",
+  categoryMap: Map<number, TaskCategory> | undefined,
+  token: ReturnType<typeof antdTheme.useToken>["token"],
+) {
+  if (mode === "category") {
+    const c = t.category_id != null ? categoryMap?.get(t.category_id) : undefined;
+    return c?.color || token.colorTextQuaternary;
+  }
+  return priorityColor(t.priority, token);
+}
+
+export function CalendarView({
+  tasks,
+  onRefresh,
+  onEdit,
+  onNewOnDate,
+  categoryMap,
+}: Props) {
   const { token } = antdTheme.useToken();
   const { message } = AntdApp.useApp();
   const [anchor, setAnchor] = useState<Dayjs>(dayjs());
   const [hoverCell, setHoverCell] = useState<string | null>(null);
+  const colorBy = useAppStore((s) => s.tasksCalendarColorBy);
+  const setColorBy = useAppStore((s) => s.setTasksCalendarColorBy);
 
   const grid = useMemo(() => buildGrid(anchor), [anchor]);
   const todayYmd = dayjs().format("YYYY-MM-DD");
 
-  // 按 due_date 聚合（含已完成）；同一天里"未完成在前、已完成在后"，
-  // 同状态内按优先级排序，便于一眼看出当日重点
-  const tasksByDate = useMemo(() => {
-    const map: Record<string, Task[]> = {};
-    for (const t of tasks) {
-      if (!t.due_date) continue;
-      const key = t.due_date.slice(0, 10);
-      (map[key] ||= []).push(t);
-    }
-    for (const key of Object.keys(map)) {
-      map[key].sort((a, b) => {
-        if (a.status !== b.status) return a.status - b.status;
-        return a.priority - b.priority;
-      });
-    }
-    return map;
-  }, [tasks]);
+  // 6 周 × 7 天：条带按"周"布局，跨天任务在周内连成一条、跨周则在边界截断
+  const weeks = useMemo(() => {
+    const out: Dayjs[][] = [];
+    for (let i = 0; i < grid.length; i += 7) out.push(grid.slice(i, i + 7));
+    return out;
+  }, [grid]);
+
+  const weekBars = useMemo(
+    () => weeks.map((w) => layoutWeek(w[0], tasks)),
+    [weeks, tasks],
+  );
+
+  /**
+   * 拖拽中把条带层整体设为 pointer-events:none，否则横条会挡住下面日期格的
+   * dragover/drop，任务永远拖不到"被条压住"的那一天。
+   */
+  const [dragging, setDragging] = useState(false);
 
   // "未安排日期"抽屉只放进行中（已完成且无日期的没意义；放进来还会让抽屉很长）
   const undated = tasks.filter((t) => !t.due_date && t.status === 0);
@@ -72,19 +121,57 @@ export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
     };
   }, [tasks]);
 
+  // 分类图例：只列"当前数据里真出现过"的分类，按条数降序取前 6 个，
+  // 避免用户建了几十个分类时图例把整行撑爆。
+  const categoryLegend = useMemo(() => {
+    if (colorBy !== "category") return [];
+    const counter = new Map<number | null, number>();
+    for (const t of tasks) {
+      if (t.status !== 0) continue; // 与紧急度图例口径一致：只数未完成
+      const key = t.category_id ?? null;
+      counter.set(key, (counter.get(key) ?? 0) + 1);
+    }
+    return [...counter.entries()]
+      .map(([id, count]) => {
+        const c = id != null ? categoryMap?.get(id) : undefined;
+        return {
+          key: id ?? "none",
+          count,
+          name: c?.name ?? "未分类",
+          color: c?.color || token.colorTextQuaternary,
+        };
+      })
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 6);
+  }, [colorBy, tasks, categoryMap, token]);
+
   async function handleDropOnDate(e: React.DragEvent, ymd: string) {
     e.preventDefault();
     setHoverCell(null);
+    setDragging(false);
     const id = Number(e.dataTransfer.getData("text/plain"));
     if (!id) return;
     const task = tasks.find((t) => t.id === id);
     if (!task) return;
-    if (task.due_date && task.due_date.slice(0, 10) === ymd) return;
+    // 保留原时分（若有），只改日期部分
+    const timePart =
+      task.due_date && task.due_date.length > 10 ? task.due_date.slice(10) : "";
     try {
-      // 保留原时分（若有），只改日期部分
-      const timePart =
-        task.due_date && task.due_date.length > 10 ? task.due_date.slice(10) : "";
-      await taskApi.update(id, { due_date: `${ymd}${timePart}` });
+      // 区间任务：拖动 = 整体平移（落点成为新的开始日），跨度保持不变。
+      // 只改 due_date 会把区间越拖越短，甚至出现"结束早于开始"的脏数据。
+      const shifted = shiftRangeTo(task, ymd);
+      if (shifted) {
+        await taskApi.update(id, {
+          start_date: shifted.start_date,
+          due_date: `${shifted.due_date}${timePart}`,
+        });
+      } else if (task.start_date) {
+        // 是区间任务但落点没变 → 什么都不用做
+        return;
+      } else {
+        if (task.due_date && task.due_date.slice(0, 10) === ymd) return;
+        await taskApi.update(id, { due_date: `${ymd}${timePart}` });
+      }
       onRefresh();
     } catch (err) {
       message.error(`更改日期失败: ${err}`);
@@ -98,7 +185,8 @@ export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
     const task = tasks.find((t) => t.id === id);
     if (!task || !task.due_date) return;
     try {
-      await taskApi.update(id, { clear_due_date: true });
+      // 连区间左端一起清掉，否则任务会从日历上消失却仍在甘特图里挂着一条起始日
+      await taskApi.update(id, { clear_due_date: true, clear_start_date: true });
       onRefresh();
     } catch (err) {
       message.error(`清空日期失败: ${err}`);
@@ -131,16 +219,41 @@ export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
           />
           <span className="ml-2 font-semibold text-sm">{anchor.format("YYYY 年 M 月")}</span>
         </div>
-        <div className="flex items-center gap-3 text-[11px]" style={{ color: token.colorTextSecondary }}>
-          <span className="flex items-center gap-1">
-            <Dot color={token.colorError} /> 紧急 {stats.urgent}
-          </span>
-          <span className="flex items-center gap-1">
-            <Dot color={token.colorPrimary} /> 一般 {stats.normal}
-          </span>
-          <span className="flex items-center gap-1">
-            <Dot color={token.colorTextQuaternary} /> 不急 {stats.low}
-          </span>
+        <div
+          className="flex items-center gap-3 text-[11px] flex-wrap justify-end"
+          style={{ color: token.colorTextSecondary }}
+        >
+          <Segmented
+            size="small"
+            value={colorBy}
+            onChange={(v) => setColorBy(v as "priority" | "category")}
+            options={[
+              { label: "紧急度", value: "priority" },
+              { label: "分类", value: "category" },
+            ]}
+            title="任务条的配色依据"
+          />
+          {colorBy === "priority" ? (
+            <>
+              <span className="flex items-center gap-1">
+                <Dot color={token.colorError} /> 紧急 {stats.urgent}
+              </span>
+              <span className="flex items-center gap-1">
+                <Dot color={token.colorPrimary} /> 一般 {stats.normal}
+              </span>
+              <span className="flex items-center gap-1">
+                <Dot color={token.colorTextQuaternary} /> 不急 {stats.low}
+              </span>
+            </>
+          ) : categoryLegend.length === 0 ? (
+            <span style={{ color: token.colorTextTertiary }}>暂无进行中的任务</span>
+          ) : (
+            categoryLegend.map((c) => (
+              <span key={c.key} className="flex items-center gap-1">
+                <Dot color={c.color} /> {c.name} {c.count}
+              </span>
+            ))
+          )}
           <span style={{ color: token.colorSuccess }}>已完成 {stats.done}</span>
         </div>
       </div>
@@ -173,63 +286,109 @@ export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-7 flex-1 auto-rows-fr">
-          {grid.map((d) => {
-            const ymd = d.format("YYYY-MM-DD");
-            const sameMonth = d.month() === anchor.month();
-            const isToday = ymd === todayYmd;
-            const items = tasksByDate[ymd] || [];
-            const isHover = hoverCell === ymd;
+        <div className="flex-1 flex flex-col min-h-0">
+          {weeks.map((week, wi) => {
+            const bars = weekBars[wi];
+            const visible = bars.filter((b) => b.lane < MAX_LANES);
+            // 超出跑道上限的条：按天累计，落到对应格子底部显示 "+N"
+            const overflowByCol = new Array<number>(7).fill(0);
+            for (const b of bars) {
+              if (b.lane < MAX_LANES) continue;
+              for (let c = b.startCol; c <= b.endCol; c += 1) overflowByCol[c] += 1;
+            }
             return (
               <div
-                key={ymd}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = "move";
-                  setHoverCell(ymd);
-                }}
-                onDragLeave={() => setHoverCell(null)}
-                onDrop={(e) => handleDropOnDate(e, ymd)}
-                onDoubleClick={() => onNewOnDate?.(ymd)}
-                className="min-h-[100px] p-1.5 transition cursor-pointer"
-                style={{
-                  background: isToday
-                    ? token.colorPrimaryBg
-                    : sameMonth
-                      ? "transparent"
-                      : token.colorFillQuaternary,
-                  borderRight: `1px solid ${token.colorBorderSecondary}`,
-                  borderBottom: `1px solid ${token.colorBorderSecondary}`,
-                  outline: isHover ? `1.5px solid ${token.colorPrimary}` : "none",
-                  outlineOffset: -1,
-                }}
-                title="双击空白可在这一天新建任务"
+                key={week[0].format("YYYY-MM-DD")}
+                className="relative flex-1 min-h-[104px]"
               >
-                <div
-                  className="text-xs font-semibold flex items-center gap-1"
-                  style={{ color: sameMonth ? token.colorText : token.colorTextQuaternary }}
-                >
-                  {d.date()}
-                  {isToday && (
-                    <span
-                      className="text-[10px] leading-none px-1 py-0.5 rounded"
-                      style={{
-                        background: token.colorPrimary,
-                        color: "#fff",
-                      }}
-                    >
-                      今
-                    </span>
-                  )}
-                </div>
-                <div className="space-y-1 mt-1">
-                  {items.slice(0, 4).map((t) => {
-                    const isDone = t.status === 1;
-                    const bar = priorityColor(t.priority, token);
-                    // 已完成：灰底 + 灰字 + 删除线；不再用优先级色（避免视觉抢戏），
-                    // 也禁止拖拽到其他日期（避免不小心修改完成任务的截止日）
+                {/* 背景层：日期格 + 拖放目标 */}
+                <div className="grid grid-cols-7 h-full">
+                  {week.map((d, ci) => {
+                    const ymd = d.format("YYYY-MM-DD");
+                    const sameMonth = d.month() === anchor.month();
+                    const isToday = ymd === todayYmd;
+                    const isHover = hoverCell === ymd;
                     return (
-                      <Tooltip key={t.id} title={isDone ? `${t.title}（已完成）` : t.title}>
+                      <div
+                        key={ymd}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = "move";
+                          setHoverCell(ymd);
+                        }}
+                        onDragLeave={() => setHoverCell(null)}
+                        onDrop={(e) => handleDropOnDate(e, ymd)}
+                        onDoubleClick={() => onNewOnDate?.(ymd)}
+                        className="p-1.5 transition cursor-pointer flex flex-col"
+                        style={{
+                          background: isToday
+                            ? token.colorPrimaryBg
+                            : sameMonth
+                              ? "transparent"
+                              : token.colorFillQuaternary,
+                          borderRight: `1px solid ${token.colorBorderSecondary}`,
+                          borderBottom: `1px solid ${token.colorBorderSecondary}`,
+                          outline: isHover ? `1.5px solid ${token.colorPrimary}` : "none",
+                          outlineOffset: -1,
+                        }}
+                        title="双击空白可在这一天新建任务"
+                      >
+                        <div
+                          className="text-xs font-semibold flex items-center gap-1"
+                          style={{
+                            color: sameMonth ? token.colorText : token.colorTextQuaternary,
+                          }}
+                        >
+                          {d.date()}
+                          {isToday && (
+                            <span
+                              className="text-[10px] leading-none px-1 py-0.5 rounded"
+                              style={{ background: token.colorPrimary, color: "#fff" }}
+                            >
+                              今
+                            </span>
+                          )}
+                        </div>
+                        {overflowByCol[ci] > 0 && (
+                          <div
+                            className="text-[10px] mt-auto"
+                            style={{ color: token.colorTextTertiary }}
+                          >
+                            +{overflowByCol[ci]}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* 条带层：绝对定位盖在格子上方。
+                    整层 pointer-events:none，只有条本身可点；拖拽期间条也让位，
+                    否则横条会挡住它压住那几天的 dragover/drop。 */}
+                <div
+                  className="absolute left-0 right-0"
+                  style={{ top: 26, pointerEvents: "none" }}
+                >
+                  {visible.map((b) => {
+                    const t = b.task;
+                    const isDone = t.status === 1;
+                    const color = resolveTaskColor(t, colorBy, categoryMap, token);
+                    // 按分类配色时紧急度没法用颜色表达了，用左侧竖条加粗把它补回来
+                    const barWidth = colorBy === "category" && t.priority === 0 ? 3 : 2;
+                    const span = b.endCol - b.startCol + 1;
+                    const r = taskRange(t);
+                    const rangeText = r
+                      ? r.from.isSame(r.to, "day")
+                        ? r.from.format("M月D日")
+                        : `${r.from.format("M月D日")} – ${r.to.format("M月D日")}`
+                      : "";
+                    return (
+                      <Tooltip
+                        key={t.id}
+                        title={`${t.title}${rangeText ? ` · ${rangeText}` : ""}${
+                          isDone ? "（已完成）" : ""
+                        }`}
+                      >
                         <div
                           draggable={!isDone}
                           onDragStart={
@@ -239,38 +398,47 @@ export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
                                   e.stopPropagation();
                                   e.dataTransfer.effectAllowed = "move";
                                   e.dataTransfer.setData("text/plain", String(t.id));
+                                  setDragging(true);
                                 }
                           }
+                          onDragEnd={() => setDragging(false)}
                           onClick={(e) => {
                             e.stopPropagation();
                             onEdit(t);
                           }}
-                          className="truncate px-1 py-0.5 rounded text-xs leading-tight cursor-pointer transition hover:opacity-80"
+                          className="absolute truncate px-1.5 rounded text-xs cursor-pointer transition hover:opacity-80"
                           style={{
+                            left: `calc(${(b.startCol / 7) * 100}% + 3px)`,
+                            width: `calc(${(span / 7) * 100}% - 6px)`,
+                            top: b.lane * 21,
+                            height: 19,
+                            lineHeight: "19px",
+                            pointerEvents: dragging ? "none" : "auto",
                             background: isDone
                               ? token.colorFillTertiary
-                              : `${bar}1a`,
-                            color: isDone ? token.colorTextTertiary : bar,
-                            borderLeft: `2px solid ${
-                              isDone ? token.colorTextQuaternary : bar
-                            }`,
+                              : withAlpha(color, "1a"),
+                            color: isDone ? token.colorTextTertiary : color,
+                            // 跨周截断的一侧不画左竖条 / 不倒圆角，视觉上"还没结束"
+                            borderLeft: b.continuesLeft
+                              ? "none"
+                              : `${barWidth}px solid ${
+                                  isDone ? token.colorTextQuaternary : color
+                                }`,
+                            borderTopLeftRadius: b.continuesLeft ? 0 : 4,
+                            borderBottomLeftRadius: b.continuesLeft ? 0 : 4,
+                            borderTopRightRadius: b.continuesRight ? 0 : 4,
+                            borderBottomRightRadius: b.continuesRight ? 0 : 4,
                             textDecoration: isDone ? "line-through" : "none",
                             opacity: isDone ? 0.75 : 1,
                           }}
                         >
+                          {b.continuesLeft ? "◀ " : ""}
                           {t.title}
+                          {b.continuesRight ? " ▶" : ""}
                         </div>
                       </Tooltip>
                     );
                   })}
-                  {items.length > 4 && (
-                    <div
-                      className="text-xs"
-                      style={{ color: token.colorTextTertiary }}
-                    >
-                      +{items.length - 4} 更多
-                    </div>
-                  )}
                 </div>
               </div>
             );
@@ -322,7 +490,7 @@ export function CalendarView({ tasks, onRefresh, onEdit, onNewOnDate }: Props) {
                 style={{
                   background: token.colorFillSecondary,
                   borderColor: token.colorBorderSecondary,
-                  borderLeft: `2px solid ${priorityColor(t.priority, token)}`,
+                  borderLeft: `2px solid ${resolveTaskColor(t, colorBy, categoryMap, token)}`,
                 }}
               >
                 {t.title}

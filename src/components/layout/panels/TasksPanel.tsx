@@ -123,8 +123,9 @@ export function TasksPanel() {
   /** URL 上的 category 参数：数字字符串 = 该分类 ID；"none" = 未分类 */
   const currentCategory = searchParams.get("category");
 
-  // 订阅：主区任务增删改后 bump urgentTodoCount → 这里重拉
-  const urgentTodoCount = useAppStore((s) => s.urgentTodoCount);
+  // 订阅：主区任务增删改后调 refreshTaskStats() → taskStatsTick 递增 → 这里重拉。
+  // 不能只订阅 urgentTodoCount：增删改**非紧急**任务时它不变，计数会停在旧值。
+  const taskStatsTick = useAppStore((s) => s.taskStatsTick);
 
   const [todoTasks, setTodoTasks] = useState<Task[]>([]);
   const [stats, setStats] = useState<TaskStats | null>(null);
@@ -147,7 +148,7 @@ export function TasksPanel() {
     return () => {
       cancelled = true;
     };
-  }, [urgentTodoCount]);
+  }, [taskStatsTick]);
 
   /** 每个分类下的未完成任务数 + 未分类计数 */
   const categoryCounts = useMemo(() => {

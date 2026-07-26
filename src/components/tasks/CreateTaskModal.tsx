@@ -120,6 +120,13 @@ export function CreateTaskModal({
   const [projectManageOpen, setProjectManageOpen] = useState(false);
   /** 甘特图起始日；可单独存在（没截止也行）或与 dueDate 组成区间 */
   const [startDate, setStartDate] = useState<Dayjs | null>(null);
+  /**
+   * 时间输入模式（滴答清单同款）：
+   * - single「日期」：只有一个截止时刻，日历上落在那一天（老行为）
+   * - range「时间段」：起止区间，甘特图画成条、日历跨天显示
+   * 只是同一组字段（start_date / due_date）的两种录入形态，不新增后端字段。
+   */
+  const [dateMode, setDateMode] = useState<"single" | "range">("single");
   // ─── 草稿子任务（仅新建模式用） ────────────────
   /** 新建态尚无主任务 id，子任务先在本地草稿数组里堆着；保存时拿到 newId 后批量 create */
   const [draftSubtasks, setDraftSubtasks] = useState<string[]>([]);
@@ -199,6 +206,8 @@ export function CreateTaskModal({
       setCategoryId(editing.category_id);
       setProjectId(editing.project_id);
       setStartDate(editing.start_date ? dayjs(editing.start_date) : null);
+      // 有起始日 = 这条任务本来就是个区间，打开时直接停在「时间段」页签
+      setDateMode(editing.start_date ? "range" : "single");
       setLinks(
         editing.links.map((l) => ({
           kind: l.kind,
@@ -241,6 +250,7 @@ export function CreateTaskModal({
       setCategoryId(presetCategoryId ?? null);
       setProjectId(null);
       setStartDate(null);
+      setDateMode("single");
       setLinks([]);
       // 循环默认清零
       setRepeatMode("none");
@@ -659,8 +669,8 @@ export function CreateTaskModal({
           />
         </div>
 
-        {/* 项目（v41） + 起始日 — 配合甘特图 */}
-        <div className="grid grid-cols-2 gap-3">
+        {/* 项目（v41）— 配合甘特图。起始日已并入下方「时间」区（时间段模式） */}
+        <div>
           <div>
             <div className="text-[11px] mb-1" style={{ color: token.colorTextSecondary }}>
               项目（可选，配合甘特图）
@@ -772,27 +782,61 @@ export function CreateTaskModal({
               )}
             />
           </div>
-          <div>
-            <div className="text-[11px] mb-1" style={{ color: token.colorTextSecondary }}>
-              起始日（可选）
-            </div>
-            <DatePicker
-              value={startDate}
-              onChange={(v) => setStartDate(v)}
-              format="YYYY-MM-DD"
-              placeholder="无起始日"
-              style={{ width: "100%" }}
-              allowClear
-            />
-          </div>
         </div>
 
-        {/* 截止时间 */}
+        {/* 时间：日期（单个截止时刻）/ 时间段（起止区间）—— 同一组字段的两种录入形态 */}
         <div>
-          <div className="text-[11px] mb-1" style={{ color: token.colorTextSecondary }}>
-            截止时间
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-[11px]" style={{ color: token.colorTextSecondary }}>
+              {dateMode === "range" ? "时间段" : "截止时间"}
+            </div>
+            <Segmented
+              size="small"
+              value={dateMode}
+              onChange={(v) => {
+                const next = v as "single" | "range";
+                setDateMode(next);
+                // 切回「日期」时清掉开始日：否则会留下一个界面上看不见、
+                // 却仍然生效（甘特图 / 日历跨天条会用到）的区间左端
+                if (next === "single") setStartDate(null);
+              }}
+              options={[
+                { label: "日期", value: "single" },
+                { label: "时间段", value: "range" },
+              ]}
+            />
           </div>
+
+          {dateMode === "range" && (
+            <div className="flex items-center gap-2 mb-2">
+              <span
+                className="text-xs shrink-0"
+                style={{ color: token.colorTextSecondary, width: 28 }}
+              >
+                开始
+              </span>
+              <DatePicker
+                value={startDate}
+                onChange={(v) => setStartDate(v)}
+                format="YYYY-MM-DD"
+                placeholder="开始日期"
+                style={{ flex: 1, minWidth: 160 }}
+                allowClear
+                // 开始日只存日期（后端 start_date 是 'YYYY-MM-DD'，甘特图条左端）
+                disabledDate={(d) => (dueDate ? d.isAfter(dueDate, "day") : false)}
+              />
+            </div>
+          )}
+
           <div className="flex items-center gap-2 flex-wrap">
+            {dateMode === "range" && (
+              <span
+                className="text-xs shrink-0"
+                style={{ color: token.colorTextSecondary, width: 28 }}
+              >
+                结束
+              </span>
+            )}
             <DatePicker
               value={dueDate}
               onChange={(v) => setDueDate(v ? applyDate(v) : null)}
