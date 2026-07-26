@@ -47,6 +47,11 @@ import {
   ListX,
 } from "lucide-react";
 import { hasManualNumber, stripManualNumber } from "@/lib/headingNumber";
+import {
+  cleanText,
+  isBlankText,
+  type TextCleanupRules,
+} from "@/lib/editorCleanup";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toKbAsset, toKbAssetHref } from "@/lib/assetUrl";
 import { attachmentApi, imageApi, videoApi } from "@/lib/api";
@@ -83,6 +88,102 @@ interface ToolItem {
 
 export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: ToolbarProps) {
   const formatPainter = useFormatPainter(editor);
+
+  // ─── 格式规整：从网页 / Word / 微信复制来的内容常常一身毛病 ───────────
+  // 每条规则一次 transaction 完成，Ctrl+Z 能整体撤销。
+  // 代码块和行内 code 一律跳过——那里的空格有语义，动了就错。
+
+  /** 删除连续空段落（连着的只保留第一个） */
+  function dropBlankParagraphs() {
+    const { state, view } = editor;
+    const tr = state.tr;
+    const ranges: { from: number; to: number }[] = [];
+    let prevBlank = false;
+    state.doc.forEach((node, offset) => {
+      const blank =
+        node.type.name === "paragraph" && isBlankText(node.textContent ?? "");
+      if (blank && prevBlank) ranges.push({ from: offset, to: offset + node.nodeSize });
+      prevBlank = blank;
+    });
+    if (ranges.length === 0) {
+      message.info("没有多余空行");
+      return;
+    }
+    // 从后往前删，避免前面的删除让后面的偏移失效
+    for (let i = ranges.length - 1; i >= 0; i -= 1) {
+      tr.delete(ranges[i].from, ranges[i].to);
+    }
+    view.dispatch(tr);
+    message.success(`已删除 ${ranges.length} 个多余空行`);
+  }
+
+  /** 按规则清洗所有正文文字 */
+  function cleanAllText(rules: TextCleanupRules, label: string) {
+    const { state, view, schema } = editor;
+    const tr = state.tr;
+    let count = 0;
+    state.doc.descendants((node, pos) => {
+      if (!node.isText || !node.text) return true;
+      // 行内 code / 代码块内的空格有语义，跳过
+      if (node.marks.some((m) => m.type.name === "code")) return true;
+      if (state.doc.resolve(pos).parent.type.name === "codeBlock") return false;
+      const cleaned = cleanText(node.text, rules);
+      if (cleaned === node.text) return true;
+      const from = tr.mapping.map(pos);
+      const to = tr.mapping.map(pos + node.text.length);
+      tr.replaceWith(from, to, cleaned ? schema.text(cleaned, node.marks) : []);
+      count += 1;
+      return true;
+    });
+    if (count === 0) {
+      message.info(`没有需要${label}的内容`);
+      return;
+    }
+    view.dispatch(tr);
+    message.success(`已${label} ${count} 处`);
+  }
+
+  /** 清除字号 / 颜色 / 高亮，保留粗体斜体链接等语义标记 */
+  function clearVisualStyles() {
+    const { from, to } = editor.state.selection;
+    editor
+      .chain()
+      .focus()
+      .selectAll()
+      .unsetMark("textStyle")
+      .unsetHighlight()
+      .setTextSelection({ from, to })
+      .run();
+    message.success("已清除字号 / 颜色 / 高亮");
+  }
+
+  /** 清除标题正文里手写的「1.1」「一、」「第一章」序号 */
+  function stripHeadingNumbers() {
+    const { state, view } = editor;
+    const tr = state.tr;
+    let count = 0;
+    state.doc.descendants((node, pos) => {
+      if (node.type.name !== "heading") return true;
+      // 只认标题第一个 text 子节点：编号一定在开头，按 text 长度算删除区间才精确
+      // （标题里可能夹着行内公式 / 图片，用 textContent 算偏移会删错位置）
+      const first = node.firstChild;
+      if (!first?.isText || !first.text) return false;
+      if (!hasManualNumber(first.text)) return false;
+      const stripped = stripManualNumber(first.text);
+      if (stripped === first.text) return false;
+      const removed = first.text.length - stripped.length;
+      const from = tr.mapping.map(pos + 1);
+      tr.delete(from, from + removed);
+      count += 1;
+      return false;
+    });
+    if (count === 0) {
+      message.info("没有找到自带编号的标题");
+      return;
+    }
+    view.dispatch(tr);
+    message.success(`已清除 ${count} 个标题的手写编号`);
+  }
   // 订阅 editor 的 selection / transaction 事件，让 toolbar 跟随光标位置刷新：
   // 段落格式下拉的 label（getCurrentBlockType）和按钮 active 高亮（isActive）
   // 都依赖最新 editor 状态，但 EditorToolbar 自身没有 React state 联动，
@@ -981,36 +1082,49 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
       },
       {
         icon: <ListX size={15} />,
-        // AI 生成 / 从 Word 粘来的文档，标题正文里常自带"1.1"「一、」这类编号，
-        // 与本软件的自动编号叠加就成了「1.1.1 1.1 公司定位」。一键清掉手写的那层，
-        // 之后交给自动编号统一管理。一次 transaction 完成，Ctrl+Z 可整体撤销。
-        title: "清除标题内手写编号（1.1 / 一、/ 第一章）",
-        action: () => {
-          const { state, view } = editor;
-          const tr = state.tr;
-          let count = 0;
-          state.doc.descendants((node, pos) => {
-            if (node.type.name !== "heading") return true;
-            // 只认标题第一个 text 子节点：编号一定在开头，按 text 长度算删除区间才精确
-            // （标题里可能夹着行内公式 / 图片，用 textContent 算偏移会删错位置）
-            const first = node.firstChild;
-            if (!first?.isText || !first.text) return false;
-            if (!hasManualNumber(first.text)) return false;
-            const stripped = stripManualNumber(first.text);
-            if (stripped === first.text) return false;
-            const removed = first.text.length - stripped.length;
-            const from = tr.mapping.map(pos + 1);
-            tr.delete(from, from + removed);
-            count += 1;
-            return false;
-          });
-          if (count === 0) {
-            message.info("没有找到自带编号的标题");
-            return;
-          }
-          view.dispatch(tr);
-          message.success(`已清除 ${count} 个标题的手写编号`);
-        },
+        title: "格式规整（清理从别处复制来的内容）",
+        dropdownItems: [
+          {
+            key: "cleanup-all",
+            label: "一键规整（空行 + 空格 + 中英文间距）",
+            onClick: () => {
+              dropBlankParagraphs();
+              cleanAllText(
+                { trim: true, squeeze: true, cjkSpacing: true },
+                "规整",
+              );
+            },
+          },
+          { type: "divider" },
+          {
+            key: "cleanup-blank",
+            label: "删除多余空行",
+            onClick: dropBlankParagraphs,
+          },
+          {
+            key: "cleanup-spaces",
+            label: "去除首尾空格 / 压缩连续空格",
+            onClick: () => cleanAllText({ trim: true, squeeze: true }, "整理空格"),
+          },
+          {
+            key: "cleanup-cjk",
+            label: "中英文之间补空格",
+            onClick: () => cleanAllText({ cjkSpacing: true }, "补空格"),
+          },
+          { type: "divider" },
+          {
+            key: "cleanup-styles",
+            label: "清除字号 / 颜色 / 高亮（保留粗体等）",
+            onClick: clearVisualStyles,
+          },
+          {
+            // AI 生成 / 从 Word 粘来的标题常自带「1.1」「一、」，与自动编号叠成
+            // 「1.1.1 1.1 公司定位」。清掉手写那层，交给自动编号统一管理。
+            key: "cleanup-heading-number",
+            label: "清除标题内手写编号（1.1 / 一、/ 第一章）",
+            onClick: stripHeadingNumbers,
+          },
+        ],
       },
       ...(onOpenSearch
         ? [

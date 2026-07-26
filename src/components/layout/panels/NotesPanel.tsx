@@ -29,6 +29,7 @@ import {
   Folder as FolderIcon,
   LayoutTemplate,
   ExternalLink,
+  AppWindow,
   Copy,
   Pin,
   PinOff,
@@ -1356,6 +1357,20 @@ export function NotesPanel() {
           label: "打开",
           onClick: () => {
             navigate(`/notes/${noteId}`);
+            close();
+          },
+        },
+        {
+          // 弹独立 OS 窗口：多篇笔记可同时弹出，用 Win+方向键 Snap 到左右半屏对照看。
+          // 能力早就有（services/popout_window.rs），但之前只有编辑器工具栏一个入口，
+          // 用户根本发现不了，这里补一个更顺手的。
+          key: "open-in-new-window",
+          icon: <AppWindow size={14} />,
+          label: "在新窗口打开",
+          onClick: () => {
+            void noteApi
+              .openInNewWindow(noteId)
+              .catch((err) => message.error(`打开新窗口失败：${err}`));
             close();
           },
         },
