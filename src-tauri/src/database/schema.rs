@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 50;
+pub const SCHEMA_VERSION: i32 = 51;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -80,6 +80,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             47 => migrate_v47_to_v48(conn)?,
             48 => migrate_v48_to_v49(conn)?,
             49 => migrate_v49_to_v50(conn)?,
+            50 => migrate_v50_to_v51(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -1027,7 +1028,7 @@ fn migrate_v24_to_v25(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch(
         r#"
         ALTER TABLE ai_models
-            ADD COLUMN max_context INTEGER NOT NULL DEFAULT 32000;
+            ADD COLUMN max_context INTEGER NOT NULL DEFAULT 32000;  -- v51 起新建模型默认 128000，见 migrate_v50_to_v51
 
         ALTER TABLE ai_conversations
             ADD COLUMN attached_note_ids TEXT NOT NULL DEFAULT '[]';
@@ -2051,6 +2052,24 @@ fn migrate_v49_to_v50(conn: &Connection) -> Result<(), AppError> {
     }
 
     set_version(conn, 50)?;
+    Ok(())
+}
+
+/// v50 → v51：把仍是老默认值 32000 的模型上下文抬到 128000
+///
+/// 32000 是 2024 年定的保守值。如今主流模型（DeepSeek / GPT / Claude / Qwen…）
+/// 都是 128K 起步，卡在 32K 意味着 RAG 检索和挂载笔记白白少拿三四倍预算，
+/// AI 经常基于被截断的片段作答。
+///
+/// **只动仍是 32000 的那批** —— 用户手动改过的（比如本地 7B 填了 8000）保持原样，
+/// 迁移不该覆盖用户的判断。判不准的场景还有 `services::ai::compute_context_budget`
+/// 的下限保护兜着，不会因为窗口填大了就真撑爆。
+fn migrate_v50_to_v51(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v50 -> v51 (max_context 默认值 32000 -> 128000)");
+
+    conn.execute_batch("UPDATE ai_models SET max_context = 128000 WHERE max_context = 32000;")?;
+
+    set_version(conn, 51)?;
     Ok(())
 }
 

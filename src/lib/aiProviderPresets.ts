@@ -131,4 +131,14 @@ export const MODEL_PRESETS: Record<
   custom: [],
 };
 
-export const DEFAULT_MAX_CONTEXT = 32000;
+/**
+ * 新建 AI 模型时「最大上下文 token」的默认值。
+ *
+ * 这个数不只是个显示项 —— 后端拿它算 RAG 检索预算和挂载笔记预算
+ * （见 services/ai.rs 的 compute_context_budget）。填小了 AI 就只能
+ * 看到被截断的片段作答。老默认值 32000 是 2024 年的保守估计，
+ * 如今主流模型普遍 128K 起步，故抬到 128000（schema v51 同步抬了存量）。
+ *
+ * 真·小窗口模型（本地 7B 等）请手动改小，后端有下限保护但不会自动降。
+ */
+export const DEFAULT_MAX_CONTEXT = 128000;

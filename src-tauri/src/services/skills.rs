@@ -5,7 +5,7 @@
 //!   避免 AI 误删/误改；写入类（创建/删除/移动）放 v2 + 二次确认
 //! - **OpenAI function-calling 兼容**：`tool_schemas()` 返回符合 OpenAI `tools` 字段
 //!   的 JSON，其他厂商（DeepSeek/智谱/Claude 代理）都能复用这套 schema
-//! - **dispatch 集中执行**：`dispatch(db, name, args_json, scope_ids)` 按 skill name 路由到
+//! - **dispatch 集中执行**：`dispatch(db, name, args_json, scope_ids, result_limit)` 按 skill name 路由到
 //!   具体实现；返回的 result 字符串会经由 AI 流式通道回注到模型作为 tool role 消息
 //! - **结果截断**：防 token 爆炸，笔记/列表类返回统一裁剪到 ~2000 字节
 //!
@@ -24,8 +24,26 @@ use crate::state::AppState;
 use rmcp::model::CallToolRequestParams;
 use tauri::{AppHandle, Manager};
 
-/// 结果字符串长度上限（按字符计），超过的部分被截断并用 "…（已截断）" 标记
-const SKILL_RESULT_MAX_CHARS: usize = 2000;
+/// 工具结果的**兜底**字符上限（模型窗口未知时用）。
+///
+/// 曾经这里是写死的 2000 —— 对 `get_note`（读整篇笔记）来说远远不够，
+/// 智能模式下 AI 拿到的永远是开头一小段，然后基于残缺内容作答。
+/// 现在按模型上下文动态算，见 `result_limit_for`。
+const SKILL_RESULT_FALLBACK_CHARS: usize = 4_000;
+
+/// 单次工具返回的字符上限。
+///
+/// 智能模式一轮最多调用若干工具（MAX_TOOL_ROUNDS 轮），结果都要塞回对话，
+/// 所以不能让单个结果吃掉整个窗口 —— 取 max_context 的 15%（× 1.5 CJK 换算）。
+///
+/// 128K 模型 → 约 28K 字符，一篇长笔记也能完整带回；
+/// 8K 小模型 → 兜底 4K 字符，够读一篇普通笔记。
+pub fn result_limit_for(max_context: i64) -> usize {
+    const SHARE: f64 = 0.15;
+    const CHARS_PER_TOKEN_CJK: f64 = 1.5;
+    ((max_context.max(0) as f64) * SHARE * CHARS_PER_TOKEN_CJK).max(SKILL_RESULT_FALLBACK_CHARS as f64)
+        as usize
+}
 
 /// 按 OpenAI tools 格式返回所有可用 skill 的 schema
 ///
@@ -120,6 +138,7 @@ pub fn dispatch(
     name: &str,
     args_json: &str,
     scope_ids: Option<&[i64]>,
+    result_limit: usize,
 ) -> Result<String, AppError> {
     let result = match name {
         "search_notes" => run_search_notes(db, args_json, scope_ids)?,
@@ -135,7 +154,7 @@ pub fn dispatch(
             )));
         }
     };
-    Ok(truncate(&result, SKILL_RESULT_MAX_CHARS))
+    Ok(truncate(&result, result_limit))
 }
 
 // ─── MCP 集成：把内置 kb-core 工具 + 外部 MCP server 的工具注入到 ai 对话 ─
@@ -290,11 +309,12 @@ pub async fn dispatch_with_mcp(
     name: &str,
     args_json: &str,
     scope_ids: Option<&[i64]>,
+    result_limit: usize,
 ) -> Result<String, AppError> {
     // kb__ 前缀（内置 kb-core 工具）—— 写权限在 dispatch_kb_internal 里拦截；
     // 文件夹范围会话下，kb-core 返回的笔记类结果在 dispatch_kb_internal 里按 scope 硬过滤
     if let Some(suffix) = name.strip_prefix(KB_TOOL_PREFIX) {
-        return dispatch_kb_internal(app, suffix, args_json, scope_ids).await;
+        return dispatch_kb_internal(app, suffix, args_json, scope_ids, result_limit).await;
     }
 
     // mcp__<id>__<name> 前缀（外部 MCP 子进程）—— 仅桌面端
@@ -309,13 +329,13 @@ pub async fn dispatch_with_mcp(
         let server_id: i64 = id_str
             .parse()
             .map_err(|_| AppError::Custom(format!("MCP 工具 server_id 解析失败: {}", id_str)))?;
-        return dispatch_mcp(app, server_id, tool_name, args_json).await;
+        return dispatch_mcp(app, server_id, tool_name, args_json, result_limit).await;
     }
     #[cfg(mobile)]
     let _ = app; // 移动端避免未使用警告（仅当也不走 kb__ 分支时）
 
     // 5 个高层内置 skills（无前缀）
-    dispatch(db, name, args_json, scope_ids)
+    dispatch(db, name, args_json, scope_ids, result_limit)
 }
 
 /// 走 in-memory MCP client 调用 kb-core 工具，写工具走相同拦截门
@@ -324,6 +344,7 @@ async fn dispatch_kb_internal(
     tool_name: &str,
     args_json: &str,
     scope_ids: Option<&[i64]>,
+    result_limit: usize,
 ) -> Result<String, AppError> {
     let state = app
         .try_state::<AppState>()
@@ -383,7 +404,7 @@ async fn dispatch_kb_internal(
         Some(scope) => filter_kb_result_by_scope(&out, scope),
         None => out,
     };
-    Ok(truncate(&out, SKILL_RESULT_MAX_CHARS))
+    Ok(truncate(&out, result_limit))
 }
 
 /// 文件夹范围会话下，对内置 kb-core 工具返回的 JSON 结果做"硬过滤"。
@@ -435,6 +456,7 @@ async fn dispatch_mcp(
     server_id: i64,
     tool_name: &str,
     args_json: &str,
+    result_limit: usize,
 ) -> Result<String, AppError> {
     let state = app
         .try_state::<AppState>()
@@ -483,7 +505,7 @@ async fn dispatch_mcp(
     if result.is_error.unwrap_or(false) {
         return Err(AppError::Custom(format!("MCP 工具返回错误: {out}")));
     }
-    Ok(truncate(&out, SKILL_RESULT_MAX_CHARS))
+    Ok(truncate(&out, result_limit))
 }
 
 // ─── 各 skill 实现 ────────────────────────────
@@ -675,6 +697,30 @@ fn summarize_content(content: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn result_limit_scales_with_model_context() {
+        // 128K 模型：0.15 × 1.5 ≈ 28800 字符，一篇长笔记也能完整带回
+        assert_eq!(result_limit_for(128_000), 28_800);
+        // 小窗口模型不至于算出个几百字符 —— 兜底 4000，够读一篇普通笔记
+        assert_eq!(result_limit_for(8_000), SKILL_RESULT_FALLBACK_CHARS);
+        // 非法输入不 panic
+        assert_eq!(result_limit_for(0), SKILL_RESULT_FALLBACK_CHARS);
+        assert_eq!(result_limit_for(-1), SKILL_RESULT_FALLBACK_CHARS);
+    }
+
+    /// 单次工具返回不能吃掉整个窗口 —— 智能模式一轮要调多个工具，结果都得塞回对话
+    #[test]
+    fn result_limit_leaves_room_for_multiple_tool_calls() {
+        for ctx in [32_000, 128_000, 200_000, 1_000_000] {
+            let limit = result_limit_for(ctx);
+            let window_chars = ((ctx as f64) * 1.5) as usize;
+            assert!(
+                limit * 4 <= window_chars,
+                "max_context={ctx}：单次上限 {limit} 太大，4 次调用就撑爆 {window_chars}"
+            );
+        }
+    }
 
     #[test]
     fn truncate_preserves_short_strings() {

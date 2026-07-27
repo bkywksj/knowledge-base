@@ -49,6 +49,64 @@ impl AiEventEmitter for ChatEmitter {
     }
 }
 
+// ─── 上下文预算 ────────────────────────────────────────────────
+//
+// 一次请求塞给模型的东西分四块：挂载笔记（用户手选，必含）、RAG 检索（自动补全）、
+// 历史消息、系统提示 + 模型输出。前两块吃大头，由这里统一算预算。
+//
+// **单位换算**：max_context 是 token 数，我们按字符裁剪，中文 1 token ≈ 1.5 字符，
+// 所以 N tokens 能装 N × 1.5 字符 —— 是**乘**不是除。曾经挂载笔记那条漏了这个
+// 系数（`max_context * 0.6` 直接当字符用），白白少给 33% 预算。
+
+/// CJK 场景下 1 token 约等于多少字符（粗估，宁可保守）
+const CHARS_PER_TOKEN_CJK: f64 = 1.5;
+/// 挂载笔记 + RAG 合计不超过 max_context 的这个比例，剩下的留给历史消息、系统提示和输出
+const CONTEXT_BUDGET_RATIO: f64 = 0.75;
+/// 挂载笔记（用户主动选的，优先级最高）最多占联合预算的比例
+const ATTACHED_SHARE: f64 = 0.6;
+/// 窗口未知（老数据没填 / 填了非法值）时的兜底字符预算。
+///
+/// **只在 max_context <= 0 时用**。曾经把它当无条件下限，结果给一个真填了
+/// 4000 token 的本地小模型算出 8000 字符（≈5300 token）预算 —— 比窗口本身还大，
+/// 请求必然被拒。填了数就按填的算，那是用户对自己模型的判断。
+const UNKNOWN_CONTEXT_BUDGET_CHARS: usize = 8_000;
+
+/// 一次对话可用的字符预算划分
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ContextBudget {
+    /// 挂载笔记可用字符数
+    pub attached: usize,
+    /// RAG 检索可用字符数
+    pub rag: usize,
+}
+
+/// 按模型上下文窗口算出各块的字符预算。
+///
+/// 关键点：**挂载 + RAG 联合受限**，不再各算各的。此前挂载按 60%、RAG 按 50%×1.5
+/// 各自计算，两者都吃满时合计会超出 max_context，直接把窗口撑爆。
+/// 现在先切出 `CONTEXT_BUDGET_RATIO` 的总盘子，挂载优先拿（最多 `ATTACHED_SHARE`），
+/// RAG 吃剩下的 —— 挂载少时 RAG 自动拿到更多，不浪费。
+pub fn compute_context_budget(max_context: i64, has_attached: bool) -> ContextBudget {
+    let total = if max_context <= 0 {
+        // 窗口未知 → 兜底值。不能按 0 算，否则 RAG 一条都塞不进去
+        UNKNOWN_CONTEXT_BUDGET_CHARS
+    } else {
+        ((max_context as f64) * CONTEXT_BUDGET_RATIO * CHARS_PER_TOKEN_CJK) as usize
+    };
+    if !has_attached {
+        // 没挂载笔记 → RAG 独占整个盘子
+        return ContextBudget {
+            attached: 0,
+            rag: total,
+        };
+    }
+    let attached = ((total as f64) * ATTACHED_SHARE) as usize;
+    ContextBudget {
+        attached,
+        rag: total.saturating_sub(attached),
+    }
+}
+
 pub struct AiService;
 
 /// 获取用于 Ollama 的 HTTP 客户端：始终绕过系统代理。
@@ -314,8 +372,8 @@ pub fn strip_pseudo_tool_calls(s: &str) -> String {
 /// 提示 AI 这是片段而非整篇。
 /// 把对话挂载的 N 篇笔记拼成 system prompt 前缀字符串。
 ///
-/// **预算计算**：模型 max_context 的 60% 留给附加笔记（剩 ~40% 给历史消息+输出+其它 system）。
-/// 每篇平均分配；标题不截断，正文按 `(预算 / 笔记数 / 1.5)` 截断（中文 1.5 字符≈1 token）。
+/// **预算计算**：由 `compute_context_budget` 统一给出（与 RAG 共享一个总盘子，挂载优先）。
+/// 每篇平均分配；标题不截断，正文按 `预算 / 笔记数` 截断。
 ///
 /// **失败容忍**：单篇笔记 `get_note` 失败时跳过该篇，不让单条坏数据搞挂整个对话。
 /// 笔记列表为空时返回空串，调用方按需跳过。
@@ -337,8 +395,9 @@ fn build_attached_notes_context(db: &Database, note_ids: &[i64], model: &AiModel
         return String::new();
     }
 
-    // 60% max_context 字符预算（粗略：1 token ≈ 1.5 字符 for CJK）
-    let total_budget_chars = ((model.max_context as f64) * 0.6) as usize;
+    // 字符预算由统一函数给出。此前这里写的是 `max_context * 0.6` 直接当字符数用，
+    // 漏了 token→字符的 1.5 倍换算，白白少给三分之一预算。
+    let total_budget_chars = compute_context_budget(model.max_context, true).attached;
     let per_note_chars = (total_budget_chars / notes.len()).max(500);
 
     let mut out = String::with_capacity(total_budget_chars);
@@ -1097,17 +1156,16 @@ impl AiService {
 
         // 3. RAG: 检索相关笔记
         //
-        // 上下文预算策略（2026-04-30 重写）：
-        // - 旧版：硬编码 top 5 × 4000 字符 = 20K 字符。在 DeepSeek/Claude/GPT 等
-        //   长上下文模型下用率仅 10-15%，且单篇被强制截断常丢关键内容。
-        // - 新版：top 15 候选，按 model.max_context × 0.5 × 1.5（CJK 估算）
-        //   分配总预算；单篇能塞下全文就塞全文，超出再用 smart window 截窗。
-        //   预算用完即停。
+        // 上下文预算策略：
+        // - 最初：硬编码 top 5 × 4000 字符 = 20K。长上下文模型下用率仅 10-15%，
+        //   且单篇被强制截断常丢关键内容。
+        // - 2026-04-30：改为按 max_context 动态分配。
+        // - 本次：与挂载笔记**共享**一个总盘子（compute_context_budget）。此前两者
+        //   各算各的（挂载 60%、RAG 50%×1.5），都吃满时合计会超出模型窗口。
+        //   现在挂载优先、RAG 吃剩下的；没挂载时 RAG 独占，不浪费。
         //
-        // 60K token 模型 → 45000 字符预算可塞 ~5 篇全文或 30+ 条窗口
-        // 200K token 模型 → 150000 字符预算几乎能塞完整个候选列表
-        const RAG_BUDGET_RATIO: f64 = 0.5; // RAG 占 max_context 的 50%（留 50% 给系统提示+历史+输出）
-        const CHARS_PER_TOKEN_CJK: f64 = 1.5; // CJK 1 token ≈ 1.5 字符（粗略估算）
+        // 单篇能塞下全文就塞全文，超出再用 smart window 截窗，预算用完即停。
+        // 128K token 模型 → 14 万字符预算，几乎能塞完整个候选列表
         const SINGLE_NOTE_HARD_CAP: usize = 16000; // 单篇硬上限，防一篇撑爆预算
         const RAG_TOP_N: usize = 15; // 候选数（旧版固定 5；提高让长上下文模型用满预算）
 
@@ -1123,9 +1181,9 @@ impl AiService {
             let notes =
                 db.search_notes_for_rag(user_message, RAG_TOP_N, scope_ids.as_deref())?;
             if !notes.is_empty() {
+                // 挂载笔记已占掉的部分不再给 RAG（联合约束，防两者叠加撑爆窗口）
                 let total_budget =
-                    ((model.max_context as f64) * RAG_BUDGET_RATIO * CHARS_PER_TOKEN_CJK)
-                        .max(8000.0) as usize;
+                    compute_context_budget(model.max_context, !attached_context.is_empty()).rag;
                 let mut used = 0usize;
                 let mut included = 0usize;
 
@@ -1855,7 +1913,17 @@ impl AiService {
                 // 执行：dispatch_with_mcp 会按前缀路由（mcp__<id>__<name> → mcp_external，否则原 skills）
                 // P1: tool 失败时把错误包装为友好提示，避免部分模型遇到 "ERROR: ..." 直接放弃
                 let (result_text, status) =
-                    match skills::dispatch_with_mcp(&app, db, &tc.name, &tc.args_json, scope_ids.as_deref()).await {
+                    match skills::dispatch_with_mcp(
+                        &app,
+                        db,
+                        &tc.name,
+                        &tc.args_json,
+                        scope_ids.as_deref(),
+                        // 单次工具返回的字符上限随模型窗口走，别让 get_note 只能读到开头
+                        skills::result_limit_for(model.max_context),
+                    )
+                    .await
+                    {
                         Ok(r) => (r, "ok"),
                         Err(e) => (
                             format!(
@@ -3440,6 +3508,100 @@ fn parse_draft_note_response(raw: &str) -> Option<DraftNoteResponse> {
         .trim_end_matches("```")
         .trim();
     serde_json::from_str(stripped).ok()
+}
+
+#[cfg(test)]
+mod context_budget_tests {
+    use super::*;
+
+    /// 单位换算必须是**乘** 1.5：max_context 是 token 数，预算按字符算。
+    /// 挂载笔记那条曾经漏了这个系数（直接 `max_context * 0.6` 当字符用），少给三分之一。
+    #[test]
+    fn budget_multiplies_token_to_chars() {
+        let b = compute_context_budget(128_000, false);
+        // 128000 tokens × 0.75 × 1.5 = 144000 字符
+        assert_eq!(b.rag, 144_000);
+        assert_eq!(b.attached, 0);
+    }
+
+    /// 核心不变式：挂载 + RAG 合计不得超过总盘子。
+    /// 老代码里两者各算各的（挂载 60%、RAG 50%×1.5），都吃满时会一起把窗口撑爆。
+    #[test]
+    fn attached_and_rag_never_exceed_total() {
+        for ctx in [1_000, 4_000, 8_000, 32_000, 128_000, 200_000, 1_000_000] {
+            let b = compute_context_budget(ctx, true);
+            let total = compute_context_budget(ctx, false).rag;
+            assert_eq!(
+                b.attached + b.rag,
+                total,
+                "max_context={ctx} 时两块之和应恰好等于总预算，实际 {} + {}",
+                b.attached,
+                b.rag
+            );
+            // 总预算本身要留出至少 25% 给系统提示 / 历史 / 输出
+            let hard_cap = ((ctx as f64) * CHARS_PER_TOKEN_CJK) as usize;
+            assert!(
+                total < hard_cap,
+                "max_context={ctx}：总预算 {total} 不该吃满整个窗口 {hard_cap}"
+            );
+        }
+    }
+
+    /// 没挂载笔记时 RAG 独占整个盘子，不浪费预算
+    #[test]
+    fn rag_takes_all_when_no_attached() {
+        let with_attached = compute_context_budget(128_000, true);
+        let without = compute_context_budget(128_000, false);
+        assert!(
+            without.rag > with_attached.rag,
+            "没挂载时 RAG 应拿到更多：{} vs {}",
+            without.rag,
+            with_attached.rag
+        );
+        assert_eq!(without.attached, 0);
+    }
+
+    /// 挂载笔记是用户手选的，优先级最高，拿大头
+    #[test]
+    fn attached_gets_the_larger_share() {
+        let b = compute_context_budget(128_000, true);
+        assert!(
+            b.attached > b.rag,
+            "挂载({})应比 RAG({})拿得多",
+            b.attached,
+            b.rag
+        );
+    }
+
+    /// 窗口未知（0 / 负数 / 老数据没填）才走兜底值，填了数就按填的算。
+    ///
+    /// 这条是真踩过的坑：兜底值曾被当作无条件下限，于是一个老老实实填了
+    /// 4000 token 的本地小模型被分到 8000 字符（≈5300 token）预算，比窗口还大。
+    #[test]
+    fn unknown_context_uses_fallback_but_small_context_is_respected() {
+        assert_eq!(
+            compute_context_budget(0, false).rag,
+            UNKNOWN_CONTEXT_BUDGET_CHARS
+        );
+        let neg = compute_context_budget(-1, true);
+        assert_eq!(neg.attached + neg.rag, UNKNOWN_CONTEXT_BUDGET_CHARS);
+
+        // 真·小窗口：4000 token × 0.75 × 1.5 = 4500 字符，绝不能被抬到 8000
+        let tiny = compute_context_budget(4_000, false);
+        assert_eq!(tiny.rag, 4_500);
+        assert!(tiny.rag < UNKNOWN_CONTEXT_BUDGET_CHARS);
+    }
+
+    /// 窗口越大预算越大，不该有反转
+    #[test]
+    fn budget_is_monotonic() {
+        let mut last = 0;
+        for ctx in [8_000, 32_000, 128_000, 200_000, 1_000_000] {
+            let total = compute_context_budget(ctx, false).rag;
+            assert!(total >= last, "max_context={ctx} 的预算 {total} 小于更小窗口的 {last}");
+            last = total;
+        }
+    }
 }
 
 #[cfg(test)]

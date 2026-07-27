@@ -3,6 +3,13 @@ use crate::models::{AiConversation, AiMessage, AiModel, AiModelInput};
 
 use super::Database;
 
+/// 新建模型时 max_context 的默认值（token）。
+///
+/// 2026 年主流模型（DeepSeek / GPT / Claude / Qwen…）都是 128K 起步。
+/// 老默认值 32000 会让 RAG 检索和挂载笔记只拿到四分之一的预算，
+/// AI 常基于被截断的片段作答 —— schema v51 已把存量的 32000 一并抬上来。
+const DEFAULT_MAX_CONTEXT: i64 = 128_000;
+
 /// 把一行 ai_models 查询结果转成 AiModel
 ///
 /// 列顺序约定（v25 起 9 列）：
@@ -218,8 +225,9 @@ impl Database {
             .conn
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
-        // max_context 缺省时走表 DEFAULT 32000
-        let max_ctx = input.max_context.unwrap_or(32000).max(1000);
+        // max_context 缺省时给 128000：2026 年主流模型都是 128K 起步，
+        // 老的 32000 会让 RAG / 挂载笔记白白少拿三四倍预算（见 schema v51 迁移）
+        let max_ctx = input.max_context.unwrap_or(DEFAULT_MAX_CONTEXT).max(1000);
         conn.execute(
             "INSERT INTO ai_models (name, provider, api_url, api_key, model_id, max_context)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -261,8 +269,8 @@ impl Database {
             .conn
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
-        // 用户没传 max_context 时保持原值，避免覆盖成默认 32000
-        let max_ctx = input.max_context.unwrap_or(32000).max(1000);
+        // 用户没传 max_context 时保持原值，避免覆盖成默认值
+        let max_ctx = input.max_context.unwrap_or(DEFAULT_MAX_CONTEXT).max(1000);
         conn.execute(
             "UPDATE ai_models SET name = ?1, provider = ?2, api_url = ?3, api_key = ?4,
                  model_id = ?5, max_context = ?6

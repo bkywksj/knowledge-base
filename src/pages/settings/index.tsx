@@ -71,6 +71,7 @@ import { TiptapEditor } from "@/components/editor";
 import { ShareConfigModal } from "@/components/config-share/ShareConfigModal";
 import { ImportConfigModal } from "@/components/config-share/ImportConfigModal";
 import { exportAiModel, type Envelope } from "@/lib/configShare";
+import { DEFAULT_MAX_CONTEXT } from "@/lib/aiProviderPresets";
 import type { Folder } from "@/types";
 
 const { Title, Text } = Typography;
@@ -1145,7 +1146,9 @@ function DesktopSettingsPage() {
         : 32000;
       const payload = {
         ...values,
-        max_context: Number.isFinite(max_context_num) ? max_context_num : 32000,
+        max_context: Number.isFinite(max_context_num)
+          ? max_context_num
+          : DEFAULT_MAX_CONTEXT,
       };
       if (editingModel) {
         await aiModelApi.update(editingModel.id, payload);
@@ -1236,7 +1239,9 @@ function DesktopSettingsPage() {
         : 32000;
       const payload: AiModelInput = {
         ...values,
-        max_context: Number.isFinite(max_context_num) ? max_context_num : 32000,
+        max_context: Number.isFinite(max_context_num)
+          ? max_context_num
+          : DEFAULT_MAX_CONTEXT,
       };
       await runModelTest(payload, -1, payload.name || "当前表单");
     } catch (e) {
@@ -2987,15 +2992,18 @@ function DesktopSettingsPage() {
           <Form.Item
             name="max_context"
             label="最大上下文 token"
-            extra="从下拉选常用量级，或手动输入任意数字。不确定就保留 32000。"
-            initialValue={32000}
+            // 这个值决定 AI 每次能看到多少笔记内容（RAG 检索 + 挂载笔记的预算都按它算），
+            // 填小了 AI 只能读到片段就作答 —— 所以把影响明说出来，别让人以为是个摆设
+            extra="决定 AI 每次能读多少笔记内容：填大 → 检索到的笔记尽量给全文，填小 → 只能给片段。按你模型的真实上限填，本地小模型请调小。"
+            initialValue={DEFAULT_MAX_CONTEXT}
           >
             <AutoComplete
-              placeholder="32000"
+              placeholder={String(DEFAULT_MAX_CONTEXT)}
               options={[
-                { value: 32000, label: "32K  （OpenAI 老款 / 默认）" },
+                { value: 8000, label: "8K   （本地 7B 等小模型）" },
+                { value: 32000, label: "32K  （OpenAI 老款）" },
                 { value: 64000, label: "64K" },
-                { value: 128000, label: "128K （DeepSeek / GPT-4o / 智谱）" },
+                { value: 128000, label: "128K （DeepSeek / GPT-4o / 智谱，默认）" },
                 { value: 200000, label: "200K （Claude）" },
                 { value: 1000000, label: "1M   （GLM-Long / MiniMax-M1）" },
                 { value: 2000000, label: "2M" },
