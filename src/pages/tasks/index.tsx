@@ -569,10 +569,18 @@ function DesktopTasksPage() {
             })()}
           </h1>
           <Text type="secondary" className="text-xs">
-            {tasks.filter((t) => t.status === 0).length} 条未完成 ·{" "}
-            <span style={{ color: token.colorError }}>
-              {tasks.filter((t) => t.status === 0 && t.priority === 0).length} 条紧急
-            </span>
+            {/* 「已放弃」/「已完成」列表里全是非待办任务，"0 条未完成 · 0 条紧急"
+                纯属噪音，改报条数 */}
+            {filter === "abandoned" || filter === "done" ? (
+              `共 ${tasks.length} 条`
+            ) : (
+              <>
+                {tasks.filter((t) => t.status === 0).length} 条未完成 ·{" "}
+                <span style={{ color: token.colorError }}>
+                  {tasks.filter((t) => t.status === 0 && t.priority === 0).length} 条紧急
+                </span>
+              </>
+            )}
           </Text>
         </div>
         <div className="flex items-center gap-2">
@@ -853,7 +861,9 @@ function DesktopTasksPage() {
               )
             : grouped.done.length > 0 && (
                 <TaskSection
-                  title="已完成"
+                  // groupTasks 把「已完成」和「已放弃」都收进 done 分组（两者都不再待办），
+                  // 所以标题要看当前筛选：在「已放弃」列表里写"已完成"会前后矛盾
+                  title={filter === "abandoned" ? "已放弃" : "已完成"}
                   count={grouped.done.length}
                   tasks={grouped.done}
                   onToggle={handleToggle}
