@@ -11,9 +11,14 @@
  * Markdown 序列化（Docusaurus / VitePress 风格）：
  *   ```python title="xxx" wrap no-line-numbers
  *   - 写：addStorage().markdown.serialize 拼接 fence info（见本文件下方）
- *   - 读：tiptap-markdown 默认会把整段 info 当作 language attr 塞进去，
- *         由 TiptapEditor 在 setContent 完成后调 normalizeCodeBlockFenceAttrs 拆分
- *         （把 title/wrap/showLineNumbers 提取出来，language 还原成干净的语言名）
+ *   - 读：addStorage().markdown.parse.setup 接管 markdown-it 的 fence 渲染，把 info 里的
+ *         attrs 补成 <pre> 上的 data-*，再由上面各 attr 的 parseHTML 读回。
+ *
+ *     🔴 为什么必须自己接管 fence：tiptap-markdown 走「markdown-it 渲染成 HTML → 解析进
+ *     编辑器」，而 markdown-it 默认的 fence 渲染**只取 info 的第一个词**当语言名输出成
+ *     class="language-xxx"，后面的 title/fontSize/wrap/no-line-numbers 全被丢弃：
+ *         ```python title="X" wrap  →  <pre><code class="language-python">
+ *     结果就是「代码块命名填了、存盘 .md 里也有，但重新打开就没了」。
  */
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
@@ -156,11 +161,10 @@ export const CodeBlockEnhanced = CodeBlockLowlight.extend({
   },
 
   /**
-   * Markdown 序列化：fence info 写成 Docusaurus / VitePress 风格
+   * Markdown 序列化 / 反序列化：fence info 写成 Docusaurus / VitePress 风格
    *   ```python title="xxx" wrap no-line-numbers
    *
-   * 反序列化（parse）在 TiptapEditor setContent 之后由 normalizeCodeBlockFenceAttrs
-   * 统一处理 —— tiptap-markdown 把 fence 整段 info 当 language 塞进来，需要后处理拆分。
+   * parse.setup 接管 markdown-it 的 fence 渲染把 attrs 补回 <pre>（详见文件头注释）。
    */
   addStorage() {
     const parent = (this.parent?.() as Record<string, unknown> | undefined) ?? {};
@@ -188,22 +192,136 @@ export const CodeBlockEnhanced = CodeBlockLowlight.extend({
           state.write("```");
           state.closeBlock(node);
         },
-        parse: {},
+        parse: {
+          /**
+           * 接管 fence 渲染，修两件事（都是 markdown-it 默认行为造成的）：
+           *
+           * ① attrs 被丢弃：默认只把 info 首词当语言名，title / fontSize / wrap /
+           *    no-line-numbers 存得进 .md 却读不回来。→ 在 <pre> 上补 data-*，
+           *    被各 attr 的 parseHTML 接住（CodeBlock 的 parse 规则是 { tag: "pre" }）。
+           *
+           * ② 没选语言时命名会"串"进语言框：info 形如 ` title="X"`，默认把首词
+           *    `title="X"` 整个当语言名输出成 class="language-title=&quot;X&quot;"，
+           *    语言下拉里就显示一串 title="..."（命名却是空的）。命名带空格时更糟，
+           *    会被截断成 `language-title=&quot;工具`。→ 判定首词是属性时删掉这个假 class。
+           */
+          setup(markdownit: MarkdownItLike) {
+            // 默认 spec 的 setup 会被本对象整体覆盖（getMarkdownSpec 是浅合并），
+            // 所以它设的 langPrefix 要在这里补回，否则语言 class 前缀可能不对。
+            markdownit.set({ langPrefix: "language-" });
+
+            const renderFence = markdownit.renderer.rules.fence;
+            if (!renderFence) return; // 理论不会发生；真没有就退回默认行为，不硬崩
+            markdownit.renderer.rules.fence = (tokens, idx, options, env, self) => {
+              const info = tokens[idx]?.info ?? "";
+              let html = renderFence(tokens, idx, options, env, self);
+              // ② 先清掉假语言 class（此时 <code> 上的 class 整个都是伪造的，直接删）
+              if (fenceInfoHasNoLanguage(info)) {
+                html = html.replace(
+                  /^(<pre[^>]*><code)\s+class="language-[^"]*"/,
+                  "$1",
+                );
+              }
+              // ① 再把 attrs 补成 <pre> 上的 data-*
+              const dataAttrs = codeFenceInfoToDataAttrs(info);
+              // 默认输出必定以 <pre 开头（带/不带 class 都是）；插在标签名之后
+              return dataAttrs ? html.replace(/^<pre/, `<pre${dataAttrs}`) : html;
+            };
+          },
+          /**
+           * 默认 spec 的 updateDOM 同样被覆盖了，必须原样带回：markdown-it 输出的是
+           * "代码\n</code></pre>"，不去掉这个换行，每个代码块末尾都会多出一个空行。
+           */
+          updateDOM(element: HTMLElement) {
+            element.innerHTML = element.innerHTML.replace(
+              /\n<\/code><\/pre>/g,
+              "</code></pre>",
+            );
+          },
+        },
       },
     };
   },
 });
 
 /**
- * 反序列化辅助：把 fence info 字符串里的 title="..." / wrap / no-line-numbers
- * 拆回各 attr，并把 language 还原成干净的语言名。
+ * markdown-it 的最小结构签名（只用到 set + renderer.rules.fence）。
+ * markdown-it 只是 tiptap-markdown 的传递依赖，本项目没有直接依赖它，
+ * 也没装 @types/markdown-it —— 故用结构化类型描述，不引入新依赖。
+ */
+interface MarkdownItLike {
+  set(options: Record<string, unknown>): void;
+  renderer: {
+    rules: Record<
+      string,
+      | ((
+          tokens: { info?: string }[],
+          idx: number,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          options: any,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          env: any,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          self: any,
+        ) => string)
+      | undefined
+    >;
+  };
+}
+
+/** HTML 属性值转义：title 是用户自由输入，不转义能直接破坏 <pre> 标签结构 */
+function escapeAttrValue(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/**
+ * 把 fence info（如 `python title="X" fontSize=14 wrap no-line-numbers`）转成可直接拼进
+ * `<pre>` 开标签的 data-* 串（含前导空格）；没有任何附加 attr 时返回空串。
  *
- * tiptap-markdown 解析 ```python title="X" wrap``` 时，会把整段 info 塞进 language attr
- * （= "python title=\"X\" wrap"），lowlight 拿这个去查语言肯定找不到 → 没高亮 + UI 异常。
- * 这里在 setContent 完成后扫一遍，恢复正确的 attr 分布。
+ * 抽成纯函数是为了能单测 —— 这段是「代码块命名存得进读不回」的修复核心。
+ */
+/**
+ * 该 fence 是否"没有语言名"（info 以属性开头，如 ` title="X"` / ` wrap`）。
  *
- * 调用时机：仅在外部 setContent（载入笔记 / 拖入 .md）之后调用一次即可，
- * 用户在编辑器里手动编辑 attrs 不会引入混合 language —— 那条路径直接走 updateAttributes。
+ * 这种 info 会让 markdown-it 把首词当语言名，渲染出 class="language-title=&quot;X&quot;"，
+ * 表现为「命名串进了旁边的语言框，命名框反而空了」。用它判定后把假 class 删掉。
+ */
+export function fenceInfoHasNoLanguage(info: string): boolean {
+  const trimmed = (info ?? "").trim();
+  if (!trimmed) return false; // 空 info：markdown-it 本就不加 class，无需处理
+  return isFenceAttrToken(trimmed.split(/\s+/)[0] ?? "");
+}
+
+export function codeFenceInfoToDataAttrs(info: string): string {
+  const trimmed = (info ?? "").trim();
+  if (!trimmed) return "";
+
+  // 直接对整串扫属性：不能用"无空格 = 纯语言名"这种捷径提前返回 ——
+  // 「没选语言只填了命名」时 info 就是 `title="X"`（整串无空格），会被误判跳过。
+  const parsed = scanFenceAttrs(trimmed);
+  const attrs: string[] = [];
+  if (parsed.title) attrs.push(`data-title="${escapeAttrValue(parsed.title)}"`);
+  if (parsed.fontSize) attrs.push(`data-font-size="${parsed.fontSize}"`);
+  if (parsed.wrap) attrs.push('data-wrap="true"');
+  if (parsed.noLineNumbers) attrs.push('data-line-numbers="false"');
+  return attrs.length ? ` ${attrs.join(" ")}` : "";
+}
+
+/**
+ * 兜底：把误塞进 language attr 的整段 fence info（"python title=\"X\" wrap"）拆回各 attr，
+ * 并把 language 还原成干净的语言名 —— 否则 lowlight 拿它查语言必然找不到，高亮失效。
+ *
+ * ⚠️ 这**不是**主解析路径。主路径是 addStorage().markdown.parse.setup（把 info 补成 <pre>
+ * 上的 data-*）。此前本函数被当成主路径，但它的前提不成立：markdown-it 压根不会把整段
+ * info 交出来，language 永远是干净的首词 → 下面的 /\s/ 判断恒为假，函数从未真正生效，
+ * title 等属性也就一直丢失。现保留作兜底（成本极低），覆盖直接灌入脏 language 的场景。
+ *
+ * 调用时机：外部 setContent（载入笔记 / 拖入 .md）之后调一次即可，
+ * 用户在编辑器里手动改 attrs 走的是 updateAttributes，不会引入混合 language。
  */
 export function normalizeCodeBlockFenceAttrs(editor: Editor): void {
   const tr = editor.state.tr;
@@ -211,7 +329,11 @@ export function normalizeCodeBlockFenceAttrs(editor: Editor): void {
   editor.state.doc.descendants((node, pos) => {
     if (node.type.name !== "codeBlock") return;
     const lang = node.attrs.language as string | null;
-    if (!lang || !/\s/.test(lang)) return; // 没空格 = 纯净的语言名 / 空，跳过
+    if (!lang) return;
+    // 脏 language 有两种形态：① 混了空格（"python title=..."）；
+    // ② 整串就是一个属性且无空格（'title="中文命名"' —— 命名不含空格时正是这种，
+    //    只判空格会漏掉，用户看到的就是语言框里挂着一串 title="..."）。
+    if (!/\s/.test(lang) && !isFenceAttrToken(lang)) return; // 纯净语言名，跳过
 
     const parsed = parseCodeFenceInfo(lang);
     tr.setNodeMarkup(pos, undefined, {
@@ -239,28 +361,46 @@ interface ParsedFenceInfo {
   noLineNumbers?: boolean;
 }
 
-function parseCodeFenceInfo(info: string): ParsedFenceInfo {
-  const trimmed = info.trim();
-  // 第一个空格之前是 language；之后是 attrs
-  const firstSpace = trimmed.indexOf(" ");
-  if (firstSpace < 0) return { language: trimmed };
-  const language = trimmed.slice(0, firstSpace);
-  const rest = trimmed.slice(firstSpace + 1);
+/** 首词是附加属性而非语言名？（用户没选语言只填了命名时，info 就以 title= 开头） */
+function isFenceAttrToken(token: string): boolean {
+  return (
+    token.startsWith("title=") ||
+    token.startsWith("fontSize=") ||
+    token === "wrap" ||
+    token === "no-line-numbers"
+  );
+}
 
+/**
+ * 扫描 fence info 里的附加属性。正则一律按词边界锚定，所以**对整串扫描**即可，
+ * 不依赖"第一个空格之后才是 attrs"这个前提 —— 那个前提在「没选语言只填了命名」
+ * （info = ` title="X"`，整串无空格）时会失效，正是命名丢失的一个分支。
+ */
+function scanFenceAttrs(info: string): Omit<ParsedFenceInfo, "language"> {
   // title="..." 或 title='...'，支持转义的引号
-  const titleMatch = rest.match(/title=(["'])((?:\\.|(?!\1).)*)\1/);
-  const title = titleMatch ? titleMatch[2].replace(/\\"/g, '"').replace(/\\'/g, "'") : undefined;
+  const titleMatch = info.match(/title=(["'])((?:\\.|(?!\1).)*)\1/);
+  const title = titleMatch
+    ? titleMatch[2].replace(/\\"/g, '"').replace(/\\'/g, "'")
+    : undefined;
 
   // fontSize=14（仅数字）
-  const fsMatch = rest.match(/(^|\s)fontSize=(\d+)(\s|$)/);
+  const fsMatch = info.match(/(^|\s)fontSize=(\d+)(\s|$)/);
   const fsNum = fsMatch ? parseInt(fsMatch[2], 10) : NaN;
   const fontSize = Number.isFinite(fsNum) && fsNum > 0 ? fsNum : undefined;
 
-  // 独立 keyword：wrap / no-line-numbers（前后是空格或边界）
-  const wrap = /(^|\s)wrap(\s|$)/.test(rest);
-  const noLineNumbers = /(^|\s)no-line-numbers(\s|$)/.test(rest);
+  // 独立 keyword：wrap / no-line-numbers（前后是空格或边界，避免命中 "wrapper"）
+  const wrap = /(^|\s)wrap(\s|$)/.test(info);
+  const noLineNumbers = /(^|\s)no-line-numbers(\s|$)/.test(info);
 
-  return { language, title, fontSize, wrap, noLineNumbers };
+  return { title, fontSize, wrap, noLineNumbers };
+}
+
+function parseCodeFenceInfo(info: string): ParsedFenceInfo {
+  const trimmed = info.trim();
+  const firstToken = trimmed.split(/\s+/)[0] ?? "";
+  // 首词是属性 → 该代码块没有语言名（如 ```` ``` title="备注" ````）
+  const language = isFenceAttrToken(firstToken) ? "" : firstToken;
+  return { language, ...scanFenceAttrs(trimmed) };
 }
 
 /** React NodeView — toolbar + 代码内容（PM 管） + 行号 */
