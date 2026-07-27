@@ -37,9 +37,8 @@ export const useAttachmentPreviewStore = create<AttachmentPreviewStore>(
   }),
 );
 
-/** 已支持应用内预览的扩展名（小写、不含点） */
-export const PREVIEWABLE_ATTACHMENT_EXTS = [
-  // Office
+/** Office 文档（走 DocxPreview / XlsxPreview） */
+export const OFFICE_ATTACHMENT_EXTS = [
   "docx",
   "doc",
   "xlsx",
@@ -47,9 +46,17 @@ export const PREVIEWABLE_ATTACHMENT_EXTS = [
   "xlsm",
   "xlsb",
   "ods",
-  // PDF
-  "pdf",
-  // 文本类
+];
+
+/**
+ * 纯文本类扩展名（走 TextPreview，后端按 UTF-8 读）。
+ *
+ * 单独列出来是因为 TextPreview 曾经是"兜底分支"——任何没匹配上 PDF/Office 的
+ * 类型都丢给它，于是改过名的 PDF（链接文本不带 .pdf）会被当文本读，
+ * 报 "stream did not contain valid UTF-8"。现在改成白名单：不在这张表里的
+ * 一律提示用系统应用打开，不再拿 UTF-8 去啃二进制。
+ */
+export const TEXT_ATTACHMENT_EXTS = [
   "txt",
   "md",
   "markdown",
@@ -83,6 +90,18 @@ export const PREVIEWABLE_ATTACHMENT_EXTS = [
   "ps1",
   "sql",
 ];
+
+/** 已支持应用内预览的扩展名（小写、不含点）= Office + PDF + 文本 */
+export const PREVIEWABLE_ATTACHMENT_EXTS = [
+  ...OFFICE_ATTACHMENT_EXTS,
+  "pdf",
+  ...TEXT_ATTACHMENT_EXTS,
+];
+
+/** 该扩展名是否走文本预览（后端 UTF-8 读取） */
+export function isTextAttachmentExt(ext: string): boolean {
+  return TEXT_ATTACHMENT_EXTS.includes(ext.toLowerCase());
+}
 
 /** 判断给定路径是否可被应用内预览 */
 export function isPreviewableAttachment(pathOrName: string): boolean {

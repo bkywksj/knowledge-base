@@ -130,8 +130,7 @@ pub fn preview_text_attachment(
     rel: String,
 ) -> Result<TextPreviewData, String> {
     let abs = resolve_attachment_path(&state, &rel).map_err(|e| e.to_string())?;
-    let raw = std::fs::read_to_string(&abs)
-        .map_err(|e| format!("读取文件失败 {}: {}", abs.display(), e))?;
+    let raw = std::fs::read_to_string(&abs).map_err(|e| friendly_read_error(&abs, &e))?;
     let total_lines = raw.lines().count();
     let char_count = raw.chars().count();
     if char_count <= TEXT_PREVIEW_MAX_CHARS {
@@ -149,4 +148,76 @@ pub fn preview_text_attachment(
         total_lines,
         truncated: true,
     })
+}
+
+/// 把 `read_to_string` 的底层错误翻译成用户能看懂的话。
+///
+/// 二进制文件（PDF / 图片 / 压缩包…）走到这里时，std 只会甩一句
+/// "stream did not contain valid UTF-8" —— 用户完全不知道发生了什么。
+/// 前端已按扩展名白名单拦了一道（见 attachmentPreview.ts 的 TEXT_ATTACHMENT_EXTS），
+/// 这里是最后兜底。
+fn friendly_read_error(abs: &std::path::Path, e: &std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::InvalidData {
+        let name = abs
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| abs.display().to_string());
+        return format!(
+            "「{name}」不是纯文本文件（可能是 PDF / 图片 / 压缩包等二进制格式），无法按文本预览。请用系统应用打开。"
+        );
+    }
+    format!("读取文件失败 {}: {}", abs.display(), e)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 用户实际踩到的场景：改过名的 PDF 落到文本预览分支，
+    /// 报一句 "stream did not contain valid UTF-8"，没人看得懂。
+    #[test]
+    fn binary_file_gets_human_readable_message() {
+        let err = std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "stream did not contain valid UTF-8",
+        );
+        let msg = friendly_read_error(std::path::Path::new("C:/kb/关于某某的通知.pdf"), &err);
+
+        assert!(msg.contains("关于某某的通知.pdf"), "要点名是哪个文件: {msg}");
+        assert!(msg.contains("不是纯文本文件"), "要说人话: {msg}");
+        assert!(msg.contains("系统应用"), "要给出下一步动作: {msg}");
+        assert!(
+            !msg.contains("UTF-8"),
+            "不该把底层编码错误甩给用户: {msg}"
+        );
+    }
+
+    /// 其它 IO 错误（文件不存在 / 没权限）保持原样 —— 那些信息对排查有用
+    #[test]
+    fn other_io_errors_keep_original_detail() {
+        let err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let msg = friendly_read_error(std::path::Path::new("C:/kb/a.txt"), &err);
+        assert!(msg.contains("读取文件失败"), "{msg}");
+        assert!(msg.contains("file not found"), "应保留底层原因: {msg}");
+    }
+
+    /// 真·二进制文件端到端：写一个非 UTF-8 的 PDF 头，确认 read_to_string
+    /// 确实返回 InvalidData，且我们的翻译能接住
+    #[test]
+    fn real_binary_pdf_triggers_invalid_data() {
+        let dir = std::env::temp_dir().join("kb_attachment_preview_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("probe.pdf");
+        // 0xFF 0xFE 不是合法 UTF-8 起始字节
+        std::fs::write(&path, b"%PDF-1.4\n\xff\xfe\x80\x81 binary\n%%EOF").unwrap();
+
+        let err = std::fs::read_to_string(&path).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+
+        let msg = friendly_read_error(&path, &err);
+        assert!(msg.contains("probe.pdf"), "{msg}");
+        assert!(msg.contains("不是纯文本文件"), "{msg}");
+
+        let _ = std::fs::remove_file(&path);
+    }
 }

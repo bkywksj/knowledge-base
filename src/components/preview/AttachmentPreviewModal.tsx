@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  Alert,
   Modal,
   Button,
   Space,
@@ -10,7 +11,10 @@ import {
 import { FolderOpen, Maximize2, Minimize2 } from "lucide-react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useAttachmentPreviewStore } from "@/store/attachmentPreview";
+import {
+  useAttachmentPreviewStore,
+  isTextAttachmentExt,
+} from "@/store/attachmentPreview";
 import { systemApi } from "@/lib/api";
 import { DocxPreview } from "./DocxPreview";
 import { XlsxPreview } from "./XlsxPreview";
@@ -38,7 +42,18 @@ export function AttachmentPreviewModal() {
 
   const open = target != null;
   const fileName = target?.fileName ?? "";
-  const ext = fileName.toLowerCase().split(".").pop() ?? "";
+  /**
+   * 用哪个预览器，**必须**按 `rel`（真实文件路径）判断，不能按 `fileName`。
+   *
+   * `fileName` 优先取笔记里链接的显示文本（见 TiptapEditor 的 attachment 点击处理），
+   * 用户完全可能把它改成不带扩展名的中文标题（"关于 XX 的通知"）。此前这里按
+   * fileName 推扩展名，遇到改过名的 PDF 就三个分支都不匹配 → 落到 TextPreview
+   * 兜底 → 用 UTF-8 读二进制 PDF → 报 "stream did not contain valid UTF-8"。
+   *
+   * 而"能不能预览"那一侧（isPreviewableAttachment）本来就是按 rel 判断的，
+   * 两处口径不一致才是 bug 根因。这里统一到 rel。
+   */
+  const ext = (target?.rel ?? "").toLowerCase().split(".").pop() ?? "";
 
   // 解析 rel → 绝对路径（系统程序打开 + PDF iframe src 都要用）
   useEffect(() => {
@@ -153,8 +168,18 @@ export function AttachmentPreviewModal() {
         <DocxPreview rel={target.rel} fileName={fileName} />
       ) : isExcel ? (
         <XlsxPreview rel={target.rel} />
-      ) : (
+      ) : isTextAttachmentExt(ext) ? (
         <TextPreview rel={target.rel} fileName={fileName} />
+      ) : (
+        // 不认识的类型不再硬塞给 TextPreview——那会拿 UTF-8 去读二进制然后报
+        // 一句用户看不懂的 "stream did not contain valid UTF-8"。
+        // 明确告诉用户"预览不了"，并引导到已经在标题栏的"用系统应用打开"。
+        <Alert
+          type="info"
+          showIcon
+          message={`暂不支持在应用内预览 .${ext || "未知"} 文件`}
+          description="可以点右上角「用系统应用打开」，用系统默认程序查看。"
+        />
       )}
     </Modal>
   );
