@@ -1,6 +1,5 @@
 {
-  "$schema": "https://developers.openai.com/codex/hooks-schema.json",
-  "_comment": "knowledge_base 项目 Codex hooks 配置。需配合 .codex/config.toml 中 [features] hooks=true 启用。",
+  "description": "knowledge_base 项目 Codex hooks 配置。需配合 .codex/config.toml 中 [features] hooks=true 启用。",
   "hooks": {
     "SessionStart": [
       {
