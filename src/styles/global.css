@@ -336,7 +336,9 @@ body,
 }
 .editor-body[data-outline="on"] {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 170px;
+  /* 220px 是首帧兜底，真实列宽由页面内联 style 覆盖（用户可拖拽 + localStorage 记忆）。
+     与 OUTLINE_DEFAULT_WIDTH 保持同值，避免首帧闪一下窄列再跳宽。 */
+  grid-template-columns: minmax(0, 1fr) 220px;
   align-items: start;
 }
 
@@ -363,8 +365,12 @@ body,
 
 .editor-content-area {
   /* 底部 10vh 空白：兼顾大纲跳转的 scrollIntoView 余量与视觉紧凑感；
-     原值 40vh / 20vh 离反向链接 / 字数统计区过远，最终降到 10vh。 */
-  padding: 24px 48px 10vh;
+     原值 40vh / 20vh 离反向链接 / 字数统计区过远，最终降到 10vh。
+     --outline-tail-space 由 EditorOutline 按需写入：仅当"最后一个标题之后的正文不足
+     一屏"时补足缺口，让尾部标题也能被滚到顶（否则 scrollTop 被 clamp，点了不动）。
+     用 calc 纯增量叠加而非 max()：组件是按"当前尾巴还差多少"算的增量，max() 会把
+     10vh 吸收进去导致每次少补 10vh，要多轮才收敛。不需要时为 0，即退回原来的 10vh。 */
+  padding: 24px 48px calc(10vh + var(--outline-tail-space, 0px));
   width: 100%;
   box-sizing: border-box;
   display: flex;
@@ -376,6 +382,58 @@ body,
   max-width: var(--editor-reading-width, none);
   margin-left: auto;
   margin-right: auto;
+}
+
+/* 大纲开启时：正文列比阅读列宽（默认 820）宽出来的空白原本被 auto margin 左右平分，
+   于是正文和大纲之间白白夹了几十像素死空白（中间并无任何内容，只有 6px 拖拽条）。
+   改成"朝大纲那侧只留固定呼吸距离，剩余空白全给另一侧"，缝隙立刻收窄。
+   用户明确要求：仅在隐藏大纲时才要求两侧空白一致，开着大纲允许不对称。
+
+   width 必须显式减掉呼吸距离：基础规则的 width:100% 会吃满整轨，再叠加固定 margin
+   就溢出轨道；而改成 width:auto 更糟 —— auto margin 会禁用 grid 的 stretch 对齐，
+   正文直接塌成 shrink-to-fit（实测只剩 122px）。calc 是唯一两头都不踩的写法。 */
+.editor-body[data-outline="on"] > .editor-content-area {
+  width: calc(100% - var(--editor-outline-gutter, 24px));
+  /* 正文可越过"阅读列宽"去吃掉剩下的死白，左右各留一个呼吸距离即可：
+       max(阅读列宽, min(填满轨道, 上限))
+     - 内层 min：撑满轨道减两侧呼吸，但不超过 --editor-outline-max-width（超宽屏防"一行横扫"）
+     - 外层 max：永远不低于用户设定的阅读列宽，上限不会反向把正文压窄
+     两层保证 min ≤ max 恒成立，不会出现 clamp 参数颠倒的未定义行为。
+
+     上限取 1600 而非拍脑袋的数：项目里 1600 已是既有基准 —— setEditorReadingWidth 的
+     clamp 上界、以及下方 @media(min-width:1800px) 的默认阅读宽度都用它。4K 最大化
+     （编辑区 ≈1613）时够正文铺满（1324），左侧死白从 69 收到 24。
+
+     注意：阅读列宽是持久化偏好（tauri-plugin-store 存，启动回填），改代码里的默认值
+     对老用户无效，所以只能在版面层放宽，不能靠调默认值解决左侧空白。 */
+  max-width: max(
+    var(--editor-reading-width, 820px),
+    min(
+      calc(100% - var(--editor-outline-gutter, 24px) * 2),
+      var(--editor-outline-max-width, 1600px)
+    )
+  );
+  margin-left: auto;
+  margin-right: var(--editor-outline-gutter, 24px);
+}
+/* 大纲左置：呼吸距离跟着翻到左侧（此规则必须排在上面那条之后，两者特异性相同靠顺序取胜） */
+.editor-body[data-outline-pos="left"] > .editor-content-area {
+  margin-left: var(--editor-outline-gutter, 24px);
+  margin-right: auto;
+}
+
+/* 隐藏大纲：同样按可用宽度填充（公式与上面一致），但左右 margin 保持 auto → 两侧严格对称。
+   原先由 editor.tsx 内联算 maxWidth = 阅读列宽 + 大纲宽 + 6，是个不随窗口变化的固定值，
+   4K 最大化时正文只有 996，两侧各空 320px。改到 CSS 后宽度跟着窗口走，日记页也一并受益
+   （它此前没有那段补偿逻辑，隐藏大纲时一直被卡在阅读列宽）。 */
+.editor-body:not([data-outline="on"]) > .editor-content-area {
+  max-width: max(
+    var(--editor-reading-width, 820px),
+    min(
+      calc(100% - var(--editor-outline-gutter, 24px) * 2),
+      var(--editor-outline-max-width, 1600px)
+    )
+  );
 }
 
 /* 大屏阅读宽度上限：仅在"不限制"（未设 --editor-reading-width）时生效——

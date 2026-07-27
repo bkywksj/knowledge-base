@@ -97,7 +97,8 @@ function DesktopDailyPage() {
   // 大纲停靠位置（'right' 默认 / 'left'）：与笔记编辑器共用同一 store 偏好
   const outlinePosition = useAppStore((s) => s.outlinePosition);
   // 大纲宽度：与笔记编辑器共用同一 localStorage 键，两处宽度记忆一致
-  const OUTLINE_DEFAULT_WIDTH = 170;
+  // （220 的取值理由见 pages/notes/editor.tsx 同名常量；两处必须同值）
+  const OUTLINE_DEFAULT_WIDTH = 220;
   const [outlineWidth, setOutlineWidth] = useState<number>(() => {
     const saved = Number(localStorage.getItem("editor.outlineWidth"));
     return Number.isFinite(saved) && saved >= 140 ? saved : OUTLINE_DEFAULT_WIDTH;
@@ -444,7 +445,7 @@ function DesktopDailyPage() {
         style={
           outlineVisible
             ? {
-                // 覆盖 CSS 里固定的 170px：左置时 大纲 | 6px | 1fr；右置时反之。
+                // 覆盖 CSS 里的兜底列宽（220px）：左置时 大纲 | 6px | 1fr；右置时反之。
                 // DOM 顺序固定为 内容→分隔条→大纲，左置由 CSS order 调换视觉次序。
                 gridTemplateColumns:
                   outlinePosition === "left"

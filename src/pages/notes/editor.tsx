@@ -769,8 +769,11 @@ function DesktopNoteEditorPage() {
   // latest 字段：handleMove 写入最新宽度，handleUp 关闭时读出落库（避免闭包陷阱）
   const splitterDragRef = useRef<{ startX: number; startWidth: number; latest: number } | null>(null);
 
-  /** 右侧大纲宽度（像素，持久化到 localStorage；双击分隔条还原到默认） */
-  const OUTLINE_DEFAULT_WIDTH = 170;
+  /** 右侧大纲宽度（像素，持久化到 localStorage；双击分隔条还原到默认）。
+   *  220：170 时长标题几乎条条被省略号截断；正文列宽固定（默认 820）撑不满轨道，
+   *  多出来的空白与其夹在正文和大纲中间当死区，不如让大纲多显示一截标题。
+   *  改动需与 daily 页同名常量、global.css 的 grid 兜底列宽三处同步。 */
+  const OUTLINE_DEFAULT_WIDTH = 220;
   const [outlineWidth, setOutlineWidth] = useState<number>(() => {
     const saved = Number(localStorage.getItem("editor.outlineWidth"));
     return Number.isFinite(saved) && saved >= 140 ? saved : OUTLINE_DEFAULT_WIDTH;
@@ -794,6 +797,15 @@ function DesktopNoteEditorPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [editorInstance, setEditorInstance] = useState<any | null>(null);
   const editorBodyRef = useRef<HTMLDivElement | null>(null);
+  // 大纲需要"滚动容器 DOM"作为 prop，而渲染期读 ref.current 首帧恒为 null，
+  // 大纲会拿着 null 建 scrollspy。用 callback ref 同步一份到 state，挂载即拿到真身。
+  // useCallback 稳定引用是必须的：内联函数每次渲染都会被 React detach/attach，
+  // 触发 null→el 的多余 setState 循环。
+  const [editorBodyEl, setEditorBodyEl] = useState<HTMLDivElement | null>(null);
+  const bindEditorBody = useCallback((el: HTMLDivElement | null) => {
+    editorBodyRef.current = el;
+    setEditorBodyEl(el);
+  }, []);
   // 当前活跃笔记 id：loadData 开头写入，后台元数据加载回来时比对，防止快速切笔记
   // 时旧请求结果覆盖新笔记（竞态守卫）。
   const loadSeqRef = useRef<number>(-1);
@@ -831,8 +843,8 @@ function DesktopNoteEditorPage() {
   const toggleOutline = useAppStore((s) => s.toggleOutline);
   // 大纲停靠位置（'right' 默认 / 'left'）。影响 grid 列序 + 拖拽方向 + 面板内边距/分隔线方向。
   const outlinePosition = useAppStore((s) => s.outlinePosition);
-  // 阅读列宽（px，0=不限制）。隐藏大纲时把大纲腾出的横向空间补给正文，避免两侧空白过大。
-  const editorReadingWidth = useAppStore((s) => s.editorReadingWidth);
+  // 注：阅读列宽（editorReadingWidth）不再在本组件订阅 —— 正文宽度改由 global.css
+  // 直接读 --editor-reading-width 计算（大纲开/关两套规则），少一份状态订阅与重渲染。
   const autoSaveEnabled = useAppStore((s) => s.autoSaveEnabled);
   const autoSaveDelay = useAppStore((s) => s.autoSaveDelay);
   /**
@@ -2258,14 +2270,14 @@ function DesktopNoteEditorPage() {
       {/* 可滚动的编辑主体 */}
       <div
         className="editor-body"
-        ref={editorBodyRef}
+        ref={bindEditorBody}
         data-outline={effectiveOutlineVisible ? "on" : undefined}
         data-outline-pos={effectiveOutlineVisible ? outlinePosition : undefined}
         style={{
           flex: 1,
           minWidth: 0,
           ...(effectiveOutlineVisible && {
-            // 覆盖 CSS 里固定的 200px：左置时 大纲列 | 6px 分隔 | 1fr；右置时反之。
+            // 覆盖 CSS 里的兜底列宽（220px）：左置时 大纲列 | 6px 分隔 | 1fr；右置时反之。
             // DOM 顺序固定为 内容→分隔条→大纲，左置时由 CSS order 调换视觉次序。
             gridTemplateColumns:
               outlinePosition === "left"
@@ -2274,16 +2286,10 @@ function DesktopNoteEditorPage() {
           }),
         }}
       >
-        <div
-          className="editor-content-area"
-          style={
-            // 隐藏大纲 + 设了阅读列宽时：把大纲列(含 6px 分隔条)腾出的宽度补给正文，
-            // 让编辑区随之变宽、收窄两侧空白。readingWidth=0(不限制)时不覆盖，沿用铺满逻辑。
-            !effectiveOutlineVisible && editorReadingWidth > 0
-              ? { maxWidth: editorReadingWidth + outlineWidth + 6 }
-              : undefined
-          }
-        >
+        {/* 隐藏大纲时的正文宽度不再在这里算：原先用固定公式「阅读列宽 + 大纲宽 + 6」补偿，
+            不随窗口变宽，4K 最大化时两侧各空 320px。现统一交给 global.css 的
+            .editor-body:not([data-outline="on"]) 规则按可用宽度填充（两侧仍对称）。 */}
+        <div className="editor-content-area">
           {/* 标题：用 position:relative 父级 + 绝对定位 mic / clear 模拟 suffix。
               不直接用 antd Input.suffix / allowClear——两者都会包一层
               .ant-input-affix-wrapper 把 borderless 大标题撑成白底大框。 */}
@@ -2463,7 +2469,7 @@ function DesktopNoteEditorPage() {
           <aside className="editor-outline-aside">
             <EditorOutline
               editor={editorInstance}
-              scrollRoot={editorBodyRef.current}
+              scrollRoot={editorBodyEl}
               onHide={toggleOutline}
             />
           </aside>
