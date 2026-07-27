@@ -165,7 +165,7 @@ export function AttachmentPreviewModal() {
           <div style={{ padding: 24 }}>正在加载 PDF...</div>
         )
       ) : isOfficeWord ? (
-        <DocxPreview rel={target.rel} fileName={fileName} />
+        <DocxPreview rel={target.rel} />
       ) : isExcel ? (
         <XlsxPreview rel={target.rel} />
       ) : isTextAttachmentExt(ext) ? (

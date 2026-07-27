@@ -78,6 +78,17 @@ describe("附件预览：可预览判定与预览器选择必须口径一致", (
     expect(extOf(displayName)).not.toBe("pdf"); // 按显示名推导会失败——这正是老 bug
   });
 
+  it(".doc 与 .docx 必须能按 rel 区分开（走不同的解析分支）", () => {
+    // DocxPreview 内部：.doc 要先转 docx 再喂 mammoth，.docx 直接读。
+    // 这个判断曾经也按 fileName 做，改过名的 .doc 会跳过转换 →
+    // 把老 Word 二进制直接喂给只吃 zip 的 mammoth → 解析失败。
+    expect(extOf("kb_assets/attachments/1/关于某某的通知.doc")).toBe("doc");
+    expect(extOf("kb_assets/attachments/1/关于某某的通知.docx")).toBe("docx");
+    // 两者都属于 Office，都会被路由到 DocxPreview
+    expect(OFFICE_ATTACHMENT_EXTS).toContain("doc");
+    expect(OFFICE_ATTACHMENT_EXTS).toContain("docx");
+  });
+
   it("不可预览的类型不会被误判为文本", () => {
     expect(isPreviewableAttachment("a/b/archive.zip")).toBe(false);
     expect(isTextAttachmentExt("zip")).toBe(false);
