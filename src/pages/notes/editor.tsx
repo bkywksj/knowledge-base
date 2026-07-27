@@ -1647,6 +1647,26 @@ function DesktopNoteEditorPage() {
     }
   }
 
+  /**
+   * 在系统文件管理器里定位原始文件（资源管理器 / Finder / 文件管理器）。
+   *
+   * 用 `revealItemInDir(abs)` 而不是取目录再 openPath：前者会把该文件**选中**，
+   * 一眼就能看到是哪个；后者只打开目录，同名文件多时还得自己找。
+   * 顺带省掉手写路径分隔符（Windows `\` vs POSIX `/`）。
+   */
+  async function handleRevealSourceFile() {
+    try {
+      const abs = await sourceFileApi.getAbsolutePath(noteId);
+      if (!abs) {
+        message.warning("原始文件丢失或未关联");
+        return;
+      }
+      await revealItemInDir(abs);
+    } catch (e) {
+      message.error(`打开所在文件夹失败: ${e}`);
+    }
+  }
+
   /** 主动解除外部 .md 双向同步关联（用户在 UI 上点击；与 Missing Modal 走同一后端 Command） */
   function handleUnlinkSourceMd() {
     Modal.confirm({
@@ -2141,7 +2161,14 @@ function DesktopNoteEditorPage() {
                       {
                         key: "open",
                         label: "用系统应用打开",
+                        icon: <FileTextIcon size={14} />,
                         onClick: () => void handleOpenSourceFile(),
+                      },
+                      {
+                        key: "reveal",
+                        label: "打开所在文件夹",
+                        icon: <FolderOpen size={14} />,
+                        onClick: () => void handleRevealSourceFile(),
                       },
                       { type: "divider" },
                       {
@@ -2157,22 +2184,50 @@ function DesktopNoteEditorPage() {
                 </Dropdown>
               </Space.Compact>
             ) : (
-              <Tooltip
-                title={
-                  note?.source_file_type === "pdf"
-                    ? "查看原始 PDF"
-                    : "用系统默认应用打开原始文件"
-                }
-              >
-                <Button
-                  icon={<FileTextIcon size={16} />}
-                  onClick={handleOpenSourceFile}
+              /* PDF / Word 等其它来源：主按钮打开文件，下拉补"定位到文件夹"。
+                 这些同样是磁盘上的本地文件，"它到底存在哪"的需求和 .md 一样常见。 */
+              <Space.Compact>
+                <Tooltip
+                  title={
+                    note?.source_file_type === "pdf"
+                      ? "查看原始 PDF"
+                      : "用系统默认应用打开原始文件"
+                  }
                 >
-                  {note?.source_file_type === "pdf"
-                    ? "PDF"
-                    : (note?.source_file_type ?? "源文件").toUpperCase()}
-                </Button>
-              </Tooltip>
+                  <Button
+                    icon={<FileTextIcon size={16} />}
+                    onClick={handleOpenSourceFile}
+                  >
+                    {note?.source_file_type === "pdf"
+                      ? "PDF"
+                      : (note?.source_file_type ?? "源文件").toUpperCase()}
+                  </Button>
+                </Tooltip>
+                <Dropdown
+                  trigger={["click"]}
+                  menu={{
+                    items: [
+                      {
+                        key: "open",
+                        label:
+                          note?.source_file_type === "pdf"
+                            ? "查看原始 PDF"
+                            : "用系统应用打开",
+                        icon: <FileTextIcon size={14} />,
+                        onClick: () => void handleOpenSourceFile(),
+                      },
+                      {
+                        key: "reveal",
+                        label: "打开所在文件夹",
+                        icon: <FolderOpen size={14} />,
+                        onClick: () => void handleRevealSourceFile(),
+                      },
+                    ],
+                  }}
+                >
+                  <Button icon={<ChevronDown size={14} />} title="更多操作" />
+                </Dropdown>
+              </Space.Compact>
             )
           )}
           {/* R-005b 打印：所见即所得，克隆编辑器实时 DOM + 应用同款 CSS → 系统打印对话框 */}
