@@ -29,15 +29,25 @@ on:
 
 jobs:
   # ===========================================================================
-  # Job 0: 预创建 draft release（杜绝 4 个 build job 并发 create release 时
-  #        撞 GitHub API race（"Server Error" / "Error updating policy"））。
-  #        让所有 build job needs 它，启动时 release 已存在，tauri-action 直接
-  #        复用并上传 assets。
+  # Job 0: 预创建 draft release + 计算构建矩阵
+  #
+  # 1) 预创建 draft release：杜绝 4 个 build job 并发 create release 时撞
+  #    GitHub API race（"Server Error" / "Error updating policy"）。让所有
+  #    build job needs 它，启动时 release 已存在，tauri-action 直接复用并上传。
+  #
+  # 2) 动态矩阵：按仓库变量 RELEASE_WINDOWS 决定是否让 CI 构建 Windows。
+  #      未设 / build → 含 Windows（默认＝现状，向后兼容）
+  #      skip         → 不含 Windows（Windows 安装包改由发版机本地构建提供，
+  #                     CI 不起 windows runner，省 ~12 分钟 Actions 额度）
+  #    设置方式：仓库 Settings → Secrets and variables → Actions → Variables，
+  #    或 `gh variable set RELEASE_WINDOWS --repo <owner/repo> -b skip`。
   # ===========================================================================
   prepare-release:
     permissions:
       contents: write
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - name: Create draft release if missing
         env:
@@ -56,6 +66,25 @@ jobs:
             echo "Created draft release $TAG"
           fi
 
+      - name: Compute build matrix
+        id: set-matrix
+        shell: bash
+        env:
+          RELEASE_WINDOWS: ${{ vars.RELEASE_WINDOWS }}
+        run: |
+          WIN='{"platform":"windows-latest","args":"--bundles nsis"}'
+          MAC_ARM='{"platform":"macos-latest","args":"--bundles app,dmg","target":"aarch64-apple-darwin"}'
+          MAC_X64='{"platform":"macos-latest","args":"--bundles app,dmg","target":"x86_64-apple-darwin"}'
+          LINUX='{"platform":"ubuntu-22.04","args":"--bundles deb,appimage"}'
+          if [ "$RELEASE_WINDOWS" = "skip" ]; then
+            echo "跳过 Windows CI 构建（RELEASE_WINDOWS=skip，Windows 由发版机本地构建提供）"
+            INCLUDE="[$MAC_ARM,$MAC_X64,$LINUX]"
+          else
+            echo "含 Windows CI 构建（RELEASE_WINDOWS='${RELEASE_WINDOWS:-unset}'）"
+            INCLUDE="[$WIN,$MAC_ARM,$MAC_X64,$LINUX]"
+          fi
+          echo "matrix={\"include\":$INCLUDE}" >> "$GITHUB_OUTPUT"
+
   # ===========================================================================
   # Job 1: 跨平台构建
   # ===========================================================================
@@ -65,18 +94,8 @@ jobs:
       contents: write
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - platform: windows-latest           # platforms: windows
-            args: '--bundles nsis'
-          - platform: macos-latest             # platforms: macos
-            args: '--bundles app,dmg'
-            target: aarch64-apple-darwin
-          - platform: macos-latest             # platforms: macos
-            args: '--bundles app,dmg'
-            target: x86_64-apple-darwin
-          - platform: ubuntu-22.04             # platforms: linux
-            args: '--bundles deb,appimage'
+      # 矩阵由 prepare-release 动态生成（受仓库变量 RELEASE_WINDOWS 控制是否含 Windows）
+      matrix: ${{ fromJSON(needs.prepare-release.outputs.matrix) }}
 
     runs-on: ${{ matrix.platform }}
 

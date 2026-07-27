@@ -23,9 +23,12 @@ CI：构建 Windows + macOS + Linux 安装包 → 上传到 GitHub Release（草
 
 本项目 CI 构建 **Windows + macOS + Linux** 三平台。
 
+> 🔴 **Windows 可按需从 CI 摘掉**：仓库变量 `RELEASE_WINDOWS=skip` 时 CI 不起 windows runner
+> （Windows 安装包改由发版机本地构建提供，省 ~12 分钟额度）。详见步骤 **5a**。
+
 | 平台 | Runner | Bundle 参数 |
 |------|--------|-------------|
-| Windows x64 | `windows-latest` | `--bundles nsis` |
+| Windows x64 | `windows-latest` | `--bundles nsis`（`RELEASE_WINDOWS=skip` 时不构建）|
 | macOS Apple Silicon | `macos-latest` + target `aarch64-apple-darwin` | `--bundles app,dmg` |
 | macOS Intel | `macos-latest` + target `x86_64-apple-darwin` | `--bundles app,dmg` |
 | Linux x64 | `ubuntu-22.04` | `--bundles deb,appimage` |
@@ -146,6 +149,23 @@ cup_watch 首发在这上面烧了约 10 轮反复误判。**事实固定如下�
 | **GitHub 主仓库** | `https://github.com/bkywksj/knowledge-base` | `github` | 已存 git credential（默认凭证）| CI 构建（主） |
 | **GitHub 备用 1** | `git@github.com:allebamala/knowledge-base.git`（SSH） | `github2` | `~/.gh_token_allebamala` + 本机 SSH key 已绑 | bkywksj 额度耗尽时切换 |
 | **GitHub 备用 2** | `https://github.com/elginbolds-cell/knowledge-base.git`（HTTPS + token URL） | `github3` | `~/.gh_token_elginbolds` | bkywksj + allebamala 都耗尽时切换 |
+| **GitHub 备用 3+** | 按需新建，如 `https://github.com/shdidnjfreezing-del/knowledge-base`（`github12`，v1.31.0 用） | `github5` / `github7` / `github12` … | **Sigil 凭据**（`mcp__sigil__list_credentials(kind=github_token)` 查真实 name → account） | 前面都耗尽时切换 |
+
+> 🔴 **新 CI 仓一次性开通（4 步，全走 Sigil，凭据不落地）**：
+> ```
+> 1. mcp__sigil__github_repo_create(credential_name=<githubN>, name=knowledge-base)   # 强制 private
+> 2. mcp__sigil__github_actions_enable(credential_name=<githubN>, repo=<owner>/knowledge-base)
+>    ↑ 新建私有仓 Actions 默认禁用；必须在推 tag 前开，否则 tag 推了 0 个 run，
+>      且启用不回溯已推 tag（要删远端 tag 重推）
+> 3. mcp__sigil__github_repo_secret_set(credential_name=<githubN>, repo=…,
+>      secret_name=TAURI_SIGNING_PRIVATE_KEY, value_from_file=src-tauri/keys/tauri-updater.key)
+>    ↑ 桌面端弹一次确认；私钥不进对话。桌面 release.yml 只需这一个 secret
+>      （PASSWORD 在 workflow 里写死空串）。要跑 android.yml 才需另配 4 个 ANDROID_* secret
+> 4. git remote add <githubN> <https url> → mcp__sigil__git_push(credential_name=<githubN>, …)
+>    tag 用 mcp__sigil__workspace_register + workspace_push_tag（git_push 只推分支不推 tag）
+> ```
+> **别名对照**：Sigil 凭据 `github1`=bkywksj（remote `github`）、`github2`=allebamala、`github3`=elginbolds、
+> `github12`=shdidnjfreezing-del。**不要凭印象猜**，用 `list_credentials` 查。
 
 > **发布前必须用 AskUserQuestion 询问**：本次用哪个 GitHub 仓库跑 CI？
 > 代码推到选定 CI 仓库，**tag 也只推到选定的 CI 仓库**（避免重复构建浪费配额）。
@@ -230,17 +250,47 @@ git push origin main
 
 ```bash
 cd "E:/my/桌面软件tauri/knowledge_base"
-git add src-tauri/tauri.conf.json src-tauri/Cargo.toml package.json
+git add src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock package.json
 # 如有其他变更一起 add
 git commit -m "release: vx.y.z
 
 <更新说明摘要>
 
-Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
-git push github master
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
+git push <CI_REMOTE> master
 git tag "vx.y.z"
-git push github "vx.y.z"
+git push <CI_REMOTE> "vx.y.z"
 ```
+
+> 💡 版本号改动会让 `src-tauri/Cargo.lock` 里的 `knowledge_base` 版本失配，
+> 用 `cargo update -p knowledge_base --offline --manifest-path src-tauri/Cargo.toml`
+> 同步后一起提交（一条命令，不重编）。
+
+#### 🔴 5a. 推 tag 前：设 CI 仓变量 `RELEASE_WINDOWS`（决定 CI 起不起 Windows runner）
+
+`.github/workflows/release.yml` 的 `prepare-release` job 读仓库变量 `RELEASE_WINDOWS` **动态生成构建矩阵**：
+
+| 场景 | `RELEASE_WINDOWS` 设为 | CI 行为 |
+|------|------|---------|
+| 常规发布（Windows 也走 CI） | `build`（或不设 / 删除该变量） | 构建 Win + macOS×2 + Linux，draft release 共 **17 个 asset**（取其中 13 个）|
+| **Windows 由发版机本地构建**（本地代码签名档）| **`skip`** | **不起 windows runner，省 ~12 分钟额度**；draft release 只有 **13 个 asset**（无 Windows 4 个），Windows 3 个产物由本地构建补 |
+
+```
+# Sigil（推荐）：对准“当次选定的 CI 仓”，幂等设置
+mcp__sigil__github_repo_variable_set(
+  credential_name=<CI仓凭据>, repo=<owner/repo>, name=RELEASE_WINDOWS, value=skip|build)
+
+# 无 Sigil
+gh variable set RELEASE_WINDOWS --repo <owner/repo> -b skip
+```
+
+> 🔴 **每次发版都显式设一次（幂等）**，即使这次要 `build` 也要显式设 —— 否则上次的 `skip`
+> 残留会让这次悄悄漏建 Windows，直到步骤 7 清点产物才发现。
+> 🔴 **变量是"每个 CI 仓各自一份"**：切到备用 CI 仓（github2/github3/…）时要在**新仓**重新设，
+> 新建的 CI 仓默认没有该变量（＝含 Windows）。
+>
+> 本机是否属于"本地构建档"由 `.claude/signing.local.json` 是否存在判定；存在时按
+> `.claude/EVSIGN-LOCAL.md`（git-excluded，仅本机可见）执行本地构建，并把 `RELEASE_WINDOWS` 设为 `skip`。
 
 ### 步骤 6：用 ScheduleWakeup 监控 CI 构建（15–30 分钟，零干预）
 
@@ -328,6 +378,20 @@ Knowledge.Base_x.y.z_amd64.AppImage.tar.gz.sig
 ```
 
 > ⚠️ **dmg 带版本号 / macOS app.tar.gz 不带版本号 / Linux AppImage.tar.gz 带版本号**（tauri-action 约定）
+
+> 🔴 **`RELEASE_WINDOWS=skip` 档（Windows 本地构建）下清点规则不同**：
+> CI 的 draft release 只有 **13 个 asset**（无上面 Windows 那 3 个 + 无 `.nsis.zip.sig`），
+> 只下载 **mac 6 + Linux 4 = 10 个**；Windows 3 个由本地构建产物**改名**补进
+> `releases/vX.Y.Z/`（本地文件名带空格 `Knowledge Base_…`，必须改成带点的 `Knowledge.Base_…`
+> 与其它平台一致；minisign 只验内容不验文件名，改名不影响自动更新校验）。
+> 凑齐后同样是 13 个文件再进入步骤 7c。
+>
+> 另外：GitHub Release 页面上挂的 Windows asset 也要换成本地构建版本，否则从 Release 页
+> 下载到的是 CI 的那份。`skip` 档天然没有这个问题；若这次是 `build` 档但仍用本地产物覆盖，
+> 需先删掉 CI 的 4 个 Windows asset 再上传本地版：
+> `mcp__sigil__http_request(credential_name=<CI仓凭据>, method=DELETE, injection=bearer,`
+> ` url=https://api.github.com/repos/<owner>/<repo>/releases/assets/<asset_id>)`
+> 然后 `mcp__sigil__github_release_asset_upload(...)` 传本地文件。
 
 #### 7b. 用 API 下载所有 13 个产物到 release 仓库目录
 
@@ -640,12 +704,15 @@ git push github vx.y.z
 
 ### 构建矩阵
 
-| 平台 | Runner | Bundle 参数 | Updater 产物 | 安装包 |
-|------|--------|-------------|-------------|--------|
-| Windows | `windows-latest` | `--bundles nsis` | `.exe` + `.exe.sig` | `.exe` (NSIS) |
-| macOS ARM | `macos-latest` | `--bundles app,dmg` | `.app.tar.gz` + `.sig` | `.dmg` (aarch64) |
-| macOS Intel | `macos-latest` | `--bundles app,dmg` | `.app.tar.gz` + `.sig` | `.dmg` (x86_64) |
-| Linux x64 | `ubuntu-22.04` | `--bundles deb,appimage` | `.AppImage.tar.gz` + `.sig` | `.deb` + `.AppImage` |
+矩阵**不是写死的**，由 `prepare-release` job 按仓库变量 `RELEASE_WINDOWS` 动态生成
+（`skip` = 去掉 Windows 那一行，见步骤 5a）：
+
+| 平台 | Runner | Bundle 参数 | Updater 产物 | 安装包 | `skip` 档 |
+|------|--------|-------------|-------------|--------|----------|
+| Windows | `windows-latest` | `--bundles nsis` | `.exe` + `.exe.sig` | `.exe` (NSIS) | ❌ 不构建 |
+| macOS ARM | `macos-latest` | `--bundles app,dmg` | `.app.tar.gz` + `.sig` | `.dmg` (aarch64) | ✅ |
+| macOS Intel | `macos-latest` | `--bundles app,dmg` | `.app.tar.gz` + `.sig` | `.dmg` (x86_64) | ✅ |
+| Linux x64 | `ubuntu-22.04` | `--bundles deb,appimage` | `.AppImage.tar.gz` + `.sig` | `.deb` + `.AppImage` | ✅ |
 
 > **macOS 必须 `--bundles app,dmg`**（dmg 单独不产出 updater）
 > **Linux Runner 需在 tauri-action 前安装 webkit2gtk-4.1 等系统包**（工作流已包含 Install Linux system dependencies 步骤）
