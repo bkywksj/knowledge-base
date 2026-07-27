@@ -2062,12 +2062,18 @@ fn migrate_v49_to_v50(conn: &Connection) -> Result<(), AppError> {
 /// AI 经常基于被截断的片段作答。
 ///
 /// **只动仍是 32000 的那批** —— 用户手动改过的（比如本地 7B 填了 8000）保持原样，
-/// 迁移不该覆盖用户的判断。判不准的场景还有 `services::ai::compute_context_budget`
-/// 的下限保护兜着，不会因为窗口填大了就真撑爆。
+/// 迁移不该覆盖用户的判断。
+///
+/// **Ollama 一律不动**：Ollama 模型的实际窗口由 `num_ctx` 决定，默认只有 2048/4096，
+/// 跟模型标称的 32K/128K 完全是两回事。把它抬到 128000 会让 RAG 塞 14 万字符进去，
+/// Ollama 只会默默从头截断 —— 比抬之前更糟。本地模型让用户自己按 num_ctx 填。
 fn migrate_v50_to_v51(conn: &Connection) -> Result<(), AppError> {
-    log::info!("数据库迁移: v50 -> v51 (max_context 默认值 32000 -> 128000)");
+    log::info!("数据库迁移: v50 -> v51 (max_context 默认值 32000 -> 128000，Ollama 除外)");
 
-    conn.execute_batch("UPDATE ai_models SET max_context = 128000 WHERE max_context = 32000;")?;
+    conn.execute_batch(
+        "UPDATE ai_models SET max_context = 128000
+         WHERE max_context = 32000 AND provider <> 'ollama';",
+    )?;
 
     set_version(conn, 51)?;
     Ok(())
@@ -2076,6 +2082,56 @@ fn migrate_v50_to_v51(conn: &Connection) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// v51 抬默认上下文：只动仍是 32000 的**非 Ollama** 模型。
+    ///
+    /// 三条不变式，缺一条都会坑到人：
+    /// - 用户手动填过的（8000 / 200000）不能被覆盖 —— 那是他对自己模型的判断
+    /// - Ollama 一律不动 —— 它的真实窗口是 num_ctx（默认 2048/4096），不是模型标称值
+    /// - 云端模型停在老默认值的才抬
+    #[test]
+    fn v51_raises_only_stale_cloud_defaults() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE ai_models (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                max_context INTEGER NOT NULL
+            );
+            INSERT INTO ai_models (name, provider, max_context) VALUES
+                ('云端·老默认',   'deepseek', 32000),
+                ('云端·手动调小', 'openai',    8000),
+                ('云端·手动调大', 'custom',  200000),
+                ('本地·老默认',   'ollama',   32000),
+                ('本地·手动填',   'ollama',    4096);
+            "#,
+        )
+        .unwrap();
+        set_version(&conn, 50).unwrap();
+
+        migrate_v50_to_v51(&conn).unwrap();
+
+        let read = |name: &str| -> i64 {
+            conn.query_row(
+                "SELECT max_context FROM ai_models WHERE name = ?1",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(read("云端·老默认"), 128_000, "停在老默认值的云端模型应该被抬上来");
+        assert_eq!(read("云端·手动调小"), 8_000, "用户手填的值不能被覆盖");
+        assert_eq!(read("云端·手动调大"), 200_000, "用户手填的值不能被覆盖");
+        assert_eq!(
+            read("本地·老默认"),
+            32_000,
+            "Ollama 即使停在老默认值也不能抬：真实窗口是 num_ctx，抬了只会让 RAG 塞爆被静默截断"
+        );
+        assert_eq!(read("本地·手动填"), 4_096);
+        assert_eq!(get_version(&conn).unwrap(), 51);
+    }
 
     #[test]
     fn v49_encodes_space_in_attachment_link() {

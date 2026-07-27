@@ -1217,7 +1217,10 @@ impl AiService {
                     included += 1;
                 }
 
-                log::debug!(
+                // info 而非 debug：这条是"这次问答到底喂了多少笔记内容"的唯一直接证据。
+                // 用户抱怨 AI 答得零碎时，第一眼就该看 chars_used 是不是贴着预算上限
+                // （说明被预算卡住，该调大 max_context）还是远没用满（说明是检索没召回）。
+                log::info!(
                     "[RAG] candidates={} included={} chars_used={}/{} (model_ctx={} tokens)",
                     notes.len(),
                     included,
