@@ -1010,6 +1010,14 @@ export const taskApi = {
   update: (id: number, input: UpdateTaskInput) =>
     invoke<boolean>("update_task", { id, input }),
   toggleStatus: (id: number) => invoke<number>("toggle_task_status", { id }),
+  /**
+   * 放弃任务（status=2）：留档但不再进待办 / 不提醒 / 不计入完成率。
+   * 区别于删除——放弃的任务可在「已放弃」筛选里找回。
+   */
+  abandon: (id: number) => invoke<void>("abandon_task", { id }),
+  /** 恢复已放弃的任务（回到未完成）；对未放弃的任务是无操作 */
+  restoreAbandoned: (id: number) =>
+    invoke<void>("restore_abandoned_task", { id }),
   /** 设置工作流看板列：'todo' / 'doing' / 'done'；done 自动标 status=1 */
   setKanbanStage: (id: number, stage: "todo" | "doing" | "done") =>
     invoke<void>("set_task_kanban_stage", { id, stage }),

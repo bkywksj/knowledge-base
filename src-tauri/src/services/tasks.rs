@@ -66,6 +66,16 @@ impl TaskService {
         db.toggle_task_status(id)
     }
 
+    /// 放弃任务：留在库里可查可恢复，但不再进待办列表 / 不提醒 / 不计入完成率
+    pub fn abandon(db: &Database, id: i64) -> Result<(), AppError> {
+        db.abandon_task(id)
+    }
+
+    /// 恢复已放弃的任务（回到未完成）
+    pub fn restore_abandoned(db: &Database, id: i64) -> Result<(), AppError> {
+        db.restore_abandoned_task(id)
+    }
+
     /// 设置任务的看板列归属（'todo' / 'doing' / 'done'）。
     /// 校验 stage 合法性后委托给 DAO 层做实际 SQL（DAO 会同步 status / completed_at）。
     pub fn set_kanban_stage(

@@ -9,6 +9,7 @@ import {
 } from "antd";
 import { projectApi } from "@/lib/api";
 import type { Project, Task } from "@/types";
+import { isAbandoned } from "@/types";
 
 interface Props {
   /** 当前查询出的全部任务（已按筛选条件过滤） */
@@ -403,7 +404,8 @@ function GanttRow({
     dot = ((due - rangeStart.getTime()) / DAY_MS) * cellWidth + cellWidth / 2;
   }
 
-  const isDone = task.status === 1;
+  // 已完成 / 已放弃都灰显（甘特图保留时间线完整性，但不再抢视觉）
+  const isDone = task.status === 1 || isAbandoned(task);
   const barColor = color ?? (task.priority === 0 ? token.colorError : token.colorPrimary);
 
   return (

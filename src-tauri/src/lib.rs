@@ -1258,6 +1258,8 @@ pub fn run() {
             commands::tasks::create_task,
             commands::tasks::update_task,
             commands::tasks::toggle_task_status,
+            commands::tasks::abandon_task,
+            commands::tasks::restore_abandoned_task,
             commands::tasks::set_task_kanban_stage,
             commands::tasks::delete_task,
             commands::tasks::delete_tasks_batch,

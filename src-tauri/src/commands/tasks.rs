@@ -58,6 +58,23 @@ pub fn toggle_task_status(state: State<'_, AppState>, id: i64) -> Result<i32, St
     Ok(v)
 }
 
+/// 放弃任务（status=2）。事情黄了但想留个记录时用，区别于删除。
+#[tauri::command]
+pub fn abandon_task(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    TaskService::abandon(&state.db, id).map_err(|e| e.to_string())?;
+    // 放弃后该任务不再参与提醒扫描，通知调度器重算下次唤醒时刻
+    notify_reminder(&state);
+    Ok(())
+}
+
+/// 恢复已放弃的任务（回到未完成）
+#[tauri::command]
+pub fn restore_abandoned_task(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    TaskService::restore_abandoned(&state.db, id).map_err(|e| e.to_string())?;
+    notify_reminder(&state);
+    Ok(())
+}
+
 /// 设置任务在看板上的列归属（todo / doing / done）。拖到 done 列时同步标记完成。
 #[tauri::command]
 pub fn set_task_kanban_stage(

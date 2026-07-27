@@ -817,7 +817,19 @@ export interface SyncHistoryItem {
 // ─── 待办任务 ───────────────────────────────────
 
 export type TaskPriority = 0 | 1 | 2; // 0=urgent / 1=normal / 2=low
-export type TaskStatus = 0 | 1;       // 0=todo / 1=done
+/**
+ * 任务状态：0=未完成 / 1=已完成 / 2=已放弃
+ *
+ * 「放弃」区别于「删除」：留在库里可查可恢复，但不进待办列表、不提醒、
+ * 不计入完成率。事情黄了是常态——删掉会丢历史，标记完成会污染统计。
+ */
+export type TaskStatus = 0 | 1 | 2;
+/** 已放弃：判断时用这个常量，别散落魔法数字 2 */
+export const TASK_STATUS_ABANDONED = 2 as const;
+/** 任务是否已放弃 */
+export function isAbandoned(t: { status: TaskStatus }): boolean {
+  return t.status === TASK_STATUS_ABANDONED;
+}
 export type TaskLinkKind = "note" | "path" | "url";
 /** 循环规则：不循环 / 每天 / 每周 / 每月 */
 export type TaskRepeatKind = "none" | "daily" | "weekly" | "monthly";

@@ -6,6 +6,18 @@ use crate::models::{
     UpdateTaskInput,
 };
 
+/// 任务状态：未完成
+pub const TASK_STATUS_TODO: i32 = 0;
+/// 任务状态：已放弃（v1.31 引入）
+///
+/// 区别于「删除」：放弃的任务留在库里可查、可恢复，但不再出现在待办列表、
+/// 不参与提醒、不计入完成率——事情黄了是常态，删掉会丢历史，标记完成会污染统计。
+///
+/// **不需要 schema 迁移**：status 本来就是 INTEGER，写 2 直接可用。
+/// 也几乎不需要改查询：全库的 status 判断都是精确等值（`status = 0` / `status = 1`），
+/// 放弃态天然不落进任何一边。
+pub const TASK_STATUS_ABANDONED: i32 = 2;
+
 impl super::Database {
     // ─── 查询 ─────────────────────────────────────
 
@@ -557,6 +569,11 @@ impl super::Database {
             params![id],
             |row| row.get(0),
         )?;
+        // status=2（已放弃）不参与勾选切换：勾一下就变"未完成"会让用户莫名其妙地
+        // 把放弃的任务捞回待办列表。放弃 → 未完成只能走显式的「恢复」。
+        if current == TASK_STATUS_ABANDONED {
+            return Ok(TASK_STATUS_ABANDONED);
+        }
         let next = if current == 0 { 1 } else { 0 };
         if next == 1 {
             conn.execute(
@@ -578,6 +595,52 @@ impl super::Database {
             )?;
         }
         Ok(next)
+    }
+
+    /// 放弃任务（status → 2）。
+    ///
+    /// 看板列一并归位到 'todo'：放弃的事不该继续占着「进行中」列。
+    /// completed_at 清空——它是"完成时刻"，放弃不是完成，留着会让导出/统计误读。
+    /// 同时清 reminded_at 无意义（status=2 已经不进提醒扫描），故不动。
+    ///
+    /// 已完成的任务也允许放弃（比如事后发现那次"完成"其实作废了）。
+    pub fn abandon_task(&self, id: i64) -> Result<(), AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let affected = conn.execute(
+            "UPDATE tasks
+                SET status = ?2,
+                    completed_at = NULL,
+                    kanban_stage = 'todo',
+                    updated_at = datetime('now','localtime')
+              WHERE id = ?1 AND is_deleted = 0",
+            params![id, TASK_STATUS_ABANDONED],
+        )?;
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("任务 {} 不存在", id)));
+        }
+        Ok(())
+    }
+
+    /// 恢复已放弃的任务（status → 0，回到未完成）。
+    ///
+    /// 只对放弃态生效：对未完成 / 已完成的任务调用是无操作（返回 Ok），
+    /// 避免误把已完成任务"恢复"成未完成。
+    pub fn restore_abandoned_task(&self, id: i64) -> Result<(), AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        conn.execute(
+            "UPDATE tasks
+                SET status = ?2,
+                    updated_at = datetime('now','localtime')
+              WHERE id = ?1 AND status = ?3 AND is_deleted = 0",
+            params![id, TASK_STATUS_TODO, TASK_STATUS_ABANDONED],
+        )?;
+        Ok(())
     }
 
     /// 设置任务的看板阶段（'todo' / 'doing' / 'done'）；同步 status / completed_at。
@@ -1288,6 +1351,70 @@ mod tests {
         assert!(
             due.iter().any(|t| t.title == "子任务"),
             "设了提醒的子任务应当参与提醒"
+        );
+    }
+
+    /// 放弃任务（status=2）后：不进待办统计、不参与提醒扫描。
+    ///
+    /// 这两条是"放弃"区别于"未完成"的全部意义所在——放弃的事不该继续催你，
+    /// 也不该让侧边栏红色 Badge 一直挂着数字。全库 status 判断都是精确等值
+    /// （`status = 0` / `status = 1`），所以放弃态天然两边都不落；本测试把这个
+    /// 隐式保证钉死，防止以后有人把某处查询改成 `status != 1` 之类的二元写法。
+    #[test]
+    fn abandoned_task_excluded_from_stats_and_reminders() {
+        let db = fresh();
+        let keep = db
+            .create_task(task_input("保留的", Some("2020-01-01 09:00:00"), Some(0), None))
+            .unwrap();
+        let drop_it = db
+            .create_task(task_input("要放弃的", Some("2020-01-01 09:00:00"), Some(0), None))
+            .unwrap();
+
+        // 放弃前：两条都算未完成、两条都待提醒
+        let s = db.get_task_stats().unwrap();
+        assert_eq!(s.total_todo, 2);
+        assert_eq!(db.list_due_reminders("09:00:00").unwrap().len(), 2);
+
+        db.abandon_task(drop_it).unwrap();
+
+        let s = db.get_task_stats().unwrap();
+        assert_eq!(s.total_todo, 1, "放弃的任务不该再计入未完成");
+        assert_eq!(s.total_done, 0, "放弃 ≠ 完成，不该计入完成数");
+        let due = db.list_due_reminders("09:00:00").unwrap();
+        assert_eq!(due.len(), 1, "放弃的任务不该再被提醒");
+        assert_eq!(due[0].id, keep);
+    }
+
+    /// 勾选框不能把放弃态切回未完成 —— 否则用户随手一勾就把放弃的任务
+    /// 捞回待办列表，且不知道自己干了什么。放弃 → 未完成只能走显式「恢复」。
+    #[test]
+    fn toggle_does_not_revive_abandoned_task() {
+        let db = fresh();
+        let id = db.create_task(task_input("放弃的", None, None, None)).unwrap();
+        db.abandon_task(id).unwrap();
+
+        let after_toggle = db.toggle_task_status(id).unwrap();
+        assert_eq!(after_toggle, 2, "toggle 应原样返回放弃态");
+        assert_eq!(db.get_task_stats().unwrap().total_todo, 0, "不该被捞回待办");
+
+        // 显式恢复才回到未完成
+        db.restore_abandoned_task(id).unwrap();
+        assert_eq!(db.get_task_stats().unwrap().total_todo, 1);
+    }
+
+    /// 恢复只对放弃态生效：别把已完成的任务"恢复"成未完成
+    #[test]
+    fn restore_only_affects_abandoned() {
+        let db = fresh();
+        let id = db.create_task(task_input("已完成的", None, None, None)).unwrap();
+        db.toggle_task_status(id).unwrap(); // → 已完成
+        assert_eq!(db.get_task_stats().unwrap().total_done, 1);
+
+        db.restore_abandoned_task(id).unwrap(); // 对已完成任务无操作
+        assert_eq!(
+            db.get_task_stats().unwrap().total_done,
+            1,
+            "已完成的任务不该被 restore 改成未完成"
         );
     }
 

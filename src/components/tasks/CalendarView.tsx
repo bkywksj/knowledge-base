@@ -9,6 +9,7 @@ import {
 import { ChevronLeft, ChevronRight, Inbox } from "lucide-react";
 import dayjs, { type Dayjs } from "dayjs";
 import type { Task, TaskCategory } from "@/types";
+import { isAbandoned } from "@/types";
 import { taskApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import { MAX_LANES, layoutWeek, shiftRangeTo, taskRange } from "@/lib/calendarLayout";
@@ -371,7 +372,9 @@ export function CalendarView({
                 >
                   {visible.map((b) => {
                     const t = b.task;
-                    const isDone = t.status === 1;
+                    // 已完成 / 已放弃都灰显：保留在日历上能看到"这段时间原本安排了什么"，
+                    // 但不该继续用优先级/分类色抢视觉
+                    const isDone = t.status === 1 || isAbandoned(t);
                     const color = resolveTaskColor(t, colorBy, categoryMap, token);
                     // 按分类配色时紧急度没法用颜色表达了，用左侧竖条加粗把它补回来
                     const barWidth = colorBy === "category" && t.priority === 0 ? 3 : 2;

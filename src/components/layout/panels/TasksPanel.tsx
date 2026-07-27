@@ -12,6 +12,7 @@ import {
   Flame,
   Circle,
   Check,
+  Ban,
   Repeat,
   Link as LinkIcon,
   Tags as TagsIcon,
@@ -57,7 +58,8 @@ type FilterKey =
   | "low"
   | "recurring"
   | "linked"
-  | "done";
+  | "done"
+  | "abandoned";
 
 /** YYYY-MM-DD（本地时区） */
 function ymd(d: Date): string {
@@ -110,6 +112,8 @@ function deriveCounts(todoTasks: Task[]): Record<FilterKey, number> {
     recurring,
     linked,
     done: 0, // 由 stats 覆盖
+    // 已放弃不显计数（SmartRow 不传 count），这里占位满足 Record<FilterKey, number>
+    abandoned: 0,
   };
 }
 
@@ -477,6 +481,16 @@ export function TasksPanel() {
           label="已完成"
           count={counts.done}
           onClick={() => goTo("done")}
+          token={token}
+        />
+
+        {/* 已放弃：不显计数——这个列表访问频率低，为它单开一个后端统计字段
+            不划算；点进去自然看得到有多少条 */}
+        <SmartRow
+          active={currentFilter === "abandoned"}
+          icon={<Ban size={14} />}
+          label="已放弃"
+          onClick={() => goTo("abandoned")}
           token={token}
         />
       </div>

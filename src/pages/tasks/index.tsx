@@ -32,6 +32,7 @@ import {
   Flame,
   Circle,
   Check as IconCheck,
+  Ban,
 } from "lucide-react";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import {
@@ -43,7 +44,8 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { taskApi, taskCategoryApi } from "@/lib/api";
 import { MicButton } from "@/components/MicButton";
 import { useAppStore } from "@/store";
-import type { Task, TaskPriority, TaskCategory } from "@/types";
+import type { Task, TaskPriority, TaskCategory, TaskStatus } from "@/types";
+import { TASK_STATUS_ABANDONED, isAbandoned } from "@/types";
 
 type ViewMode = "list" | "kanban" | "quadrant" | "calendar" | "gantt";
 import { CreateTaskModal } from "@/components/tasks/CreateTaskModal";
@@ -86,7 +88,8 @@ function groupTasks(tasks: Task[]) {
   const noDate: Task[] = [];
   const done: Task[] = [];
   for (const t of tasks) {
-    if (t.status === 1) {
+    // 已完成与已放弃都归到底部折叠区：都不再"待办"，不该混在逾期/今天里
+    if (t.status === 1 || isAbandoned(t)) {
       done.push(t);
       continue;
     }
@@ -159,6 +162,7 @@ function describeDueDate(
 type SmartFilter =
   | "todo"
   | "done"
+  | "abandoned"
   | "all"
   | "overdue"
   | "today"
@@ -171,8 +175,9 @@ type SmartFilter =
   | "linked";
 
 /** URL `?filter=` → 传给 taskApi.list 的 status 参数 */
-function filterToStatusArg(filter: SmartFilter): 0 | 1 | undefined {
+function filterToStatusArg(filter: SmartFilter): TaskStatus | undefined {
   if (filter === "done") return 1;
+  if (filter === "abandoned") return TASK_STATUS_ABANDONED;
   if (filter === "all") return undefined;
   // 其他维度都基于未完成
   return 0;
@@ -186,7 +191,11 @@ function filterToStatusArg(filter: SmartFilter): 0 | 1 | undefined {
  * 收敛为"未完成"；不加这个限制，会出现 filter=overdue 日历里冒出大量历史已完成
  * 任务的 bug。
  */
-function applySmartFilter(tasks: Task[], filter: SmartFilter): Task[] {
+function applySmartFilter(
+  tasks: Task[],
+  filter: SmartFilter,
+  viewMode: ViewMode = "list",
+): Task[] {
   const today = ymdLocal(new Date());
   const weekEnd = ymdLocal(new Date(Date.now() + 7 * 86400000));
   switch (filter) {
@@ -222,9 +231,20 @@ function applySmartFilter(tasks: Task[], filter: SmartFilter): Task[] {
       return tasks.filter(
         (t) => t.status === 0 && t.links && t.links.length > 0,
       );
-    default:
-      // todo / done / all：保持后端 status 过滤的结果（todo 拉全部用于日历回顾）
+    case "abandoned":
+      // 后端已按 status=2 过滤，这里原样返回
       return tasks;
+    default: {
+      // todo / done / all：保持后端 status 过滤的结果（todo 拉全部用于日历回顾）。
+      //
+      // 「已放弃」的去留分两种：
+      // · 日历 / 甘特：保留（组件内会灰显），这样能看到"这段时间原本安排了什么"，
+      //   时间线不会莫名其妙断一截。
+      // · 列表 / 看板 / 四象限：摘掉。todo 视图拉的是全量，不摘的话放弃的任务会
+      //   落进底部「已完成」折叠区，标题就对不上了；要看请走「已放弃」筛选。
+      const keepAbandoned = viewMode === "calendar" || viewMode === "gantt";
+      return keepAbandoned ? tasks : tasks.filter((t) => !isAbandoned(t));
+    }
   }
 }
 
@@ -232,6 +252,7 @@ function applySmartFilter(tasks: Task[], filter: SmartFilter): Task[] {
 function filterTitle(filter: SmartFilter): string {
   switch (filter) {
     case "done": return "已完成";
+    case "abandoned": return "已放弃";
     case "all": return "全部任务";
     case "overdue": return "逾期任务";
     case "today": return "今天的任务";
@@ -374,7 +395,7 @@ function DesktopTasksPage() {
       //   · 看板视图：仅未完成（看板 Done 列改造另议）。
       //   · 列表视图：filter=todo（"全部任务"默认入口）拉全部，已完成进底部折叠区；
       //     其他 filter（如 done / urgent / today...）维持原 status 行为。
-      let statusArg: 0 | 1 | undefined;
+      let statusArg: TaskStatus | undefined;
       // 甘特图 / 日历都要看全量（含已完成）才能展示完整时间线；
       // 看板 / 四象限默认只看未完成（已完成的去 list 视图查）
       if (viewMode === "calendar" || viewMode === "gantt") {
@@ -396,7 +417,7 @@ function DesktopTasksPage() {
         ...categoryQuery,
       });
       // overdue / today / urgent 这些维度后端暂未支持参数，前端二次过滤
-      setTasks(applySmartFilter(list, filter));
+      setTasks(applySmartFilter(list, filter, viewMode));
       // 每次重拉任务列表时，顺带刷新侧边栏紧急任务数
       useAppStore.getState().refreshTaskStats();
     } catch (e) {
@@ -430,13 +451,31 @@ function DesktopTasksPage() {
 
   async function handleToggle(task: Task) {
     try {
-      if (task.status === 0 && task.repeat_kind !== "none") {
+      if (isAbandoned(task)) {
+        // 放弃态的勾选框语义是「恢复」——后端 toggle 对 status=2 是无操作，
+        // 这里必须显式走 restore，否则点了没反应
+        await taskApi.restoreAbandoned(task.id);
+        message.success("已恢复为未完成");
+      } else if (task.status === 0 && task.repeat_kind !== "none") {
         // 循环任务：完成本次并推进到下一次；若想结束整条循环，在提醒 Modal 或编辑页里操作
         await taskApi.completeOccurrence(task.id);
       } else {
         await taskApi.toggleStatus(task.id);
       }
       await loadTasks();
+      useAppStore.getState().refreshTaskStats();
+    } catch (e) {
+      message.error(`操作失败: ${e}`);
+    }
+  }
+
+  /** 放弃任务：留档但不再进待办 / 不提醒 / 不计入完成率 */
+  async function handleAbandon(task: Task) {
+    try {
+      await taskApi.abandon(task.id);
+      message.success("已放弃（可在「已放弃」里找回）");
+      await loadTasks();
+      useAppStore.getState().refreshTaskStats();
     } catch (e) {
       message.error(`操作失败: ${e}`);
     }
@@ -690,6 +729,7 @@ function DesktopTasksPage() {
               tasks={grouped.overdue}
               onToggle={handleToggle}
               onDelete={handleDelete}
+              onAbandon={handleAbandon}
               onEdit={setEditing}
               onRowClick={setDetailViewing}
               onOpenLink={handleOpenLink}
@@ -710,6 +750,7 @@ function DesktopTasksPage() {
               tasks={grouped.today}
               onToggle={handleToggle}
               onDelete={handleDelete}
+              onAbandon={handleAbandon}
               onEdit={setEditing}
               onRowClick={setDetailViewing}
               onOpenLink={handleOpenLink}
@@ -730,6 +771,7 @@ function DesktopTasksPage() {
               tasks={grouped.upcoming}
               onToggle={handleToggle}
               onDelete={handleDelete}
+              onAbandon={handleAbandon}
               onEdit={setEditing}
               onRowClick={setDetailViewing}
               onOpenLink={handleOpenLink}
@@ -749,6 +791,7 @@ function DesktopTasksPage() {
               tasks={grouped.noDate}
               onToggle={handleToggle}
               onDelete={handleDelete}
+              onAbandon={handleAbandon}
               onEdit={setEditing}
               onRowClick={setDetailViewing}
               onOpenLink={handleOpenLink}
@@ -795,6 +838,7 @@ function DesktopTasksPage() {
                   tasks={recentDoneTasks}
                   onToggle={handleToggle}
                   onDelete={handleDelete}
+                  onAbandon={handleAbandon}
                   onEdit={setEditing}
                   onRowClick={setDetailViewing}
                   onOpenLink={handleOpenLink}
@@ -814,6 +858,7 @@ function DesktopTasksPage() {
                   tasks={grouped.done}
                   onToggle={handleToggle}
                   onDelete={handleDelete}
+                  onAbandon={handleAbandon}
                   onEdit={setEditing}
                   onRowClick={setDetailViewing}
                   onOpenLink={handleOpenLink}
@@ -954,6 +999,8 @@ interface SectionProps {
   token: ReturnType<typeof antdTheme.useToken>["token"];
   onToggle: (t: Task) => void;
   onDelete: (t: Task) => void;
+  /** 放弃任务（status=2）：留档但不再进待办；右键菜单用 */
+  onAbandon?: (t: Task) => void;
   onEdit: (t: Task) => void;
   /** 行 onClick → 弹只读详情 Modal（与首页保持一致）；编辑走 hover Edit / 右键菜单 */
   onRowClick: (t: Task) => void;
@@ -982,6 +1029,7 @@ function TaskSection({
   token,
   onToggle,
   onDelete,
+  onAbandon,
   onEdit,
   onRowClick,
   onOpenLink,
@@ -1001,7 +1049,8 @@ function TaskSection({
 
   /** 把任务序列化成 markdown 列表项 */
   function toMarkdown(t: Task): string {
-    const checkbox = t.status === 1 ? "[x]" : "[ ]";
+    // 放弃的任务用 [-]（Obsidian / Logseq 的"取消"约定），别用 [x] 冒充完成
+    const checkbox = isAbandoned(t) ? "[-]" : t.status === 1 ? "[x]" : "[ ]";
     const due = t.due_date ? ` (截止: ${t.due_date.slice(0, 16)})` : "";
     return `- ${checkbox} ${t.title}${due}`;
   }
@@ -1020,16 +1069,36 @@ function TaskSection({
     const t = ctx.state.payload;
     if (!t) return [];
     const done = t.status === 1;
+    const abandoned = isAbandoned(t);
     return [
       {
         key: "toggle",
-        label: done ? "标记为未完成" : "标记已完成",
+        label: abandoned
+          ? "恢复为未完成"
+          : done
+            ? "标记为未完成"
+            : "标记已完成",
         icon: <IconCheck size={13} />,
         onClick: () => {
           ctx.close();
           onToggle(t);
         },
       },
+      // 放弃：事情黄了但想留个记录。已放弃的任务这里不再重复给入口（上面的
+      // 「恢复为未完成」就是它的反向操作）
+      ...(abandoned
+        ? []
+        : [
+            {
+              key: "abandon",
+              label: "放弃这个任务",
+              icon: <Ban size={13} />,
+              onClick: () => {
+                ctx.close();
+                onAbandon?.(t);
+              },
+            } as ContextMenuEntry,
+          ]),
       {
         key: "edit",
         label: "编辑任务",
@@ -1214,7 +1283,11 @@ function TaskRow({
   onSubtaskChanged,
 }: RowProps) {
   const done = task.status === 1;
-  const due = describeDueDate(task.due_date, done);
+  const abandoned = isAbandoned(task);
+  // 放弃与完成的共同点：都不再"待办"，所以同样灰显 + 删除线；
+  // 区别在勾选框（放弃态显示 ✕ 且点击是「恢复」而不是「切换完成」）
+  const inactive = done || abandoned;
+  const due = describeDueDate(task.due_date, inactive);
   const isSelected = !!selected;
   const hasSubtasks = task.subtask_total > 0;
   return (
@@ -1272,7 +1345,15 @@ function TaskRow({
           style={{ marginTop: 2 }}
         />
       ) : (
-        <Tooltip title={done ? "标记为未完成" : "标记为已完成"}>
+        <Tooltip
+          title={
+            abandoned
+              ? "已放弃 —— 点击恢复为未完成"
+              : done
+                ? "标记为未完成"
+                : "标记为已完成"
+          }
+        >
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -1282,19 +1363,23 @@ function TaskRow({
             style={{
               width: 18,
               height: 18,
-              border: done
-                ? `1.5px solid ${token.colorSuccess}`
-                : `1.5px solid ${token.colorBorder}`,
+              border: abandoned
+                ? `1.5px dashed ${token.colorTextQuaternary}`
+                : done
+                  ? `1.5px solid ${token.colorSuccess}`
+                  : `1.5px solid ${token.colorBorder}`,
               background: done ? token.colorSuccess : "transparent",
-              color: "#fff",
+              color: abandoned ? token.colorTextQuaternary : "#fff",
             }}
           >
-            {done && (
+            {abandoned ? (
+              <IconX size={11} />
+            ) : done ? (
               <ChevronRight
                 size={12}
                 style={{ transform: "rotate(90deg) scale(0.9)" }}
               />
-            )}
+            ) : null}
           </button>
         </Tooltip>
       )}
@@ -1307,7 +1392,7 @@ function TaskRow({
           height: 8,
           background: priorityColor(task.priority, token),
           marginTop: 7,
-          opacity: done ? 0.35 : 1,
+          opacity: inactive ? 0.35 : 1,
         }}
       />
 
@@ -1317,12 +1402,23 @@ function TaskRow({
             className="font-medium"
             style={{
               fontSize: 13,
-              textDecoration: done ? "line-through" : "none",
-              color: done ? token.colorTextTertiary : token.colorText,
+              textDecoration: inactive ? "line-through" : "none",
+              color: inactive ? token.colorTextTertiary : token.colorText,
             }}
           >
             {task.title}
           </span>
+          {abandoned && (
+            <span
+              className="shrink-0 text-[10px] leading-none px-1.5 py-0.5 rounded"
+              style={{
+                background: token.colorFillTertiary,
+                color: token.colorTextTertiary,
+              }}
+            >
+              已放弃
+            </span>
+          )}
           {due.text && (
             <span
               className="text-[10px] px-1.5 py-0.5 rounded"
