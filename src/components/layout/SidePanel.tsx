@@ -16,11 +16,10 @@ import type { ActiveView } from "@/store";
  */
 
 // 各 panel 都是 named export，需要在 .then 里转成 default export 给 lazy 用
-const NotesPanel = lazy(() =>
-  import("./panels/NotesPanel").then((m) => ({ default: m.NotesPanel })),
-);
-const TagsPanel = lazy(() =>
-  import("./panels/TagsPanel").then((m) => ({ default: m.TagsPanel })),
+// 笔记与标签合并为一个面板（顶部页签切换），故只需引这层薄壳；
+// NotesPanel / TagsPanel 由它内部按需 lazy 加载
+const NotesTagsPanel = lazy(() =>
+  import("./panels/NotesTagsPanel").then((m) => ({ default: m.NotesTagsPanel })),
 );
 const DailyPanel = lazy(() =>
   import("./panels/DailyPanel").then((m) => ({ default: m.DailyPanel })),
@@ -78,11 +77,11 @@ export function SidePanel() {
 
   let node: React.ReactNode = null;
   switch (activeView) {
+    // 笔记 / 标签共用同一个面板，内部页签决定显示哪棵树。
+    // Activity Bar 的「标签」图标仍然可用：点它进来直接停在标签页签
     case "notes":
-      node = <NotesPanel />;
-      break;
     case "tags":
-      node = <TagsPanel />;
+      node = <NotesTagsPanel />;
       break;
     case "daily":
       node = <DailyPanel />;

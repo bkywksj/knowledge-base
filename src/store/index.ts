@@ -413,6 +413,11 @@ interface AppStore {
    * 用分类色时更容易一眼分辨"这是哪条线上的事"，紧急度改由左侧竖条粗细/图例补充。
    */
   tasksCalendarColorBy: "priority" | "category";
+  /**
+   * 笔记面板当前页签（持久化）：'folders' = 文件夹树 / 'tags' = 标签树。
+   * 标签和笔记是同一批内容的两种组织方式，合并到一个面板里用页签切换。
+   */
+  notesPanelTab: "folders" | "tags";
   /** 笔记编辑页：右侧大纲面板是否显示（持久化）。标题数 < 2 时由组件自动隐藏，与此独立 */
   outlineVisible: boolean;
   /** 笔记编辑页：大纲面板停靠位置（持久化）。'right'（默认）/ 'left' */
@@ -642,6 +647,8 @@ interface AppStore {
   ) => void;
   /** 设置日历配色依据（紧急度 / 任务分类） */
   setTasksCalendarColorBy: (v: "priority" | "category") => void;
+  /** 切换笔记面板页签（文件夹 / 标签） */
+  setNotesPanelTab: (v: "folders" | "tags") => void;
   /** 切换大纲面板可见性（persist） */
   toggleOutline: () => void;
   /** 设置大纲面板可见性（persist） */
@@ -834,6 +841,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   defaultViewMode: "edit",
   tasksDefaultView: "list",
   tasksCalendarColorBy: "priority",
+  notesPanelTab: "folders",
   outlineVisible: true,
   outlinePosition: "right",
   notesCollapsedFolderKeys: [],
@@ -1175,6 +1183,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setTasksDefaultView: (v) => set({ tasksDefaultView: v }),
   setTasksCalendarColorBy: (v) =>
     set({ tasksCalendarColorBy: v === "category" ? "category" : "priority" }),
+  setNotesPanelTab: (v) =>
+    set({ notesPanelTab: v === "tags" ? "tags" : "folders" }),
   toggleOutline: () => set((s) => ({ outlineVisible: !s.outlineVisible })),
   setOutlineVisible: (visible) => set({ outlineVisible: visible }),
   setOutlinePosition: (pos) => set({ outlinePosition: pos === "left" ? "left" : "right" }),
@@ -1702,6 +1712,10 @@ export async function loadThemeFromStore() {
     ) {
       useAppStore.getState().setTasksDefaultView(tdv);
     }
+    const npt = await store.get<string>("notesPanelTab");
+    if (npt === "folders" || npt === "tags") {
+      useAppStore.getState().setNotesPanelTab(npt);
+    }
     const tccb = await store.get<string>("tasksCalendarColorBy");
     if (tccb === "priority" || tccb === "category") {
       useAppStore.getState().setTasksCalendarColorBy(tccb);
@@ -1816,6 +1830,7 @@ export async function saveThemeToStore() {
       defaultViewMode,
       tasksDefaultView,
       tasksCalendarColorBy,
+      notesPanelTab,
       outlineVisible,
       outlinePosition,
       notesCollapsedFolderKeys,
@@ -1862,6 +1877,7 @@ export async function saveThemeToStore() {
     await store.set("defaultViewMode", defaultViewMode);
     await store.set("tasksDefaultView", tasksDefaultView);
     await store.set("tasksCalendarColorBy", tasksCalendarColorBy);
+    await store.set("notesPanelTab", notesPanelTab);
     await store.set("outlineVisible", outlineVisible);
     await store.set("outlinePosition", outlinePosition);
     await store.set("notesCollapsedFolderKeys", notesCollapsedFolderKeys);
@@ -1894,7 +1910,7 @@ useAppStore.subscribe((state) => {
   // notesHeadingFolded 摘要：用 entries 数 + 总 anchor 数 简化对比，避免每次 stringify 大对象
   const headingFoldEntries = Object.entries(state.notesHeadingFolded);
   const headingFoldKey = `${headingFoldEntries.length}:${headingFoldEntries.reduce((acc, [, v]) => acc + v.length, 0)}:${headingFoldEntries.map(([k, v]) => `${k}=${v.join(",")}`).join("|")}`;
-  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.autoHideActivityBar}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.editorCodeFontSize}|${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}|${state.editorHeadingNumber}|${state.editorHeadingNumberFormat}|${state.editorHeadingNumberStartLevel}|${state.editorHeadingNumberSkipManual}|${state.editorGuideLine}|${state.editorHighlightShortcut}|${state.uiScale}|${state.uiScaleUserSet}|${state.autoSaveEnabled}|${state.autoSaveDelay}|${state.outlineVisible}|${state.outlinePosition}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesShowOnlyFolders}|${state.notesFoldersInitialCollapseDone}|${state.notesCollapseFoldersOnStartup}|${headingFoldKey}|${state.themeOverridesEnabled}|${state.customAccent ?? ""}|${state.customBgImage ?? ""}|${state.customBgDim}|${state.customBgBlur}|${state.customBgFit}|${state.defaultViewMode}|${state.tasksDefaultView}|${state.tasksCalendarColorBy}`;
+  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.autoHideActivityBar}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.editorCodeFontSize}|${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}|${state.editorHeadingNumber}|${state.editorHeadingNumberFormat}|${state.editorHeadingNumberStartLevel}|${state.editorHeadingNumberSkipManual}|${state.editorGuideLine}|${state.editorHighlightShortcut}|${state.uiScale}|${state.uiScaleUserSet}|${state.autoSaveEnabled}|${state.autoSaveDelay}|${state.outlineVisible}|${state.outlinePosition}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesShowOnlyFolders}|${state.notesFoldersInitialCollapseDone}|${state.notesCollapseFoldersOnStartup}|${headingFoldKey}|${state.themeOverridesEnabled}|${state.customAccent ?? ""}|${state.customBgImage ?? ""}|${state.customBgDim}|${state.customBgBlur}|${state.customBgFit}|${state.defaultViewMode}|${state.tasksDefaultView}|${state.tasksCalendarColorBy}|${state.notesPanelTab}`;
   if (key !== _prevPersistKey) {
     _prevPersistKey = key;
     saveThemeToStore();
