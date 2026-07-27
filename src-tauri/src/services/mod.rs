@@ -38,6 +38,10 @@ pub mod markdown;
 // 移动端 fork/spawn 受限，砍掉外部 MCP，仅保留 in-memory 内置 server（kb-core）
 #[cfg(desktop)]
 pub mod mcp_client;
+// MCP HTTP 服务：把自家知识库暴露给外部 agent。仅桌面端
+// （移动端没有"被别的进程连"的场景，也不该在手机上开监听端口）
+#[cfg(desktop)]
+pub mod mcp_http;
 pub mod note;
 #[cfg(desktop)]
 pub mod ocr;

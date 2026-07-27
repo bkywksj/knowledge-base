@@ -103,8 +103,18 @@ tauri-plugin-global-shortcut = "2"
 # PDFium fallback（pdf-extract 对中文 CMap 不支持，运行时动态加载 pdfium.dll 兜底）
 # 移动端 NDK 加载动态库受沙盒限制，暂不支持，待 T-M012 决策
 pdfium-render = "0.8"
-# rmcp 桌面端额外能力：spawn 外部 MCP server 子进程（移动端 fork/spawn 受限）
-rmcp = { version = "1.5", features = ["transport-child-process"] }
+# rmcp 桌面端额外能力：
+# - transport-child-process: spawn 外部 MCP server 子进程（移动端 fork/spawn 受限）
+# - transport-streamable-http-server: 把自家 KbServer 以 HTTP 暴露给外部 agent。
+#   该 feature 只拉 uuid/http/bytes/tower-service 等轻量件，**不含** HTTP 服务器本身
+#   （它给的是一个 tower::Service），故下面还要 axum 来承载。
+rmcp = { version = "1.5", features = [
+    "transport-child-process",
+    "transport-streamable-http-server",
+] }
+# axum：承载上面那个 tower::Service。选它而不是裸 hyper —— tower/hyper 本来就在依赖树里
+# （reqwest 拉的），axum 是增量最小又不用手写路由/中间件的选择。
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 # Excel / ODS 解析（calamine 在 Android target 编译失败，先桌面端独享；
 # 移动端按 T-M013 改单文件导入流程后再决策）
 calamine = "0.28"

@@ -997,3 +997,100 @@ pub fn mcp_check_install_status(target: InstallTarget) -> Result<ClientInstallSt
         writable,
     })
 }
+
+// ─── MCP HTTP 服务（把自家知识库暴露给外部 agent）─────────────
+//
+// 与上面那套 in-memory 的区别：in-memory 是"自家 AI 消费自家工具"，
+// 这套是"别人的 agent 通过 HTTP 消费我们的工具"。共用同一份 KbServer 实现。
+// 仅桌面端：移动端不该开监听端口。
+
+/// 读 HTTP 服务配置（供设置页回显）
+#[cfg(desktop)]
+#[tauri::command]
+pub fn get_mcp_http_config(
+    state: tauri::State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    use crate::services::mcp_http as h;
+    let get = |k: &str| state.db.get_config(k).ok().flatten().unwrap_or_default();
+    Ok(serde_json::json!({
+        "enabled": get(h::KEY_ENABLED) == "1",
+        "port": get(h::KEY_PORT).parse::<u16>().unwrap_or(h::DEFAULT_PORT),
+        "token": get(h::KEY_TOKEN),
+        "writable": get(h::KEY_WRITABLE) == "1",
+        "bindLan": get(h::KEY_BIND_LAN) == "1",
+    }))
+}
+
+/// 查询运行状态
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn get_mcp_http_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::services::mcp_http::McpHttpStatus, String> {
+    Ok(state.mcp_http.status().await)
+}
+
+/// 重新生成访问 Token（旧 token 立即作废；服务在跑的话需要重启才生效）
+#[cfg(desktop)]
+#[tauri::command]
+pub fn regenerate_mcp_http_token(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    use crate::services::mcp_http as h;
+    let token = h::generate_token();
+    state
+        .db
+        .set_config(h::KEY_TOKEN, &token)
+        .map_err(|e| e.to_string())?;
+    Ok(token)
+}
+
+/// 启动 / 重启 HTTP 服务。配置从入参落库后再按新配置起。
+///
+/// 没有 token 时会自动生成一个 —— 不给"裸奔"的可能。
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn start_mcp_http(
+    state: tauri::State<'_, AppState>,
+    port: u16,
+    writable: bool,
+    bind_lan: bool,
+) -> Result<crate::services::mcp_http::McpHttpStatus, String> {
+    use crate::services::mcp_http as h;
+
+    let mut token = state
+        .db
+        .get_config(h::KEY_TOKEN)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if token.trim().is_empty() {
+        token = h::generate_token();
+        state
+            .db
+            .set_config(h::KEY_TOKEN, &token)
+            .map_err(|e| e.to_string())?;
+    }
+
+    // 先落库再启动：这样即使启动失败，用户改的配置也留住了，不用重填
+    let set = |k: &str, v: &str| state.db.set_config(k, v).map_err(|e| e.to_string());
+    set(h::KEY_PORT, &port.to_string())?;
+    set(h::KEY_WRITABLE, if writable { "1" } else { "0" })?;
+    set(h::KEY_BIND_LAN, if bind_lan { "1" } else { "0" })?;
+    set(h::KEY_ENABLED, "1")?;
+
+    let db_path = state.data_dir.join(crate::db_file_name());
+    h::start(&state.mcp_http, db_path, port, token, writable, bind_lan)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 停止 HTTP 服务
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn stop_mcp_http(
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::services::mcp_http::McpHttpStatus, String> {
+    use crate::services::mcp_http as h;
+    let _ = state.db.set_config(h::KEY_ENABLED, "0");
+    state.mcp_http.stop().await;
+    Ok(state.mcp_http.status().await)
+}

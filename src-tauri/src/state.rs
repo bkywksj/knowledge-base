@@ -48,6 +48,10 @@ pub struct AppState {
     /// 仅桌面端：移动端 fork/spawn 受限，没有外部 MCP 概念
     #[cfg(desktop)]
     pub mcp_external: Arc<crate::services::mcp_client::McpClientManager>,
+    /// MCP HTTP 服务运行态（把自家知识库暴露给外部 agent）。
+    /// 默认不启动；用户在设置页开启后才监听端口。仅桌面端。
+    #[cfg(desktop)]
+    pub mcp_http: Arc<crate::services::mcp_http::McpHttpState>,
     /// 单实例守护锁文件句柄（保持存活以维持独占锁，进程退出时自动释放）
     _lock_file: Option<File>,
 }
@@ -72,6 +76,8 @@ impl AppState {
             mcp_internal,
             #[cfg(desktop)]
             mcp_external: Arc::new(crate::services::mcp_client::McpClientManager::new()),
+            #[cfg(desktop)]
+            mcp_http: Arc::new(crate::services::mcp_http::McpHttpState::default()),
             _lock_file: lock_file,
         }
     }

@@ -30,6 +30,7 @@ import {
 } from "@ant-design/icons";
 import { ExternalLink, Folder, Trash2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { McpHttpSection } from "./McpHttpSection";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { MarkdownContent as Markdown } from "@/components/ai/MarkdownContent";
 import { save as saveDialog, open as openFileDialog } from "@tauri-apps/plugin-dialog";
@@ -1067,6 +1068,9 @@ function ExternalServersSubsection({ sidecarBinaryPath, dbPath }: ExternalServer
           </Form.Item>
         </Form>
       </Modal>
+
+      {/* HTTP 服务：把自家工具暴露给外部 agent（与上面"调用别人的 MCP"是反方向） */}
+      <McpHttpSection />
     </div>
   );
 }

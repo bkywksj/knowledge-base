@@ -89,6 +89,16 @@ const IDENTIFIER: &str = "com.agilefr.kb";
 /// .md 文件投递文件名（单实例守护的轮询 watcher 监听此文件）
 const DELIVER_FILE: &str = "deliver-md.txt";
 
+/// 当前进程使用的 SQLite 文件名。
+///
+/// dev 与 prod 用不同文件（`dev-app.db` / `app.db`），避免开发时把生产数据写坏。
+/// 抽成函数是因为不止 setup 需要它 —— MCP HTTP 服务另开连接时也要拿到同一个路径，
+/// 两处各写一遍 `if cfg!(debug_assertions)` 迟早会分叉。
+pub(crate) fn db_file_name() -> String {
+    let prefix = if cfg!(debug_assertions) { "dev-" } else { "" };
+    format!("{prefix}app.db")
+}
+
 // ───────── 单实例守护 ─────────
 
 /// 从命令行参数中提取 .md / .markdown / .txt 文件路径（仅桌面端：移动端无 CLI 参数）
@@ -648,8 +658,7 @@ pub fn run() {
 
             std::fs::create_dir_all(&data_dir_root)?;
 
-            let prefix = if cfg!(debug_assertions) { "dev-" } else { "" };
-            let db_path = data_dir_root.join(format!("{}app.db", prefix));
+            let db_path = data_dir_root.join(db_file_name());
             let db_path_str = db_path.to_string_lossy().to_string();
 
             // 数据库打开失败是"应用完全不可用"级别的故障，但**不能**直接 `?` 让 setup 返回 Err ——
@@ -887,6 +896,42 @@ pub fn run() {
                 services::task_reminder::run_reminder_loop(app_handle_reminder).await;
             });
 
+            // MCP HTTP 服务：上次用户开着的话，启动时按存的配置自动拉起，
+            // 否则用户重启应用后要手动再开一次，很反直觉。
+            #[cfg(desktop)]
+            {
+                let app_handle_mcp_http = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    use crate::services::mcp_http as h;
+                    let Some(state) = app_handle_mcp_http.try_state::<AppState>() else {
+                        return;
+                    };
+                    let get = |k: &str| state.db.get_config(k).ok().flatten().unwrap_or_default();
+                    if get(h::KEY_ENABLED) != "1" {
+                        return;
+                    }
+                    let token = get(h::KEY_TOKEN);
+                    if token.trim().is_empty() {
+                        log::warn!("[mcp-http] 已启用但没有 Token，跳过自动启动");
+                        return;
+                    }
+                    let port = get(h::KEY_PORT).parse::<u16>().unwrap_or(h::DEFAULT_PORT);
+                    let db_path = state.data_dir.join(db_file_name());
+                    if let Err(e) = h::start(
+                        &state.mcp_http,
+                        db_path,
+                        port,
+                        token,
+                        get(h::KEY_WRITABLE) == "1",
+                        get(h::KEY_BIND_LAN) == "1",
+                    )
+                    .await
+                    {
+                        log::warn!("[mcp-http] 自动启动失败: {e}");
+                    }
+                });
+            }
+
             // 文件夹自动导入：盯住用户指定目录，新落地的 .md 自动进库
             // （浏览器剪藏插件把网页存成 Markdown 后不用再手动导入）。
             // 默认关闭，循环里读 app_config 判断，没开启就空转。
@@ -972,6 +1017,17 @@ pub fn run() {
             commands::mcp::mcp_get_setup_doc,
             commands::mcp::mcp_get_ai_writable,
             commands::mcp::mcp_set_ai_writable,
+            // MCP HTTP 服务（桌面端专属：移动端不开监听端口）
+            #[cfg(desktop)]
+            commands::mcp::get_mcp_http_config,
+            #[cfg(desktop)]
+            commands::mcp::get_mcp_http_status,
+            #[cfg(desktop)]
+            commands::mcp::regenerate_mcp_http_token,
+            #[cfg(desktop)]
+            commands::mcp::start_mcp_http,
+            #[cfg(desktop)]
+            commands::mcp::stop_mcp_http,
             // 系统模块
             commands::system::greet,
             commands::system::get_system_info,
