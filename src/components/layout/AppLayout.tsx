@@ -27,6 +27,7 @@ import { AsrToggleController } from "@/components/AsrToggleController";
 import { ShortcutsPanel } from "@/components/ui/ShortcutsPanel";
 import { StarryBackground } from "@/components/ui/StarryBackground";
 import { createBlankAndOpen } from "@/lib/noteCreator";
+import { targetFromFolderParam } from "@/lib/newNoteTarget";
 import { UpdateBadge } from "@/components/ui/UpdateBadge";
 import { UpdateModal } from "@/components/ui/UpdateModal";
 import { ExitConfirmListener } from "@/components/ui/ExitConfirmListener";
@@ -325,6 +326,9 @@ export function AppLayout() {
     const unlisteners: UnlistenFn[] = [];
 
     listen("tray:new-note", () => {
+      // 有意不跟随当前文件夹上下文（与 Ctrl+N / 侧边栏按钮不同）：
+      // 从托盘点进来时用户多半在别的应用里，脑子里没有"我正在哪个文件夹"，
+      // 拿一个他看不见的选中态决定落点会很意外。这种场景套全局默认更合适。
       createBlankAndOpen(null, navigate, { useDefaults: true });
     }).then((fn) => unlisteners.push(fn));
 
@@ -496,12 +500,20 @@ export function AppLayout() {
       setQuickNoteOpen(true);
       return;
     }
-    // Ctrl/Cmd + N 新建笔记
+    // Ctrl/Cmd + N 新建笔记 —— 跟随当前页面的文件夹上下文。
+    // 用户正在某个文件夹页面按 Ctrl+N，期望和点该页面上的「+ 新建笔记」结果一致；
+    // 以前这里写死 null，同一个界面两条路建到不同地方。
+    // location.search 读的是即时值（回调重新创建时刷新），不用额外订阅 searchParams。
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "n") {
       e.preventDefault();
-      createBlankAndOpen(null, navigate, { useDefaults: true });
+      const target = targetFromFolderParam(
+        new URLSearchParams(location.search).get("folder"),
+      );
+      createBlankAndOpen(target.folderId, navigate, {
+        useDefaults: target.useDefaults,
+      });
     }
-  }, [focusMode, setFocusMode, navigate]);
+  }, [focusMode, setFocusMode, navigate, location.search]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleGlobalKeyDown);

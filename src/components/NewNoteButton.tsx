@@ -26,6 +26,14 @@ import {
 interface Props {
   /** 创建/导入时归入的文件夹 id；顶层创建传 null */
   folderId?: number | null;
+  /**
+   * 是否套用全局「默认文件夹 / 默认标签」偏好。
+   *
+   * 不传时按老规则推断（`folderId == null` 就套）。但光看 folderId 分不出
+   * 「没有上下文」和「用户明确选了未分类」—— 后者的 folderId 也是 null，
+   * 却不该被默认文件夹劫持。这种场景显式传 false，见 lib/newNoteTarget.ts。
+   */
+  useDefaults?: boolean;
   /** 侧边栏折叠态：只显示 + 图标，不带下拉 */
   collapsed?: boolean;
   /** 块级占满父容器宽度（首页/笔记页大按钮用） */
@@ -47,6 +55,7 @@ interface Props {
  */
 export function NewNoteButton({
   folderId = null,
+  useDefaults,
   collapsed = false,
   block = false,
   label = "新建笔记",
@@ -61,10 +70,12 @@ export function NewNoteButton({
     folderId: number | null;
   } | null>(null);
 
-  // 没有文件夹上下文时（顶部+按钮 / 首页大按钮）套用全局默认；
-  // 有 folderId（NotesPanel 文件夹下嵌入）就遵循上下文
+  // 有 folderId 就遵循上下文；没有则套全局默认。
+  // 调用方能区分「未选中」和「明确选了未分类」时，用 useDefaults 显式覆盖。
   const handleCreate = () =>
-    createBlankAndOpen(folderId, navigate, { useDefaults: folderId == null });
+    createBlankAndOpen(folderId, navigate, {
+      useDefaults: useDefaults ?? folderId == null,
+    });
 
   // 选目录 → 扫描 → 弹 ImportPreviewModal。与 NotesPanel.handleImportMdFolder 同源。
   // Why: 文件夹导入要让用户选副本策略 + 是否保留根目录层级，所以单独走 Modal 流，

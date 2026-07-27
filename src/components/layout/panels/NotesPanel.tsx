@@ -55,6 +55,10 @@ import { FileTypeIcon } from "@/components/FileTypeIcon";
 import { TemplatePickerModal } from "@/components/TemplatePickerModal";
 import { NoteComparePicker } from "@/components/editor/NoteComparePicker";
 import {
+  targetFromSidebarKey,
+  UNCATEGORIZED_KEY as SHARED_UNCATEGORIZED_KEY,
+} from "@/lib/newNoteTarget";
+import {
   createBlankAndOpen,
   importPdfsFlow,
   importTextFlow,
@@ -81,7 +85,8 @@ const NEW_NODE_PREFIX = "__new_under_";
 const NOTE_KEY_PREFIX = "note:";
 
 /** 「未分类」虚拟根节点 key（folder_id IS NULL 的笔记挂在这里） */
-const UNCATEGORIZED_KEY = "__uncategorized__";
+// 从 lib/newNoteTarget 引入，避免这边的 key 约定和那边的判定各写一份字面量后漂移
+const UNCATEGORIZED_KEY = SHARED_UNCATEGORIZED_KEY;
 
 /** 单个文件夹直属笔记的展示上限（超过引导用户去主区） */
 const NOTES_PER_FOLDER_LIMIT = 100;
@@ -417,6 +422,12 @@ export function NotesPanel() {
   const [editingName, setEditingName] = useState("");
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+
+  /** 选中态 → 新建笔记落点。判定规则见 lib/newNoteTarget.ts（有单测锁着）。 */
+  const newNoteTarget = useMemo(
+    () => targetFromSidebarKey(selectedKey),
+    [selectedKey],
+  );
 
   // ─── 面板内就地搜索 ─────────────────────────────
   // 输入关键词 → 防抖走后端 search_notes 全文搜索（标题+正文），结果以扁平列表
@@ -1705,8 +1716,10 @@ export function NotesPanel() {
       return ext === "md" || ext === "markdown";
     });
     const paths = mdOnly.length === texts.length ? collectOsPaths(texts) : null;
-    // T-016: 当前侧栏选中了文件夹时，落到该文件夹下（OB 用户期望）；未选中则落根
-    const targetFolderId = selectedKey ? Number(selectedKey) : null;
+    // T-016: 当前侧栏选中了文件夹时，落到该文件夹下（OB 用户期望）；未选中则落根。
+    // 复用与「+ 新建笔记」同一份判定 —— 原来这里是裸 Number(selectedKey)，
+    // 选中的是「未分类」或某篇笔记时会算出 NaN 当文件夹 id 传下去。
+    const targetFolderId = newNoteTarget.folderId;
     if (paths && paths.length > 0) {
       const hide = message.loading(`正在导入 ${paths.length} 个 Markdown 文件…`, 0);
       try {
@@ -2215,7 +2228,14 @@ export function NotesPanel() {
         }}
       >
         <div style={{ flex: 1, display: "flex" }}>
-          <NewNoteButton block />
+          {/* 跟随树上的选中态：选中文件夹就建到它下面，与 OS 文件拖入（handleDropFiles
+              里的 targetFolderId）同一口径。以前这里永远传 null，用户明明选着文件夹
+              新建出来的笔记却掉到默认文件夹或未分类。 */}
+          <NewNoteButton
+            block
+            folderId={newNoteTarget.folderId}
+            useDefaults={newNoteTarget.useDefaults}
+          />
         </div>
         <Button
           icon={<FolderOpen size={14} />}

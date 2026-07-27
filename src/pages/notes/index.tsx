@@ -79,6 +79,7 @@ import { resolveAssetSrc, parseKbAsset, isEncryptedAsset } from "@/lib/assetUrl"
 import { EmptyState } from "@/components/ui/EmptyState";
 import { NewNoteButton } from "@/components/NewNoteButton";
 import { createBlankAndOpen } from "@/lib/noteCreator";
+import { targetFromFolderParam } from "@/lib/newNoteTarget";
 import { startAiChatWithNotes } from "@/lib/aiAttach";
 import { NoteComparePicker } from "@/components/editor/NoteComparePicker";
 // AntD 已有 Tag 组件同名，这里给类型起个别名避免冲突
@@ -610,6 +611,11 @@ function DesktopNoteListPage() {
   const [compareNotes, setCompareNotes] = useState<{ first: number; second: number | null } | null>(null);
 
   const folderId = searchParams.get("folder");
+  /** 当前页面上下文 → 新建笔记落点（与侧边栏、Ctrl+N 共用同一判定） */
+  const newNoteTarget = useMemo(
+    () => targetFromFolderParam(folderId),
+    [folderId],
+  );
 
   // 文件夹 id → name 映射（用于显示目录列）
   const [folderMap, setFolderMap] = useState<Map<number, string>>(new Map());
@@ -1411,7 +1417,12 @@ function DesktopNoteListPage() {
               全部移到回收站
             </Button>
           )}
-          <NewNoteButton folderId={folderId ? Number(folderId) : null} />
+          {/* ?folder=uncategorized 时 folderId 也是 null，但不该套全局默认
+              （用户明确在看未分类）—— 这个区分由 targetFromFolderParam 给出 */}
+          <NewNoteButton
+            folderId={newNoteTarget.folderId}
+            useDefaults={newNoteTarget.useDefaults}
+          />
         </Space>
       </div>
 
@@ -1885,11 +1896,9 @@ function DesktopNoteListPage() {
               description="暂无笔记"
               actionText="创建第一篇笔记"
               onAction={() =>
-                createBlankAndOpen(
-                  folderId ? Number(folderId) : null,
-                  navigate,
-                  { useDefaults: !folderId },
-                )
+                createBlankAndOpen(newNoteTarget.folderId, navigate, {
+                  useDefaults: newNoteTarget.useDefaults,
+                })
               }
             />
           )}
@@ -1967,11 +1976,9 @@ function DesktopNoteListPage() {
               description="暂无笔记"
               actionText="创建第一篇笔记"
               onAction={() =>
-                createBlankAndOpen(
-                  folderId ? Number(folderId) : null,
-                  navigate,
-                  { useDefaults: !folderId },
-                )
+                createBlankAndOpen(newNoteTarget.folderId, navigate, {
+                  useDefaults: newNoteTarget.useDefaults,
+                })
               }
             />
           )}
