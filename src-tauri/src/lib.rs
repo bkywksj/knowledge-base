@@ -529,7 +529,29 @@ pub fn run() {
 
     // ─── 跨平台共享插件 ────────────────────────
     #[allow(unused_mut)]
-    let mut builder = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // 单实例守护（桌面端）。**必须是第一个注册的插件**（官方要求：它要在其它插件
+    // 初始化前抢先判定并退出重复进程）。
+    //
+    // 这不只是"少开一个窗口"的体验问题。多实例下两份进程各持一份内存设置，
+    // saveThemeToStore() 又是**全量覆写**——A 进程随便改个侧栏宽度，就会把自己那份
+    // 陈旧的 editorHeadingNumber 一起刷下去，抹掉 B 进程刚打开的编号设置。
+    // 用户反馈的"重启后标题编号没有了、要重新设置"就是这么来的。
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // 第二次启动：把已有主窗口唤到前台（被最小化 / 缩到托盘时也能拉回来），
+            // 而不是无声无息地退出——否则用户双击图标"没反应"，会以为程序坏了。
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.unminimize();
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }));
+    }
+
+    builder = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(

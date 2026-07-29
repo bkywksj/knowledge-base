@@ -1793,11 +1793,46 @@ export async function loadThemeFromStore() {
     applyEditorLayout(useAppStore.getState());
     applyUiScale(useAppStore.getState().uiScale);
     void applyThemeOverrides(useAppStore.getState());
+    // 放行写盘。必须在 finally 里：加载抛错也要放行，否则用户这次会话的所有
+    // 设置改动都静默丢失（比"读到默认值"更糟）。
+    // 同时把 subscribe 的比较基准对齐到当前状态，避免 hydrate 完立刻触发一次
+    // 无意义的全量写盘。
+    _settingsHydrated = true;
+    _prevPersistKey = persistKeyOf(useAppStore.getState());
   }
 }
 
+/**
+ * 设置是否已从磁盘载入完毕。
+ *
+ * `loadThemeFromStore()` 是逐个 `store.get()` 再 `set(...)` 到 zustand 的，
+ * 每次 set 都会触发下面的 subscribe。若此时就允许写盘，等于拿"读到一半的状态"
+ * 全量覆写磁盘 —— 排在后面还没读到的键会被内存里的默认值刷掉。
+ *
+ * 启动越慢（冷启动 / 机械盘）这个窗口越大，表现就是"设置过的东西重启后回到默认"。
+ */
+let _settingsHydrated = false;
+
+/**
+ * 把「需要持久化的那批状态」压成一个字符串，用来判断是否真有变化。
+ *
+ * 抽成函数是为了让 hydrate 结束时能把比较基准对齐到当前状态 —— 否则加载完
+ * 立刻会因为"基准还是空串"触发一次全量写盘。
+ */
+function persistKeyOf(state: AppStore): string {
+  // notesHeadingFolded 摘要：用 entries 数 + 总 anchor 数 简化对比，避免每次 stringify 大对象
+  const headingFoldEntries = Object.entries(state.notesHeadingFolded);
+  const headingFoldKey = `${headingFoldEntries.length}:${headingFoldEntries.reduce((acc, [, v]) => acc + v.length, 0)}:${headingFoldEntries.map(([k, v]) => `${k}=${v.join(",")}`).join("|")}`;
+  return `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.autoHideActivityBar}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.editorCodeFontSize}|${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}|${state.editorHeadingNumber}|${state.editorHeadingNumberFormat}|${state.editorHeadingNumberStartLevel}|${state.editorHeadingNumberSkipManual}|${state.editorGuideLine}|${state.editorHighlightShortcut}|${state.uiScale}|${state.uiScaleUserSet}|${state.autoSaveEnabled}|${state.autoSaveDelay}|${state.outlineVisible}|${state.outlinePosition}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesShowOnlyFolders}|${state.notesFoldersInitialCollapseDone}|${state.notesCollapseFoldersOnStartup}|${headingFoldKey}|${state.themeOverridesEnabled}|${state.customAccent ?? ""}|${state.customBgImage ?? ""}|${state.customBgDim}|${state.customBgBlur}|${state.customBgFit}|${state.defaultViewMode}|${state.tasksDefaultView}|${state.tasksCalendarColorBy}|${state.notesPanelTab}`;
+}
+
+/** 上次写盘时的状态指纹；与 persistKeyOf 比对，只在真变了才落盘 */
+let _prevPersistKey = "";
+
 /** 保存主题 + 窗口置顶 + SidePanel 偏好到 tauri-plugin-store */
 export async function saveThemeToStore() {
+  // 未 hydrate 完就别写：见 _settingsHydrated 的说明
+  if (!_settingsHydrated) return;
   try {
     const {
       lightTheme,
@@ -1905,12 +1940,8 @@ export async function saveThemeToStore() {
 }
 
 // 监听主题 + 置顶 + SidePanel + 编辑器字体偏好变化自动保存
-let _prevPersistKey = "";
 useAppStore.subscribe((state) => {
-  // notesHeadingFolded 摘要：用 entries 数 + 总 anchor 数 简化对比，避免每次 stringify 大对象
-  const headingFoldEntries = Object.entries(state.notesHeadingFolded);
-  const headingFoldKey = `${headingFoldEntries.length}:${headingFoldEntries.reduce((acc, [, v]) => acc + v.length, 0)}:${headingFoldEntries.map(([k, v]) => `${k}=${v.join(",")}`).join("|")}`;
-  const key = `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.autoHideActivityBar}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.editorCodeFontSize}|${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}|${state.editorHeadingNumber}|${state.editorHeadingNumberFormat}|${state.editorHeadingNumberStartLevel}|${state.editorHeadingNumberSkipManual}|${state.editorGuideLine}|${state.editorHighlightShortcut}|${state.uiScale}|${state.uiScaleUserSet}|${state.autoSaveEnabled}|${state.autoSaveDelay}|${state.outlineVisible}|${state.outlinePosition}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesShowOnlyFolders}|${state.notesFoldersInitialCollapseDone}|${state.notesCollapseFoldersOnStartup}|${headingFoldKey}|${state.themeOverridesEnabled}|${state.customAccent ?? ""}|${state.customBgImage ?? ""}|${state.customBgDim}|${state.customBgBlur}|${state.customBgFit}|${state.defaultViewMode}|${state.tasksDefaultView}|${state.tasksCalendarColorBy}|${state.notesPanelTab}`;
+  const key = persistKeyOf(state)
   if (key !== _prevPersistKey) {
     _prevPersistKey = key;
     saveThemeToStore();

@@ -100,6 +100,10 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-updater = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-global-shortcut = "2"
+# 单实例：第二次启动直接唤起已开的窗口。
+# 不只是"体验好"——多实例下两份进程各持一份内存设置，任一方改设置都会
+# 用自己那份全量覆写 settings.json，把对方的改动抹掉（用户反馈"重启后编号设置没了"）。
+tauri-plugin-single-instance = "2"
 # PDFium fallback（pdf-extract 对中文 CMap 不支持，运行时动态加载 pdfium.dll 兜底）
 # 移动端 NDK 加载动态库受沙盒限制，暂不支持，待 T-M012 决策
 pdfium-render = "0.8"
