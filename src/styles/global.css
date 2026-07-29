@@ -649,12 +649,21 @@ body,
 :root[data-editor-guide-line="1"] .editor-content-area .tiptap ol::before {
   content: "";
   position: absolute;
-  left: 0.5em;
+  /* 竖线横坐标：默认按无序列表的圆点算（见下方 ol 覆盖） */
+  left: var(--kb-guide-line-x, 0.5em);
   top: 0.25em;
   bottom: 0.25em;
   width: 1px;
   background: color-mix(in srgb, var(--ant-color-text, #000) 14%, transparent);
   pointer-events: none;
+}
+/* 有序列表的竖线要往左让。
+   marker 右对齐到 padding-left（1.5em）处：圆点只有 ~0.4em 宽，从 1.1em 起画，
+   0.5em 的竖线碰不到；但 "1." 约 0.8em、两位数 "10." 超过 1.1em，会一路盖到
+   0.5em 左边 —— 竖线就横穿在数字上（用户反馈的"引线与编号内容重叠"）。
+   移到 0 处贴着内容左边缘，数字再宽也压不到。 */
+:root[data-editor-guide-line="1"] .editor-content-area .tiptap ol {
+  --kb-guide-line-x: 0;
 }
 
 /* Mermaid 预览块：右上角"全屏"按钮，hover preview 时显形 */

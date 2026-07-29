@@ -1600,14 +1600,21 @@ export function TiptapEditor({
       }),
       // 标题折叠（H1–H3 左侧 chevron 折叠到下一同级标题；走 noteId 维度持久化）
       HeadingFold.configure({
+        // 必须走 noteIdRef.current，不能闭包捕获 noteId：useEditor 只在 mount 时
+        // 建一次（无依赖数组），<TiptapEditor> 也没有 key={noteId}，所以切换笔记时
+        // 组件实例复用、这两个回调里的 noteId 会永远停在第一次打开那篇的 id ——
+        // 表现就是"从第二篇起点折叠没反应"（折叠态写到了上一篇头上）。
+        // 隔壁 SlashCommand.getNoteId 用的就是 ref，这里当初漏改了。
         getFolded: () => {
-          if (noteId == null) return new Set<string>();
-          const arr = useAppStore.getState().notesHeadingFolded[noteId] ?? [];
+          const id = noteIdRef.current;
+          if (id == null) return new Set<string>();
+          const arr = useAppStore.getState().notesHeadingFolded[id] ?? [];
           return new Set(arr);
         },
         onToggle: (anchor) => {
-          if (noteId == null) return;
-          useAppStore.getState().toggleNoteHeadingFold(noteId, anchor);
+          const id = noteIdRef.current;
+          if (id == null) return;
+          useAppStore.getState().toggleNoteHeadingFold(id, anchor);
         },
         maxLevel: 3,
       }),
