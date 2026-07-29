@@ -646,12 +646,16 @@ export const exportApi = {
    *  - `singleFile=true`：不建目录，图片/附件 base64 内嵌，直接写单个 `{标题}.md` */
   exportSingle: (id: number, parentDir: string, singleFile = false) =>
     invoke<SingleExportResult>("export_single_note", { id, parentDir, singleFile }),
-  /** T-020 导出单条笔记为 Word（.docx）；targetPath 是用户在 save dialog 选定的最终路径 */
-  exportSingleToWord: (id: number, targetPath: string) =>
-    invoke<WordExportResult>("export_single_note_to_word", { id, targetPath }),
-  /** T-020 导出单条笔记为 HTML（单文件，图片内嵌 base64） */
-  exportSingleToHtml: (id: number, targetPath: string) =>
-    invoke<HtmlExportResult>("export_single_note_to_html", { id, targetPath }),
+  /** T-020 导出单条笔记为 Word（.docx）；targetPath 是用户在 save dialog 选定的最终路径。
+   *
+   *  `bodyHtml`：编辑器实时 DOM（用 printNote 的 editorDomToSelfContainedHtml 生成）。
+   *  传了就用它，导出物才会带上**标题自动编号** —— 编号是 ProseMirror widget
+   *  decoration，不写进 doc / .md，后端拿 markdown 重渲永远看不到。省略则退回旧管线。 */
+  exportSingleToWord: (id: number, targetPath: string, bodyHtml?: string) =>
+    invoke<WordExportResult>("export_single_note_to_word", { id, targetPath, bodyHtml }),
+  /** T-020 导出单条笔记为 HTML（单文件，图片内嵌 base64）。`bodyHtml` 同上 */
+  exportSingleToHtml: (id: number, targetPath: string, bodyHtml?: string) =>
+    invoke<HtmlExportResult>("export_single_note_to_html", { id, targetPath, bodyHtml }),
   /** R-005 渲染笔记为 HTML 字符串（不写文件），供前端 iframe 打印为 PDF。
    *  返回的 HTML 与 exportSingleToHtml 同构：图片已 inline 为 base64，自包含。 */
   renderHtmlForPdf: (id: number) =>

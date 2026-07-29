@@ -77,6 +77,49 @@ impl HtmlExportService {
         })
     }
 
+    /// 把前端渲染好的 body HTML 套上 CSS 模板，并内嵌其中的本地图片。
+    ///
+    /// 返回 `(完整 html, 内嵌图片数, 缺失图片数)`。Word 导出（走系统转换器那条）
+    /// 也复用它，两边拿到的是同一份 HTML，样式与编号表现一致。
+    pub fn render_html_from_body(
+        title: &str,
+        body_html: &str,
+        assets_root: &Path,
+    ) -> (String, usize, usize) {
+        let (body, inlined, missing) = inline_images(body_html, assets_root);
+        (wrap_template(title, &body), inlined, missing)
+    }
+
+    /// 把**前端已渲染好的 HTML 片段**套上 CSS 模板写成单文件 .html。
+    ///
+    /// 与 `export_single` 的区别在于内容从哪来：那条把 markdown 交给 pulldown-cmark
+    /// 重新渲染，看不到只活在编辑器 DOM 里的东西 —— 标题自动编号是 ProseMirror 的
+    /// widget decoration，不写进 doc / .md，于是导出的 HTML 里编号全没了
+    /// （用户反馈"导出 html、word 时无编号"）。本方法直接收编辑器真实 DOM，
+    /// 编号 / callout / 分栏 / mermaid SVG 一并保留，做到"导出 = 屏幕所见"。
+    ///
+    /// 传入的 `body_html` 应当已经过 `inline_assets` 处理（前端打印管线的既有步骤），
+    /// 这里仍再跑一次附件内嵌兜底 —— 重复内嵌是幂等的（已是 data: 的会被跳过）。
+    pub fn export_single_from_html(
+        title: &str,
+        body_html: &str,
+        target_path: &Path,
+        assets_root: &Path,
+    ) -> Result<HtmlExportResult, AppError> {
+        let (html, img_inlined, img_missing) =
+            Self::render_html_from_body(title, body_html, assets_root);
+        let (html, att_inlined, att_missing) = inline_attachments(&html, assets_root);
+        std::fs::write(target_path, html)?;
+
+        Ok(HtmlExportResult {
+            file_path: target_path.to_string_lossy().into(),
+            images_inlined: img_inlined,
+            images_missing: img_missing,
+            attachments_inlined: att_inlined,
+            attachments_missing: att_missing,
+        })
+    }
+
     /// R-005b 把任意 HTML 片段里的本地图片 / 附件链接 inline 成 base64（自包含）。
     ///
     /// 与 `render_html` / `export_single` 的本质区别：**不经 markdown 渲染、不套 CSS 模板**，
@@ -353,4 +396,45 @@ fn guess_mime(path: &Path) -> String {
         _ => "application/octet-stream",
     }
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 前端 DOM 路径**不能**经 markdown 重渲 —— 那正是编号丢失的原因。
+    ///
+    /// 用一段只可能来自编辑器渲染层的 HTML（编号 widget + callout）做探针：
+    /// 若实现哪天偷偷改回"先转 markdown 再渲染"，这些结构会被打平，测试就会挂。
+    #[test]
+    fn render_html_from_body_preserves_rendered_dom() {
+        let body = r#"<div class="tiptap"><h1><span class="kb-hnum">1</span>研发与制造脱节</h1><div class="kb-callout">提示</div></div>"#;
+        let (html, _inlined, _missing) =
+            HtmlExportService::render_html_from_body("标题", body, Path::new("/nonexistent"));
+
+        // 编号 widget 必须原样保留（用户反馈的核心诉求）
+        assert!(
+            html.contains(r#"<span class="kb-hnum">1</span>"#),
+            "标题编号应原样保留，实际：{html}"
+        );
+        // 自定义节点也不该被打平成普通段落
+        assert!(html.contains(r#"class="kb-callout""#), "callout 结构应保留");
+        // 套了模板：有 <html> 骨架和标题
+        assert!(html.contains("<html"), "应套上完整 HTML 模板");
+        assert!(html.contains("标题"), "模板应带上笔记标题");
+    }
+
+    /// 对照组：走 markdown 重渲的老路径确实看不到编号（这就是 bug 的成因）。
+    /// 锁住这个差异，避免有人误以为两条路等价而把新路径删掉。
+    #[test]
+    fn markdown_path_cannot_see_heading_numbers() {
+        // markdown 源码里根本没有编号 —— 编号只存在于编辑器 DOM
+        let (html, _i, _m) =
+            HtmlExportService::render_html("标题", "# 研发与制造脱节", Path::new("/nonexistent"))
+                .unwrap();
+        assert!(
+            !html.contains("kb-hnum"),
+            "markdown 路径不可能产出编号，这正是需要前端 DOM 路径的原因"
+        );
+    }
 }

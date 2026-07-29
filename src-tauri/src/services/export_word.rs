@@ -65,14 +65,18 @@ impl WordExportService {
     ///
     /// 这样：装了 Office/WPS/LibreOffice 的机器拿到高保真结果，裸机也至少能把
     /// 文字 + 表格 + 图片 + 列表导出来，不再「只剩标题」。
+    /// `body_html`：前端传来的**编辑器实时 DOM**（已内嵌资源）。给了就用它替代
+    /// markdown 重渲 —— 只有这样才能带上标题自动编号（widget decoration 不进 .md）。
+    /// 传 None 走老路（批量导出等拿不到前端渲染的场景）。
     pub fn export_single_best_effort(
         title: &str,
         content: &str,
         target_path: &Path,
         assets_root: &Path,
+        body_html: Option<&str>,
     ) -> Result<WordExportResult, AppError> {
         if converter::detect_converter() != DocConverter::None {
-            match Self::export_via_converter(title, content, target_path, assets_root) {
+            match Self::export_via_converter(title, content, target_path, assets_root, body_html) {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     log::warn!("Word 导出：转换器路径失败，回退原生 docx 生成：{}", e);
@@ -88,10 +92,14 @@ impl WordExportService {
         content: &str,
         target_path: &Path,
         assets_root: &Path,
+        body_html: Option<&str>,
     ) -> Result<WordExportResult, AppError> {
-        // 渲染为自包含 HTML（图片已内嵌为 base64 data: URL）
-        let (html, images_inlined, images_missing) =
-            HtmlExportService::render_html(title, content, assets_root)?;
+        // 有前端 DOM 就套模板直接用（保住标题编号等只存在于渲染层的东西），
+        // 否则退回 markdown 重渲
+        let (html, images_inlined, images_missing) = match body_html {
+            Some(body) => HtmlExportService::render_html_from_body(title, body, assets_root),
+            None => HtmlExportService::render_html(title, content, assets_root)?,
+        };
 
         // 临时工作目录用纯 ASCII 路径与文件名，规避部分转换器对非 ASCII 路径的兼容问题
         let nanos = SystemTime::now()

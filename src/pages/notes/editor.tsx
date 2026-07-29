@@ -26,7 +26,11 @@ import { useAppStore } from "@/store";
 import { useTabsStore } from "@/store/tabs";
 import { noteApi, tagApi, folderApi, linkApi, exportApi, sourceFileApi, vaultApi, sourceWritebackApi } from "@/lib/api";
 import { printHtmlAsPdf } from "@/lib/exportPdf";
-import { printEditorContent, copyEditorContentForWord } from "@/lib/printNote";
+import {
+  printEditorContent,
+  copyEditorContentForWord,
+  editorDomToSelfContainedHtml,
+} from "@/lib/printNote";
 import { VaultModal } from "@/components/vault/VaultModal";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -1732,6 +1736,27 @@ function DesktopNoteEditorPage() {
     }
   }
 
+  /**
+   * 取「编辑器实时 DOM」给导出用。
+   *
+   * 为什么导出要走 DOM 而不是让后端拿 markdown 重渲：标题自动编号是 ProseMirror 的
+   * widget decoration，只活在渲染层、不写进 doc / .md —— 后端看不到它，导出的
+   * HTML / Word 里编号就全没了（用户反馈"导出 html、word 时无编号"）。
+   * 顺带 callout / 分栏 / mermaid SVG 等自定义节点也一并保真。
+   *
+   * 返回 undefined = 编辑器没就绪，让后端走老管线兜底，不阻断导出。
+   */
+  async function currentEditorHtml(): Promise<string | undefined> {
+    if (!editorInstance) return undefined;
+    try {
+      return await editorDomToSelfContainedHtml(editorInstance, title);
+    } catch (e) {
+      // 拿 DOM 失败不该让整个导出失败：退回后端渲染（只是没有编号）
+      console.warn("[export] 取编辑器 DOM 失败，退回后端渲染", e);
+      return undefined;
+    }
+  }
+
   /** T-020: 导出为 Word (.docx) — 用 save dialog 选最终文件路径 */
   async function handleExportWord() {
     const safeName = title.replace(/[/\\:*?"<>|]/g, "_").trim() || "未命名";
@@ -1741,7 +1766,11 @@ function DesktopNoteEditorPage() {
     });
     if (!filePath) return;
     try {
-      const result = await exportApi.exportSingleToWord(noteId, filePath);
+      const result = await exportApi.exportSingleToWord(
+        noteId,
+        filePath,
+        await currentEditorHtml(),
+      );
       Modal.success({
         title: "导出 Word 成功",
         content: (
@@ -1779,7 +1808,11 @@ function DesktopNoteEditorPage() {
     });
     if (!filePath) return;
     try {
-      const result = await exportApi.exportSingleToHtml(noteId, filePath);
+      const result = await exportApi.exportSingleToHtml(
+        noteId,
+        filePath,
+        await currentEditorHtml(),
+      );
       Modal.success({
         title: "导出 HTML 成功",
         content: (

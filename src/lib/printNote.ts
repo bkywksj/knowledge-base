@@ -29,47 +29,69 @@ import { exportApi } from "@/lib/api";
 import { printHtmlAsPdf } from "@/lib/exportPdf";
 
 /**
- * 打印（或打印成 PDF）当前编辑器内容，所见即所得。
+ * 把编辑器当前渲染结果转成**自包含 HTML 片段**（图片/附件已内嵌 base64）。
  *
- * @param editor Tiptap 编辑器实例（来自 TiptapEditor 的 onEditorReady）
- * @param title  笔记标题，作为打印文档大标题 + 打印对话框默认文件名
+ * 打印、复制为 Word、导出 HTML / Word 四条路都走这里 —— 它们要的东西是同一个：
+ * 「屏幕上看到的样子，且脱离本应用也能正常显示」。
+ *
+ * 关键在于取的是**编辑器真实 DOM**而不是 markdown 源码：标题自动编号是
+ * ProseMirror 的 widget decoration，只活在 DOM 里、不写进 doc / .md —— 后端拿
+ * markdown 重渲染永远看不到它（用户反馈"导出 html、word 时无编号"就是这么来的）。
+ *
+ * @param editor     Tiptap 编辑器实例
+ * @param title      笔记标题；作为文档大标题插到最前
+ * @param titleClass 大标题的 class（打印要 kb-print-title 压掉顶部空白，其它场景不需要）
  */
-export async function printEditorContent(editor: Editor, title: string): Promise<void> {
-  // 1. 克隆真实渲染 DOM（.tiptap.ProseMirror 节点）
-  const sourceDom = editor.view.dom as HTMLElement;
-  const clone = sourceDom.cloneNode(true) as HTMLElement;
+export async function editorDomToSelfContainedHtml(
+  editor: Editor,
+  title: string,
+  titleClass = "",
+): Promise<string> {
+  // 1. 克隆真实渲染 DOM（.tiptap.ProseMirror 节点，含 callout / 分栏 / 编号 widget）
+  const clone = (editor.view.dom as HTMLElement).cloneNode(true) as HTMLElement;
 
-  // 2. 顶部插入标题（用 .tiptap h1 同款样式：作为 .tiptap 的首个子节点即可命中）
+  // 2. 顶部插入标题（作为 .tiptap 的首个子节点，命中 .tiptap h1 同款样式）
   const safeTitle = escapeHtml(title.trim() || "未命名");
-  clone.insertAdjacentHTML("afterbegin", `<h1 class="kb-print-title">${safeTitle}</h1>`);
+  const cls = titleClass ? ` class="${titleClass}"` : "";
+  clone.insertAdjacentHTML("afterbegin", `<h1${cls}>${safeTitle}</h1>`);
 
-  // 3. 剥掉编辑态专属、不参与排版的交互元素（CSS 兜底之外再做一层 DOM 清理）
+  // 3. 剥掉编辑态专属、不参与排版的交互元素
   stripEditingArtifacts(clone);
 
-  // 4. 图片固化为 base64。编辑器实时 DOM 的 <img src> 已被替换成**可显示 URL**：
-  //    普通图 http://asset.localhost/…、加密图 blob:…。这些只在主文档上下文有效
-  //    （blob: 尤其跨不进 iframe），打印 iframe 要自包含，必须在主文档里 fetch 固化。
+  // 4. 图片固化为 base64。实时 DOM 的 <img src> 是 http://asset.localhost/… 或 blob:…，
+  //    只在主文档上下文有效（blob: 尤其跨不进 iframe），必须在主文档里 fetch 固化。
   await inlineImages(clone);
 
-  // 5. 包到 .editor-content-area 链下，命中应用里 `.editor-content-area .tiptap …` 的样式
+  // 5. 包到 .editor-content-area 链下，命中 `.editor-content-area .tiptap …` 的样式
   const wrapped =
     `<div class="editor-content-area">` +
     `<div class="tiptap-wrapper">` +
     `<div class="tiptap-content">${clone.outerHTML}</div>` +
     `</div></div>`;
 
-  // 6. Rust 兜底：内嵌任何残留的 kb-asset:// 本地资源（如附件 <a href> —— DOM 里不会被
-  //    前面的 img 固化覆盖到）。图片已是 data: URL，Rust 的 inline_images 会自动跳过不重复。
-  let body = wrapped;
+  // 6. Rust 兜底：内嵌残留的 kb-asset:// 本地资源（如附件 <a href> —— 上一步的 img
+  //    固化覆盖不到）。图片已是 data: URL，Rust 的 inline_images 会自动跳过不重复。
   try {
-    body = await exportApi.inlineNoteHtmlAssets(wrapped);
+    return await exportApi.inlineNoteHtmlAssets(wrapped);
   } catch {
-    /* ignore：内嵌失败不阻断打印 */
+    // 内嵌失败不阻断：残留本地资源在外部可能裂图，但结构/文字正常
+    return wrapped;
   }
+}
 
-  // 7. 收集应用 CSS + 打印覆盖样式，拼成完整文档
+/**
+ * 打印（或打印成 PDF）当前编辑器内容，所见即所得。
+ *
+ * @param editor Tiptap 编辑器实例（来自 TiptapEditor 的 onEditorReady）
+ * @param title  笔记标题，作为打印文档大标题 + 打印对话框默认文件名
+ */
+export async function printEditorContent(editor: Editor, title: string): Promise<void> {
+  // kb-print-title 让顶部标题不留多余空白
+  const body = await editorDomToSelfContainedHtml(editor, title, "kb-print-title");
+
+  // 收集应用 CSS + 打印覆盖样式，拼成完整文档
   const appCss = collectDocumentCss();
-  const html = buildPrintDocument(safeTitle, appCss, body);
+  const html = buildPrintDocument(escapeHtml(title.trim() || "未命名"), appCss, body);
 
   await printHtmlAsPdf(html, title.trim() || "未命名");
 }
@@ -86,21 +108,7 @@ export async function copyEditorContentForWord(
   editor: Editor,
   title: string,
 ): Promise<void> {
-  const clone = (editor.view.dom as HTMLElement).cloneNode(true) as HTMLElement;
-  const safeTitle = escapeHtml(title.trim() || "未命名");
-  clone.insertAdjacentHTML("afterbegin", `<h1>${safeTitle}</h1>`);
-  stripEditingArtifacts(clone);
-  await inlineImages(clone);
-
-  let html =
-    `<div class="editor-content-area"><div class="tiptap-wrapper">` +
-    `<div class="tiptap-content">${clone.outerHTML}</div></div></div>`;
-  try {
-    // Rust 兜底内嵌残留 kb-asset:// 本地资源（图片已是 data: URL，会被自动跳过）
-    html = await exportApi.inlineNoteHtmlAssets(html);
-  } catch {
-    /* 内嵌失败不阻断：残留本地图片在外部可能裂图，但结构/文字正常 */
-  }
+  const html = await editorDomToSelfContainedHtml(editor, title);
 
   // text/plain 用单换行分隔块，避免 Word 把 Markdown 的 \n\n 当成空段落
   const plain = editor.getText({ blockSeparator: "\n" });

@@ -68,6 +68,9 @@ pub fn export_single_note_to_word(
     state: tauri::State<'_, AppState>,
     id: i64,
     target_path: String,
+    // 前端编辑器实时 DOM（已内嵌资源）。给了就用它，能带上只活在渲染层的
+    // 标题自动编号；不给则退回 markdown 重渲（批量导出等场景）。
+    body_html: Option<String>,
 ) -> Result<WordExportResult, String> {
     let note = state
         .db
@@ -83,6 +86,7 @@ pub fn export_single_note_to_word(
         &note.content,
         &target,
         &assets_root,
+        body_html.as_deref(),
     )
     .map_err(|e| e.to_string())
 }
@@ -93,6 +97,8 @@ pub fn export_single_note_to_html(
     state: tauri::State<'_, AppState>,
     id: i64,
     target_path: String,
+    // 同 export_single_note_to_word：前端 DOM 优先，缺省退回 markdown 重渲
+    body_html: Option<String>,
 ) -> Result<HtmlExportResult, String> {
     let note = state
         .db
@@ -103,12 +109,20 @@ pub fn export_single_note_to_html(
     let assets_root = state.data_dir.clone();
     let target = PathBuf::from(&target_path);
 
-    services::export_html::HtmlExportService::export_single(
-        &note.title,
-        &note.content,
-        &target,
-        &assets_root,
-    )
+    match body_html.as_deref() {
+        Some(body) => services::export_html::HtmlExportService::export_single_from_html(
+            &note.title,
+            body,
+            &target,
+            &assets_root,
+        ),
+        None => services::export_html::HtmlExportService::export_single(
+            &note.title,
+            &note.content,
+            &target,
+            &assets_root,
+        ),
+    }
     .map_err(|e| e.to_string())
 }
 
