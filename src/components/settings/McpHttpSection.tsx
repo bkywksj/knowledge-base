@@ -222,6 +222,57 @@ export function McpHttpSection() {
             </Button>
           </div>
 
+          {/* 一键把「端点 + Token + 请求头」整份给出去。
+              用户反馈：拿浏览器插件连过来一律 HTTP 401 —— 端点和 Token 虽然各自
+              能复制，但要用户自己意识到"还得配一个 Authorization 头"。这里直接
+              产出可粘贴的配置，少一步猜。 */}
+          {status?.running && (
+            <div className="flex items-center gap-2 py-1 flex-wrap">
+              <span
+                className="text-xs shrink-0"
+                style={{ color: "#8c8c8c", width: 64 }}
+              >
+                快速接入
+              </span>
+              <Button
+                size="small"
+                icon={<CopyOutlined />}
+                onClick={() => {
+                  const json = JSON.stringify(
+                    {
+                      url: status.endpoint,
+                      transport: "streamable-http",
+                      headers: { Authorization: `Bearer ${cfg.token}` },
+                    },
+                    null,
+                    2,
+                  );
+                  navigator.clipboard
+                    .writeText(json)
+                    .then(() => message.success("已复制连接配置（含 Token）"))
+                    .catch((err) => message.error(String(err)));
+                }}
+              >
+                复制连接配置 (JSON)
+              </Button>
+              <Button
+                size="small"
+                icon={<CopyOutlined />}
+                onClick={() => {
+                  navigator.clipboard
+                    .writeText(`Authorization: Bearer ${cfg.token}`)
+                    .then(() => message.success("已复制请求头"))
+                    .catch((err) => message.error(String(err)));
+                }}
+              >
+                复制请求头
+              </Button>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                本服务是 MCP 协议，接不了思源 API / Obsidian Local REST 那类接口
+              </Text>
+            </div>
+          )}
+
           <div className="flex items-center justify-between py-1">
             <div>
               <div style={{ fontSize: 13 }}>允许写入</div>

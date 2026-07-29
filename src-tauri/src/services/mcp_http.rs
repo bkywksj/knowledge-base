@@ -28,9 +28,9 @@ use std::sync::Arc;
 
 use axum::{
     extract::Request,
-    http::{header, StatusCode},
+    http::{header, HeaderValue, StatusCode},
     middleware::{self, Next},
-    response::Response,
+    response::{IntoResponse, Response},
     Router,
 };
 use rmcp::transport::streamable_http_server::{
@@ -108,19 +108,60 @@ async fn auth_middleware(
     axum::extract::State(expected): axum::extract::State<Arc<String>>,
     req: Request,
     next: Next,
-) -> Result<Response, StatusCode> {
-    let provided = req
+) -> Response {
+    let raw = req
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
         .unwrap_or("");
+    let provided = raw.strip_prefix("Bearer ").unwrap_or("");
 
     if !constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
-        log::warn!("[mcp-http] 鉴权失败：token 不匹配或缺失");
-        return Err(StatusCode::UNAUTHORIZED);
+        // 区分"没带"和"带错了"：两者的处置完全不同（去复制 token vs 换一个 token），
+        // 但客户端只看得到状态码，所以必须写进响应体。
+        let reason = if raw.is_empty() {
+            "missing_token"
+        } else if provided.is_empty() {
+            "malformed_header"
+        } else {
+            "invalid_token"
+        };
+        log::warn!("[mcp-http] 鉴权失败（{reason}）");
+        return unauthorized(reason);
     }
-    Ok(next.run(req).await)
+    next.run(req).await
+}
+
+/// 带人话说明的 401。
+///
+/// 用户反馈里两个浏览器插件都只显示一句 "MCP server returned HTTP 401."，
+/// 因为原来直接返回 `StatusCode::UNAUTHORIZED`（空响应体）——客户端拿不到任何
+/// 可操作信息，用户只能猜。现在把「哪里错了 + 去哪儿拿 token + 正确的头长什么样」
+/// 都写进 body，顺带按 RFC 6750 补 `WWW-Authenticate`，让规范些的客户端能自动提示。
+fn unauthorized(reason: &str) -> Response {
+    let hint = match reason {
+        "missing_token" => {
+            "请求缺少 Authorization 头。在知识库「设置 → MCP 服务器 → HTTP 服务」复制 Token，             在客户端加请求头：Authorization: Bearer <token>"
+        }
+        "malformed_header" => {
+            "Authorization 头格式不对，必须是 `Bearer <token>`（注意 Bearer 后有一个空格）"
+        }
+        _ => "Token 不匹配。请在知识库「设置 → MCP 服务器 → HTTP 服务」重新复制当前 Token",
+    };
+    // 手写 JSON：就三个固定字段，不值得为它引 serde_json 到这一层
+    let body = format!(
+        r#"{{"error":"{reason}","hint":"{hint}","protocol":"MCP Streamable HTTP（不是思源 API / Obsidian Local REST API，那些协议接不上）"}}"#
+    );
+    let mut resp = (StatusCode::UNAUTHORIZED, body).into_response();
+    resp.headers_mut().insert(
+        header::WWW_AUTHENTICATE,
+        HeaderValue::from_static(r#"Bearer realm="knowledge-base-mcp""#),
+    );
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json; charset=utf-8"),
+    );
+    resp
 }
 
 /// 常数时间字节比较（不短路），避免用响应时间侧信道猜 token
@@ -254,6 +295,40 @@ mod tests {
         assert!(!constant_time_eq(b"abc", b"ab"));
         assert!(!constant_time_eq(b"", b"x"));
         assert!(constant_time_eq(b"", b""));
+    }
+
+    /// 401 必须带可操作信息 —— 用户反馈里插件只显示一句 "HTTP 401."，
+    /// 拿不到"去哪儿复制 token"的线索。这条锁住三种失败原因各自的提示。
+    #[test]
+    fn unauthorized_response_carries_actionable_hint() {
+        use axum::body::to_bytes;
+
+        for (reason, expect_in_hint) in [
+            ("missing_token", "Authorization"),
+            ("malformed_header", "Bearer"),
+            ("invalid_token", "重新复制"),
+        ] {
+            let resp = unauthorized(reason);
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+            // RFC 6750：规范些的客户端会读它自动提示要 Bearer 凭据
+            assert!(
+                resp.headers().contains_key(header::WWW_AUTHENTICATE),
+                "{reason}: 应带 WWW-Authenticate"
+            );
+
+            let body = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(async { to_bytes(resp.into_body(), 64 * 1024).await.unwrap() });
+            let text = String::from_utf8(body.to_vec()).unwrap();
+            assert!(text.contains(reason), "{reason}: body 应写明 error 字段");
+            assert!(
+                text.contains(expect_in_hint),
+                "{reason}: hint 里应出现「{expect_in_hint}」，实际：{text}"
+            );
+            // 明确告诉用户这是 MCP 协议，避免再拿思源 API 那套来接
+            assert!(text.contains("MCP"), "{reason}: 应写明协议类型");
+        }
     }
 
     #[test]
