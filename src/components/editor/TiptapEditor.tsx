@@ -234,7 +234,11 @@ import {
 import { EditorToolbar } from "./EditorToolbar";
 import { TableBubbleMenu } from "./TableBubbleMenu";
 import { AiWriteMenu } from "./AiWriteMenu";
-import { WikiLinkDecoration } from "./WikiLinkDecoration";
+import {
+  WikiLinkDecoration,
+  type WikiLinkRange,
+} from "./WikiLinkDecoration";
+import { WikiLinkEditModal } from "./WikiLinkEditModal";
 import { WikiLinkSuggestion } from "./WikiLinkSuggestion";
 import { SlashCommand } from "./SlashCommand";
 import { useEditorContextMenu } from "./useEditorContextMenu";
@@ -2184,9 +2188,36 @@ export function TiptapEditor({
 
   const { token } = antdTheme.useToken();
 
+  // 右键双链 →「修改链接」：记住待改双链的范围，弹选择器换目标笔记
+  const [editingWikiLink, setEditingWikiLink] = useState<WikiLinkRange | null>(
+    null,
+  );
+
   // 编辑器节点右键菜单：图片/视频/附件/wiki 链接的自定义右键操作；
   // 普通文本继续走浏览器原生剪切/复制/粘贴菜单
-  const { ctx: nodeCtxMenu, menuItems: nodeMenuItems } = useEditorContextMenu(editor, noteId);
+  const { ctx: nodeCtxMenu, menuItems: nodeMenuItems } = useEditorContextMenu(
+    editor,
+    noteId,
+    setEditingWikiLink,
+  );
+
+  /**
+   * 用选中的新目标替换整段 `[[旧标题]]`。
+   *
+   * 一律写成带 ID 锚点的 `[[标题|123]]`：手敲形式没有锚点，目标笔记改名就断链；
+   * 这里既然已经拿到了 id，就顺手把链接升级成稳定形式。
+   */
+  function applyWikiLinkEdit(title: string, id: number) {
+    const range = editingWikiLink;
+    setEditingWikiLink(null);
+    if (!editor || !range) return;
+    editor
+      .chain()
+      .focus()
+      .insertContentAt({ from: range.from, to: range.to }, `[[${title}|${id}]]`)
+      .run();
+    message.success(`已改为链接到「${title}」`);
+  }
 
   // ─── 查找替换浮条状态（Ctrl+F / Ctrl+H 触发） ───
   const [searchOpen, setSearchOpen] = useState(false);
@@ -2376,6 +2407,14 @@ export function TiptapEditor({
         y={nodeCtxMenu.state.y}
         items={nodeMenuItems}
         onClose={nodeCtxMenu.close}
+      />
+
+      {/* 右键双链 →「修改链接」的目标选择器 */}
+      <WikiLinkEditModal
+        open={!!editingWikiLink}
+        currentTitle={editingWikiLink?.title ?? ""}
+        onSubmit={applyWikiLinkEdit}
+        onCancel={() => setEditingWikiLink(null)}
       />
     </div>
   );

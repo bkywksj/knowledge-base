@@ -13,10 +13,15 @@ import {
   Layers,
   Maximize2,
   Minimize2,
+  PenLine,
 } from "lucide-react";
 import { revealItemInDir, openPath } from "@tauri-apps/plugin-opener";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useFeatureEnabled } from "@/hooks/useFeatureEnabled";
+import {
+  findWikiLinkAtPos,
+  type WikiLinkRange,
+} from "./WikiLinkDecoration";
 import { systemApi, linkApi, imageApi, cardApi } from "@/lib/api";
 import { parseKbAsset } from "@/lib/assetUrl";
 import {
@@ -41,7 +46,9 @@ import {
  */
 
 type EditorMenuPayload =
-  | { kind: "wiki"; title: string; el: HTMLElement }
+  // pos：右键落点对应的文档位置。「修改链接」要靠它反查整段 `[[...]]` 的范围再替换；
+  // posAtCoords 偶尔解析不出位置（点在边缘），此时为 null，菜单里就不显示该项。
+  | { kind: "wiki"; title: string; el: HTMLElement; pos: number | null }
   | { kind: "image"; src: string; el: HTMLElement }
   | { kind: "video"; src: string; el: HTMLElement }
   | { kind: "file"; href: string; el: HTMLElement }
@@ -118,6 +125,8 @@ async function resolveAbsolute(urlOrSrc: string): Promise<string | null> {
 export function useEditorContextMenu(
   editor: Editor | null,
   noteId?: number | null,
+  /** 右键双链 →「修改链接」：把待改双链的范围交给调用方弹选择器 */
+  onEditWikiLink?: (range: WikiLinkRange) => void,
 ) {
   const ctx = useContextMenu<EditorMenuPayload>();
   const navigate = useNavigate();
@@ -214,9 +223,13 @@ export function useEditorContextMenu(
         const title = wikiEl.getAttribute("data-wiki-link") ?? "";
         if (title) {
           e.preventDefault();
+          const at = editor.view.posAtCoords({
+            left: e.clientX,
+            top: e.clientY,
+          });
           ctx.open(
             { clientX: e.clientX, clientY: e.clientY },
-            { kind: "wiki", title, el: wikiEl },
+            { kind: "wiki", title, el: wikiEl, pos: at?.pos ?? null },
           );
           return;
         }
@@ -434,6 +447,24 @@ export function useEditorContextMenu(
             } catch (err) {
               message.error(`跳转失败：${err}`);
             }
+          },
+        },
+        {
+          // 想把这条双链改指到别的笔记时，不用手工逐字改 `[[旧标题]]`
+          key: "edit-link",
+          label: "修改链接",
+          icon: <PenLine size={13} />,
+          // posAtCoords 没解析出位置就没法定位要替换的范围，此时隐藏该项
+          disabled: p.pos == null || !editor || !onEditWikiLink,
+          onClick: () => {
+            ctx.close();
+            if (p.pos == null || !editor || !onEditWikiLink) return;
+            const range = findWikiLinkAtPos(editor.state.doc, p.pos);
+            if (!range) {
+              message.warning("没能定位到这条双链，请重试");
+              return;
+            }
+            onEditWikiLink(range);
           },
         },
         {
