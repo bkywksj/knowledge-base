@@ -18,6 +18,8 @@ import { TableHeader } from "@tiptap/extension-table-header";
 import { Fragment, type Node as PMNode } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
 import { getHTMLFromFragment, mergeAttributes } from "@tiptap/core";
+import type { JSONContent } from "@tiptap/core";
+import { isWindowsPathText } from "@/lib/windowsPath";
 import { TextAlign } from "@tiptap/extension-text-align";
 import { Color } from "@tiptap/extension-color";
 import Superscript from "@tiptap/extension-superscript";
@@ -1849,6 +1851,26 @@ export function TiptapEditor({
             content: "已识别为代码并粘贴为代码块（Ctrl+Z 撤销）",
             duration: 2,
           });
+          return true;
+        }
+
+        // 场景 G：Windows 本地/UNC 路径 → 字面插入，绕开 Markdown 解析。
+        // 不这么做的话 `transformPastedText` 会把路径当 Markdown 解析，`\` + ASCII 标点
+        // 被当转义序列吃掉（`D:\111\.vscode` → `D:\111.vscode`），详见 isWindowsPathText。
+        // 上面场景 F 的代码块兜底救不了它：looksLikeCode 对单行文本直接判否，多行路径
+        // 列表也既无缩进也无代码 token，同样判否。
+        if (!html.trim() && isWindowsPathText(plainText)) {
+          // 多行路径列表用 hardBreak 分行，与编辑器 breaks:true 下其它多行粘贴表现一致
+          const lines = plainText
+            .replace(/\r\n?/g, "\n")
+            .replace(/\s+$/, "")
+            .split("\n");
+          const content: JSONContent[] = [];
+          lines.forEach((line, i) => {
+            if (i > 0) content.push({ type: "hardBreak" });
+            if (line.length > 0) content.push({ type: "text", text: line });
+          });
+          editor.chain().focus().insertContent(content).run();
           return true;
         }
 
