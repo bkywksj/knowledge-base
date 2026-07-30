@@ -22,7 +22,7 @@ import {
   ListTree,
 } from "lucide-react";
 import { CloseCircleFilled } from "@ant-design/icons";
-import { configApi, dailyApi, noteApi, templateApi } from "@/lib/api";
+import { configApi, dailyApi, linkApi, noteApi, templateApi } from "@/lib/api";
 import { todayYmd } from "@/lib/utils";
 import { MicButton } from "@/components/MicButton";
 import { TiptapEditor } from "@/components/editor";
@@ -284,6 +284,48 @@ function DesktopDailyPage() {
     navigate(`/daily?date=${d}`);
   }
 
+  /**
+   * 日记正文里点击 wiki 双链 → 跳到目标笔记。
+   *
+   * 之前这里没给 TiptapEditor 传 onWikiLinkClick，扩展拿到的回调是 undefined：
+   * handleClick 认出双链、preventDefault 吞掉事件后什么都不做 —— 日记里的双链
+   * 点上去连光标都不动，看起来就是「双链点击完全没反应」。
+   *
+   * 与笔记编辑器口径保持一致：ID 锚点优先 → 规范化精确匹配 → 模糊取最相近；
+   * 跳走之前先 flush 未保存内容，避免日记草稿丢失。重名消歧的 Modal 是笔记页
+   * 特有的交互，日记这边不引入，直接取最近更新的一条。
+   */
+  async function handleWikiLinkClick(wikiTitle: string, wikiId?: number) {
+    try {
+      if (wikiId != null && Number.isFinite(wikiId)) {
+        const target = await noteApi.get(wikiId).catch(() => null);
+        if (target) {
+          await autoSave.flush();
+          navigate(`/notes/${target.id}`);
+          return;
+        }
+        // ID 指向已删除笔记 → 退回按标题找
+      }
+      // 走 title_normalized 精确匹配（不过滤隐藏笔记）
+      const exactId = await linkApi.findIdByTitle(wikiTitle);
+      if (exactId != null) {
+        await autoSave.flush();
+        navigate(`/notes/${exactId}`);
+        return;
+      }
+      const results = await linkApi.searchTargets(wikiTitle, 20);
+      if (results.length > 0) {
+        await autoSave.flush();
+        navigate(`/notes/${results[0].id}`);
+        message.info(`未找到同名笔记，跳转到相近的「${results[0].title}」`);
+        return;
+      }
+      message.warning(`未找到笔记「${wikiTitle}」`);
+    } catch (e) {
+      message.error(`跳转失败: ${e}`);
+    }
+  }
+
   function renderStatus() {
     switch (autoSave.status) {
       case "saving":
@@ -539,6 +581,7 @@ function DesktopDailyPage() {
                     message.error(`打开 AI 失败：${e}`);
                   }
                 }}
+                onWikiLinkClick={handleWikiLinkClick}
                 onEditorReady={setEditorInstance}
               />
             </>

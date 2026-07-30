@@ -1611,6 +1611,21 @@ function DesktopNoteEditorPage() {
         return;
       }
 
+      // searchTargets 给不出精确匹配时，再按「规范化精确匹配」兜底一次。
+      // 必要性：searchTargets 是 LIKE 模糊 + LIMIT 20 + `is_hidden = 0`，于是
+      //   ① 指向隐藏笔记的 [[...]] 永远查不到 —— database/links.rs 的注释本就声明
+      //      「用户已经写好的 [[隐藏笔记]] 跳转仍可用（走 find_note_id_by_title_loose）」，
+      //      但这条路径一直没人调用，隐藏笔记的双链点了毫无反应；
+      //   ② 标题只差首尾空格 / 大小写时，上面的 `r.title === wikiTitle` 也匹配不上；
+      //   ③ 标题是常见词时，目标可能被挤出 LIKE 的前 20 条。
+      // find_note_id_by_title_loose 走 title_normalized，且只排除已删除笔记。
+      const looseId = await linkApi.findIdByTitle(wikiTitle);
+      if (looseId != null) {
+        await ensureSavedBeforeNavigate();
+        navigate(`/notes/${looseId}`);
+        return;
+      }
+
       // 无精确匹配但有模糊匹配：跳转相近的第一条
       if (results.length > 0) {
         await ensureSavedBeforeNavigate();
