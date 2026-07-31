@@ -3176,7 +3176,7 @@ dependencies = [
 
 [[package]]
 name = "knowledge_base"
-version = "1.31.1"
+version = "1.32.0"
 dependencies = [
  "aes-gcm",
  "argon2",
