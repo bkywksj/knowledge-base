@@ -635,6 +635,41 @@ export const sourceWritebackApi = {
     invoke<void>("clear_source_md_link", { noteId }),
 };
 
+/** 导出时写进 HTML 模板的字体（完整 CSS font-family 值，含 fallback 链） */
+export interface ExportFonts {
+  /** 正文字体；省略 = 用后端模板自带的通用中文链 */
+  body?: string;
+  /** 标题字体；省略 = 跟随正文 */
+  heading?: string;
+}
+
+/**
+ * 「当前导出字体」提供者。
+ *
+ * 由 store 在模块初始化时注册（`setExportFontsProvider`），导出 API 调用时现取。
+ * 之所以用注册回调而不是直接 `import { useAppStore } from "@/store"`：store 已经
+ * import 了本模块，反过来再 import 就成了循环依赖 —— 打包器虽然多半能绕过去，
+ * 但 store 顶层有 subscribe 副作用，初始化顺序一旦被打乱很难查。
+ *
+ * 好处是 7 个导出调用点一处都不用改，将来新增导出入口也自动跟随用户字体。
+ */
+let exportFontsProvider: (() => ExportFonts | undefined) | null = null;
+
+export function setExportFontsProvider(fn: () => ExportFonts | undefined): void {
+  exportFontsProvider = fn;
+}
+
+function currentExportFonts(): ExportFonts | undefined {
+  try {
+    const fonts = exportFontsProvider?.();
+    // 两个字段都空就别传了，让后端走默认模板
+    if (!fonts || (!fonts.body && !fonts.heading)) return undefined;
+    return fonts;
+  } catch {
+    return undefined; // 取字体失败不该拖垮导出
+  }
+}
+
 /** 导出 API */
 export const exportApi = {
   /** 批量导出笔记。`outputDir` 是用户选择的父目录，
@@ -652,14 +687,25 @@ export const exportApi = {
    *  传了就用它，导出物才会带上**标题自动编号** —— 编号是 ProseMirror widget
    *  decoration，不写进 doc / .md，后端拿 markdown 重渲永远看不到。省略则退回旧管线。 */
   exportSingleToWord: (id: number, targetPath: string, bodyHtml?: string) =>
-    invoke<WordExportResult>("export_single_note_to_word", { id, targetPath, bodyHtml }),
+    invoke<WordExportResult>("export_single_note_to_word", {
+      id,
+      targetPath,
+      bodyHtml,
+      // 字体只在「系统转换器」路径生效；无转换器时后端回退原生 docx，仍是 Word 默认样式
+      fonts: currentExportFonts(),
+    }),
   /** T-020 导出单条笔记为 HTML（单文件，图片内嵌 base64）。`bodyHtml` 同上 */
   exportSingleToHtml: (id: number, targetPath: string, bodyHtml?: string) =>
-    invoke<HtmlExportResult>("export_single_note_to_html", { id, targetPath, bodyHtml }),
+    invoke<HtmlExportResult>("export_single_note_to_html", {
+      id,
+      targetPath,
+      bodyHtml,
+      fonts: currentExportFonts(),
+    }),
   /** R-005 渲染笔记为 HTML 字符串（不写文件），供前端 iframe 打印为 PDF。
    *  返回的 HTML 与 exportSingleToHtml 同构：图片已 inline 为 base64，自包含。 */
   renderHtmlForPdf: (id: number) =>
-    invoke<string>("render_note_html_for_pdf", { id }),
+    invoke<string>("render_note_html_for_pdf", { id, fonts: currentExportFonts() }),
   /** R-005b 「所见即所得」打印：把编辑器**实时 DOM** 序列化出的 HTML 里的本地图片/附件
    *  inline 成 base64。与 renderHtmlForPdf 不同——不经 markdown 重渲、不套模板，只内嵌
    *  传入 HTML 的本地资源，保证打印 iframe 自包含、所见即所得。返回内嵌后的 HTML 片段。 */

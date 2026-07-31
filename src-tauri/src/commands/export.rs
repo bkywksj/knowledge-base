@@ -5,7 +5,7 @@ use tauri::AppHandle;
 
 use crate::models::{ExportResult, SingleExportResult};
 use crate::services;
-use crate::services::export_html::HtmlExportResult;
+use crate::services::export_html::{ExportFonts, HtmlExportResult};
 // Word 导出仅桌面端（docx_rs 移动端编译失败）
 #[cfg(desktop)]
 use crate::services::export_word::WordExportResult;
@@ -71,6 +71,8 @@ pub fn export_single_note_to_word(
     // 前端编辑器实时 DOM（已内嵌资源）。给了就用它，能带上只活在渲染层的
     // 标题自动编号；不给则退回 markdown 重渲（批量导出等场景）。
     body_html: Option<String>,
+    // 用户设置里的正文 / 标题字体；只在转换器路径生效（见 service 注释）
+    fonts: Option<ExportFonts>,
 ) -> Result<WordExportResult, String> {
     let note = state
         .db
@@ -87,6 +89,7 @@ pub fn export_single_note_to_word(
         &target,
         &assets_root,
         body_html.as_deref(),
+        fonts.as_ref(),
     )
     .map_err(|e| e.to_string())
 }
@@ -99,6 +102,8 @@ pub fn export_single_note_to_html(
     target_path: String,
     // 同 export_single_note_to_word：前端 DOM 优先，缺省退回 markdown 重渲
     body_html: Option<String>,
+    // 用户设置里的正文 / 标题字体；缺省则用模板自带的通用中文字体链
+    fonts: Option<ExportFonts>,
 ) -> Result<HtmlExportResult, String> {
     let note = state
         .db
@@ -115,12 +120,14 @@ pub fn export_single_note_to_html(
             body,
             &target,
             &assets_root,
+            fonts.as_ref(),
         ),
         None => services::export_html::HtmlExportService::export_single(
             &note.title,
             &note.content,
             &target,
             &assets_root,
+            fonts.as_ref(),
         ),
     }
     .map_err(|e| e.to_string())
@@ -158,6 +165,8 @@ pub fn export_png_to_file(target_path: String, base64_data: String) -> Result<()
 pub fn render_note_html_for_pdf(
     state: tauri::State<'_, AppState>,
     id: i64,
+    // 用户设置里的正文 / 标题字体；缺省则用模板自带的通用中文字体链
+    fonts: Option<ExportFonts>,
 ) -> Result<String, String> {
     let note = state
         .db
@@ -172,6 +181,7 @@ pub fn render_note_html_for_pdf(
             &note.title,
             &note.content,
             &assets_root,
+            fonts.as_ref(),
         )
         .map_err(|e| e.to_string())?;
 

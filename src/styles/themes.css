@@ -178,9 +178,13 @@
   border-color: var(--kb-primary) !important;
 }
 
-/* 衬线标题 */
-[data-theme="light-warm"] h1,
-[data-theme="light-warm"] h2,
+/* 衬线标题 —— 只作用于「应用界面」的 h1/h2（页面标题、统计卡片数字等）。
+   `:not(.tiptap *)` 把笔记正文里的标题排除在外：那里的字体归用户的
+   「正文字体 / 标题字体」偏好管，主题不该越权（此前带 !important 的写法会让
+   用户在设置里选的标题字体在暖色主题下完全失效，且 H1/H2 变宋体、H3+ 仍是黑体，
+   同一篇笔记里字体割裂）。 */
+[data-theme="light-warm"] h1:not(.tiptap *),
+[data-theme="light-warm"] h2:not(.tiptap *),
 [data-theme="light-warm"] .ant-statistic-content-value {
   font-family: "Georgia", "Noto Serif SC", "Source Han Serif SC", "PingFang SC", serif !important;
 }

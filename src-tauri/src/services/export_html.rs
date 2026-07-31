@@ -23,6 +23,42 @@ pub struct HtmlExportResult {
     pub attachments_missing: usize,
 }
 
+/// 导出时使用的字体（跟随用户在设置里选的「正文字体 / 标题字体」）。
+///
+/// 值是**完整的 CSS font-family 串**（含 fallback 链），由前端 `resolveEditorFontStack`
+/// 生成后传下来 —— Rust 侧不认识字体预设 ID，也不该重复一份映射表。
+/// 两个字段都可空：空 = 用模板自带的通用中文字体链（老行为）。
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportFonts {
+    /// 正文字体
+    pub body: Option<String>,
+    /// 标题字体（H1–H6）；空 = 跟随正文
+    pub heading: Option<String>,
+}
+
+/// 模板自带的正文字体链（用户没设字体时的老行为，原样保留）
+const DEFAULT_BODY_FONT: &str = r#"-apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+      "PingFang SC", "Source Han Sans SC", "Noto Sans SC", "Helvetica Neue", Arial, sans-serif"#;
+
+/// 过滤字体串里会破坏 CSS / HTML 结构的字符。
+///
+/// 字体名在设置页是**可手输**的，而导出的 HTML 常常要发给别人 —— `</style><script>`
+/// 这类越界注入必须在写进模板前掐掉。顺带剔除 CSS 语法字符（`{}` `;` `@`），
+/// 防止一条声明被撑成多条规则。合法字体名（含中文、空格、引号、逗号、连字符）不受影响。
+fn sanitize_font_family(v: &str) -> Option<String> {
+    let cleaned: String = v
+        .chars()
+        .filter(|c| !matches!(c, '<' | '>' | '{' | '}' | ';' | '@' | '\\'))
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 pub struct HtmlExportService;
 
 impl HtmlExportService {
@@ -36,6 +72,7 @@ impl HtmlExportService {
         title: &str,
         markdown: &str,
         assets_root: &Path,
+        fonts: Option<&ExportFonts>,
     ) -> Result<(String, usize, usize), AppError> {
         let mut options = Options::empty();
         options.insert(Options::ENABLE_TABLES);
@@ -50,7 +87,7 @@ impl HtmlExportService {
         // 把 <img src="..."> 中的本地路径 inline 成 base64
         let (body, inlined, missing) = inline_images(&body, assets_root);
 
-        let html = wrap_template(title, &body);
+        let html = wrap_template(title, &body, fonts);
         Ok((html, inlined, missing))
     }
 
@@ -60,8 +97,9 @@ impl HtmlExportService {
         markdown: &str,
         target_path: &Path,
         assets_root: &Path,
+        fonts: Option<&ExportFonts>,
     ) -> Result<HtmlExportResult, AppError> {
-        let (html, inlined, missing) = Self::render_html(title, markdown, assets_root)?;
+        let (html, inlined, missing) = Self::render_html(title, markdown, assets_root, fonts)?;
         // 把正文里指向本地文件的 <a href="..."> 附件链接换成 data: URL（带 download 属性），
         // 这样导出的单个 .html 仍是 self-contained 的：换台机器/发给别人也能点开下载附件。
         // CSS 模板里只有 `a {}` 选择器、没有真实 <a> 元素，所以直接在整段 HTML 上跑也安全。
@@ -85,9 +123,10 @@ impl HtmlExportService {
         title: &str,
         body_html: &str,
         assets_root: &Path,
+        fonts: Option<&ExportFonts>,
     ) -> (String, usize, usize) {
         let (body, inlined, missing) = inline_images(body_html, assets_root);
-        (wrap_template(title, &body), inlined, missing)
+        (wrap_template(title, &body, fonts), inlined, missing)
     }
 
     /// 把**前端已渲染好的 HTML 片段**套上 CSS 模板写成单文件 .html。
@@ -105,9 +144,10 @@ impl HtmlExportService {
         body_html: &str,
         target_path: &Path,
         assets_root: &Path,
+        fonts: Option<&ExportFonts>,
     ) -> Result<HtmlExportResult, AppError> {
         let (html, img_inlined, img_missing) =
-            Self::render_html_from_body(title, body_html, assets_root);
+            Self::render_html_from_body(title, body_html, assets_root, fonts);
         let (html, att_inlined, att_missing) = inline_attachments(&html, assets_root);
         std::fs::write(target_path, html)?;
 
@@ -141,8 +181,19 @@ impl HtmlExportService {
 /// - 中文字体 fallback 链
 /// - 代码块 / 表格 / 引用基础样式
 /// - 适合阅读的最大宽度 + 行距
-fn wrap_template(title: &str, body: &str) -> String {
+fn wrap_template(title: &str, body: &str, fonts: Option<&ExportFonts>) -> String {
     let safe_title = html_escape(title);
+    // 用户设了字体就用用户的，否则保持模板自带的通用中文链（老行为）
+    let body_font = fonts
+        .and_then(|f| f.body.as_deref())
+        .and_then(sanitize_font_family)
+        .unwrap_or_else(|| DEFAULT_BODY_FONT.to_string());
+    // 标题字体是可选的一条额外声明：不设就整条不写，h1~h6 自然继承 body
+    let heading_font_css = fonts
+        .and_then(|f| f.heading.as_deref())
+        .and_then(sanitize_font_family)
+        .map(|f| format!("\n    font-family: {};", f))
+        .unwrap_or_default();
     format!(
         r##"<!DOCTYPE html>
 <html lang="zh-CN">
@@ -160,8 +211,7 @@ fn wrap_template(title: &str, body: &str) -> String {
   }}
   * {{ box-sizing: border-box; }}
   body {{
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
-      "PingFang SC", "Source Han Sans SC", "Noto Sans SC", "Helvetica Neue", Arial, sans-serif;
+    font-family: {body_font};
     color: var(--fg);
     line-height: 1.7;
     max-width: 820px;
@@ -172,7 +222,7 @@ fn wrap_template(title: &str, body: &str) -> String {
   h1, h2, h3, h4, h5, h6 {{
     margin: 1.6em 0 0.6em;
     font-weight: 600;
-    line-height: 1.3;
+    line-height: 1.3;{heading_font_css}
   }}
   h1 {{ font-size: 2em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); }}
   h2 {{ font-size: 1.5em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); }}
@@ -410,7 +460,7 @@ mod tests {
     fn render_html_from_body_preserves_rendered_dom() {
         let body = r#"<div class="tiptap"><h1><span class="kb-hnum">1</span>研发与制造脱节</h1><div class="kb-callout">提示</div></div>"#;
         let (html, _inlined, _missing) =
-            HtmlExportService::render_html_from_body("标题", body, Path::new("/nonexistent"));
+            HtmlExportService::render_html_from_body("标题", body, Path::new("/nonexistent"), None);
 
         // 编号 widget 必须原样保留（用户反馈的核心诉求）
         assert!(
@@ -429,12 +479,118 @@ mod tests {
     #[test]
     fn markdown_path_cannot_see_heading_numbers() {
         // markdown 源码里根本没有编号 —— 编号只存在于编辑器 DOM
-        let (html, _i, _m) =
-            HtmlExportService::render_html("标题", "# 研发与制造脱节", Path::new("/nonexistent"))
-                .unwrap();
+        let (html, _i, _m) = HtmlExportService::render_html(
+            "标题",
+            "# 研发与制造脱节",
+            Path::new("/nonexistent"),
+            None,
+        )
+        .unwrap();
         assert!(
             !html.contains("kb-hnum"),
             "markdown 路径不可能产出编号，这正是需要前端 DOM 路径的原因"
         );
+    }
+
+    /// 不传字体 = 老行为：模板自带的通用中文链，且不给标题额外加 font-family
+    #[test]
+    fn template_without_fonts_keeps_default() {
+        let (html, _i, _m) =
+            HtmlExportService::render_html("标题", "# 一级标题", Path::new("/nonexistent"), None)
+                .unwrap();
+        assert!(
+            html.contains("Microsoft YaHei"),
+            "未指定字体时应保留模板自带的中文 fallback 链"
+        );
+        // h1~h6 块里不该出现 font-family（标题继承 body）
+        let heading_block = html
+            .split("h1, h2, h3, h4, h5, h6 {")
+            .nth(1)
+            .and_then(|s| s.split('}').next())
+            .unwrap_or_default();
+        assert!(
+            !heading_block.contains("font-family"),
+            "未指定标题字体时不该写 font-family，实际：{heading_block}"
+        );
+    }
+
+    /// 传了字体 → 正文与标题各自写进模板 CSS
+    #[test]
+    fn template_applies_user_fonts() {
+        let fonts = ExportFonts {
+            body: Some(r#""霞鹜文楷", serif"#.into()),
+            heading: Some(r#""方正小标宋", serif"#.into()),
+        };
+        let (html, _i, _m) = HtmlExportService::render_html(
+            "标题",
+            "# 一级标题",
+            Path::new("/nonexistent"),
+            Some(&fonts),
+        )
+        .unwrap();
+        assert!(html.contains(r#"font-family: "霞鹜文楷", serif;"#), "正文字体应写入 body");
+        assert!(html.contains(r#"font-family: "方正小标宋", serif;"#), "标题字体应写入 h1~h6");
+        assert!(
+            !html.contains("Microsoft YaHei"),
+            "指定了正文字体就不该再留默认链"
+        );
+    }
+
+    /// 字体串是用户可手输的，导出物又常发给别人 —— 必须掐掉能越出 CSS 的字符
+    #[test]
+    fn sanitize_strips_css_and_html_breakouts() {
+        let fonts = ExportFonts {
+            body: Some(r#"宋体</style><script>alert(1)</script>"#.into()),
+            heading: Some("A; } body { display: none } @import url(evil)".into()),
+        };
+        let (html, _i, _m) = HtmlExportService::render_html(
+            "标题",
+            "正文",
+            Path::new("/nonexistent"),
+            Some(&fonts),
+        )
+        .unwrap();
+        assert!(!html.contains("<script"), "不得注入 script 标签：{html}");
+        // 模板自己有且只有一个 </style>，注入不该再撑出第二个
+        assert_eq!(
+            html.matches("</style>").count(),
+            1,
+            "style 块不得被提前闭合"
+        );
+        assert!(!html.contains("@import"), "不得注入 @import");
+        // 关键是**结构字符**被剔除：花括号 / 分号 / @ 一旦漏进去，一条声明就能撑成多条规则。
+        // 残留的 "display: none" 文本无所谓——它只是 font-family 值里一个非法字体名，浏览器直接忽略。
+        let heading_block = html
+            .split("h1, h2, h3, h4, h5, h6 {")
+            .nth(1)
+            .and_then(|s| s.split('}').next())
+            .unwrap_or_default();
+        assert!(
+            heading_block.contains("font-family"),
+            "标题字体声明应当写进去了：{heading_block}"
+        );
+        assert!(
+            !heading_block.contains('{') && !heading_block.contains('@'),
+            "注入的花括号 / @ 必须被剔除：{heading_block}"
+        );
+        // 合法部分仍然保留，不是整条丢弃
+        assert!(html.contains("宋体"), "无害的字体名应保留");
+    }
+
+    /// 空串 / 只有空白的字体值等同于没传，回退默认模板
+    #[test]
+    fn blank_fonts_fall_back_to_default() {
+        let fonts = ExportFonts {
+            body: Some("   ".into()),
+            heading: Some(String::new()),
+        };
+        let (html, _i, _m) = HtmlExportService::render_html(
+            "标题",
+            "正文",
+            Path::new("/nonexistent"),
+            Some(&fonts),
+        )
+        .unwrap();
+        assert!(html.contains("Microsoft YaHei"), "空字体值应回退默认链");
     }
 }

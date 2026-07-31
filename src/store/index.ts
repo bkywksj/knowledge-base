@@ -2,7 +2,14 @@ import { create } from "zustand";
 import { Store } from "@tauri-apps/plugin-store";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
-import { taskApi, systemApi, folderApi, configApi, appLockApi } from "@/lib/api";
+import {
+  taskApi,
+  systemApi,
+  folderApi,
+  configApi,
+  appLockApi,
+  setExportFontsProvider,
+} from "@/lib/api";
 import type { HeadingNumberFormat } from "@/lib/headingNumber";
 
 /**
@@ -119,6 +126,19 @@ export function resolveEditorFontStack(family: EditorFontFamily): string {
   return `"${name.replace(/["\\]/g, "")}", ${EDITOR_CUSTOM_FONT_FALLBACK}`;
 }
 
+/**
+ * 「标题字体跟随正文」的哨兵值。
+ *
+ * 标题字体是独立于正文的一档偏好，但绝大多数人只想统一改一处字体，所以默认
+ * 用这个值表示"不单独指定，跟着正文走"——此时不写 `--editor-heading-font-family`，
+ * `.tiptap h1~h6` 的 `font-family: var(..., inherit)` 自然继承正文设置。
+ *
+ * 用独立哨兵而不是复用 "system"：`system` 的语义是"用系统默认字体"（会切断对
+ * 正文字体的继承），跟"跟随正文"是两回事——正文选了楷体时，前者标题变系统默认，
+ * 后者标题跟着变楷体。
+ */
+export const EDITOR_HEADING_FONT_FOLLOW = "follow";
+
 export const EDITOR_FONT_SIZE_OPTIONS = [12, 13, 14, 15, 16, 18, 20, 22] as const;
 export const EDITOR_LINE_HEIGHT_OPTIONS = [1.4, 1.5, 1.6, 1.8, 2.0] as const;
 
@@ -139,6 +159,8 @@ export const AUTO_SAVE_DELAY_DEFAULT = 1500;
 
 export const EDITOR_FONT_DEFAULTS = {
   family: "system" as EditorFontFamily,
+  // 标题默认跟随正文，保持老行为（此前标题就是继承正文字体的）
+  headingFamily: EDITOR_HEADING_FONT_FOLLOW as EditorFontFamily,
   size: 15,
   lineHeight: 1.8,
   codeSize: 0, // 0 = 代码块字号跟随正文（相对 0.9em），保持老行为
@@ -346,6 +368,8 @@ interface AppStore {
   recentSearches: string[];
   /** 编辑器字体族（持久化） */
   editorFontFamily: EditorFontFamily;
+  /** 编辑器标题字体族（持久化）。EDITOR_HEADING_FONT_FOLLOW = 跟随正文 */
+  editorHeadingFontFamily: EditorFontFamily;
   /** 编辑器字号 px（持久化） */
   editorFontSize: number;
   /** 编辑器行距倍数（持久化） */
@@ -603,6 +627,8 @@ interface AppStore {
   clearRecentSearches: () => void;
   /** 设置编辑器字体族 */
   setEditorFontFamily: (family: EditorFontFamily) => void;
+  /** 设置标题字体族（传空或 EDITOR_HEADING_FONT_FOLLOW = 跟随正文） */
+  setEditorHeadingFontFamily: (family: EditorFontFamily) => void;
   /** 设置编辑器字号（px） */
   setEditorFontSize: (size: number) => void;
   /** 设置编辑器行距倍数 */
@@ -820,6 +846,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   autoHideActivityBar: false,
   recentSearches: [],
   editorFontFamily: EDITOR_FONT_DEFAULTS.family,
+  editorHeadingFontFamily: EDITOR_FONT_DEFAULTS.headingFamily,
   editorFontSize: EDITOR_FONT_DEFAULTS.size,
   editorLineHeight: EDITOR_FONT_DEFAULTS.lineHeight,
   editorCodeFontSize: EDITOR_FONT_DEFAULTS.codeSize,
@@ -1111,6 +1138,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
       editorFontFamily:
         typeof family === "string" && family.trim() ? family.trim() : "system",
     }),
+  setEditorHeadingFontFamily: (family) =>
+    set({
+      // 空则回退"跟随正文"（而不是 system），保持与默认值一致的语义
+      editorHeadingFontFamily:
+        typeof family === "string" && family.trim()
+          ? family.trim()
+          : EDITOR_HEADING_FONT_FOLLOW,
+    }),
   setEditorFontSize: (size) => {
     // clamp 到合法预设范围 [12, 22]，防止外部 set 写脏数据
     const clamped = Math.max(12, Math.min(22, Math.round(size)));
@@ -1129,6 +1164,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   resetEditorTypography: () =>
     set({
       editorFontFamily: EDITOR_FONT_DEFAULTS.family,
+      editorHeadingFontFamily: EDITOR_FONT_DEFAULTS.headingFamily,
       editorFontSize: EDITOR_FONT_DEFAULTS.size,
       editorLineHeight: EDITOR_FONT_DEFAULTS.lineHeight,
       editorCodeFontSize: EDITOR_FONT_DEFAULTS.codeSize,
@@ -1362,9 +1398,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
  *
  * - family=system 时清掉变量，让编辑器继承全局默认字体
  * - 其余 family 写入完整 fallback 链，避免用户没装首选字体时变成方块
+ * - 标题字体（headingFamily）= EDITOR_HEADING_FONT_FOLLOW 时同样清掉变量，
+ *   `.tiptap h1~h6` 的 `var(--editor-heading-font-family, inherit)` 便继承正文
  */
 export function applyEditorTypography(state: {
   editorFontFamily: EditorFontFamily;
+  editorHeadingFontFamily: EditorFontFamily;
   editorFontSize: number;
   editorLineHeight: number;
   editorCodeFontSize: number;
@@ -1375,6 +1414,16 @@ export function applyEditorTypography(state: {
     root.style.setProperty("--editor-font-family", stack);
   } else {
     root.style.removeProperty("--editor-font-family");
+  }
+  // 标题字体：follow（默认）不写变量 → 继承正文；其余按同一套 fallback 规则解析
+  const headingStack =
+    state.editorHeadingFontFamily === EDITOR_HEADING_FONT_FOLLOW
+      ? ""
+      : resolveEditorFontStack(state.editorHeadingFontFamily);
+  if (headingStack) {
+    root.style.setProperty("--editor-heading-font-family", headingStack);
+  } else {
+    root.style.removeProperty("--editor-heading-font-family");
   }
   root.style.setProperty("--editor-font-size", `${state.editorFontSize}px`);
   root.style.setProperty("--editor-line-height", String(state.editorLineHeight));
@@ -1608,6 +1657,11 @@ export async function loadThemeFromStore() {
     if (typeof ef === "string" && ef.trim()) {
       useAppStore.getState().setEditorFontFamily(ef);
     }
+    // 标题字体：老版本没有这个键 → 保持默认「跟随正文」，行为与升级前一致
+    const ehf = await store.get<EditorFontFamily>("editorHeadingFontFamily");
+    if (typeof ehf === "string" && ehf.trim()) {
+      useAppStore.getState().setEditorHeadingFontFamily(ehf);
+    }
     const fs = await store.get<number>("editorFontSize");
     if (typeof fs === "number" && Number.isFinite(fs)) {
       useAppStore.getState().setEditorFontSize(fs);
@@ -1823,7 +1877,7 @@ function persistKeyOf(state: AppStore): string {
   // notesHeadingFolded 摘要：用 entries 数 + 总 anchor 数 简化对比，避免每次 stringify 大对象
   const headingFoldEntries = Object.entries(state.notesHeadingFolded);
   const headingFoldKey = `${headingFoldEntries.length}:${headingFoldEntries.reduce((acc, [, v]) => acc + v.length, 0)}:${headingFoldEntries.map(([k, v]) => `${k}=${v.join(",")}`).join("|")}`;
-  return `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.autoHideActivityBar}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.editorCodeFontSize}|${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}|${state.editorHeadingNumber}|${state.editorHeadingNumberFormat}|${state.editorHeadingNumberStartLevel}|${state.editorHeadingNumberSkipManual}|${state.editorGuideLine}|${state.editorHighlightShortcut}|${state.uiScale}|${state.uiScaleUserSet}|${state.autoSaveEnabled}|${state.autoSaveDelay}|${state.outlineVisible}|${state.outlinePosition}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesShowOnlyFolders}|${state.notesFoldersInitialCollapseDone}|${state.notesCollapseFoldersOnStartup}|${headingFoldKey}|${state.themeOverridesEnabled}|${state.customAccent ?? ""}|${state.customBgImage ?? ""}|${state.customBgDim}|${state.customBgBlur}|${state.customBgFit}|${state.defaultViewMode}|${state.tasksDefaultView}|${state.tasksCalendarColorBy}|${state.notesPanelTab}`;
+  return `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.autoHideActivityBar}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorHeadingFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.editorCodeFontSize}|${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}|${state.editorHeadingNumber}|${state.editorHeadingNumberFormat}|${state.editorHeadingNumberStartLevel}|${state.editorHeadingNumberSkipManual}|${state.editorGuideLine}|${state.editorHighlightShortcut}|${state.uiScale}|${state.uiScaleUserSet}|${state.autoSaveEnabled}|${state.autoSaveDelay}|${state.outlineVisible}|${state.outlinePosition}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesShowOnlyFolders}|${state.notesFoldersInitialCollapseDone}|${state.notesCollapseFoldersOnStartup}|${headingFoldKey}|${state.themeOverridesEnabled}|${state.customAccent ?? ""}|${state.customBgImage ?? ""}|${state.customBgDim}|${state.customBgBlur}|${state.customBgFit}|${state.defaultViewMode}|${state.tasksDefaultView}|${state.tasksCalendarColorBy}|${state.notesPanelTab}`;
 }
 
 /** 上次写盘时的状态指纹；与 persistKeyOf 比对，只在真变了才落盘 */
@@ -1844,6 +1898,7 @@ export async function saveThemeToStore() {
       autoHideActivityBar,
       recentSearches,
       editorFontFamily,
+      editorHeadingFontFamily,
       editorFontSize,
       editorLineHeight,
       editorCodeFontSize,
@@ -1891,6 +1946,7 @@ export async function saveThemeToStore() {
     await store.set("autoHideActivityBar", autoHideActivityBar);
     await store.set("recentSearches", recentSearches);
     await store.set("editorFontFamily", editorFontFamily);
+    await store.set("editorHeadingFontFamily", editorHeadingFontFamily);
     await store.set("editorFontSize", editorFontSize);
     await store.set("editorLineHeight", editorLineHeight);
     await store.set("editorCodeFontSize", editorCodeFontSize);
@@ -1948,10 +2004,23 @@ useAppStore.subscribe((state) => {
   }
 });
 
+// 把「当前字体偏好」注册给导出 API —— 导出 HTML / 打印 PDF / Word（转换器路径）
+// 会写进模板 CSS，让导出物和编辑器里看到的字体一致。
+// 用注册回调而非让 api 反向 import store，避免循环依赖（见 setExportFontsProvider 注释）。
+setExportFontsProvider(() => {
+  const s = useAppStore.getState();
+  const body = resolveEditorFontStack(s.editorFontFamily);
+  const heading =
+    s.editorHeadingFontFamily === EDITOR_HEADING_FONT_FOLLOW
+      ? ""
+      : resolveEditorFontStack(s.editorHeadingFontFamily);
+  return { body: body || undefined, heading: heading || undefined };
+});
+
 // 编辑器字体偏好变化时实时同步到 CSS 变量（无需刷新页面）
 let _prevTypographyKey = "";
 useAppStore.subscribe((state) => {
-  const key = `${state.editorFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.editorCodeFontSize}`;
+  const key = `${state.editorFontFamily}|${state.editorHeadingFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.editorCodeFontSize}`;
   if (key !== _prevTypographyKey) {
     _prevTypographyKey = key;
     applyEditorTypography(state);

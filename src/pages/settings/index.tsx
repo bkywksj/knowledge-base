@@ -36,6 +36,7 @@ import {
   useAppStore,
   EDITOR_FONT_LABELS,
   EDITOR_FONT_STACKS,
+  EDITOR_HEADING_FONT_FOLLOW,
   EDITOR_FONT_SIZE_OPTIONS,
   EDITOR_LINE_HEIGHT_OPTIONS,
   EDITOR_CODE_FONT_SIZE_OPTIONS,
@@ -507,6 +508,10 @@ function DesktopSettingsPage() {
   const editorLineHeight = useAppStore((s) => s.editorLineHeight);
   const editorCodeFontSize = useAppStore((s) => s.editorCodeFontSize);
   const setEditorFontFamily = useAppStore((s) => s.setEditorFontFamily);
+  const editorHeadingFontFamily = useAppStore((s) => s.editorHeadingFontFamily);
+  const setEditorHeadingFontFamily = useAppStore(
+    (s) => s.setEditorHeadingFontFamily,
+  );
   const setEditorFontSize = useAppStore((s) => s.setEditorFontSize);
   const setEditorLineHeight = useAppStore((s) => s.setEditorLineHeight);
   const setEditorCodeFontSize = useAppStore((s) => s.setEditorCodeFontSize);
@@ -561,6 +566,23 @@ function DesktopSettingsPage() {
         ]
       : [{ label: "预设", options: preset }];
   }, [systemFonts]);
+  // 「标题字体」下拉：正文那套选项前面插一个「跟随正文」（默认值）
+  const headingFontSelectOptions = useMemo(
+    () => [
+      {
+        label: "默认",
+        options: [
+          {
+            value: EDITOR_HEADING_FONT_FOLLOW,
+            searchText: "跟随正文 follow",
+            label: <span>跟随正文</span>,
+          },
+        ],
+      },
+      ...fontSelectOptions,
+    ],
+    [fontSelectOptions],
+  );
   // 编辑器版面偏好（阅读列宽 / 纸张 / 纹理 / 首行缩进）
   const editorReadingWidth = useAppStore((s) => s.editorReadingWidth);
   const editorPaper = useAppStore((s) => s.editorPaper);
@@ -1879,6 +1901,32 @@ function DesktopSettingsPage() {
               />
             )}
           </div>
+        </div>
+
+        <div
+          className="flex items-center justify-between py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div>
+            <div>标题字体</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              默认跟随正文；单独指定后 H1–H6 用该字体（正文不受影响）
+            </Text>
+          </div>
+          <Select
+            value={editorHeadingFontFamily}
+            onChange={(v) => setEditorHeadingFontFamily(v as EditorFontFamily)}
+            style={{ width: 260 }}
+            showSearch
+            filterOption={(input, option) => {
+              const opt = option as
+                | { searchText?: string; value?: string }
+                | undefined;
+              const t = String(opt?.searchText ?? opt?.value ?? "");
+              return t.toLowerCase().includes(input.trim().toLowerCase());
+            }}
+            options={headingFontSelectOptions}
+          />
         </div>
 
         <div

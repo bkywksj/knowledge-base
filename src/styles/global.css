@@ -1070,7 +1070,20 @@ body,
   padding: 16px 20px;
 }
 
-/* 标题（H1–H6，Notion 风层级 — 更明显的视觉对比） */
+/* 标题（H1–H6，Notion 风层级 — 更明显的视觉对比）
+
+   字体：默认 inherit（= 跟随正文的 --editor-font-family），用户在设置里单独指定
+   「标题字体」后由 store 写入 --editor-heading-font-family 覆盖。变量只在用户
+   真的选了非「跟随正文」时才存在，所以升级前后默认表现完全一致。 */
+.tiptap h1,
+.tiptap h2,
+.tiptap h3,
+.tiptap h4,
+.tiptap h5,
+.tiptap h6 {
+  font-family: var(--editor-heading-font-family, inherit);
+}
+
 .tiptap h1 { font-size: 1.875em; font-weight: 700; margin: 0.7em 0 0.4em; line-height: 1.3; }
 .tiptap h2 { font-size: 1.5em;   font-weight: 700; margin: 0.6em 0 0.3em; line-height: 1.3; }
 .tiptap h3 { font-size: 1.25em;  font-weight: 600; margin: 0.5em 0 0.25em; line-height: 1.35; }

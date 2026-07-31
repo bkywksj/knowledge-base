@@ -1,7 +1,8 @@
 /**
- * 在 @tiptap/extension-text-style 基础上补字号 / 行间距 / 段落缩进 attr。
+ * 在 @tiptap/extension-text-style 基础上补字号 / 字体 / 行间距 / 段落缩进 attr。
  *
  * - 字号：作为 mark.attr.fontSize（写到 span style="font-size: 14px"）
+ * - 字体：作为 mark.attr.fontFamily（写到 span style="font-family: …"）
  * - 行间距：作为 paragraph/heading 节点的 attr.lineHeight
  * - 缩进：作为 paragraph 节点的 attr.indent（数值，每级 24px padding-left）
  *
@@ -23,6 +24,11 @@ declare module "@tiptap/core" {
       setFontSize: (size: string) => ReturnType;
       unsetFontSize: () => ReturnType;
     };
+    fontFamily: {
+      /** 传完整的 CSS font-family 值（含 fallback 链），见 resolveEditorFontStack */
+      setFontFamily: (family: string) => ReturnType;
+      unsetFontFamily: () => ReturnType;
+    };
     lineHeight: {
       setLineHeight: (lh: string) => ReturnType;
       unsetLineHeight: () => ReturnType;
@@ -35,11 +41,20 @@ declare module "@tiptap/core" {
 }
 
 /**
- * 字号 mark 扩展。
+ * 字号 + 字体 mark 扩展。
  *
- * 不另起新 mark name —— 直接继承 TextStyle 加 fontSize attr，复用 textStyle 这个
- * mark 名。这样 @tiptap/extension-color 默认配的 types: ["textStyle"] 仍然有效，
- * 一个 mark 同时承载 color + fontSize 两个 attr，schema 干净。
+ * 不另起新 mark name —— 直接继承 TextStyle 加 attr，复用 textStyle 这个 mark 名。
+ * 这样 @tiptap/extension-color 默认配的 types: ["textStyle"] 仍然有效，一个 mark
+ * 同时承载 color + fontSize + fontFamily，schema 干净。
+ *
+ * ⚠️ 字体**不能**再 `TextStyle.extend()` 一次单独成扩展：mark 名相同会重复注册，
+ * schema 直接冲突。要加 textStyle 上的新 attr，只能往这个扩展里塞。
+ * （导出名保留 FontSize 是为了不牵动各处 import，实际它承载的不止字号。）
+ *
+ * 字体 attr 存的是**完整 CSS font-family 值**（含 fallback 链，由
+ * `resolveEditorFontStack` 生成），而不是字体 ID：renderHTML / parseHTML 都
+ * 直来直去，从 Word / 网页粘进来的 `font-family` 也能原样接住 —— 接得住才谈得上
+ * 用工具栏的「清除字体」把它清掉。
  */
 export const FontSize = TextStyle.extend({
   addAttributes() {
@@ -51,6 +66,13 @@ export const FontSize = TextStyle.extend({
           el.style.fontSize?.replace(/['"]+/g, "") || null,
         renderHTML: (attrs: { fontSize?: string | null }) =>
           attrs.fontSize ? { style: `font-size: ${attrs.fontSize}` } : {},
+      },
+      fontFamily: {
+        default: null,
+        // 不剥引号：字体名含空格 / 中文时引号是 CSS 语法的一部分，剥了会坏
+        parseHTML: (el: HTMLElement) => el.style.fontFamily || null,
+        renderHTML: (attrs: { fontFamily?: string | null }) =>
+          attrs.fontFamily ? { style: `font-family: ${attrs.fontFamily}` } : {},
       },
     };
   },
@@ -67,6 +89,12 @@ export const FontSize = TextStyle.extend({
         // appendTransaction 自然清理空 mark；这样不论父 commands 是否齐全都安全。
         return chain().setMark("textStyle", { fontSize: null }).run();
       },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setFontFamily: (family: string) => ({ chain }: { chain: () => any }) =>
+        chain().setMark("textStyle", { fontFamily: family }).run(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      unsetFontFamily: () => ({ chain }: { chain: () => any }) =>
+        chain().setMark("textStyle", { fontFamily: null }).run(),
     };
   },
 });

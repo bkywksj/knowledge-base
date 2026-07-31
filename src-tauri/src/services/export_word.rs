@@ -22,7 +22,7 @@ use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, T
 use crate::error::AppError;
 use crate::services::asset_path::resolve_content_url;
 use crate::services::converter::{self, DocConverter};
-use crate::services::export_html::HtmlExportService;
+use crate::services::export_html::{ExportFonts, HtmlExportService};
 use crate::services::markdown::html_to_markdown;
 
 /// GFM 扩展开关（表格 / 删除线 / 任务列表）。
@@ -68,15 +68,27 @@ impl WordExportService {
     /// `body_html`：前端传来的**编辑器实时 DOM**（已内嵌资源）。给了就用它替代
     /// markdown 重渲 —— 只有这样才能带上标题自动编号（widget decoration 不进 .md）。
     /// 传 None 走老路（批量导出等拿不到前端渲染的场景）。
+    ///
+    /// `fonts`：用户在设置里选的正文 / 标题字体。**只有转换器路径能跟随**——它走的是
+    /// HTML 模板，字体写在 CSS 里；原生 docx 回退路径的字体分散在十几处 Run 上，
+    /// 不在本次范围内，回退时仍是 Word 默认样式。
     pub fn export_single_best_effort(
         title: &str,
         content: &str,
         target_path: &Path,
         assets_root: &Path,
         body_html: Option<&str>,
+        fonts: Option<&ExportFonts>,
     ) -> Result<WordExportResult, AppError> {
         if converter::detect_converter() != DocConverter::None {
-            match Self::export_via_converter(title, content, target_path, assets_root, body_html) {
+            match Self::export_via_converter(
+                title,
+                content,
+                target_path,
+                assets_root,
+                body_html,
+                fonts,
+            ) {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     log::warn!("Word 导出：转换器路径失败，回退原生 docx 生成：{}", e);
@@ -93,12 +105,15 @@ impl WordExportService {
         target_path: &Path,
         assets_root: &Path,
         body_html: Option<&str>,
+        fonts: Option<&ExportFonts>,
     ) -> Result<WordExportResult, AppError> {
         // 有前端 DOM 就套模板直接用（保住标题编号等只存在于渲染层的东西），
         // 否则退回 markdown 重渲
         let (html, images_inlined, images_missing) = match body_html {
-            Some(body) => HtmlExportService::render_html_from_body(title, body, assets_root),
-            None => HtmlExportService::render_html(title, content, assets_root)?,
+            Some(body) => {
+                HtmlExportService::render_html_from_body(title, body, assets_root, fonts)
+            }
+            None => HtmlExportService::render_html(title, content, assets_root, fonts)?,
         };
 
         // 临时工作目录用纯 ASCII 路径与文件名，规避部分转换器对非 ASCII 路径的兼容问题

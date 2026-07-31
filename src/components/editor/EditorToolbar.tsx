@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useReducer } from "react";
+import { useState, useCallback, useEffect, useMemo, useReducer } from "react";
 import type { Editor } from "@tiptap/react";
 import { Button, Divider, Tooltip, Modal, Input, message, Dropdown, Select, ColorPicker } from "antd";
 import type { MenuProps } from "antd";
@@ -54,7 +54,13 @@ import {
 } from "@/lib/editorCleanup";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toKbAsset, toKbAssetHref } from "@/lib/assetUrl";
-import { attachmentApi, imageApi, videoApi } from "@/lib/api";
+import { attachmentApi, imageApi, systemApi, videoApi } from "@/lib/api";
+import {
+  EDITOR_FONT_LABELS,
+  EDITOR_FONT_STACKS,
+  resolveEditorFontStack,
+  type EditorFontPreset,
+} from "@/store";
 import { MicButton } from "@/components/MicButton";
 import { insertVideoTimestamp } from "./VideoTimestamp";
 import { EmojiPicker } from "./EmojiPicker";
@@ -220,6 +226,59 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
   /** 嵌入网络视频弹窗：粘贴 B站/YouTube/腾讯/优酷链接 → iframe 节点 */
   const [embedModalOpen, setEmbedModalOpen] = useState(false);
   const [embedUrlInput, setEmbedUrlInput] = useState("");
+  /** 「字体」下拉的系统字体列表（模块级单飞缓存，多个编辑器实例只枚举一次） */
+  const [systemFonts, setSystemFonts] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    void loadSystemFontsOnce().then((fonts) => {
+      if (alive) setSystemFonts(fonts);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  /**
+   * 「字体」下拉选项。value 直接是**完整 CSS font-family 值**，与 textStyle mark
+   * 里存的东西同构，选中态判定就是一次字符串相等，不需要维护 ID ↔ 字体链的反查表。
+   * 预设里的 `system`（空 stack）跳过——它和「默认」是一回事。
+   */
+  const fontFamilyOptions = useMemo(() => {
+    const preset = (Object.keys(EDITOR_FONT_LABELS) as EditorFontPreset[])
+      .filter((key) => !!EDITOR_FONT_STACKS[key])
+      .map((key) => ({
+        value: EDITOR_FONT_STACKS[key],
+        searchText: `${EDITOR_FONT_LABELS[key]} ${key}`,
+        label: (
+          <span style={{ fontFamily: EDITOR_FONT_STACKS[key] }}>
+            {EDITOR_FONT_LABELS[key]}
+          </span>
+        ),
+      }));
+    const system = systemFonts.map((name) => ({
+      value: resolveEditorFontStack(name),
+      searchText: name,
+      label: (
+        <span style={{ fontFamily: `"${name.replace(/["\\]/g, "")}"` }}>
+          {name}
+        </span>
+      ),
+    }));
+    const clear = {
+      value: FONT_FAMILY_CLEAR,
+      searchText: "默认 清除字体 default",
+      label: <span>默认（清除字体）</span>,
+    };
+    return system.length > 0
+      ? [
+          { label: "默认", options: [clear] },
+          { label: "预设", options: preset },
+          { label: `系统字体（${system.length}）`, options: system },
+        ]
+      : [
+          { label: "默认", options: [clear] },
+          { label: "预设", options: preset },
+        ];
+  }, [systemFonts]);
 
 
   function openCaptionModal() {
@@ -700,6 +759,43 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
             </ColorPicker>
           </Tooltip>
         ),
+      },
+      {
+        icon: null,
+        title: "字体",
+        customRender: () => {
+          const cur =
+            (editor.getAttributes("textStyle").fontFamily as string) || "";
+          return (
+            <Tooltip title="字体（作用于选中文字）" mouseEnterDelay={0.5}>
+              <Select
+                size="small"
+                showSearch
+                value={cur || FONT_FAMILY_CLEAR}
+                style={{ width: 128 }}
+                // 选中态只显示首个字体名，不把整条 fallback 链塞进 128px 的框里
+                labelRender={({ value }) => (
+                  <span>{shortFontLabel(String(value))}</span>
+                )}
+                filterOption={(input, option) => {
+                  const opt = option as
+                    | { searchText?: string; value?: string }
+                    | undefined;
+                  const t = String(opt?.searchText ?? opt?.value ?? "");
+                  return t.toLowerCase().includes(input.trim().toLowerCase());
+                }}
+                options={fontFamilyOptions}
+                onChange={(v) => {
+                  if (v === FONT_FAMILY_CLEAR) {
+                    editor.chain().focus().unsetFontFamily().run();
+                  } else {
+                    editor.chain().focus().setFontFamily(String(v)).run();
+                  }
+                }}
+              />
+            </Tooltip>
+          );
+        },
       },
       {
         icon: null,
@@ -1408,6 +1504,35 @@ function applyBlockType(editor: Editor, type: BlockType): void {
       .setHeading({ level: lv as 1 | 2 | 3 | 4 | 5 | 6 })
       .run();
   }
+}
+
+/** 「字体」下拉里代表"清除字体"的哨兵 value（不可能与真实 font-family 值撞车） */
+const FONT_FAMILY_CLEAR = "__clear__";
+
+/**
+ * 把一条 font-family 值压成一个短标签：只取首个字体名并去掉引号。
+ * 用于下拉的选中态显示——完整 fallback 链动辄上百字符，塞不进工具栏。
+ * 从 Word / 网页粘进来的字体（不在选项里）也能靠这个显示出"是什么字体"。
+ */
+function shortFontLabel(value: string): string {
+  if (!value || value === FONT_FAMILY_CLEAR) return "字体";
+  const first = value.split(",")[0]?.trim() ?? "";
+  return first.replace(/^["']|["']$/g, "") || "字体";
+}
+
+/**
+ * 系统已装字体的模块级单飞缓存。
+ *
+ * 枚举一次要跑到 Rust 侧读系统字体表，而工具栏会随每个编辑器实例挂载
+ * （笔记页 / 日记页 / 弹出窗），没必要各枚举一遍。失败（移动端无此 Command）
+ * 时缓存空数组 → 下拉只剩预设，不反复重试。
+ */
+let systemFontsPromise: Promise<string[]> | null = null;
+function loadSystemFontsOnce(): Promise<string[]> {
+  if (!systemFontsPromise) {
+    systemFontsPromise = systemApi.listSystemFonts().catch(() => []);
+  }
+  return systemFontsPromise;
 }
 
 const FONT_SIZE_OPTIONS = [
