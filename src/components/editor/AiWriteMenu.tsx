@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { Editor } from "@tiptap/react";
 import { useFeatureEnabled } from "@/hooks/useFeatureEnabled";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
-import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { PluginKey } from "@tiptap/pm/state";
+import type { DecorationSet } from "@tiptap/pm/view";
+import { createFakeSelectionPlugin } from "./fakeSelection";
 import { Button, Input, Popover, Tooltip, message, theme as antdTheme } from "antd";
 import {
   Sparkles,
@@ -180,41 +181,11 @@ function parseResultWithPlaceholders(
 }
 
 /**
- * 伪选区 Plugin：在 AI 菜单弹出（流式中 / 结果区显示 / 自定义 Popover 打开）时，
- * 给当前选区位置加一个 inline class，靠 CSS 渲染高亮。
- *
- * 解决的问题：弹窗 / Popover 里的输入框抢焦点后，编辑器失焦，浏览器原生
- * `::selection` 蓝底就消失了，用户视觉上"看不到自己选的什么"。本 plugin
- * 维持一个独立于浏览器原生 selection 的视觉装饰，焦点不在编辑器也仍可见。
+ * 伪选区 key：AI 菜单弹出（流式中 / 结果区显示 / 自定义 Popover 打开）时，
+ * 用它标出当前选区 —— Popover 输入框抢焦点后浏览器原生 `::selection` 会消失，
+ * 靠这层装饰用户才看得到"AI 正在处理哪段文字"。实现见 fakeSelection.ts。
  */
 const FAKE_SELECTION_KEY = new PluginKey<DecorationSet>("ai-write-fake-selection");
-
-function createFakeSelectionPlugin(): Plugin<DecorationSet> {
-  return new Plugin<DecorationSet>({
-    key: FAKE_SELECTION_KEY,
-    state: {
-      init: () => DecorationSet.empty,
-      apply(tr, deco) {
-        const meta = tr.getMeta(FAKE_SELECTION_KEY);
-        if (meta === "clear") return DecorationSet.empty;
-        if (meta && typeof meta === "object" && "from" in meta) {
-          const { from, to } = meta as { from: number; to: number };
-          if (from === to) return DecorationSet.empty;
-          return DecorationSet.create(tr.doc, [
-            Decoration.inline(from, to, { class: "kb-fake-selection" }),
-          ]);
-        }
-        // 文档变化时同步映射坐标，避免编辑后高亮范围错位
-        return deco.map(tr.mapping, tr.doc);
-      },
-    },
-    props: {
-      decorations(state) {
-        return FAKE_SELECTION_KEY.getState(state) ?? DecorationSet.empty;
-      },
-    },
-  });
-}
 
 export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
   const { token } = antdTheme.useToken();
@@ -403,7 +374,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
 
   // 注册 / 注销伪选区 Plugin（生命周期跟随组件 mount）
   useEffect(() => {
-    const plugin = createFakeSelectionPlugin();
+    const plugin = createFakeSelectionPlugin(FAKE_SELECTION_KEY);
     editor.registerPlugin(plugin);
     return () => {
       editor.unregisterPlugin(FAKE_SELECTION_KEY);

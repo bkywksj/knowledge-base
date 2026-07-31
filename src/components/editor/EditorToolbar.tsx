@@ -70,6 +70,9 @@ import { CompareClipboardButton } from "./CompareClipboardButton";
 import { CompareNotesButton } from "./CompareNotesButton";
 import { parseEmbedUrl, SUPPORTED_PROVIDERS } from "./embedVideoProviders";
 import { useFormatPainter } from "./useFormatPainter";
+import { PluginKey } from "@tiptap/pm/state";
+import type { DecorationSet } from "@tiptap/pm/view";
+import { createFakeSelectionPlugin, setFakeSelection } from "./fakeSelection";
 
 interface ToolbarProps {
   editor: Editor;
@@ -237,6 +240,14 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
       alive = false;
     };
   }, []);
+  // 伪选区 plugin：生命周期跟随工具栏挂载，供字体下拉打开时标出选区
+  useEffect(() => {
+    const plugin = createFakeSelectionPlugin(TOOLBAR_FAKE_SELECTION_KEY);
+    editor.registerPlugin(plugin);
+    return () => {
+      editor.unregisterPlugin(TOOLBAR_FAKE_SELECTION_KEY);
+    };
+  }, [editor]);
   /**
    * 「字体」下拉选项。value 直接是**完整 CSS font-family 值**，与 textStyle mark
    * 里存的东西同构，选中态判定就是一次字符串相等，不需要维护 ID ↔ 字体链的反查表。
@@ -785,12 +796,23 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
                   return t.toLowerCase().includes(input.trim().toLowerCase());
                 }}
                 options={fontFamilyOptions}
+                // 打开时铺伪选区（Select 会夺焦，原生蓝底会消失），关闭即清
+                onOpenChange={(open) => {
+                  const { from, to } = editor.state.selection;
+                  setFakeSelection(
+                    editor,
+                    TOOLBAR_FAKE_SELECTION_KEY,
+                    open && from !== to ? { from, to } : null,
+                  );
+                }}
                 onChange={(v) => {
                   if (v === FONT_FAMILY_CLEAR) {
                     editor.chain().focus().unsetFontFamily().run();
                   } else {
                     editor.chain().focus().setFontFamily(String(v)).run();
                   }
+                  // chain().focus() 已把真实选区还回来，伪选区就该退场，免得叠成两层
+                  setFakeSelection(editor, TOOLBAR_FAKE_SELECTION_KEY, null);
                 }}
               />
             </Tooltip>
@@ -1508,6 +1530,18 @@ function applyBlockType(editor: Editor, type: BlockType): void {
 
 /** 「字体」下拉里代表"清除字体"的哨兵 value（不可能与真实 font-family 值撞车） */
 const FONT_FAMILY_CLEAR = "__clear__";
+
+/**
+ * 工具栏用的伪选区 key。
+ *
+ * antd Select 打开时靠内部 focus 拉起 popup，`handleToolbarMouseDown` 的
+ * preventDefault 对它无效（所以那里显式跳过了 .ant-select）—— 编辑器一失焦，
+ * 浏览器就不再画选区蓝底，用户看着像"刚选的字没了"，回去重点一下反而真丢。
+ * 下拉打开期间铺一层伪选区，选完即清。与 AI 写作菜单各用各的 key，互不干扰。
+ */
+const TOOLBAR_FAKE_SELECTION_KEY = new PluginKey<DecorationSet>(
+  "kb-toolbar-fake-selection",
+);
 
 /**
  * 把一条 font-family 值压成一个短标签：只取首个字体名并去掉引号。
