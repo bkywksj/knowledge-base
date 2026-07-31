@@ -5,7 +5,7 @@ use tauri::AppHandle;
 
 use crate::models::{ExportResult, SingleExportResult};
 use crate::services;
-use crate::services::export_html::{ExportFonts, HtmlExportResult};
+use crate::services::export_html::{ExportFonts, HtmlExportResult, ResolvedAssetUrl};
 // Word 导出仅桌面端（docx_rs 移动端编译失败）
 #[cfg(desktop)]
 use crate::services::export_word::WordExportResult;
@@ -204,4 +204,27 @@ pub fn inline_note_html_assets(
     let (html, _img, _att) =
         services::export_html::HtmlExportService::inline_assets(&html, &assets_root);
     Ok(html)
+}
+
+/// 批量把本地资源 URL 解析成 data: URL（打印 / 复制为 Word 的附件内嵌走这条）。
+///
+/// 与 `inline_note_html_assets` 的区别是**只搬需要的东西**：那条要求整篇 HTML 进出，
+/// 一篇带图的笔记内嵌后动辄几十 MB，两次 JSON 序列化就能把 WebView 卡住；这条只收
+/// URL 清单、只回 data: URL，前端自己在 DOM 上回填。
+///
+/// `max_bytes` 缺省 32 MiB：单个文件超过就返回 data_url = null，前端保留原 URL
+/// （应用内仍能显示，只是导出物不自包含），避免一个巨型附件把内存顶爆。
+#[tauri::command]
+pub fn resolve_asset_data_urls(
+    state: tauri::State<'_, AppState>,
+    urls: Vec<String>,
+    max_bytes: Option<u64>,
+) -> Result<Vec<ResolvedAssetUrl>, String> {
+    const DEFAULT_MAX_BYTES: u64 = 32 * 1024 * 1024;
+    let assets_root = state.data_dir.clone();
+    Ok(services::export_html::HtmlExportService::resolve_asset_data_urls(
+        &urls,
+        &assets_root,
+        max_bytes.unwrap_or(DEFAULT_MAX_BYTES),
+    ))
 }

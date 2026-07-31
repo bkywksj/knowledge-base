@@ -635,6 +635,16 @@ export const sourceWritebackApi = {
     invoke<void>("clear_source_md_link", { noteId }),
 };
 
+/** 一条本地资源 URL 的解析结果（resolveAssetDataUrls 返回） */
+export interface ResolvedAssetUrl {
+  /** 原样回传的请求 URL，据此回填对应 DOM 元素 */
+  url: string;
+  /** data: URL；解析失败 / 超出大小上限时为 null */
+  dataUrl: string | null;
+  /** 文件名，用于 `<a download="…">` */
+  fileName: string | null;
+}
+
 /** 导出时写进 HTML 模板的字体（完整 CSS font-family 值，含 fallback 链） */
 export interface ExportFonts {
   /** 正文字体；省略 = 用后端模板自带的通用中文链 */
@@ -711,6 +721,13 @@ export const exportApi = {
    *  传入 HTML 的本地资源，保证打印 iframe 自包含、所见即所得。返回内嵌后的 HTML 片段。 */
   inlineNoteHtmlAssets: (html: string) =>
     invoke<string>("inline_note_html_assets", { html }),
+  /** 批量把本地资源 URL 解析成 data: URL（打印 / 复制为 Word 的附件内嵌）。
+   *
+   *  用它而不是 inlineNoteHtmlAssets：后者要整篇 HTML 进出，内嵌图片后动辄几十 MB，
+   *  两次 JSON 序列化就足以卡住 WebView；这条 IPC 上只走 URL 清单 + 附件本身。
+   *  解析不到 / 超出 maxBytes 的条目返回 dataUrl = null，调用方保留原 URL。 */
+  resolveAssetDataUrls: (urls: string[], maxBytes?: number) =>
+    invoke<ResolvedAssetUrl[]>("resolve_asset_data_urls", { urls, maxBytes }),
 };
 
 /** 附件 API（PDF/Office/ZIP/音视频等非图片非文本文件）

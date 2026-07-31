@@ -17,16 +17,44 @@
  *   3. 剥掉编辑态控件（节点视图工具栏 / 光标小部件等）
  *   4. 图片固化为 base64：实时 DOM 的 img.src 已是 http://asset.localhost/… 或 blob:…，
  *      在主文档 fetch → dataURL，保证打印 iframe 自包含（blob: 跨不进 iframe，必须固化）
- *   5. Rust inlineNoteHtmlAssets 兜底：内嵌残留的 kb-asset://（如附件 <a href>）
+ *   5. 附件链接内嵌：把本地 <a href> 的 URL 清单交给 Rust，换回 data: URL 后本地回填
  *   6. 收集当前文档全部可读 CSS → 一段 <style>（应用唯一样式源），再叠打印专用 <style>：
  *      @page 页边距 + 强制浅色文字变量（深色主题也不白底白字）+ 隐藏编辑控件 +
  *      解除滚动容器固定高 + 分页避免截断
  *   7. 交给 printHtmlAsPdf → 系统打印对话框（可选真实打印机出纸，或「另存为 PDF」）
+ *
+ * ⚠️ 大文档性能（这里每一条都是踩过的坑，改动前先读）：
+ *   · 第 5 步曾经是"把整篇 HTML 送去 Rust 再整篇拿回来"（inlineNoteHtmlAssets）。
+ *     此时图片已在第 4 步内嵌成 base64，20 张 2MB 图就是 ~53MB 字符串——一趟 IPC
+ *     等于两次巨型 JSON 序列化 + Rust 全文正则扫两遍，而真正要做的只是替换几个附件
+ *     链接。现已改为只传 URL 清单（见 inlineAttachmentLinks）。
+ *   · 第 4 步的图片固化必须限并发：Promise.all 一把梭会让 N 份 Blob + N 份膨胀 33%
+ *     的 base64 同时驻留内存。
+ *   · 内嵌总量有上限：超过 MAX_INLINE_TOTAL_BYTES 后剩余图片保留原 URL 不再内嵌
+ *     （应用内 asset:// 仍能显示，导出物可能缺图，但不会把内存顶爆）。
  */
 
 import type { Editor } from "@tiptap/react";
 import { exportApi } from "@/lib/api";
 import { printHtmlAsPdf } from "@/lib/exportPdf";
+
+/** 图片固化的并发上限：太大则内存峰值失控，太小则串行等待久 */
+const IMAGE_CONCURRENCY = 4;
+/** 单张图片内嵌上限，超过则保留原 URL（12 MiB 已远超正常截图/照片） */
+const MAX_SINGLE_IMAGE_BYTES = 12 * 1024 * 1024;
+/** 本次内嵌的总量上限，超过后剩余资源一律不再内嵌（base64 后约 1.33 倍） */
+const MAX_INLINE_TOTAL_BYTES = 48 * 1024 * 1024;
+
+/** 自包含化过程的进度回报，供调用方更新 loading 文案 */
+export interface SelfContainedProgress {
+  phase: "images" | "attachments" | "done";
+  /** 当前处理到第几个（phase=done 时为已内嵌总数） */
+  current: number;
+  /** 总数 */
+  total: number;
+  /** 因体积上限被跳过、保留原 URL 的资源数（phase=done 时有效） */
+  skipped?: number;
+}
 
 /**
  * 把编辑器当前渲染结果转成**自包含 HTML 片段**（图片/附件已内嵌 base64）。
@@ -41,11 +69,14 @@ import { printHtmlAsPdf } from "@/lib/exportPdf";
  * @param editor     Tiptap 编辑器实例
  * @param title      笔记标题；作为文档大标题插到最前
  * @param titleClass 大标题的 class（打印要 kb-print-title 压掉顶部空白，其它场景不需要）
+ * @param onProgress 可选进度回调；大笔记内嵌资源要几秒到几十秒，调用方据此更新提示，
+ *                   免得用户以为卡死
  */
 export async function editorDomToSelfContainedHtml(
   editor: Editor,
   title: string,
   titleClass = "",
+  onProgress?: (p: SelfContainedProgress) => void,
 ): Promise<string> {
   // 1. 克隆真实渲染 DOM（.tiptap.ProseMirror 节点，含 callout / 分栏 / 编号 widget）
   const clone = (editor.view.dom as HTMLElement).cloneNode(true) as HTMLElement;
@@ -60,34 +91,51 @@ export async function editorDomToSelfContainedHtml(
 
   // 4. 图片固化为 base64。实时 DOM 的 <img src> 是 http://asset.localhost/… 或 blob:…，
   //    只在主文档上下文有效（blob: 尤其跨不进 iframe），必须在主文档里 fetch 固化。
-  await inlineImages(clone);
+  const imgStat = await inlineImages(clone, onProgress);
 
-  // 5. 包到 .editor-content-area 链下，命中 `.editor-content-area .tiptap …` 的样式
-  const wrapped =
+  // 5. 附件链接内嵌：<a href="kb-asset://…"> 这类本地资源 img 固化覆盖不到，
+  //    交给 Rust 解析成 data: URL —— 只传 URL 清单，不再把整篇文档搬去搬回。
+  const attStat = await inlineAttachmentLinks(
+    clone,
+    MAX_INLINE_TOTAL_BYTES - imgStat.bytes,
+    onProgress,
+  );
+
+  onProgress?.({
+    phase: "done",
+    current: imgStat.inlined + attStat.inlined,
+    total: imgStat.total + attStat.total,
+    skipped: imgStat.skipped + attStat.skipped,
+  });
+
+  // 6. 包到 .editor-content-area 链下，命中 `.editor-content-area .tiptap …` 的样式
+  return (
     `<div class="editor-content-area">` +
     `<div class="tiptap-wrapper">` +
     `<div class="tiptap-content">${clone.outerHTML}</div>` +
-    `</div></div>`;
-
-  // 6. Rust 兜底：内嵌残留的 kb-asset:// 本地资源（如附件 <a href> —— 上一步的 img
-  //    固化覆盖不到）。图片已是 data: URL，Rust 的 inline_images 会自动跳过不重复。
-  try {
-    return await exportApi.inlineNoteHtmlAssets(wrapped);
-  } catch {
-    // 内嵌失败不阻断：残留本地资源在外部可能裂图，但结构/文字正常
-    return wrapped;
-  }
+    `</div></div>`
+  );
 }
 
 /**
  * 打印（或打印成 PDF）当前编辑器内容，所见即所得。
  *
- * @param editor Tiptap 编辑器实例（来自 TiptapEditor 的 onEditorReady）
- * @param title  笔记标题，作为打印文档大标题 + 打印对话框默认文件名
+ * @param editor     Tiptap 编辑器实例（来自 TiptapEditor 的 onEditorReady）
+ * @param title      笔记标题，作为打印文档大标题 + 打印对话框默认文件名
+ * @param onProgress 可选进度回调，图多的笔记内嵌阶段会走几秒到几十秒
  */
-export async function printEditorContent(editor: Editor, title: string): Promise<void> {
+export async function printEditorContent(
+  editor: Editor,
+  title: string,
+  onProgress?: (p: SelfContainedProgress) => void,
+): Promise<void> {
   // kb-print-title 让顶部标题不留多余空白
-  const body = await editorDomToSelfContainedHtml(editor, title, "kb-print-title");
+  const body = await editorDomToSelfContainedHtml(
+    editor,
+    title,
+    "kb-print-title",
+    onProgress,
+  );
 
   // 收集应用 CSS + 打印覆盖样式，拼成完整文档
   const appCss = collectDocumentCss();
@@ -137,30 +185,165 @@ async function writeRichTextToClipboard(
   }
 }
 
+/** 一轮内嵌的统计 */
+interface InlineStat {
+  /** 需要处理的总数 */
+  total: number;
+  /** 成功内嵌数 */
+  inlined: number;
+  /** 因体积上限 / 失败而保留原 URL 的数量 */
+  skipped: number;
+  /** 已内嵌的原始字节数（未计 base64 膨胀） */
+  bytes: number;
+}
+
 /**
- * 把 DOM 里的 `<img>` 逐个固化成 base64 data URL。
+ * 把 DOM 里的 `<img>` 固化成 base64 data URL。
  *
  * 编辑器实时 DOM 的 `img.src` 已是可显示 URL（http://asset.localhost/… 或 blob:…），
  * 在主文档上下文里 `fetch` 取字节再转 dataURL —— blob: 在同文档 fetch 有效，
  * asset 协议若允许跨域 fetch 也能取到。任一失败就保留原 src：http://asset.localhost
  * 这类在同一 WebView 的 iframe 里通常仍能作为 `<img>` 直接加载，graceful 降级。
+ *
+ * **限并发 + 限总量**：原实现 `Promise.all` 一把梭，N 张图同时 fetch，内存里同时
+ * 驻留 N 份 Blob 和 N 份膨胀 33% 的 base64 —— 20 张 2MB 图瞬时就能顶到 100MB+。
+ * 现在按 IMAGE_CONCURRENCY 分批，并在累计超过 budget 后停止内嵌剩余图片。
  */
-async function inlineImages(root: HTMLElement): Promise<void> {
-  const imgs = Array.from(root.querySelectorAll("img"));
-  await Promise.all(
-    imgs.map(async (img) => {
-      const src = img.getAttribute("src") || "";
-      if (!src || src.startsWith("data:")) return;
+async function inlineImages(
+  root: HTMLElement,
+  onProgress?: (p: SelfContainedProgress) => void,
+): Promise<InlineStat> {
+  const imgs = Array.from(root.querySelectorAll("img")).filter((img) => {
+    const src = img.getAttribute("src") || "";
+    return !!src && !src.startsWith("data:");
+  });
+  const stat: InlineStat = { total: imgs.length, inlined: 0, skipped: 0, bytes: 0 };
+  if (imgs.length === 0) return stat;
+
+  let done = 0;
+  await mapWithConcurrency(imgs, IMAGE_CONCURRENCY, async (img) => {
+    // 预算已用尽：剩下的一律保留原 src（应用内仍能显示）
+    if (stat.bytes >= MAX_INLINE_TOTAL_BYTES) {
+      stat.skipped++;
+    } else {
       try {
-        const resp = await fetch(src);
+        const resp = await fetch(img.getAttribute("src") || "");
         const blob = await resp.blob();
-        const dataUrl = await blobToDataUrl(blob);
-        img.setAttribute("src", dataUrl);
+        if (blob.size > MAX_SINGLE_IMAGE_BYTES) {
+          stat.skipped++;
+        } else {
+          img.setAttribute("src", await blobToDataUrl(blob));
+          stat.inlined++;
+          stat.bytes += blob.size;
+        }
       } catch {
-        /* 保留原 src */
+        stat.skipped++; // 保留原 src
       }
-    }),
+    }
+    done++;
+    onProgress?.({ phase: "images", current: done, total: imgs.length });
+  });
+  return stat;
+}
+
+/**
+ * 把本地附件链接 `<a href>` 换成 data: URL。
+ *
+ * 只把 **URL 清单**交给 Rust，拿回 data: URL 后在本地 DOM 上回填 —— 而不是把整篇
+ * （图片已内嵌、动辄几十 MB 的）HTML 送过去再拿回来。后者一趟 IPC 就是两次巨型
+ * JSON 序列化加 Rust 全文正则，是大笔记打印卡死的头号原因。
+ *
+ * `budget` 是本次还能内嵌多少字节（图片已经吃掉一部分）；≤0 时直接跳过，全部保留原链接。
+ */
+async function inlineAttachmentLinks(
+  root: HTMLElement,
+  budget: number,
+  onProgress?: (p: SelfContainedProgress) => void,
+): Promise<InlineStat> {
+  const anchors = Array.from(root.querySelectorAll("a[href]")).filter((a) =>
+    isLocalAssetUrl(a.getAttribute("href") || ""),
   );
+  const stat: InlineStat = { total: anchors.length, inlined: 0, skipped: 0, bytes: 0 };
+  if (anchors.length === 0) return stat;
+  if (budget <= 0) {
+    stat.skipped = anchors.length;
+    return stat;
+  }
+
+  // 同一个附件可能被链接多次，去重后只解析一遍
+  const urls = Array.from(
+    new Set(anchors.map((a) => a.getAttribute("href") || "")),
+  );
+  onProgress?.({ phase: "attachments", current: 0, total: urls.length });
+
+  try {
+    const resolved = await exportApi.resolveAssetDataUrls(
+      urls,
+      Math.min(budget, MAX_SINGLE_IMAGE_BYTES * 4),
+    );
+    const map = new Map(resolved.map((r) => [r.url, r]));
+    for (const a of anchors) {
+      const hit = map.get(a.getAttribute("href") || "");
+      if (hit?.dataUrl) {
+        a.setAttribute("href", hit.dataUrl);
+        if (hit.fileName) a.setAttribute("download", hit.fileName);
+        stat.inlined++;
+      } else {
+        stat.skipped++; // 保留原链接：应用内可点，导出物里失效
+      }
+    }
+    onProgress?.({ phase: "attachments", current: urls.length, total: urls.length });
+  } catch {
+    // 内嵌失败不阻断打印：结构和文字都正常，只是附件链接指向本地
+    stat.skipped = anchors.length;
+  }
+  return stat;
+}
+
+/**
+ * 这个 URL 是否指向本应用的本地资源（需要内嵌）。
+ *
+ * 判定与 Rust 侧 `asset_path::resolve_content_url` 对齐：注意
+ * `http://asset.localhost/…` 虽然是 http 开头，却是**本地资源**，不能按外链排除。
+ *
+ * 导出仅为单测覆盖这条判定（漏判会把外链也送去 Rust，误判会让附件内嵌不上）。
+ */
+export function isLocalAssetUrl(href: string): boolean {
+  const u = href.trim();
+  if (!u) return false;
+  if (
+    u.startsWith("data:") ||
+    u.startsWith("blob:") ||
+    u.startsWith("#") ||
+    u.startsWith("mailto:") ||
+    u.startsWith("tel:")
+  ) {
+    return false;
+  }
+  if (/^https?:\/\//i.test(u)) return /^https?:\/\/asset\.localhost\//i.test(u);
+  return true; // kb-asset:// / asset:// / file:// / 裸路径
+}
+
+/**
+ * 按固定并发跑一批异步任务。
+ * 不引第三方库：就一个取号循环，N 个 worker 各自领任务，天然限流。
+ *
+ * 导出仅为单测验证"并发确实被限住、且每个任务都跑到了"。
+ */
+export async function mapWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
 }
 
 /** Blob → data: URL（FileReader.readAsDataURL） */

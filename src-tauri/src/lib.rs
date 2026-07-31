@@ -1253,6 +1253,7 @@ pub fn run() {
             commands::export::render_note_html_for_pdf,
             // R-005b 所见即所得打印：内嵌前端编辑器实时 DOM 的本地资源为 base64
             commands::export::inline_note_html_assets,
+            commands::export::resolve_asset_data_urls,
             // 通用：前端生成的 PNG 落盘到用户选定路径（如表格导出图片）
             commands::export::export_png_to_file,
             // 笔记批量操作

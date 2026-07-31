@@ -1884,13 +1884,45 @@ function DesktopNoteEditorPage() {
       message.warning("编辑器尚未就绪，请稍候再试");
       return;
     }
-    const hide = message.loading("正在准备打印…", 0);
+    // 图多的笔记内嵌资源要走几秒到几十秒，用可更新的 loading 报进度，
+    // 免得用户盯着一句静止的"正在准备"以为卡死了
+    const KEY = "kb-print-progress";
+    message.open({ key: KEY, type: "loading", content: "正在准备打印…", duration: 0 });
+    let skipped = 0;
     try {
-      await printEditorContent(editorInstance, title);
-      hide();
+      await printEditorContent(editorInstance, title, (p) => {
+        if (p.phase === "images" && p.total > 0) {
+          message.open({
+            key: KEY,
+            type: "loading",
+            content: `正在内嵌图片 ${p.current}/${p.total}…`,
+            duration: 0,
+          });
+        } else if (p.phase === "attachments" && p.total > 0) {
+          message.open({
+            key: KEY,
+            type: "loading",
+            content: "正在内嵌附件…",
+            duration: 0,
+          });
+        } else if (p.phase === "done") {
+          skipped = p.skipped ?? 0;
+          message.open({
+            key: KEY,
+            type: "loading",
+            content: "正在生成打印文档…",
+            duration: 0,
+          });
+        }
+      });
+      message.destroy(KEY);
       message.info("请在打印对话框中选择打印机，或「另存为 PDF」", 3);
+      if (skipped > 0) {
+        // 超出体积上限的资源保留了原链接：应用内能显示，但打印/导出物里可能缺
+        message.warning(`有 ${skipped} 个图片/附件体积过大未内嵌，打印结果可能缺失`, 5);
+      }
     } catch (e) {
-      hide();
+      message.destroy(KEY);
       message.error(`打印失败: ${e}`);
     }
   }

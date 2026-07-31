@@ -175,6 +175,68 @@ impl HtmlExportService {
         let (html, att_inlined, _att_missing) = inline_attachments(&html, assets_root);
         (html, img_inlined, att_inlined)
     }
+
+    /// 批量把本地资源 URL 解析成 data: URL。
+    ///
+    /// **为什么要有它**：`inline_assets` 要求把**整篇 HTML** 送进来再整篇送回去。
+    /// 打印管线里那篇 HTML 的图片已经在前端内嵌成 base64 了，几十 MB 的字符串走一趟
+    /// IPC 就是两次巨型 JSON 序列化 + 两次全文正则，而真正要做的事只是"把几个附件
+    /// 链接换成 data: URL"。改成只传 URL 清单、只回 data: URL，IPC 载荷从几十 MB
+    /// 降到几 KB（附件本身除外）。
+    ///
+    /// 逐条独立失败：解析不到路径 / 读不出 / 超过 `max_bytes` 的条目返回 `data_url = None`，
+    /// 调用方保留原 URL —— 在应用自己的 WebView 里 `kb-asset://` 仍能正常加载，
+    /// 只是导出的文件不自包含，属于可接受的降级。
+    pub fn resolve_asset_data_urls(
+        urls: &[String],
+        assets_root: &Path,
+        max_bytes: u64,
+    ) -> Vec<ResolvedAssetUrl> {
+        urls.iter()
+            .map(|url| {
+                let resolved = resolve_content_url(url, assets_root)
+                    .and_then(|abs| {
+                        // 先看大小再读：避免为一个几百 MB 的文件白白分配内存
+                        let size = std::fs::metadata(&abs).ok()?.len();
+                        if size > max_bytes {
+                            return None;
+                        }
+                        let bytes = std::fs::read(&abs).ok()?;
+                        let name = abs
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "attachment".to_string());
+                        let mime = guess_mime(&abs);
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                        Some((format!("data:{};base64,{}", mime, b64), name))
+                    });
+                match resolved {
+                    Some((data_url, file_name)) => ResolvedAssetUrl {
+                        url: url.clone(),
+                        data_url: Some(data_url),
+                        file_name: Some(file_name),
+                    },
+                    None => ResolvedAssetUrl {
+                        url: url.clone(),
+                        data_url: None,
+                        file_name: None,
+                    },
+                }
+            })
+            .collect()
+    }
+}
+
+/// 一条本地资源 URL 的解析结果（见 `HtmlExportService::resolve_asset_data_urls`）
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedAssetUrl {
+    /// 原样回传请求时的 URL，调用方据此回填对应元素
+    pub url: String,
+    /// 解析成功时的 data: URL；失败 / 超限为 None
+    pub data_url: Option<String>,
+    /// 文件名，用于 `<a download="…">`
+    pub file_name: Option<String>,
 }
 
 /// 用一个最简模板包住 body：
@@ -575,6 +637,74 @@ mod tests {
         );
         // 合法部分仍然保留，不是整条丢弃
         assert!(html.contains("宋体"), "无害的字体名应保留");
+    }
+
+    /// 建一个带内容的临时文件，返回路径；调用方负责删
+    fn temp_file(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join("kb_export_html_tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join(name);
+        std::fs::write(&p, bytes).unwrap();
+        p
+    }
+
+    /// 正常路径：解析成 data: URL，MIME 按扩展名推断，带上文件名供 <a download>
+    #[test]
+    fn resolve_asset_data_urls_inlines_local_file() {
+        let p = temp_file("kb_test_a.png", b"PNGDATA");
+        let urls = vec![p.to_string_lossy().into_owned()];
+
+        let out = HtmlExportService::resolve_asset_data_urls(
+            &urls,
+            Path::new("/nonexistent"),
+            1024 * 1024,
+        );
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].url, urls[0], "url 必须原样回传，前端靠它回填");
+        let data_url = out[0].data_url.as_deref().unwrap();
+        assert!(
+            data_url.starts_with("data:image/png;base64,"),
+            "MIME 应按扩展名推断，实际：{data_url}"
+        );
+        assert_eq!(out[0].file_name.as_deref(), Some("kb_test_a.png"));
+        let _ = std::fs::remove_file(p);
+    }
+
+    /// 超过 max_bytes 的文件不读进内存，返回 None 让前端保留原 URL
+    #[test]
+    fn resolve_asset_data_urls_respects_size_limit() {
+        let p = temp_file("kb_test_big.bin", &vec![0u8; 4096]);
+        let urls = vec![p.to_string_lossy().into_owned()];
+
+        let out = HtmlExportService::resolve_asset_data_urls(&urls, Path::new("/nonexistent"), 1024);
+
+        assert!(out[0].data_url.is_none(), "超限文件不该被内嵌");
+        assert!(out[0].file_name.is_none());
+        let _ = std::fs::remove_file(p);
+    }
+
+    /// 解析不到 / 读不出的条目独立失败，不影响同批其它条目
+    #[test]
+    fn resolve_asset_data_urls_fails_per_item() {
+        let ok = temp_file("kb_test_ok.txt", b"hello");
+        let urls = vec![
+            "https://example.com/remote.pdf".to_string(), // 外链：解析不到本地路径
+            "mailto:a@b.com".to_string(),                 // 非资源
+            ok.to_string_lossy().into_owned(),            // 正常
+        ];
+
+        let out = HtmlExportService::resolve_asset_data_urls(
+            &urls,
+            Path::new("/nonexistent"),
+            1024 * 1024,
+        );
+
+        assert_eq!(out.len(), 3, "每条请求都要有对应结果，顺序一一对应");
+        assert!(out[0].data_url.is_none(), "外链不内嵌");
+        assert!(out[1].data_url.is_none(), "mailto 不内嵌");
+        assert!(out[2].data_url.is_some(), "同批里的合法条目不受前面失败影响");
+        let _ = std::fs::remove_file(ok);
     }
 
     /// 空串 / 只有空白的字体值等同于没传，回退默认模板
