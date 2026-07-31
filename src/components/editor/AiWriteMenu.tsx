@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { Editor } from "@tiptap/react";
 import { useFeatureEnabled } from "@/hooks/useFeatureEnabled";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
@@ -19,9 +19,13 @@ import {
   Wand2,
   PenLine,
   Copy,
+  Brain,
+  ChevronRight,
+  ChevronDown,
 } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { aiWriteApi, promptApi } from "@/lib/api";
+import { splitThinking } from "@/lib/stripThinking";
 import type { PromptOutputMode, PromptTemplate } from "@/types";
 
 interface AiWriteMenuProps {
@@ -218,7 +222,10 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
   const aiEnabled = useFeatureEnabled("ai");
   const [visible, setVisible] = useState(false);
   const [streaming, setStreaming] = useState(false);
+  // 模型原始输出（可能含 <think> 思考过程），展示 / 插入前一律经 splitThinking 拆分
   const [result, setResult] = useState("");
+  // 思考过程折叠区是否展开（每次新请求重置为折叠）
+  const [thinkExpanded, setThinkExpanded] = useState(false);
   const [selectedText, setSelectedText] = useState("");
   // 浮动 AI 工具栏：贴近选区下方，一行展示所有提示词按钮（横向滚动，不换行）
   // 直接展开整条工具栏，不再走"先点小按钮→再展开菜单"的二段交互
@@ -481,6 +488,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
 
     setStreaming(true);
     setResult("");
+    setThinkExpanded(false);
     setActivePrompt(display);
     await cleanup();
 
@@ -557,10 +565,24 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
     await runAssist(`custom:${instruction}`, ephemeral);
   }
 
+  // 把模型原始输出拆成「正文」和「思考过程」。
+  //
+  // deepseek-r1 / qwq / qwen3 这类推理模型，经本地 Ollama / LM Studio / 多数中转
+  // 走的都是把 <think>…</think> 直接塞在正文通道里（只有部分服务端会分离到
+  // reasoning_content 字段）。写作辅助的结果要整段替换进笔记，思考过程必须在
+  // 这一层摘掉——下面展示、复制、插入统一只认 applyText。
+  const {
+    content: applyText,
+    thinking,
+    thinkingOpen,
+  } = useMemo(() => splitThinking(result, { streaming }), [result, streaming]);
+
   async function handleCopy() {
-    if (!result) return;
+    // 正文为空（模型只吐了思考）时退而复制思考，避免点了没反应
+    const copyText = applyText || thinking;
+    if (!copyText) return;
     try {
-      await navigator.clipboard.writeText(result);
+      await navigator.clipboard.writeText(copyText);
       message.success("已复制");
     } catch {
       message.error("复制失败");
@@ -584,29 +606,32 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
    * - replace（默认）：删选区再插入
    *
    * R-016：选区里如果有 image/video 节点，runAssist 已把它们存档到 mediaNodesRef 并
-   * 在喂给 AI 的文本中标记 [IMG_N] 占位符。这里按占位符切分 result，分段交替插入
+   * 在喂给 AI 的文本中标记 [IMG_N] 占位符。这里按占位符切分正文，分段交替插入
    * text 和 nodeJSON，保证图片不丢。
+   *
+   * ⚠️ 插入的是 `applyText`（已剥掉 <think> 思考过程）而不是原始 `result`——
+   * 推理模型的思考过程写进笔记就是污染。
    */
   function applyResult(mode: PromptOutputMode) {
-    if (!result) return;
+    if (!applyText) return;
     const { from, to } = editor.state.selection;
     const mediaNodes = mediaNodesRef.current;
 
     // 无媒体节点：走旧的快速路径，避免无谓的解析开销
     if (mediaNodes.length === 0) {
       if (mode === "append") {
-        editor.chain().focus().insertContentAt(to, result).run();
+        editor.chain().focus().insertContentAt(to, applyText).run();
       } else {
         editor
           .chain()
           .focus()
           .deleteRange({ from, to })
-          .insertContentAt(from, result)
+          .insertContentAt(from, applyText)
           .run();
       }
     } else {
       const { segments, usedIndices } = parseResultWithPlaceholders(
-        result,
+        applyText,
         mediaNodes,
       );
       // 兜底：AI 完全或部分丢弃了占位符，把没用上的图片追加到结果末尾
@@ -647,12 +672,14 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
     mediaNodesRef.current = [];
     setVisible(false);
     setResult("");
+    setThinkExpanded(false);
     setActivePrompt(null);
   }
 
   function handleDiscard() {
     mediaNodesRef.current = [];
     setResult("");
+    setThinkExpanded(false);
     setVisible(false);
     setActivePrompt(null);
   }
@@ -908,18 +935,58 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
               )}
             </div>
 
-            {/* 结果内容 */}
+            {/* 思考过程：推理模型的 <think> 内容单独折叠展示，默认收起，
+                且**永远不会**参与替换/追加（applyResult 只认 applyText）。 */}
+            {thinking && (
+              <div
+                style={{
+                  borderBottom: `1px dashed ${token.colorBorderSecondary}`,
+                }}
+              >
+                <button
+                  type="button"
+                  className="flex items-center gap-1 w-full px-3 py-1 text-xs text-left"
+                  style={{
+                    color: token.colorTextTertiary,
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                  }}
+                  onClick={() => setThinkExpanded((v) => !v)}
+                >
+                  {thinkExpanded ? (
+                    <ChevronDown size={11} />
+                  ) : (
+                    <ChevronRight size={11} />
+                  )}
+                  <Brain size={11} />
+                  {thinkingOpen
+                    ? "AI 正在思考…"
+                    : `思考过程（${thinking.length} 字，不会写入笔记）`}
+                </button>
+                {thinkExpanded && (
+                  <div
+                    className="px-3 pb-2 text-xs whitespace-pre-wrap max-h-40 overflow-auto"
+                    style={{ color: token.colorTextTertiary }}
+                  >
+                    {thinking}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 结果内容：只展示剥掉思考过程后的正文，所见即所得地对应"替换"结果 */}
             <div
               className="px-3 py-2 text-sm whitespace-pre-wrap max-h-60 overflow-auto"
               style={{ color: token.colorText }}
             >
-              {result}
-              {streaming && !result && (
+              {applyText}
+              {streaming && !applyText && (
                 <span style={{ color: token.colorTextQuaternary }}>
-                  生成中...
+                  {thinkingOpen ? "思考中..." : "生成中..."}
                 </span>
               )}
-              {streaming && result && (
+              {streaming && applyText && (
                 <span
                   className="inline-block w-1.5 h-3.5 ml-0.5 animate-pulse"
                   style={{ background: token.colorPrimary }}
@@ -935,7 +1002,16 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
                   borderTop: `1px solid ${token.colorBorderSecondary}`,
                 }}
               >
-                <Tooltip title="复制到剪贴板">
+                {/* 只有思考没有正文：插入按钮禁用，免得用户点了"替换"把选区删空 */}
+                {!applyText && (
+                  <span
+                    className="mr-auto text-xs"
+                    style={{ color: token.colorTextTertiary }}
+                  >
+                    模型只输出了思考过程，没给出结果，可展开查看或重试
+                  </span>
+                )}
+                <Tooltip title="复制到剪贴板（不含思考过程）">
                   <Button
                     size="small"
                     icon={<Copy size={12} />}
@@ -954,6 +1030,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
                 <Button
                   type={defaultMode === "append" ? "primary" : "default"}
                   size="small"
+                  disabled={!applyText}
                   onClick={() => applyResult("append")}
                 >
                   追加
@@ -962,6 +1039,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
                   type={defaultMode === "append" ? "default" : "primary"}
                   size="small"
                   icon={<Check size={12} />}
+                  disabled={!applyText}
                   onClick={() => applyResult("replace")}
                 >
                   替换
