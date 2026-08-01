@@ -33,6 +33,7 @@ import { useAppStore } from "@/store";
 import { useAllFeaturesEnabled } from "@/hooks/useFeatureEnabled";
 import { PlanTodayModal } from "@/components/ai/PlanTodayModal";
 import { DailyImportModal } from "@/components/DailyImportModal";
+import { LinkStatusBar } from "@/components/editor/LinkStatusBar";
 import { NoteAiDrawer } from "@/components/ai/NoteAiDrawer";
 import type { Note } from "@/types";
 
@@ -73,6 +74,8 @@ function DesktopDailyPage() {
   const [loading, setLoading] = useState(true);
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  /** 底部链接状态条的刷新信号：保存完成（出链已同步）后自增 */
+  const [linkRefreshTick, setLinkRefreshTick] = useState(0);
   // 与 notes/editor 一致：选段触发「问 AI」时打开伴生抽屉，把选段当引用挂上
   const [aiDrawerOpen, setAiDrawerOpen] = useState(false);
   const [aiSelection, setAiSelection] = useState<string | undefined>(undefined);
@@ -261,6 +264,13 @@ function DesktopDailyPage() {
       if (isNew || titleChanged) {
         useAppStore.getState().bumpNotesRefresh();
       }
+      // 同步日记的出链。日记此前**从不**同步出链 —— 写进日记的 [[X]] 不进
+      // note_links，于是日记的链出永远是 0，X 的反链里也看不到这篇日记。
+      // 走 Rust 侧的 rebuildLinks（解析 + 解析目标 + 写表一次完成），
+      // 与同步拉取那条路径共用同一份判定，不会两处口径漂移。
+      // 失败不阻断保存：正文已经落库了，链接是派生数据，下次保存会再试。
+      await linkApi.rebuildLinks(current.id, c).catch(() => {});
+      setLinkRefreshTick((n) => n + 1);
     },
   });
 
@@ -669,6 +679,19 @@ function DesktopDailyPage() {
           </aside>
         )}
       </div>
+
+      {/* 链接状态条：与笔记编辑器同款，常驻底部不随正文滚动。
+          日记同样支持 [[双链]]，之前只有笔记编辑器能看到链接情况，这里补齐。
+          note 为空（当天还没落库）时组件自己返回 null，不占位。 */}
+      <LinkStatusBar
+        noteId={note?.id}
+        refreshKey={linkRefreshTick}
+        onNavigate={async (id) => {
+          await autoSave.flush();
+          navigate(`/notes/${id}`);
+        }}
+      />
+
       {/* 伴生 AI 抽屉：仅在日记 note 已存在时挂载（NoteAiDrawer 需要确切 noteId） */}
       {note && (
         <NoteAiDrawer
