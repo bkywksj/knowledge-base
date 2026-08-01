@@ -1849,10 +1849,10 @@ export async function loadThemeFromStore() {
     void applyThemeOverrides(useAppStore.getState());
     // 放行写盘。必须在 finally 里：加载抛错也要放行，否则用户这次会话的所有
     // 设置改动都静默丢失（比"读到默认值"更糟）。
-    // 同时把 subscribe 的比较基准对齐到当前状态，避免 hydrate 完立刻触发一次
-    // 无意义的全量写盘。
+    // 同时把增量写的基线对齐到"刚从磁盘读回来的状态"——这样接下来只有用户在
+    // 本窗口真正改动的字段才会被写回，不会拿本窗口的旧值去动别的字段。
     _settingsHydrated = true;
-    _prevPersistKey = persistKeyOf(useAppStore.getState());
+    _lastPersisted = collectPersistPayload(useAppStore.getState());
   }
 }
 
@@ -1868,140 +1868,172 @@ export async function loadThemeFromStore() {
 let _settingsHydrated = false;
 
 /**
- * 把「需要持久化的那批状态」压成一个字符串，用来判断是否真有变化。
+ * 收集「需要持久化的那批状态」为一个扁平 payload。
  *
- * 抽成函数是为了让 hydrate 结束时能把比较基准对齐到当前状态 —— 否则加载完
- * 立刻会因为"基准还是空串"触发一次全量写盘。
+ * 🔴 **这是持久化字段的唯一真相源**：写盘、变更检测、单测一致性校验全部从它派生。
+ * 以前写盘一份清单、变更检测另写一条 40+ 字段的字符串表达式，两处各自维护 ——
+ * `pasteCodeAsBlock` 就是这么漏的：写盘列表里有、变更检测里没有，于是**只改这一项
+ * 永远不会触发写盘**，改完重启就回默认。现在两者共用本函数，漏挂在结构上不可能发生。
+ *
+ * 新增持久化字段时只需改这里 + 在 `loadThemeFromStore` 补一段读取（有单测兜底）。
  */
-function persistKeyOf(state: AppStore): string {
-  // notesHeadingFolded 摘要：用 entries 数 + 总 anchor 数 简化对比，避免每次 stringify 大对象
-  const headingFoldEntries = Object.entries(state.notesHeadingFolded);
-  const headingFoldKey = `${headingFoldEntries.length}:${headingFoldEntries.reduce((acc, [, v]) => acc + v.length, 0)}:${headingFoldEntries.map(([k, v]) => `${k}=${v.join(",")}`).join("|")}`;
-  return `${state.lightTheme}|${state.darkTheme}|${state.themeCategory}|${state.alwaysOnTop}|${state.sidePanelWidth}|${state.sidePanelVisible}|${state.autoHideActivityBar}|${state.recentSearches.join(",")}|${state.editorFontFamily}|${state.editorHeadingFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.editorCodeFontSize}|${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}|${state.editorHeadingNumber}|${state.editorHeadingNumberFormat}|${state.editorHeadingNumberStartLevel}|${state.editorHeadingNumberSkipManual}|${state.editorGuideLine}|${state.editorHighlightShortcut}|${state.uiScale}|${state.uiScaleUserSet}|${state.autoSaveEnabled}|${state.autoSaveDelay}|${state.outlineVisible}|${state.outlinePosition}|${state.notesCollapsedFolderKeys.join(",")}|${state.notesUncategorizedExpanded}|${state.notesShowOnlyFolders}|${state.notesFoldersInitialCollapseDone}|${state.notesCollapseFoldersOnStartup}|${headingFoldKey}|${state.themeOverridesEnabled}|${state.customAccent ?? ""}|${state.customBgImage ?? ""}|${state.customBgDim}|${state.customBgBlur}|${state.customBgFit}|${state.defaultViewMode}|${state.tasksDefaultView}|${state.tasksCalendarColorBy}|${state.notesPanelTab}`;
+function collectPersistPayload(state: AppStore): Record<string, unknown> {
+  return {
+    lightTheme: state.lightTheme,
+    darkTheme: state.darkTheme,
+    themeCategory: state.themeCategory,
+    alwaysOnTop: state.alwaysOnTop,
+    sidePanelWidth: state.sidePanelWidth,
+    sidePanelVisible: state.sidePanelVisible,
+    autoHideActivityBar: state.autoHideActivityBar,
+    recentSearches: state.recentSearches,
+    editorFontFamily: state.editorFontFamily,
+    editorHeadingFontFamily: state.editorHeadingFontFamily,
+    editorFontSize: state.editorFontSize,
+    editorLineHeight: state.editorLineHeight,
+    editorCodeFontSize: state.editorCodeFontSize,
+    editorReadingWidth: state.editorReadingWidth,
+    editorPaper: state.editorPaper,
+    editorRuleLines: state.editorRuleLines,
+    editorFirstLineIndent: state.editorFirstLineIndent,
+    editorHeadingNumber: state.editorHeadingNumber,
+    editorHeadingNumberFormat: state.editorHeadingNumberFormat,
+    editorHeadingNumberStartLevel: state.editorHeadingNumberStartLevel,
+    editorHeadingNumberSkipManual: state.editorHeadingNumberSkipManual,
+    editorGuideLine: state.editorGuideLine,
+    editorHighlightShortcut: state.editorHighlightShortcut,
+    uiScale: state.uiScale,
+    uiScaleUserSet: state.uiScaleUserSet,
+    autoSaveEnabled: state.autoSaveEnabled,
+    autoSaveDelay: state.autoSaveDelay,
+    pasteCodeAsBlock: state.pasteCodeAsBlock,
+    defaultViewMode: state.defaultViewMode,
+    tasksDefaultView: state.tasksDefaultView,
+    tasksCalendarColorBy: state.tasksCalendarColorBy,
+    notesPanelTab: state.notesPanelTab,
+    outlineVisible: state.outlineVisible,
+    outlinePosition: state.outlinePosition,
+    notesCollapsedFolderKeys: state.notesCollapsedFolderKeys,
+    notesUncategorizedExpanded: state.notesUncategorizedExpanded,
+    notesShowOnlyFolders: state.notesShowOnlyFolders,
+    notesFoldersInitialCollapseDone: state.notesFoldersInitialCollapseDone,
+    notesCollapseFoldersOnStartup: state.notesCollapseFoldersOnStartup,
+    notesHeadingFolded: state.notesHeadingFolded,
+    themeOverridesEnabled: state.themeOverridesEnabled,
+    customAccent: state.customAccent,
+    customBgImage: state.customBgImage,
+    customBgDim: state.customBgDim,
+    customBgBlur: state.customBgBlur,
+    customBgFit: state.customBgFit,
+  };
 }
 
-/** 上次写盘时的状态指纹；与 persistKeyOf 比对，只在真变了才落盘 */
-let _prevPersistKey = "";
+/**
+ * 持久化字段的等值判断。
+ *
+ * 标量按值比；数组 / 普通对象按**内容**比（不是引用）—— 保持与旧实现一致的口径：
+ * setter 产生了新引用但内容没变时不该触发写盘。`notesHeadingFolded` 是
+ * `Record<number, string[]>`，所以对象分支里还要再比一层数组。
+ *
+ * 不用 `JSON.stringify` 对比：它在每次 store 变更时都会跑，而 notesHeadingFolded
+ * 可能很大，序列化整个对象太浪费。
+ */
+export function persistValueEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
+  }
+  const plain = (v: unknown): v is Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+  if (plain(a) && plain(b)) {
+    const ka = Object.keys(a);
+    if (ka.length !== Object.keys(b).length) return false;
+    return ka.every((k) => {
+      const va = a[k];
+      const vb = b[k];
+      if (Array.isArray(va) && Array.isArray(vb)) {
+        return va.length === vb.length && va.every((x, i) => Object.is(x, vb[i]));
+      }
+      return Object.is(va, vb);
+    });
+  }
+  return false;
+}
 
-/** 保存主题 + 窗口置顶 + SidePanel 偏好到 tauri-plugin-store */
+/**
+ * 算出相对基线**真正变了**的字段名。基线为 null（还没写过）时视为全部要写。
+ *
+ * 增量写盘的核心：只写本窗口自己改过的键。
+ */
+export function changedPersistKeys(
+  payload: Record<string, unknown>,
+  baseline: Record<string, unknown> | null,
+): string[] {
+  if (!baseline) return Object.keys(payload);
+  return Object.keys(payload).filter(
+    (k) => !persistValueEqual(payload[k], baseline[k]),
+  );
+}
+
+/**
+ * 上次成功写盘时的 payload 快照，作为增量写的基线。
+ *
+ * 🔴 **这是"设置莫名回默认"的根治点**。旧实现是**全量覆写** 46 个键：
+ * 每个 WebView 窗口（主窗 / 快速记一笔 / AI 对话浮窗 / 定时推送弹窗 / 思维导图浮窗…）
+ * 都各跑一份 `main.tsx`、各持一份 zustand、各挂一个写盘器，而设置**没有跨窗口同步**。
+ * 于是：主窗把标题编号打开并写盘后，副窗内存里还是旧的 `false`；副窗随便改个侧栏宽度
+ * 就把自己那份陈旧状态整体刷回磁盘，编号被抹掉 —— 用户看到的就是"更新/重启后设置没了"。
+ *
+ * （v1.32.0 装的 single-instance 插件只挡多**进程**，挡不住一个进程里的多**窗口**。）
+ *
+ * 改成增量后：副窗的 diff 里只有 `sidePanelWidth`，它**碰不到** `editorHeadingNumber`，
+ * 陈旧值自然没有机会覆盖新值。
+ */
+let _lastPersisted: Record<string, unknown> | null = null;
+
+/**
+ * 把设置**增量**写入 tauri-plugin-store：只写本窗口相对基线真正改过的键。
+ *
+ * 为什么必须增量（而不是图省事全量覆写）见 {@link _lastPersisted} 的注释 ——
+ * 一句话：全量覆写会让任意一个副窗拿陈旧内存状态抹掉主窗刚改的设置。
+ *
+ * 基线只在**写盘成功后**推进：写失败时下次还会重试这批键，不会静默丢改动。
+ */
 export async function saveThemeToStore() {
   // 未 hydrate 完就别写：见 _settingsHydrated 的说明
   if (!_settingsHydrated) return;
+  const payload = collectPersistPayload(useAppStore.getState());
+  const keys = changedPersistKeys(payload, _lastPersisted);
+  if (keys.length === 0) return;
   try {
-    const {
-      lightTheme,
-      darkTheme,
-      themeCategory,
-      alwaysOnTop,
-      sidePanelWidth,
-      sidePanelVisible,
-      autoHideActivityBar,
-      recentSearches,
-      editorFontFamily,
-      editorHeadingFontFamily,
-      editorFontSize,
-      editorLineHeight,
-      editorCodeFontSize,
-      editorReadingWidth,
-      editorPaper,
-      editorRuleLines,
-      editorFirstLineIndent,
-      editorHeadingNumber,
-      editorHeadingNumberFormat,
-      editorHeadingNumberStartLevel,
-      editorHeadingNumberSkipManual,
-      editorGuideLine,
-      editorHighlightShortcut,
-      uiScale,
-      uiScaleUserSet,
-      autoSaveEnabled,
-      autoSaveDelay,
-      pasteCodeAsBlock,
-      defaultViewMode,
-      tasksDefaultView,
-      tasksCalendarColorBy,
-      notesPanelTab,
-      outlineVisible,
-      outlinePosition,
-      notesCollapsedFolderKeys,
-      notesUncategorizedExpanded,
-      notesShowOnlyFolders,
-      notesFoldersInitialCollapseDone,
-      notesCollapseFoldersOnStartup,
-      notesHeadingFolded,
-      themeOverridesEnabled,
-      customAccent,
-      customBgImage,
-      customBgDim,
-      customBgBlur,
-      customBgFit,
-    } = useAppStore.getState();
     const store = await Store.load(STORE_FILE);
-    await store.set("lightTheme", lightTheme);
-    await store.set("darkTheme", darkTheme);
-    await store.set("themeCategory", themeCategory);
-    await store.set("alwaysOnTop", alwaysOnTop);
-    await store.set("sidePanelWidth", sidePanelWidth);
-    await store.set("sidePanelVisible", sidePanelVisible);
-    await store.set("autoHideActivityBar", autoHideActivityBar);
-    await store.set("recentSearches", recentSearches);
-    await store.set("editorFontFamily", editorFontFamily);
-    await store.set("editorHeadingFontFamily", editorHeadingFontFamily);
-    await store.set("editorFontSize", editorFontSize);
-    await store.set("editorLineHeight", editorLineHeight);
-    await store.set("editorCodeFontSize", editorCodeFontSize);
-    await store.set("editorReadingWidth", editorReadingWidth);
-    await store.set("editorPaper", editorPaper);
-    await store.set("editorRuleLines", editorRuleLines);
-    await store.set("editorFirstLineIndent", editorFirstLineIndent);
-    await store.set("editorHeadingNumber", editorHeadingNumber);
-    await store.set("editorHeadingNumberFormat", editorHeadingNumberFormat);
-    await store.set("editorHeadingNumberStartLevel", editorHeadingNumberStartLevel);
-    await store.set("editorHeadingNumberSkipManual", editorHeadingNumberSkipManual);
-    await store.set("editorGuideLine", editorGuideLine);
-    await store.set("editorHighlightShortcut", editorHighlightShortcut);
-    await store.set("uiScale", uiScale);
-    await store.set("uiScaleUserSet", uiScaleUserSet);
-    await store.set("autoSaveEnabled", autoSaveEnabled);
-    await store.set("autoSaveDelay", autoSaveDelay);
-    await store.set("pasteCodeAsBlock", pasteCodeAsBlock);
-    await store.set("defaultViewMode", defaultViewMode);
-    await store.set("tasksDefaultView", tasksDefaultView);
-    await store.set("tasksCalendarColorBy", tasksCalendarColorBy);
-    await store.set("notesPanelTab", notesPanelTab);
-    await store.set("outlineVisible", outlineVisible);
-    await store.set("outlinePosition", outlinePosition);
-    await store.set("notesCollapsedFolderKeys", notesCollapsedFolderKeys);
-    await store.set("notesUncategorizedExpanded", notesUncategorizedExpanded);
-    await store.set("notesShowOnlyFolders", notesShowOnlyFolders);
-    await store.set(
-      "notesFoldersInitialCollapseDone",
-      notesFoldersInitialCollapseDone,
-    );
-    await store.set(
-      "notesCollapseFoldersOnStartup",
-      notesCollapseFoldersOnStartup,
-    );
-    await store.set("notesHeadingFolded", notesHeadingFolded);
-    await store.set("themeOverridesEnabled", themeOverridesEnabled);
-    await store.set("customAccent", customAccent);
-    await store.set("customBgImage", customBgImage);
-    await store.set("customBgDim", customBgDim);
-    await store.set("customBgBlur", customBgBlur);
-    await store.set("customBgFit", customBgFit);
+    for (const k of keys) {
+      await store.set(k, payload[k]);
+    }
     await store.save();
+    _lastPersisted = payload;
   } catch {
-    // 静默失败
+    // 静默失败（基线不推进 → 下次变更时这批键会再试一次）
   }
 }
 
-// 监听主题 + 置顶 + SidePanel + 编辑器字体偏好变化自动保存
+/**
+ * 立刻把待写设置刷到磁盘，等落盘完成再返回。
+ *
+ * 用在"进程马上就要没了"的路口 —— 目前是应用内更新：`install()` 会拉起安装器，
+ * 安装器为了替换 exe 必须先杀掉正在运行的本进程。此时若还有没落盘的改动就永久丢了。
+ */
+export async function flushSettingsToDisk(): Promise<void> {
+  await saveThemeToStore();
+}
+
+// 设置变更 → 增量落盘。这里先做一次廉价 diff，没变就连 Store.load 都不做，
+// 避免每次 zustand 变更（含大量与设置无关的变更）都去碰磁盘。
 useAppStore.subscribe((state) => {
-  const key = persistKeyOf(state)
-  if (key !== _prevPersistKey) {
-    _prevPersistKey = key;
-    saveThemeToStore();
-  }
+  if (!_settingsHydrated) return;
+  const payload = collectPersistPayload(state);
+  if (changedPersistKeys(payload, _lastPersisted).length === 0) return;
+  void saveThemeToStore();
 });
 
 // 把「当前字体偏好」注册给导出 API —— 导出 HTML / 打印 PDF / Word（转换器路径）

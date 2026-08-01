@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { updaterApi } from "@/lib/api";
+import { flushSettingsToDisk } from "@/store";
 
 /**
  * 更新生命周期状态机。
@@ -112,6 +113,10 @@ export function useUpdateChecker(options: Options = {}) {
     setPhase("installing");
     setError(null);
     try {
+      // install() 会拉起安装器，安装器为了替换 exe 必须先杀掉本进程 —— 此时还没落盘的
+      // 设置改动就永久丢了（用户观感就是"更新之后设置被重置"）。先同步刷一次。
+      // 刷盘失败不该挡住更新：settings 是次要数据，装不上新版本才是大事。
+      await flushSettingsToDisk().catch(() => {});
       await u.install();
       await relaunch();
     } catch (e) {
