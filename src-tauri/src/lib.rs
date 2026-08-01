@@ -531,14 +531,23 @@ pub fn run() {
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default();
 
-    // 单实例守护（桌面端）。**必须是第一个注册的插件**（官方要求：它要在其它插件
-    // 初始化前抢先判定并退出重复进程）。
+    // 单实例守护（桌面端 **release** 专用）。**必须是第一个注册的插件**（官方要求：
+    // 它要在其它插件初始化前抢先判定并退出重复进程）。
     //
     // 这不只是"少开一个窗口"的体验问题。多实例下两份进程各持一份内存设置，
-    // saveThemeToStore() 又是**全量覆写**——A 进程随便改个侧栏宽度，就会把自己那份
+    // 早期 saveThemeToStore() 是**全量覆写**——A 进程随便改个侧栏宽度，就会把自己那份
     // 陈旧的 editorHeadingNumber 一起刷下去，抹掉 B 进程刚打开的编号设置。
     // 用户反馈的"重启后标题编号没有了、要重新设置"就是这么来的。
-    #[cfg(desktop)]
+    // （该根因已由「设置增量写盘」根治，见 store/index.ts 的 _lastPersisted。）
+    //
+    // 🔴 **debug 构建不注册**：插件的互斥体名是 `{identifier}-sim`，而 dev 与 prod
+    // 用的是同一个 identifier（com.agilefr.kb）→ 装了正式版的机器上 `tauri dev`
+    // 会被正式版的互斥体挡掉，二进制起来就立刻退出（实测：Running target\debug\...
+    // 之后进程直接 exit 0），根本调不了。
+    // 而本项目**自带**的那道锁（下方 early 路径的 `{dev-}default.lock`）本来就带
+    // `dev-` 前缀 + dev 独立数据目录，dev/prod 天然隔离，且同样会把已有窗口前置。
+    // 所以 debug 下交给它就够了，不需要也不能再叠一层不隔离的插件。
+    #[cfg(all(desktop, not(debug_assertions)))]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             // 第二次启动：把已有主窗口唤到前台（被最小化 / 缩到托盘时也能拉回来），
