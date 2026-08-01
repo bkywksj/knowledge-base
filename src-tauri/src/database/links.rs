@@ -1,5 +1,7 @@
 use crate::error::AppError;
-use crate::models::{GraphData, GraphEdge, GraphNode, NoteLink, WikiLinkSuggestItem};
+use crate::models::{
+    GraphData, GraphEdge, GraphNode, LinkedNote, NoteLink, NoteLinkSummary, WikiLinkSuggestItem,
+};
 
 /// 去 markdown 转义：把 `\X`（X 为非字母数字）中的 `\` 丢弃。
 ///
@@ -206,6 +208,118 @@ impl super::Database {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(links)
+    }
+
+    /// 取当前笔记的链接全貌：出链 + 入链 + 断链。
+    ///
+    /// 编辑器底部状态条一次调用拿齐，不为一条状态条打三次 IPC。
+    ///
+    /// **出链**读 `note_links`（保存时由 `sync_note_links` 维护），按 source_id 查 ——
+    /// 命中 PRIMARY KEY `(source_id, target_id)` 的前缀，不需要额外索引。
+    ///
+    /// **断链**：拿正文重跑一遍 `extract_wiki_refs`，凡是解析不到可见目标的
+    /// `[[X]]` 就算断（目标不存在 / 已删 / 已隐藏 / 标题打错）。判定口径与
+    /// `rebuild_note_links_from_content` **完全一致**，否则会出现"状态条说断了、
+    /// 但点进去又能跳"这种自相矛盾。
+    ///
+    /// 与 backlinks 一样过滤 `is_hidden`：不在普通笔记里泄露"哪些隐藏笔记引用了你"。
+    pub fn get_note_link_summary(&self, note_id: i64) -> Result<NoteLinkSummary, AppError> {
+        // ── 出链 ──
+        let outgoing = {
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|e| AppError::Custom(e.to_string()))?;
+            let mut stmt = conn.prepare(
+                "SELECT n.id, n.title, n.updated_at
+                 FROM note_links nl
+                 JOIN notes n ON n.id = nl.target_id
+                 WHERE nl.source_id = ?1 AND n.is_deleted = 0 AND n.is_hidden = 0
+                 ORDER BY n.updated_at DESC",
+            )?;
+            let rows = stmt
+                .query_map([note_id], |row| {
+                    Ok(LinkedNote {
+                        id: row.get(0)?,
+                        title: row.get(1)?,
+                        updated_at: row.get(2)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+
+        // ── 入链 ──
+        let incoming = {
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|e| AppError::Custom(e.to_string()))?;
+            let mut stmt = conn.prepare(
+                "SELECT n.id, n.title, n.updated_at
+                 FROM note_links nl
+                 JOIN notes n ON n.id = nl.source_id
+                 WHERE nl.target_id = ?1 AND n.is_deleted = 0 AND n.is_hidden = 0
+                 ORDER BY n.updated_at DESC",
+            )?;
+            let rows = stmt
+                .query_map([note_id], |row| {
+                    Ok(LinkedNote {
+                        id: row.get(0)?,
+                        title: row.get(1)?,
+                        updated_at: row.get(2)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+
+        // ── 断链 ──
+        let content: Option<String> = {
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|e| AppError::Custom(e.to_string()))?;
+            conn.query_row(
+                "SELECT content FROM notes WHERE id = ?1 AND is_deleted = 0",
+                rusqlite::params![note_id],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+        };
+        let mut broken: Vec<String> = Vec::new();
+        if let Some(content) = content {
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for (title, explicit_id) in extract_wiki_refs(&content) {
+                let resolved = match explicit_id {
+                    Some(id) => {
+                        let conn = self
+                            .conn
+                            .lock()
+                            .map_err(|e| AppError::Custom(e.to_string()))?;
+                        conn.query_row(
+                            "SELECT id FROM notes
+                             WHERE id = ?1 AND is_deleted = 0 AND is_hidden = 0",
+                            rusqlite::params![id],
+                            |row| row.get::<_, i64>(0),
+                        )
+                        .ok()
+                    }
+                    None => self.find_note_id_by_title_loose(&title)?,
+                };
+                // 自引用不算断链（rebuild 那边也是排除自引用，不是当成断）
+                let ok = matches!(resolved, Some(tid) if tid == note_id) || resolved.is_some();
+                if !ok && seen.insert(normalize_title(&title)) {
+                    broken.push(title);
+                }
+            }
+        }
+
+        Ok(NoteLinkSummary {
+            outgoing,
+            incoming,
+            broken,
+        })
     }
 
     /// 通过"规范化精确匹配"查找笔记 ID
@@ -657,5 +771,111 @@ mod tests {
         // 竖线后是非数字 → 不识别为 ID，整体当 title
         let refs = extract_wiki_refs("[[标题|abc]]");
         assert_eq!(refs, vec![("标题|abc".to_string(), None)]);
+    }
+
+    // ─── get_note_link_summary（编辑器底部链接状态条）─────────────────
+
+    /// 建一篇笔记的简写
+    fn note(db: &crate::database::Database, title: &str, content: &str) -> i64 {
+        db.create_note(&NoteInput {
+            title: title.into(),
+            content: content.into(),
+            folder_id: None,
+        })
+        .unwrap()
+        .id
+    }
+
+    #[test]
+    fn summary_reports_outgoing_and_incoming_separately() {
+        let db = mem_db();
+        let a = note(&db, "A", "");
+        let b = note(&db, "B", "");
+        let c = note(&db, "C", "");
+        // A → B（A 的出链）；C → A（A 的入链）
+        db.rebuild_note_links_from_content(a, "见 [[B]]").unwrap();
+        db.rebuild_note_links_from_content(c, "见 [[A]]").unwrap();
+
+        let s = db.get_note_link_summary(a).unwrap();
+        assert_eq!(s.outgoing.len(), 1, "A 应有 1 条出链");
+        assert_eq!(s.outgoing[0].id, b);
+        assert_eq!(s.incoming.len(), 1, "A 应有 1 条入链");
+        assert_eq!(s.incoming[0].id, c);
+        assert!(s.broken.is_empty());
+    }
+
+    #[test]
+    fn summary_detects_broken_link() {
+        let db = mem_db();
+        // 正文引用了一篇根本不存在的笔记
+        let a = note(&db, "A", "见 [[根本不存在的笔记]]");
+        db.rebuild_note_links_from_content(a, "见 [[根本不存在的笔记]]")
+            .unwrap();
+
+        let s = db.get_note_link_summary(a).unwrap();
+        assert!(s.outgoing.is_empty(), "解析不到目标就不该建边");
+        assert_eq!(s.broken, vec!["根本不存在的笔记".to_string()]);
+    }
+
+    #[test]
+    fn summary_broken_dedupes_by_normalized_title() {
+        let db = mem_db();
+        // 同一个坏链接写了两遍（大小写/空白不同）→ 只报一条
+        let content = "见 [[Ghost]] 又见 [[ ghost ]]";
+        let a = note(&db, "A", content);
+        db.rebuild_note_links_from_content(a, content).unwrap();
+
+        let s = db.get_note_link_summary(a).unwrap();
+        assert_eq!(s.broken.len(), 1, "规范化后同名只报一条，实际：{:?}", s.broken);
+    }
+
+    #[test]
+    fn summary_deleted_target_becomes_broken() {
+        let db = mem_db();
+        let a = note(&db, "A", "见 [[B]]");
+        let b = note(&db, "B", "");
+        db.rebuild_note_links_from_content(a, "见 [[B]]").unwrap();
+        assert_eq!(db.get_note_link_summary(a).unwrap().outgoing.len(), 1);
+
+        // B 进回收站后：出链消失，且该 [[B]] 应被判为断链
+        db.soft_delete_note(b).unwrap();
+        let s = db.get_note_link_summary(a).unwrap();
+        assert!(s.outgoing.is_empty(), "目标已删，不该还算出链");
+        assert_eq!(s.broken, vec!["B".to_string()], "目标已删应报断链");
+    }
+
+    #[test]
+    fn summary_self_reference_is_not_broken() {
+        let db = mem_db();
+        // 自引用：rebuild 那边是"排除"而不是"当成断链"，两处口径必须一致，
+        // 否则状态条会报一条用户点了能跳的"断链"
+        let a = note(&db, "A", "见 [[A]]");
+        db.rebuild_note_links_from_content(a, "见 [[A]]").unwrap();
+
+        let s = db.get_note_link_summary(a).unwrap();
+        assert!(s.outgoing.is_empty(), "自引用不建边");
+        assert!(s.broken.is_empty(), "自引用不算断链");
+    }
+
+    #[test]
+    fn summary_explicit_id_link_counts_as_outgoing() {
+        let db = mem_db();
+        let a = note(&db, "A", "");
+        let b = note(&db, "B", "");
+        let content = format!("见 [[B|{}]]", b);
+        db.rebuild_note_links_from_content(a, &content).unwrap();
+
+        let s = db.get_note_link_summary(a).unwrap();
+        assert_eq!(s.outgoing.len(), 1);
+        assert_eq!(s.outgoing[0].id, b);
+        assert!(s.broken.is_empty());
+    }
+
+    #[test]
+    fn summary_empty_note_is_all_empty() {
+        let db = mem_db();
+        let a = note(&db, "A", "什么链接都没有");
+        let s = db.get_note_link_summary(a).unwrap();
+        assert!(s.outgoing.is_empty() && s.incoming.is_empty() && s.broken.is_empty());
     }
 }

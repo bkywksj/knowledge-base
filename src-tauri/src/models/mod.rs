@@ -206,6 +206,33 @@ pub struct NoteLink {
     pub updated_at: String,
 }
 
+/// 与当前笔记相连的一篇笔记（出链 / 入链共用）。
+///
+/// 不复用 `NoteLink`：那个的字段名是 `source_*`，用来描述出链时语义正好相反
+/// （出链的对端是 target），读代码会拧巴。这里用中性的 `id` / `title`。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkedNote {
+    pub id: i64,
+    pub title: String,
+    pub updated_at: String,
+}
+
+/// 当前笔记的链接全貌，供编辑器底部状态条一次取回。
+///
+/// 三类信息合在一个 Command 里返回，避免前端为一条状态条打三次 IPC。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteLinkSummary {
+    /// 本篇链出去的笔记（我引用了谁）
+    pub outgoing: Vec<LinkedNote>,
+    /// 链进来的笔记（谁引用了我）
+    pub incoming: Vec<LinkedNote>,
+    /// 断链：正文里写了 `[[X]]` 但 X 不存在 / 已删 / 已隐藏，按原文标题去重。
+    /// 这是知识库里很实用的信号 —— 能发现打错的链接和被删掉的目标。
+    pub broken: Vec<String>,
+}
+
 /// wiki 链接候选项（`[[` 补全下拉用）
 ///
 /// 比旧的 `(id, title)` 元组多了 `folder_name`，让前端在**重名标题**时
