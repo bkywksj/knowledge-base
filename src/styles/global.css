@@ -2725,3 +2725,61 @@ body,
     transform: translateY(0);
   }
 }
+
+/* ── 编辑器底部「链接状态条」──────────────────────────────
+   常驻一条横条显示 链出 / 链入 / 断链 计数，点击展开明细。
+   放在编辑主体**外面**（不随正文滚动）：笔记编辑器的内容区有 40vh 的
+   padding-bottom，挂在滚动内容里的话会被推到离视觉底部很远的地方。 */
+.kb-link-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 4px 16px;
+  border-top: 1px solid var(--ant-color-border-secondary, #f0f0f0);
+  background: var(--ant-color-bg-container, #fff);
+  font-size: 12px;
+  color: var(--ant-color-text-tertiary, #999);
+  /* 深色主题下背景跟随容器变量，不写死白底 */
+}
+
+.kb-link-status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.kb-link-status-item:hover {
+  background: var(--ant-color-fill-tertiary, rgba(0, 0, 0, 0.06));
+  color: var(--ant-color-text, #333);
+}
+
+/* 断链用警示色：它代表"有东西坏了"，不该和普通计数一个观感 */
+.kb-link-status-broken {
+  color: var(--ant-color-warning, #faad14);
+}
+.kb-link-status-broken:hover {
+  color: var(--ant-color-warning, #faad14);
+  background: var(--ant-color-warning-bg, rgba(250, 173, 20, 0.1));
+}
+
+/* 明细浮层里的一行 */
+.kb-link-status-row {
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-link-status-row:hover {
+  background: var(--ant-color-fill-tertiary, rgba(0, 0, 0, 0.06));
+}

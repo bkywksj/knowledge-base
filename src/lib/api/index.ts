@@ -25,6 +25,7 @@ import type {
   Tag,
   SearchResult,
   NoteLink,
+  NoteLinkSummary,
   WikiLinkSuggestItem,
   GraphData,
   AiModel,
@@ -442,6 +443,13 @@ export const linkApi = {
     invoke<void>("sync_note_links", { sourceId, targetIds }),
   getBacklinks: (noteId: number) =>
     invoke<NoteLink[]>("get_backlinks", { noteId }),
+  /** 出链 + 入链 + 断链一次取回（编辑器底部链接状态条用，避免打三次 IPC） */
+  getLinkSummary: (noteId: number) =>
+    invoke<NoteLinkSummary>("get_note_link_summary", { noteId }),
+  /** 从正文重新解析 [[wiki]] 并同步出链（Rust 侧一次完成）。
+   *  日记页保存后调它 —— 日记此前从不同步出链，写进去的 [[X]] 不进 note_links。 */
+  rebuildLinks: (noteId: number, content: string) =>
+    invoke<void>("rebuild_note_links", { noteId, content }),
   searchTargets: (keyword: string, limit?: number) =>
     invoke<WikiLinkSuggestItem[]>("search_link_targets", { keyword, limit }),
   /** 规范化精确匹配：trim + 空白折叠 + 大小写不敏感 */

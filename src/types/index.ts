@@ -172,6 +172,23 @@ export interface NoteLink {
   updated_at: string;
 }
 
+/** 与当前笔记相连的一篇笔记（出链 / 入链共用；字段名中性，不叫 source/target） */
+export interface LinkedNote {
+  id: number;
+  title: string;
+  updatedAt: string;
+}
+
+/** 当前笔记的链接全貌，编辑器底部状态条一次取回 */
+export interface NoteLinkSummary {
+  /** 本篇链出去的笔记（我引用了谁） */
+  outgoing: LinkedNote[];
+  /** 链进来的笔记（谁引用了我） */
+  incoming: LinkedNote[];
+  /** 断链：正文写了 [[X]] 但 X 不存在 / 已删 / 已隐藏，按原文标题去重 */
+  broken: string[];
+}
+
 /** wiki 链接候选项（`[[` 补全下拉用，带 folder 名做重名消歧义） */
 export interface WikiLinkSuggestItem {
   id: number;

@@ -15,7 +15,6 @@ import {
   List,
   Popover,
   Tree,
-  Badge,
   Dropdown,
   App as AntdApp,
   theme as antdTheme,
@@ -40,6 +39,7 @@ import { listen } from "@tauri-apps/api/event";
 import { relativeTime, stripHtml } from "@/lib/utils";
 import { buildTagTreeSelectData } from "@/lib/tagTree";
 import { TiptapEditor } from "@/components/editor";
+import { LinkStatusBar } from "@/components/editor/LinkStatusBar";
 import { EditorOutline } from "@/components/editor/EditorOutline";
 import { EditorStats } from "@/components/editor/EditorStats";
 import { TagColorPicker } from "@/components/TagColorPicker";
@@ -793,6 +793,8 @@ function DesktopNoteEditorPage() {
 
   // 反向链接状态
   const [backlinks, setBacklinks] = useState<NoteLink[]>([]);
+  /** 底部链接状态条的刷新信号：保存完成（出链已落库）后自增 */
+  const [linkRefreshTick, setLinkRefreshTick] = useState(0);
 
   // 导出菜单受控状态：让 Ctrl+Shift+E 可以唤起这个 Dropdown
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
@@ -1224,6 +1226,8 @@ function DesktopNoteEditorPage() {
       } else {
         await linkApi.syncLinks(noteId, []).catch(() => {});
       }
+      // 出链刚落库 → 通知底部状态条重拉，否则刚写完的 [[X]] 计数还是旧的
+      setLinkRefreshTick((t) => t + 1);
 
       if (missing.length > 0) {
         notification.warning({
@@ -2188,29 +2192,10 @@ function DesktopNoteEditorPage() {
               />
             </Tooltip>
           )}
-          <Tooltip
-            title={
-              backlinks.length > 0
-                ? `${backlinks.length} 条反向链接 — 点击滚动到底部查看`
-                : "反向链接（暂无）— 点击查看说明"
-            }
-          >
-            <Badge
-              count={backlinks.length}
-              size="small"
-              offset={[-2, 2]}
-              color={backlinks.length > 0 ? undefined : "#bfbfbf"}
-            >
-              <Button
-                icon={<Link2 size={16} />}
-                onClick={() => {
-                  document
-                    .getElementById("backlinks-panel")
-                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
-                }}
-              />
-            </Badge>
-          </Tooltip>
+          {/* 原先这里有个 Link2 徽标按钮，作用只是「滚动到正文底部的反链面板」——
+              本质是个滚动快捷方式而非功能入口，语义绕、还占工具栏位置。
+              现在底部有常驻的链接状态条（链出/链入/断链，点击即看明细），它就没必要了。
+              正文底部的 BacklinksPanel 保留：习惯从底部看反链的用户不受影响。 */}
           {!readingMode && (
             <Button
               type="primary"
@@ -2677,6 +2662,20 @@ function DesktopNoteEditorPage() {
         </div>
       )}
       </div>
+
+      {/* 链接状态条：常驻页面底部，不随正文滚动。
+          放在横向分栏容器**之外** —— 内容区有 40vh padding-bottom，挂在里面
+          会被推到离视觉底部很远的地方（顶部那个 Link2 按钮当初就是为此打的补丁）。
+          saveTick 在保存完成后自增：出链是保存时才同步进 note_links 的，
+          不刷新的话刚写完 [[X]] 计数还是旧的。 */}
+      <LinkStatusBar
+        noteId={Number.isFinite(noteId) ? noteId : undefined}
+        refreshKey={linkRefreshTick}
+        onNavigate={async (id) => {
+          await ensureSavedBeforeNavigate();
+          navigate(`/notes/${id}`);
+        }}
+      />
 
       {/* 幻灯片演示：fixed 全屏覆盖，按 <hr> 分页 */}
       <SlideshowView
