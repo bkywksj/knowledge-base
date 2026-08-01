@@ -1175,6 +1175,8 @@ pub fn run() {
             commands::daily::get_daily_neighbors,
             commands::daily::list_all_dailies,
             commands::daily::append_quick_capture,
+            commands::daily::scan_daily_convert,
+            commands::daily::apply_daily_convert,
             // 标签模块
             commands::tags::create_tag,
             commands::tags::list_tags,

@@ -15,10 +15,11 @@ interface Props {
   /** 默认是否勾选"保留原目录文件夹"。默认 false：直接导入子内容，不在目标下多包一层源根目录 */
   defaultPreserveRoot?: boolean;
   onCancel: () => void;
-  /** 用户点击"开始导入"时回调，带上选择的 policy + preserveRoot */
+  /** 用户点击"开始导入"时回调，带上选择的 policy + preserveRoot + dailyMode */
   onConfirm: (opts: {
     policy: ImportConflictPolicy;
     preserveRoot: boolean;
+    dailyMode: boolean;
   }) => void;
 }
 
@@ -38,6 +39,20 @@ export function ImportPreviewModal({
 }: Props) {
   const [policy, setPolicy] = useState<ImportConflictPolicy>("skip");
   const [preserveRoot, setPreserveRoot] = useState(defaultPreserveRoot);
+  // 扫到日期文件夹时默认勾上 —— 这种结构基本只可能是日记导出
+  const [dailyMode, setDailyMode] = useState(false);
+
+  /** 识别出日期的文件数 / 覆盖的天数（同一天多篇只算一天） */
+  const dailyStats = useMemo(() => {
+    const dated = files.filter((f) => f.detected_date);
+    const days = new Set(dated.map((f) => f.detected_date));
+    return { fileCount: dated.length, dayCount: days.size };
+  }, [files]);
+
+  // 扫描结果一变（用户重新扫了别的文件夹）就重算默认勾选
+  const autoDaily = dailyStats.dayCount >= 3;
+  const [dailyTouched, setDailyTouched] = useState(false);
+  const effectiveDaily = dailyTouched ? dailyMode : autoDaily;
 
   const stats = useMemo(() => {
     const news: ScannedFile[] = [];
@@ -63,7 +78,9 @@ export function ImportPreviewModal({
       okText="开始导入"
       cancelText="取消"
       onCancel={onCancel}
-      onOk={() => onConfirm({ policy, preserveRoot })}
+      onOk={() =>
+        onConfirm({ policy, preserveRoot, dailyMode: effectiveDaily })
+      }
       okButtonProps={{ disabled: files.length === 0 }}
     >
       <div className="text-[13px] leading-7">
@@ -166,6 +183,33 @@ export function ImportPreviewModal({
             </span>
           </Checkbox>
         </div>
+
+        {/* 日记识别：只在真的扫到日期文件夹时才出现，不打扰普通导入 */}
+        {dailyStats.dayCount > 0 && (
+          <div className="mb-2">
+            <Checkbox
+              checked={effectiveDaily}
+              onChange={(e) => {
+                setDailyTouched(true);
+                setDailyMode(e.target.checked);
+              }}
+            >
+              <span>
+                按日期文件夹识别为日记
+                <Text type="secondary" style={{ marginLeft: 4, fontSize: 12 }}>
+                  扫到 {dailyStats.dayCount} 天（{dailyStats.fileCount} 个文件），
+                  勾选后会落成日记、在日记页按日期查看
+                </Text>
+              </span>
+            </Checkbox>
+            {effectiveDaily && dailyStats.fileCount > dailyStats.dayCount && (
+              <div className="mt-1 text-xs text-[var(--color-text-tertiary,#9ca3af)]">
+                有些天存在多个文件，导入时每天只认领第一篇；其余仍是普通笔记，
+                可事后在日记页用「整理历史日记」合并进当天。
+              </div>
+            )}
+          </div>
+        )}
 
         {/* 详细列表（折叠） */}
         {conflictCount > 0 && (

@@ -22,7 +22,8 @@ import {
   ColorPicker,
 } from "antd";
 import { SyncOutlined, PlusOutlined, CheckCircleFilled, CheckCircleOutlined } from "@ant-design/icons";
-import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate, Power, ExternalLink, Type, Zap, Share2, Download, PanelLeft, Palette, Image as ImageIcon } from "lucide-react";
+import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate, Power, ExternalLink, Type, Zap, Share2, Download, PanelLeft, Palette, Image as ImageIcon, CalendarCheck } from "lucide-react";
+import { DailyImportModal } from "@/components/DailyImportModal";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs, { type Dayjs } from "dayjs";
 import { TimePicker } from "antd";
@@ -356,6 +357,8 @@ function DesktopSettingsPage() {
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [scanModalOpen, setScanModalOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
+  /** 「整理历史日记」弹窗（与日记页顶部按钮共用同一个组件） */
+  const [showDailyConvert, setShowDailyConvert] = useState(false);
   /** 扫描时用户选的根目录（后端用来按相对路径重建文件夹树） */
   const [scanRootPath, setScanRootPath] = useState<string | null>(null);
   /** 是否在目标下多套一层"源根目录名"作为导入批次根 */
@@ -2395,6 +2398,26 @@ function DesktopSettingsPage() {
           </Space>
         </div>
 
+        {/* 历史日记：从「日期文件夹/笔记.md」直接导入，或把已导入的普通笔记认回日记 */}
+        <div className="mt-4 pt-3" style={{ borderTop: "1px solid #f0f0f0" }}>
+          <div className="flex items-center justify-between">
+            <div style={{ paddingRight: 16 }}>
+              <div style={{ fontSize: 14 }}>导入日记</div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                别的笔记软件导出的日记多是「日期文件夹 / 笔记.md」结构，按普通 Markdown
+                导进来会全变成普通笔记、日记页看不到。这里可以直接从文件夹导入成日记，
+                也能把已经导进来的普通笔记认回日记（都是先扫描预览，确认后才改动）。
+              </Text>
+            </div>
+            <Button
+              icon={<CalendarCheck size={14} />}
+              onClick={() => setShowDailyConvert(true)}
+            >
+              打开
+            </Button>
+          </div>
+        </div>
+
         {/* 文件夹自动导入：盯住一个目录，新落地的 .md 自动进库 */}
         <div className="mt-4 pt-3" style={{ borderTop: "1px solid #f0f0f0" }}>
           <div className="flex items-center justify-between">
@@ -3125,6 +3148,10 @@ function DesktopSettingsPage() {
         open={importOpen}
         onClose={() => setImportOpen(false)}
         onImported={() => void loadModels()}
+      />
+      <DailyImportModal
+        open={showDailyConvert}
+        onClose={() => setShowDailyConvert(false)}
       />
       </div>
     </div>

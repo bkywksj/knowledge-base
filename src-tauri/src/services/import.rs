@@ -115,6 +115,11 @@ impl ImportService {
                         ("new".to_string(), None)
                     });
 
+                // 日期识别：文件夹名优先、文件名兜底。让前端预览能显示
+                // 「其中 N 个将作为日记导入」，导入时也据此落 is_daily。
+                let (detected_date, date_conflict) =
+                    crate::services::daily_import::detect_date(&relative_dir, &name);
+
                 Some(ScannedFile {
                     path: path.to_string_lossy().to_string(),
                     relative_dir,
@@ -122,6 +127,8 @@ impl ImportService {
                     size,
                     match_kind,
                     existing_note_id: existing_id,
+                    detected_date,
+                    date_conflict,
                 })
             })
             .collect();
@@ -142,6 +149,10 @@ impl ImportService {
     /// - `root_path`: 扫描的根路径。传了才能按相对路径重建目录树；不传则全部平铺到 base
     /// - `preserve_root`: 是否在 base 下多套一层"源文件夹名"。需要 root_path 存在
     /// - `policy`: 已存在的文件怎么办（Skip / Duplicate）
+    /// - `daily_mode`: true = 按「日期文件夹/笔记.md」结构把笔记标记成日记
+    ///   （日期由 `ScannedFile.detected_date` 同一套逻辑识别）。
+    ///   同一天有多篇时**只认领第一篇** —— 日记是一天一篇，多认会让日记页出现重复日期。
+    ///   其余篇保持普通笔记，用户可事后在日记页用「整理历史日记」按冲突策略合并进当天。
     ///
     /// 同名文件夹按 (parent_id, name) 复用已有记录，避免重复创建。
     /// 每条成功导入的笔记都会写入 canonical `source_file_path`，方便下次导入时去重。
@@ -152,10 +163,15 @@ impl ImportService {
         root_path: Option<&str>,
         preserve_root: bool,
         policy: ImportConflictPolicy,
+        daily_mode: bool,
         app_data_dir: &Path,
         emitter: &E,
     ) -> Result<ImportResult, AppError> {
         let total = file_paths.len();
+        // 本批已认领的日期 —— 保证「一天一篇」，同一天的后续文件不再认领
+        let mut claimed_dates: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut daily_marked = 0usize;
+        let mut daily_extra_notes = 0usize;
         let mut imported = 0usize;
         let mut skipped = 0usize;
         let mut duplicated = 0usize;
@@ -336,6 +352,27 @@ impl ImportService {
                         _ => "md", // markdown / md 统一记 md
                     };
                     let _ = db.set_note_source_file(note.id, Some(&canonical_path), Some(src_type));
+
+                    // ─── 日记识别：日期文件夹 / 日期文件名 → 标记成当天日记 ───
+                    if daily_mode {
+                        let rel_dir = root_canonical
+                            .as_ref()
+                            .map(|rc| compute_relative_dir(file_path, rc))
+                            .unwrap_or_default();
+                        if let (Some(date), _) =
+                            crate::services::daily_import::detect_date(&rel_dir, &final_title)
+                        {
+                            // 一天一篇：本批已认领过该日期，或库里已有该天的日记，都不再认领
+                            let already = claimed_dates.contains(&date)
+                                || db.get_daily(&date).ok().flatten().is_some();
+                            if already {
+                                daily_extra_notes += 1;
+                            } else if db.mark_note_as_daily(note.id, &date).is_ok() {
+                                claimed_dates.insert(date);
+                                daily_marked += 1;
+                            }
+                        }
+                    }
 
                     // ─── T-009 + #9 Obsidian: 标签来源汇总（去重）───
                     // 1) frontmatter 里的 tags（YAML 显式列出）
@@ -519,6 +556,8 @@ impl ImportService {
             attachments_missing,
             note_ids,
             existing_note_ids,
+            daily_marked,
+            daily_extra_notes,
         };
 
         let _ = emitter.emit("import:done", &result);

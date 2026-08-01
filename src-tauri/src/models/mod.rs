@@ -398,6 +398,11 @@ pub struct ScannedFile {
     pub match_kind: String,
     /// match_kind 非 "new" 时，指向已存在笔记的 id
     pub existing_note_id: Option<i64>,
+    /// 从所在文件夹名（优先）或文件名识别出的日期 `YYYY-MM-DD`；不像日记则为 None。
+    /// 用于「日期文件夹/笔记.md」结构的日记导入 —— 见 services::daily_import。
+    pub detected_date: Option<String>,
+    /// 文件夹名与文件名都解析出日期但**不一致**（以文件夹为准，但要让用户知道）
+    pub date_conflict: bool,
 }
 
 /// 导入冲突策略：遇到已存在的文件怎么处理
@@ -449,6 +454,13 @@ pub struct ImportResult {
     /// 前端"重复命中也跳"逻辑用：用户拖个旧文件想打开它，能直达。
     #[serde(default, rename = "existingNoteIds")]
     pub existing_note_ids: Vec<i64>,
+    /// 按「日期文件夹」识别并标记为日记的篇数
+    #[serde(default)]
+    pub daily_marked: usize,
+    /// 同一天有多篇时，只有第一篇成了日记，其余仍是普通笔记的篇数。
+    /// 前端据此提示用户"可到日记页用「整理历史日记」把它们合并进当天"。
+    #[serde(default)]
+    pub daily_extra_notes: usize,
 }
 
 /// 导入进度（通过事件推送）

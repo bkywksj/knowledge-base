@@ -20,6 +20,7 @@ import {
   Save,
   Sparkles,
   ListTree,
+  CalendarCheck,
 } from "lucide-react";
 import { CloseCircleFilled } from "@ant-design/icons";
 import { configApi, dailyApi, linkApi, noteApi, templateApi } from "@/lib/api";
@@ -31,6 +32,7 @@ import { useAutoSave } from "@/hooks/useAutoSave";
 import { useAppStore } from "@/store";
 import { useAllFeaturesEnabled } from "@/hooks/useFeatureEnabled";
 import { PlanTodayModal } from "@/components/ai/PlanTodayModal";
+import { DailyImportModal } from "@/components/DailyImportModal";
 import { NoteAiDrawer } from "@/components/ai/NoteAiDrawer";
 import type { Note } from "@/types";
 
@@ -70,6 +72,7 @@ function DesktopDailyPage() {
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(true);
   const [showPlanModal, setShowPlanModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   // 与 notes/editor 一致：选段触发「问 AI」时打开伴生抽屉，把选段当引用挂上
   const [aiDrawerOpen, setAiDrawerOpen] = useState(false);
   const [aiSelection, setAiSelection] = useState<string | undefined>(undefined);
@@ -448,6 +451,14 @@ function DesktopDailyPage() {
               AI 规划今日
             </Button>
           )}
+          <Tooltip title="从「日期文件夹/笔记.md」结构导入历史日记，或把已导入的普通笔记认回日记">
+            <Button
+              icon={<CalendarCheck size={16} />}
+              onClick={() => setShowImportModal(true)}
+            >
+              导入日记
+            </Button>
+          </Tooltip>
           <Tooltip title={outlineVisible ? "隐藏大纲" : "显示大纲"}>
             <Button
               type={outlineVisible ? "primary" : "default"}
@@ -468,6 +479,16 @@ function DesktopDailyPage() {
           </Button>
         </Space>
       </div>
+
+      <DailyImportModal
+        open={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        onDone={() => {
+          // 转换后日历圆点要跟着变：清掉按月缓存，让 ensureMonthLoaded 重新拉
+          loadingMonthsRef.current.clear();
+          setDatesByMonth(new Map());
+        }}
+      />
 
       <PlanTodayModal
         open={showPlanModal}

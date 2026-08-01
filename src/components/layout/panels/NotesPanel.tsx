@@ -2614,7 +2614,7 @@ export function NotesPanel() {
           files={importPreview.files}
           rootPath={importPreview.rootPath}
           onCancel={() => setImportPreview(null)}
-          onConfirm={async ({ policy, preserveRoot }) => {
+          onConfirm={async ({ policy, preserveRoot, dailyMode }) => {
             const { files, rootPath, folderId } = importPreview;
             setImportPreview(null);
             const paths = files.map((f) => f.path);
@@ -2626,6 +2626,7 @@ export function NotesPanel() {
                 rootPath,
                 preserveRoot,
                 policy,
+                dailyMode,
               );
               hide();
               const parts: string[] = [];
@@ -2638,7 +2639,18 @@ export function NotesPanel() {
               if (result.attachments_copied && result.attachments_copied > 0) {
                 parts.push(`复制图片 ${result.attachments_copied} 张`);
               }
+              if (result.daily_marked && result.daily_marked > 0) {
+                parts.push(`日记 ${result.daily_marked} 天`);
+              }
               if (parts.length > 0) message.success(parts.join("，"));
+              // 同一天多篇时只认领了第一篇，提示用户可以去合并
+              if (result.daily_extra_notes && result.daily_extra_notes > 0) {
+                message.info(
+                  `有 ${result.daily_extra_notes} 篇与已有日记同一天，仍是普通笔记；` +
+                    `可在日记页用「整理历史日记」合并进当天`,
+                  6,
+                );
+              }
               const missCount = result.attachments_missing?.length ?? 0;
               if (missCount > 0) {
                 message.warning(

@@ -1625,6 +1625,67 @@ impl Database {
         Ok(())
     }
 
+    /// 列出全部**普通**笔记（非日记）及其所在文件夹的完整路径，供"历史日记转换"扫描用。
+    ///
+    /// 返回 `(note_id, title, folder_path)`；`folder_path` 是从根到该笔记所在文件夹的
+    /// 名称串，用 '/' 连接（根层笔记为空串）—— 与 `ScannedFile.relative_dir` 同构，
+    /// 这样 `daily_import` 那套日期识别对"库里的笔记"和"磁盘上的文件"能共用一份实现。
+    ///
+    /// 用递归 CTE 一次查完，避免几千条笔记逐条向上爬文件夹树（N+1 查询）。
+    pub fn list_notes_with_folder_path(&self) -> Result<Vec<(i64, String, String)>, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+
+        let mut stmt = conn.prepare(
+            "WITH RECURSIVE folder_path(id, path) AS (
+                 SELECT id, name FROM folders WHERE parent_id IS NULL
+                 UNION ALL
+                 SELECT f.id, fp.path || '/' || f.name
+                 FROM folders f JOIN folder_path fp ON f.parent_id = fp.id
+             )
+             SELECT n.id, n.title, COALESCE(fp.path, '')
+             FROM notes n
+             LEFT JOIN folder_path fp ON n.folder_id = fp.id
+             WHERE n.is_deleted = 0 AND n.is_daily = 0
+             ORDER BY n.id",
+        )?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// 把一条普通笔记就地认领为某天的日记。
+    ///
+    /// 只改 `is_daily` / `daily_date`，**不动正文、不动 folder_id** —— 转换后笔记树里
+    /// 原来的位置保持不变，日记页也能按日期看到，且回滚只需把 is_daily 清回 0。
+    /// 与 `get_or_create_daily` 里"认领伪日记"是同一路数，不新建笔记，避免日记增殖。
+    pub fn mark_note_as_daily(&self, id: i64, date: &str) -> Result<(), AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let affected = conn.execute(
+            "UPDATE notes SET is_daily = 1, daily_date = ?1,
+                    updated_at = datetime('now','localtime')
+             WHERE id = ?2 AND is_deleted = 0",
+            params![date, id],
+        )?;
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("笔记 {} 不存在", id)));
+        }
+        Ok(())
+    }
+
     /// 按 (title, content_hash) 查活跃笔记的 id —— 导入去重的兜底
     ///
     /// 和 `find_active_note_by_source_path` 的关系：

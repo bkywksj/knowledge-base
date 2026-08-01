@@ -493,6 +493,54 @@ export interface ScannedFile {
   match_kind: ImportMatchKind;
   /** match_kind 非 "new" 时，指向已存在笔记的 id */
   existing_note_id: number | null;
+  /** 从所在文件夹名（优先）或文件名识别出的日期 YYYY-MM-DD；不像日记则为 null */
+  detected_date: string | null;
+  /** 文件夹名与文件名都解析出日期但不一致（以文件夹为准） */
+  date_conflict: boolean;
+}
+
+/** 历史日记转换：一天对应的候选（可能由多篇笔记合并而来） */
+export interface DailyCandidate {
+  /** 目标日期 YYYY-MM-DD */
+  date: string;
+  /** 参与这一天的笔记 id（与 titles 同序，合并时按此顺序拼接） */
+  noteIds: number[];
+  titles: string[];
+  /** 该日期已存在日记时，指向那条已有日记的 id */
+  existingDailyId: number | null;
+}
+
+/** 历史日记转换计划（只读扫描结果，给用户预览用） */
+export interface DailyConvertPlan {
+  /** 单文件日期：直接认领，无损 */
+  single: DailyCandidate[];
+  /** 多文件日期：按策略合并 / 选主 */
+  multi: DailyCandidate[];
+  /** 与已有日记冲突的日期 */
+  conflicts: DailyCandidate[];
+  /** 名字不像日期、被跳过的文件夹名（去重，最多 50 条） */
+  skippedFolders: string[];
+  dateFrom: string | null;
+  dateTo: string | null;
+}
+
+/** 一天有多篇笔记时怎么办 */
+export type MultiFileStrategy = "merge" | "keepFirst" | "skip";
+/** 该日期已有日记时怎么办 */
+export type DailyConflictStrategy = "skip" | "append";
+
+export interface DailyConvertOptions {
+  multiFile: MultiFileStrategy;
+  conflict: DailyConflictStrategy;
+}
+
+export interface DailyConvertResult {
+  convertedDays: number;
+  /** 因合并而并入其它笔记、随后进回收站的笔记数 */
+  mergedNotes: number;
+  appendedDays: number;
+  skippedDays: number;
+  errors: string[];
 }
 
 /**
@@ -520,6 +568,10 @@ export interface ImportResult {
   noteIds?: number[];
   /** 命中已有笔记并按 Skip 策略跳过时记录的现有笔记 ID */
   existingNoteIds?: number[];
+  /** 按「日期文件夹」识别并标记为日记的篇数（dailyMode 开启时才非 0） */
+  daily_marked?: number;
+  /** 同一天有多篇、只有第一篇成了日记，其余仍是普通笔记的篇数 */
+  daily_extra_notes?: number;
 }
 
 /** 导入进度 */

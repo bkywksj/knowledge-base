@@ -23,6 +23,7 @@ pub fn scan_markdown_folder(
 /// - `root_path`: 扫描根路径；传了才能按相对目录重建文件夹树
 /// - `preserve_root`: 是否在目标下多套一层"源根目录名"
 /// - `policy`: 遇到已存在文件的处理策略（Skip / Duplicate），省略按 Skip
+/// - `daily_mode`: 按「日期文件夹/笔记.md」结构识别为日记，省略 = 关（保持原行为）
 #[tauri::command]
 pub async fn import_selected_files(
     state: tauri::State<'_, AppState>,
@@ -32,6 +33,7 @@ pub async fn import_selected_files(
     root_path: Option<String>,
     preserve_root: Option<bool>,
     policy: Option<ImportConflictPolicy>,
+    daily_mode: Option<bool>,
 ) -> Result<ImportResult, String> {
     // ⚠️ 必须用 state.data_dir（已经过 DataDirResolver 解析），
     // 不能用 app.path().app_data_dir()（那是 OS 默认 framework 目录，不跟随用户改的数据目录）
@@ -43,6 +45,7 @@ pub async fn import_selected_files(
         root_path.as_deref(),
         preserve_root.unwrap_or(false),
         policy.unwrap_or_default(),
+        daily_mode.unwrap_or(false),
         &app_data_dir,
         &app,
     )

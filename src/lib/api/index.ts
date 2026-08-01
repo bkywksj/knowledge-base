@@ -47,6 +47,9 @@ import type {
   NoteTemplateInput,
   DailyWritingStat,
   DailyEntry,
+  DailyConvertPlan,
+  DailyConvertOptions,
+  DailyConvertResult,
   PdfImportResult,
   DocConverter,
   ConverterDiagnostic,
@@ -424,6 +427,13 @@ export const dailyApi = {
   /** 快速记一笔：追加带时间戳的 callout 块到今天的日记末尾，返回当天日记 id */
   appendQuickCapture: (text: string) =>
     invoke<number>("append_quick_capture", { text }),
+  /** 扫描库里「文件夹名是日期」的普通笔记，生成历史日记转换计划。
+   *  只读，不改数据 —— 前端拿它渲染预览，用户确认后再调 applyConvert。 */
+  scanConvert: () => invoke<DailyConvertPlan>("scan_daily_convert"),
+  /** 执行历史日记转换。会改数据：合并模式下被并入的笔记会进回收站（可捞回）。
+   *  plan 可以是 scanConvert 的返回值经前端筛选后的子集（用户勾掉了某几天）。 */
+  applyConvert: (plan: DailyConvertPlan, options: DailyConvertOptions) =>
+    invoke<DailyConvertResult>("apply_daily_convert", { plan, options }),
 };
 
 /** 笔记链接 API */
@@ -594,6 +604,8 @@ export const importApi = {
    * - `policy` 控制遇到已存在文件的处理：
    *   · "skip"（默认）已存在则跳过
    *   · "duplicate" 标题加 " (2)" 新建副本
+   * - `dailyMode` 按「日期文件夹/笔记.md」结构把笔记标记为日记（默认关，保持原行为）。
+   *   同一天多篇时只认领第一篇，其余仍是普通笔记 —— 可事后用「整理历史日记」合并。
    */
   importSelected: (
     filePaths: string[],
@@ -601,6 +613,7 @@ export const importApi = {
     rootPath?: string | null,
     preserveRoot?: boolean,
     policy?: ImportConflictPolicy,
+    dailyMode?: boolean,
   ) =>
     invoke<ImportResult>("import_selected_files", {
       filePaths,
@@ -608,6 +621,7 @@ export const importApi = {
       rootPath: rootPath ?? null,
       preserveRoot: preserveRoot ?? false,
       policy: policy ?? "skip",
+      dailyMode: dailyMode ?? false,
     }),
   /** 打开单个 md 文件；返回 note id 与是否已同步 */
   openMarkdownFile: (filePath: string) =>
