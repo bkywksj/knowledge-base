@@ -686,6 +686,9 @@ function DesktopDailyPage() {
       <LinkStatusBar
         noteId={note?.id}
         refreshKey={linkRefreshTick}
+        /* 大纲列宽 + 6px 分隔条：状态条据此让出同样的空间，左右沿才对得上卡片 */
+        outlineSpace={outlineVisible ? outlineWidth + 6 : 0}
+        outlinePos={outlineVisible ? outlinePosition : undefined}
         onNavigate={async (id) => {
           await autoSave.flush();
           navigate(`/notes/${id}`);

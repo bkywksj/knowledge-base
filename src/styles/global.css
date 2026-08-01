@@ -2728,19 +2728,98 @@ body,
 
 /* ── 编辑器底部「链接状态条」──────────────────────────────
    常驻一条横条显示 链出 / 链入 / 断链 计数，点击展开明细。
-   放在编辑主体**外面**（不随正文滚动）：笔记编辑器的内容区有 40vh 的
-   padding-bottom，挂在滚动内容里的话会被推到离视觉底部很远的地方。 */
+   放在编辑主体**外面**（不随正文滚动）：笔记编辑器的内容区有 10vh 的
+   padding-bottom，挂在滚动内容里的话会被推到离视觉底部很远的地方。
+
+   代价是它拿不到 grid 的正文轨道宽 —— 挂在外面，100% 是整页宽，而卡片的
+   100% 是轨道宽（整页 - 大纲 - 6px 分隔条）。原来直接全宽平铺，于是左沿比
+   卡片靠左、右沿一路压到大纲底下，白底又与卡片同色，看着像卡片漏出来一圈。
+
+   解法分两层：
+     · .kb-link-status-dock —— 全宽，用 padding 把大纲列那段吃掉，
+       让里层的包含块宽度 == 卡片的 grid 轨道宽
+     · .kb-link-status-bar  —— 逐字复刻 .editor-content-area 的宽度公式，
+       于是左右沿与卡片严格对齐（随大纲宽 / 阅读列宽 / 窗口宽自适应）
+   ⚠️ 改 .editor-content-area 的宽度公式时，这里必须同步改，否则会错开。 */
+.kb-link-status-dock {
+  flex-shrink: 0;
+  /* 大纲在右：右侧留出大纲列；关闭大纲时变量为 0，等于不留 */
+  padding-right: var(--kb-status-outline-space, 0px);
+
+  /* 🔴 背景必须与 .editor-body 逐条同步 —— dock 在 .editor-body **外面**，
+     两者各自成一层。主题（如 light-glass 的 rgba(255,255,255,.5)）是叠在页面
+     渐变上的半透明层，dock 不叠就会露出原始渐变，于是状态条上沿横着断出一条
+     色带（实测左侧 rgb(239,240,252) → rgb(228,229,253)，肉眼可见）。
+     themes.css 里 4 个主题的 .editor-body 背景规则也都带上了本类名。 */
+  background: var(--ant-color-bg-container, #fff);
+}
+.kb-link-status-dock[data-outline-pos="left"] {
+  padding-right: 0;
+  padding-left: var(--kb-status-outline-space, 0px);
+}
+
 .kb-link-status-bar {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-shrink: 0;
+  box-sizing: border-box;
   padding: 4px 16px;
   border-top: 1px solid var(--ant-color-border-secondary, #f0f0f0);
-  background: var(--ant-color-bg-container, #fff);
   font-size: 12px;
   color: var(--ant-color-text-tertiary, #999);
-  /* 深色主题下背景跟随容器变量，不写死白底 */
+
+  /* ↓ 与 .editor-content-area 同宽同位（公式见上方警示） */
+  width: 100%;
+  max-width: max(
+    var(--editor-reading-width, 820px),
+    min(
+      calc(100% - var(--editor-outline-gutter, 24px) * 2),
+      var(--editor-outline-max-width, 1600px)
+    )
+  );
+  margin-left: auto;
+  margin-right: auto;
+}
+/* 大纲开启：卡片朝大纲那侧只留固定呼吸距离，剩余空白全给另一侧（非对称）*/
+.kb-link-status-dock[data-outline-pos] > .kb-link-status-bar {
+  width: calc(100% - var(--editor-outline-gutter, 24px));
+  margin-left: auto;
+  margin-right: var(--editor-outline-gutter, 24px);
+}
+.kb-link-status-dock[data-outline-pos="left"] > .kb-link-status-bar {
+  margin-left: var(--editor-outline-gutter, 24px);
+  margin-right: auto;
+}
+
+/* 纸张模式：状态条穿上卡片的皮，成为纸的底栏（白底 + 侧/底边框 + 下圆角）。
+   卡片在滚动容器内、状态条在容器外，但卡片被 .editor-body 的 overflow 裁在
+   同一条底边上，两者紧邻 —— 补上边框和圆角后视觉上就是一张纸。 */
+:root[data-editor-paper="1"] .kb-link-status-bar {
+  background: var(--ant-color-bg-container, #fff);
+  border: 1px solid color-mix(in srgb, var(--ant-color-text, #000) 7%, transparent);
+  /* 顶边保留浅分隔线（与卡片同色边框太重，压不住"纸内分栏"的感觉） */
+  border-top-color: var(--ant-color-border-secondary, #f0f0f0);
+  border-radius: 0 0 12px 12px;
+  /* 与卡片**逐层一致**。曾漏掉 0 1px 3px 那层，接缝处露出亮边（Δ=8）。
+     也试过去掉 0 10px 30px 的 y 偏移想让侧翼投影更快满值，实测更差：接缝 Δ 6→7，
+     且无偏移的投影会向上溢到卡片底部把它糊灰（252→249）—— 状态条在 DOM 里靠后，
+     投影会盖住卡片。照抄是最优解。
+     残留：紧贴卡片左右沿约 10px 内仍有 Δ≈6（约 2%）的投影浓度差 —— 卡片是高元素、
+     到接缝处投影已满强度，状态条只有 30px 高追不上。两个独立元素各自投影的固有
+     差异，除非合并成一个元素，否则消不掉。 */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 10px 30px rgba(0, 0, 0, 0.06);
+}
+/* 纸的下沿改成方角：底栏接在它下面，两个圆角叠在一起会掐出个腰 */
+:root[data-editor-paper="1"] .editor-content-area {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+/* 纸张模式下 .editor-body 换成"页面层"衬底，dock 跟着换，色带才不会重新出现 */
+:root[data-editor-paper="1"] .kb-link-status-dock {
+  background: var(
+    --ant-color-bg-layout,
+    color-mix(in srgb, var(--ant-color-text, #000) 4%, var(--ant-color-bg-container, #fff))
+  );
 }
 
 .kb-link-status-item {

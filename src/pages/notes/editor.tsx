@@ -2671,6 +2671,9 @@ function DesktopNoteEditorPage() {
       <LinkStatusBar
         noteId={Number.isFinite(noteId) ? noteId : undefined}
         refreshKey={linkRefreshTick}
+        /* 大纲列宽 + 6px 分隔条：状态条据此让出同样的空间，左右沿才对得上卡片 */
+        outlineSpace={effectiveOutlineVisible ? outlineWidth + 6 : 0}
+        outlinePos={effectiveOutlineVisible ? outlinePosition : undefined}
         onNavigate={async (id) => {
           await ensureSavedBeforeNavigate();
           navigate(`/notes/${id}`);

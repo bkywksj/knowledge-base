@@ -373,7 +373,10 @@
   background: var(--kb-bg-panel) !important;
   border-bottom-color: var(--kb-border) !important;
 }
-[data-theme="light-jade"] .editor-body {
+/* .kb-link-status-dock 必须跟着 .editor-body 走：它是编辑区底部的链接状态条，
+   挂在 .editor-body 外面自成一层，不同步就会在状态条上沿断出一条色带 */
+[data-theme="light-jade"] .editor-body,
+[data-theme="light-jade"] .kb-link-status-dock {
   background: #ffffff !important;
 }
 
@@ -720,7 +723,9 @@ html[data-theme-category="dark"] .tiptap-toolbar .toolbar-btn-active:hover:not(:
   background: rgba(255,255,255,0.6) !important;
   backdrop-filter: blur(16px) !important;
 }
-[data-theme="light-glass"] .editor-body {
+/* 半透明叠在页面渐变上 —— dock 不跟着叠就会露出原始渐变（色带最明显的一档） */
+[data-theme="light-glass"] .editor-body,
+[data-theme="light-glass"] .kb-link-status-dock {
   background: rgba(255,255,255,0.5) !important;
 }
 
@@ -731,7 +736,8 @@ html[data-theme-category="dark"] .tiptap-toolbar .toolbar-btn-active:hover:not(:
 [data-theme="dark-starry"] .editor-topbar {
   background: rgba(14,14,24,0.9) !important;
 }
-[data-theme="dark-starry"] .editor-body {
+[data-theme="dark-starry"] .editor-body,
+[data-theme="dark-starry"] .kb-link-status-dock {
   background: var(--kb-bg-card) !important;
 }
 
@@ -742,7 +748,8 @@ html[data-theme-category="dark"] .tiptap-toolbar .toolbar-btn-active:hover:not(:
 [data-theme="dark-mocha"] .editor-topbar {
   background: var(--kb-bg-sidebar) !important;
 }
-[data-theme="dark-mocha"] .editor-body {
+[data-theme="dark-mocha"] .editor-body,
+[data-theme="dark-mocha"] .kb-link-status-dock {
   background: var(--kb-bg-card) !important;
 }
 
