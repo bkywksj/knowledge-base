@@ -208,6 +208,16 @@ export const shortcutsApi = {
   disable: (id: string) => invoke<void>("disable_shortcut_binding", { id }),
 };
 
+/** 主窗口尺寸 API（桌面端） */
+export const windowApi = {
+  /**
+   * 恢复默认大小并居中。
+   * 窗口大小/位置会被记住并在下次启动还原，这是把它拖歪之后的唯一退路
+   * （尤其是从多屏挪到单屏、或外接屏拔掉之后）。
+   */
+  resetSize: () => invoke<void>("reset_window_size"),
+};
+
 export const configApi = {
   getAll: () => invoke<AppConfig[]>("get_all_config"),
   get: (key: string) => invoke<string>("get_config", { key }),

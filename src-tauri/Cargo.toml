@@ -104,6 +104,10 @@ tauri-plugin-global-shortcut = "2"
 # 不只是"体验好"——多实例下两份进程各持一份内存设置，任一方改设置都会
 # 用自己那份全量覆写 settings.json，把对方的改动抹掉（用户反馈"重启后编号设置没了"）。
 tauri-plugin-single-instance = "2"
+# 窗口状态记忆：记住上次的大小 / 位置 / 最大化状态，下次启动还原。
+# 没有它的话每次启动都会走 setup 里的自适应公式重算，用户手动调过的尺寸永远丢。
+# 移动端窗口由系统管理，不引入。
+tauri-plugin-window-state = "2"
 # PDFium fallback（pdf-extract 对中文 CMap 不支持，运行时动态加载 pdfium.dll 兜底）
 # 移动端 NDK 加载动态库受沙盒限制，暂不支持，待 T-M012 决策
 pdfium-render = "0.8"

@@ -22,7 +22,7 @@ import {
   ColorPicker,
 } from "antd";
 import { SyncOutlined, PlusOutlined, CheckCircleFilled, CheckCircleOutlined } from "@ant-design/icons";
-import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate, Power, ExternalLink, Type, Zap, Share2, Download, PanelLeft, Palette, Image as ImageIcon, CalendarCheck } from "lucide-react";
+import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate, Power, ExternalLink, Type, Zap, Share2, Download, PanelLeft, Palette, Image as ImageIcon, CalendarCheck, Maximize2 } from "lucide-react";
 import { DailyImportModal } from "@/components/DailyImportModal";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs, { type Dayjs } from "dayjs";
@@ -32,7 +32,7 @@ import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useLocation } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import type { AiModel, AiModelInput, ImportResult, ImportProgress, ImportConflictPolicy, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput } from "@/types";
-import { systemApi, aiModelApi, importApi, exportApi, folderApi, templateApi, pdfApi, sourceFileApi, autostartApi, configApi } from "@/lib/api";
+import { systemApi, aiModelApi, importApi, exportApi, folderApi, templateApi, pdfApi, sourceFileApi, autostartApi, configApi, windowApi } from "@/lib/api";
 import {
   useAppStore,
   EDITOR_FONT_LABELS,
@@ -398,6 +398,8 @@ function DesktopSettingsPage() {
   const [startMinimized, setStartMinimized] = useState(false);
   const [autostartLoading, setAutostartLoading] = useState(false);
   const [startMinimizedLoading, setStartMinimizedLoading] = useState(false);
+  // 恢复窗口默认大小（window-state 插件会记住尺寸，这是唯一的退路）
+  const [resettingWindowSize, setResettingWindowSize] = useState(false);
   // 文件夹自动导入：配置存 app_config，后台 folder_watch 循环每 5 秒读一次
   const [watchEnabled, setWatchEnabled] = useState(false);
   const [watchDir, setWatchDir] = useState("");
@@ -892,6 +894,23 @@ function DesktopSettingsPage() {
       setCloseAction(next);
     } catch (e) {
       message.error(`保存失败: ${e}`);
+    }
+  }
+
+  /**
+   * 恢复窗口默认大小。Rust 侧会退出最大化 → 按当前主显示器重算尺寸 → 居中 →
+   * 立刻把新尺寸写进 window-state 存档（不落盘的话用户点完直接关窗口，
+   * 插件会把关闭那一刻的尺寸写回去，看着像没生效）。
+   */
+  async function handleResetWindowSize() {
+    setResettingWindowSize(true);
+    try {
+      await windowApi.resetSize();
+      message.success("窗口已恢复默认大小并居中");
+    } catch (e) {
+      message.error(`恢复失败: ${e}`);
+    } finally {
+      setResettingWindowSize(false);
     }
   }
 
@@ -1461,6 +1480,25 @@ function DesktopSettingsPage() {
               <Radio.Button value="exit">直接退出</Radio.Button>
             </Radio.Group>
           </div>
+        </div>
+        <div
+          className="flex items-center justify-between py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div>
+            <div>窗口大小</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              窗口的大小、位置、是否最大化会被记住，下次启动照原样打开。
+              拖歪了、或换了显示器打不开在可见范围内时，点右边一键恢复。
+            </Text>
+          </div>
+          <Button
+            icon={<Maximize2 size={14} />}
+            loading={resettingWindowSize}
+            onClick={handleResetWindowSize}
+          >
+            恢复默认大小
+          </Button>
         </div>
       </Card>
 

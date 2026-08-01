@@ -183,6 +183,21 @@ fn app_data_dir_name() -> String {
     }
 }
 
+/// window-state 插件的存档文件名（相对 app_config_dir）。
+///
+/// dev / prod 必须分开：插件用的是 Tauri 原生 `app_config_dir()`，它只认
+/// tauri.conf.json 的 identifier，dev 和 prod 落在同一个目录 —— 本项目的 `-dev`
+/// 隔离是 [`framework_app_data_dir`] 自己做的，插件不知道。共用一份的话，开着
+/// dev 拖窗口会把正式版记住的尺寸冲掉。
+#[cfg(desktop)]
+fn window_state_filename() -> String {
+    if cfg!(debug_assertions) {
+        ".window-state-dev.json".to_string()
+    } else {
+        tauri_plugin_window_state::DEFAULT_FILENAME.to_string()
+    }
+}
+
 /// 取当前进程实际使用的 framework_app_data_dir（dev 已隔离到 `-dev` 目录）。
 ///
 /// Tauri 内置 `app.path().app_data_dir()` 永远返回 prod 名（基于 tauri.conf.json
@@ -583,7 +598,28 @@ pub fn run() {
                 Some(vec!["--start-minimized"]),
             ))
             .plugin(tauri_plugin_updater::Builder::new().build())
-            .plugin(tauri_plugin_global_shortcut::Builder::new().build());
+            .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+            // 窗口状态记忆：用户调过的大小 / 位置 / 最大化状态下次启动照原样还原。
+            //
+            // 只跟踪 SIZE|POSITION|MAXIMIZED，**刻意不跟踪 VISIBLE**：本应用支持
+            // 「关闭时最小化到托盘」和 autostart `--start-minimized`，窗口隐藏着退出是
+            // 正常路径；跟踪 VISIBLE 会把 visible:false 存下来，下次双击图标启动直接
+            // 无窗口，看着像启动失败。DECORATIONS / FULLSCREEN 同理没有跟踪价值。
+            //
+            // 文件名按 dev/prod 分开：插件落在 app_config_dir，而 Tauri 的
+            // app_config_dir 只认 tauri.conf.json 的 identifier，dev 和 prod 是同一个
+            // 目录（本项目的 `-dev` 隔离是 framework_app_data_dir 自己做的，插件不知道）。
+            // 不分开的话开着 dev 调窗口会把正式版的记忆冲掉。
+            .plugin(
+                tauri_plugin_window_state::Builder::default()
+                    .with_state_flags(
+                        tauri_plugin_window_state::StateFlags::SIZE
+                            | tauri_plugin_window_state::StateFlags::POSITION
+                            | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+                    )
+                    .with_filename(window_state_filename())
+                    .build(),
+            );
     }
 
     // ─── macOS 应用菜单中文化 ─────────────────────
@@ -606,13 +642,9 @@ pub fn run() {
             // 仅桌面端：移动端 WebviewWindow 不提供 show/hide（系统管理可见性）
             #[cfg(desktop)]
             if let Some(window) = app.get_webview_window("main") {
-                // 启动尺寸智能化：按主显示器逻辑分辨率重设窗口大小。
-                // 规则：永不比 conf.json 默认 1388×830 更小（floor），按屏宽 75% / 屏高 88% 计算，
-                //       同时不超出屏幕 95%、最高 1700×1050（cap）。
-                //
-                // 注意：floor 必须与 tauri.conf.json 的 width 保持一致 — 之前 floor=1330
-                // 而 conf.json=1388 时，1080p (logical 1920) 走 1920*0.7=1344 被 1330 floor 兜
-                // 但实际不到 1388 → 改 conf 不生效；现在统一抬到 1388（编辑器 toolbar 一行所需的最小宽度）。
+                // 启动尺寸智能化：**首次启动**按主显示器逻辑分辨率给一个合适的默认尺寸。
+                // 公式在 services::window_size::default_window_size（纯函数 + 单测锁住边界），
+                // 「恢复窗口默认大小」Command 复用同一份，两处不会漂移。
                 //
                 // 高度系数 0.77 → 0.88（用户反馈"窗口再高点"）：1080p 上原来只有 832，而系统
                 // 工作区是 1032（1080 减 48 任务栏），底下白空 200px；编辑器垂直开销（标签栏 +
@@ -628,21 +660,28 @@ pub fn run() {
                 // - 旧本 1366×768  (logical 1366×768):  1297×730   屏幕 95%（屏比默认还小时退让）
                 //
                 // 取不到 monitor 时静默回落到 conf.json 默认尺寸。
-                if let Ok(Some(monitor)) = window.primary_monitor() {
-                    let phys = monitor.size();
-                    let scale = monitor.scale_factor().max(0.1);
-                    let logical_w = phys.width as f64 / scale;
-                    let logical_h = phys.height as f64 / scale;
-                    let target_w = (logical_w * 0.75)
-                        .max(1388.0)
-                        .min(logical_w * 0.95)
-                        .min(1700.0);
-                    let target_h = (logical_h * 0.88)
-                        .max(830.0)
-                        .min(logical_h * 0.95)
-                        .min(1050.0);
-                    let _ = window.set_size(tauri::LogicalSize::new(target_w, target_h));
-                    let _ = window.center();
+                //
+                // 🔴 只在「没有窗口状态存档」时才套用 —— 存档存在说明用户自己调过窗口，
+                // 该由 window-state 插件还原，这里再 set_size 就等于每次启动都把用户
+                // 拖出来的尺寸抹掉。存档不存在时插件的 restore_state 是空操作（只把当前
+                // 尺寸播种进缓存），所以两种执行顺序（插件先还原 / setup 先跑）都正确。
+                let has_saved_window_state = app
+                    .handle()
+                    .path()
+                    .app_config_dir()
+                    .map(|dir| dir.join(window_state_filename()).exists())
+                    .unwrap_or(false);
+                if !has_saved_window_state {
+                    if let Ok(Some(monitor)) = window.primary_monitor() {
+                        let phys = monitor.size();
+                        let scale = monitor.scale_factor().max(0.1);
+                        let (target_w, target_h) = services::window_size::default_window_size(
+                            phys.width as f64 / scale,
+                            phys.height as f64 / scale,
+                        );
+                        let _ = window.set_size(tauri::LogicalSize::new(target_w, target_h));
+                        let _ = window.center();
+                    }
                 }
                 let _ = window.show();
             }
@@ -1377,6 +1416,9 @@ pub fn run() {
             commands::shortcut::reset_shortcut_binding,
             #[cfg(desktop)]
             commands::shortcut::disable_shortcut_binding,
+            // 窗口尺寸（仅桌面端；移动端窗口由系统管理）
+            #[cfg(desktop)]
+            commands::window::reset_window_size,
             // 待办分类
             commands::tasks::list_task_categories,
             commands::tasks::create_task_category,

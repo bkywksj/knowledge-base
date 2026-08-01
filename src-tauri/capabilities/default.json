@@ -36,6 +36,7 @@
     "autostart:default",
     "notification:default",
     "global-shortcut:default",
+    "window-state:default",
     "clipboard-manager:default",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text"

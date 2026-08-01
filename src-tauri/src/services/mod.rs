@@ -81,3 +81,4 @@ pub mod vault;
 pub mod video;
 pub mod web_clip;
 pub mod webdav;
+pub mod window_size;
