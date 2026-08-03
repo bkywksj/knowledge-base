@@ -8,6 +8,7 @@ import {
   ChevronDown,
   LayoutTemplate,
   FolderOpen,
+  PenTool,
 } from "lucide-react";
 
 import { FileTypeIcon } from "./FileTypeIcon";
@@ -18,6 +19,7 @@ import { useAppStore } from "@/store";
 import type { ScannedFile } from "@/types";
 import {
   createBlankAndOpen,
+  createWhiteboardAndOpen,
   importPdfsFlow,
   importTextFlow,
   importWordFlow,
@@ -114,6 +116,12 @@ export function NewNoteButton({
       label: "从模板…",
       icon: <LayoutTemplate size={14} />,
       onClick: () => setTemplateOpen(true),
+    },
+    {
+      key: "whiteboard",
+      label: "新建白板",
+      icon: <PenTool size={14} />,
+      onClick: () => createWhiteboardAndOpen(folderId, navigate),
     },
     { type: "divider" },
     {

@@ -966,6 +966,18 @@ function DesktopNoteEditorPage() {
       // 增长变慢）捆在同一个 Promise.all，5 条全 resolve 才放行渲染 → 正文被无关的
       // 全局元数据查询阻塞，打开变卡。拆开后：正文一拿到立刻显示，元数据后台补。
       const noteData = await noteApi.get(noteId);
+
+      // 白板也是一条笔记，但 content 是 Excalidraw JSON —— 交给 Markdown 编辑器
+      // 只会渲染出一坨乱码，保存还会把画布覆盖掉。这里统一改道到白板画布。
+      //
+      // 之所以在**这里**拦而不是改各处跳转：全项目有 20+ 个入口 navigate(`/notes/${id}`)
+      // （列表 / 搜索 / 命令面板 / 双链 / AI 引用 / 标签页 …），逐个加判断既漏得掉
+      // 又要重复查一次类型。在编辑器入口做一次重定向，所有入口自动生效。
+      if (noteData.note_type === "whiteboard") {
+        navigate(`/whiteboard/${noteId}`, { replace: true });
+        return;
+      }
+
       setNote(noteData);
       openTab({
         id: noteData.id,

@@ -38,6 +38,7 @@ import {
   Sparkles,
   Search,
   Hash,
+  PenTool,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderFilled } from "@ant-design/icons";
@@ -1858,6 +1859,11 @@ export function NotesPanel() {
 
     if (isNoteKey(key)) {
       const isMultiSelected = selectedNoteKeys.has(key);
+      // 白板换个图标：它点开进的是画布而不是编辑器，列表里长得跟普通笔记
+      // 一模一样的话，用户只能靠点进去才知道是哪种。
+      const nodeData = (node as EnrichedNode).data;
+      const isWhiteboard =
+        nodeData?.isNote === true && nodeData.note.note_type === "whiteboard";
       // 多选高亮：用主色淡底，区别于 antd 的"当前打开"行高亮，又彼此和谐
       const multiStyle: React.CSSProperties = isMultiSelected
         ? {
@@ -1882,6 +1888,11 @@ export function NotesPanel() {
             <span style={{ fontSize: 14, flexShrink: 0, lineHeight: 1 }}>
               {emoji}
             </span>
+          ) : isWhiteboard ? (
+            <PenTool
+              size={13}
+              style={{ flexShrink: 0, color: token.colorPrimary }}
+            />
           ) : (
             <FileText
               size={13}
@@ -2351,7 +2362,11 @@ export function NotesPanel() {
                     className="flex items-center gap-1.5 truncate"
                     style={{ fontSize: 13, color: token.colorText }}
                   >
-                    <FileText size={13} style={{ color: token.colorTextTertiary, flexShrink: 0 }} />
+                    {r.note_type === "whiteboard" ? (
+                      <PenTool size={13} style={{ color: token.colorPrimary, flexShrink: 0 }} />
+                    ) : (
+                      <FileText size={13} style={{ color: token.colorTextTertiary, flexShrink: 0 }} />
+                    )}
                     <span className="truncate">{highlightText(r.title || "未命名", searchQuery)}</span>
                   </div>
                   {r.snippet && (

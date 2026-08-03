@@ -27,6 +27,7 @@ import FeatureTogglePage from "@/pages/feature-toggle";
 import MigrationSplash from "@/pages/migration-splash";
 import EmergencyReminderPage from "@/pages/emergency-reminder";
 import MindMapPopoutPage from "@/pages/mindmap-popout";
+import WhiteboardPage from "@/pages/whiteboard";
 import PushPopupPage from "@/pages/push-popup";
 
 // 路由级 errorElement：路由内任何同步渲染异常（如 TipTap 在老 WebView 上
@@ -96,6 +97,9 @@ const router = createHashRouter([
       { index: true, element: <HomePage /> },
       { path: "notes", element: <NoteListPage /> },
       { path: "notes/:id", element: <NoteEditorPage /> },
+      // 白板：本质也是一条笔记（note_type='whiteboard'），只是换成画布编辑器。
+      // 走错路由时页面会自行重定向到对应的另一个编辑器。
+      { path: "whiteboard/:id", element: <WhiteboardPage /> },
       { path: "search", element: <SearchPage /> },
       { path: "tags", element: <TagsPage /> },
       { path: "trash", element: <TrashPage /> },

@@ -52,6 +52,25 @@ export interface Note {
   source_file_type: string | null;
   /** 同 folder 内的自定义排序值，越小越靠前；只在 NoteQuery.sort_by="custom" 时生效 */
   sort_order: number;
+  /** 笔记类型：普通 Markdown 笔记 or 白板。决定点开时进哪个编辑器 */
+  note_type: NoteType;
+}
+
+/**
+ * 笔记类型（对齐 Rust `models::note_type`）。
+ *
+ * - `markdown`：普通笔记，`content` 是 Markdown 正文
+ * - `whiteboard`：白板，`content` 是 Excalidraw 场景 JSON（别拿去当正文渲染）
+ */
+export type NoteType = "markdown" | "whiteboard";
+
+/**
+ * 笔记内嵌白板保存后的资源路径（相对 data_dir 的 POSIX 路径）。
+ * 场景文件与预览图配对命名，改同一块白板永远覆盖这两个文件。
+ */
+export interface EmbeddedWhiteboardSaved {
+  scene_path: string;
+  preview_path: string;
 }
 
 /**
@@ -152,6 +171,8 @@ export interface SearchResult {
   snippet: string;
   updated_at: string;
   folder_id: number | null;
+  /** 笔记类型：搜索结果据此换图标（白板点开是画布，不是编辑器） */
+  note_type: NoteType;
 }
 
 // ─── 回收站 ───────────────────────────────────

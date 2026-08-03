@@ -112,6 +112,7 @@ import type {
   UpdatePushJobInput,
   PushRunLog,
   PushPopupData,
+  EmbeddedWhiteboardSaved,
 } from "@/types";
 
 /** 系统相关 API */
@@ -269,6 +270,55 @@ export const noteApi = {
   /** 把指定笔记的思维导图弹到独立 OS 窗口（纯导图视图，方便双屏对照） */
   openMindMapInNewWindow: (id: number) =>
     invoke<void>("open_mindmap_in_new_window", { noteId: id }),
+};
+
+/**
+ * 白板 API。
+ *
+ * 白板本质是 `note_type='whiteboard'` 的笔记，所以**重命名 / 移动文件夹 / 删除 /
+ * 打标签 / 置顶都直接用 `noteApi`**；这里只有白板独有的两条。
+ */
+export const whiteboardApi = {
+  /** 新建白板；title 省略时后端给「白板 年-月-日 时:分」默认名 */
+  create: (title?: string, folderId?: number | null) =>
+    invoke<Note>("create_whiteboard", {
+      title: title ?? null,
+      folderId: folderId ?? null,
+    }),
+  /**
+   * 读取画布场景 JSON。
+   *
+   * ⚠️ 必须用这个而不是 `note.content` —— 库里存的图片是 `kb-asset://` 引用，
+   * 后端会在这里把它们内联回 base64，Excalidraw 才能正常渲染和导出。
+   */
+  getScene: (id: number) => invoke<string>("get_whiteboard_scene", { id }),
+  /** 保存画布。scene 是 Excalidraw 场景 JSON 字符串；后端负责校验、图片外置、抽取可搜索文本 */
+  saveScene: (id: number, scene: string) =>
+    invoke<void>("save_whiteboard_scene", { id, scene }),
+
+  // ─── 笔记内嵌白板（正文里的白板块，与上面的整页白板并存）───────────
+  /**
+   * 保存内嵌白板：一次写入场景文件 + PNG 预览图，返回两者的相对路径
+   * （调用方拼 `kb-asset://` 存进节点属性）。
+   *
+   * `relPath` 传已有场景路径 = 覆盖同一对文件；传 null/undefined = 新建。
+   * `preview` 是 PNG 的 base64（不含 data URL 前缀）。
+   */
+  saveEmbedded: (
+    noteId: number,
+    scene: string,
+    preview: string,
+    relPath?: string | null,
+  ) =>
+    invoke<EmbeddedWhiteboardSaved>("save_embedded_whiteboard", {
+      noteId,
+      relPath: relPath ?? null,
+      scene,
+      preview,
+    }),
+  /** 读回内嵌白板画布（图片已内联成 base64，可直接喂 Excalidraw） */
+  loadEmbedded: (relPath: string) =>
+    invoke<string>("load_embedded_whiteboard", { relPath }),
 };
 
 /** T-003 隐藏笔记专用 API（/hidden 页面） */

@@ -6,7 +6,7 @@ import { List, Modal, Typography, message } from "antd";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { NavigateFunction } from "react-router-dom";
 
-import { noteApi, importApi, pdfApi, ocrApi, sourceFileApi, tagApi, folderApi } from "./api";
+import { noteApi, importApi, pdfApi, ocrApi, sourceFileApi, tagApi, folderApi, whiteboardApi } from "./api";
 import { importWordFiles } from "./wordImport";
 import { useAppStore } from "@/store";
 
@@ -120,6 +120,26 @@ export async function createBlankAndOpen(
     }
   } catch (e) {
     message.error(String(e));
+  }
+}
+
+/**
+ * 新建一块空白板并跳到画布。
+ *
+ * 白板走的是同一套笔记存储（`note_type='whiteboard'`），所以它自然拥有文件夹、
+ * 标签、回收站、同步这些能力；这里刻意**不套用**"默认标签"偏好 ——
+ * 那个偏好是给文字笔记设的，硬套到白板上多半不是用户想要的。
+ */
+export async function createWhiteboardAndOpen(
+  folderId: number | null,
+  navigate: NavigateFunction,
+): Promise<void> {
+  try {
+    const note = await whiteboardApi.create(undefined, folderId);
+    useAppStore.getState().bumpNotesRefresh();
+    navigate(`/whiteboard/${note.id}`);
+  } catch (e) {
+    message.error(`新建白板失败: ${e}`);
   }
 }
 

@@ -191,6 +191,16 @@ const NoteDecorators = ({ note, warningColor }: { note: Note; warningColor: stri
         日记
       </Tag>
     )}
+    {/* 白板点开进的是画布而非编辑器，列表里必须能一眼分辨。
+        放在 NoteDecorators 里而不是逐个列表改：表格视图、两种卡片视图共用它。 */}
+    {note.note_type === "whiteboard" && (
+      <Tag
+        color="purple"
+        style={{ fontSize: 10, lineHeight: "14px", padding: "0 3px", margin: 0 }}
+      >
+        白板
+      </Tag>
+    )}
   </span>
 );
 
