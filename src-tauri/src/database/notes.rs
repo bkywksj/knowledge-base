@@ -439,7 +439,7 @@ impl Database {
             .map_err(|e| AppError::Custom(e.to_string()))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type
              FROM notes WHERE id = ?1",
         )?;
 
@@ -461,6 +461,7 @@ impl Database {
                     source_file_path: row.get(12)?,
                     source_file_type: row.get(13)?,
                     sort_order: row.get(14)?,
+                    note_type: row.get(15)?,
                 })
             })
             .ok();
@@ -596,7 +597,7 @@ impl Database {
             _ => "is_pinned DESC, updated_at DESC",
         };
         let data_sql = format!(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type
              FROM notes {} ORDER BY {} LIMIT ?{} OFFSET ?{}",
             where_clause,
             order_clause,
@@ -630,6 +631,7 @@ impl Database {
                     source_file_path: row.get(12)?,
                     source_file_type: row.get(13)?,
                     sort_order: row.get(14)?,
+                    note_type: row.get(15)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -807,7 +809,7 @@ impl Database {
         let offset = (page.saturating_sub(1)) * page_size;
         let select_sql = format!(
             "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted,
-                    word_count, created_at, updated_at, source_file_path, source_file_type, sort_order
+                    word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type
              FROM notes
              WHERE is_deleted = 0 AND is_hidden = 1{}
              ORDER BY updated_at DESC
@@ -832,6 +834,7 @@ impl Database {
                 source_file_path: row.get(12)?,
                 source_file_type: row.get(13)?,
                 sort_order: row.get(14)?,
+                note_type: row.get(15)?,
             })
         };
         let notes = if has_folder_param {
@@ -1117,7 +1120,7 @@ impl Database {
         // 查询分页数据
         let offset = (page.saturating_sub(1)) * page_size;
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type
              FROM notes WHERE is_deleted = 1
              ORDER BY deleted_at DESC
              LIMIT ?1 OFFSET ?2",
@@ -1141,6 +1144,7 @@ impl Database {
                     source_file_path: row.get(12)?,
                     source_file_type: row.get(13)?,
                     sort_order: row.get(14)?,
+                    note_type: row.get(15)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -1268,7 +1272,7 @@ impl Database {
             .map_err(|e| AppError::Custom(e.to_string()))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type
              FROM notes WHERE is_daily = 1 AND daily_date = ?1 AND is_deleted = 0",
         )?;
 
@@ -1290,6 +1294,7 @@ impl Database {
                     source_file_path: row.get(12)?,
                     source_file_type: row.get(13)?,
                     sort_order: row.get(14)?,
+                    note_type: row.get(15)?,
                 })
             })
             .ok();
@@ -1306,7 +1311,7 @@ impl Database {
 
         // 先查询是否已存在
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type
              FROM notes WHERE is_daily = 1 AND daily_date = ?1 AND is_deleted = 0",
         )?;
 
@@ -1328,6 +1333,7 @@ impl Database {
                     source_file_path: row.get(12)?,
                     source_file_type: row.get(13)?,
                     sort_order: row.get(14)?,
+                    note_type: row.get(15)?,
                 })
             })
             .ok();
@@ -1468,9 +1474,15 @@ impl Database {
     }
 
     /// 内部方法：通过已有连接获取单个笔记（避免重复锁）
-    fn get_note_inner(&self, conn: &rusqlite::Connection, id: i64) -> Result<Note, AppError> {
+    // pub(super)：兄弟模块 database::whiteboard 建完白板后要在**同一把锁内**取回整行。
+    // 换成公开的 get_note() 会二次 lock 同一个 Mutex —— std::sync::Mutex 不可重入，直接死锁。
+    pub(super) fn get_note_inner(
+        &self,
+        conn: &rusqlite::Connection,
+        id: i64,
+    ) -> Result<Note, AppError> {
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type
              FROM notes WHERE id = ?1",
         )?;
 
@@ -1491,6 +1503,7 @@ impl Database {
                 source_file_path: row.get(12)?,
                 source_file_type: row.get(13)?,
                 sort_order: row.get(14)?,
+                note_type: row.get(15)?,
             })
         })?;
 

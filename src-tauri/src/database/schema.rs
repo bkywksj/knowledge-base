@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 51;
+pub const SCHEMA_VERSION: i32 = 53;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -81,6 +81,8 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             48 => migrate_v48_to_v49(conn)?,
             49 => migrate_v49_to_v50(conn)?,
             50 => migrate_v50_to_v51(conn)?,
+            51 => migrate_v51_to_v52(conn)?,
+            52 => migrate_v52_to_v53(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2079,9 +2081,234 @@ fn migrate_v50_to_v51(conn: &Connection) -> Result<(), AppError> {
     Ok(())
 }
 
+/// v51 -> v52: notes.note_type — 区分普通 Markdown 笔记与白板笔记
+///
+/// 白板走「一种笔记类型」而不是独立表，是为了**白拿现有全部基建**：
+/// 文件夹 / 标签 / 回收站 / 同步（S3・WebDAV・本地）/ 加密 / 置顶 / 双链 / 导出
+/// 都不用为白板再实现一遍。白板内容以 Excalidraw JSON 存在 `notes.content` 里。
+///
+/// 取值：`markdown`（默认，存量全部）/ `whiteboard`。
+/// 有意用 TEXT 而非整数枚举：同步下去的 `.md` front-matter 里人眼可读，
+/// 将来加第三种类型（如 canvas）也不用改表。
+/// 同批加 `notes.search_text`，并把 FTS 触发器改成索引 `COALESCE(search_text, content)`。
+///
+/// 为什么必须一起做：白板的 `content` 是一整坨 Excalidraw JSON。FTS 触发器原样索引
+/// `content` 的话，用户搜「black」「width」「rectangle」会命中每一块白板 —— 等于把
+/// 现有全文搜索污染掉。所以白板保存时由 Rust 侧抽出画布里的**纯文字**写进
+/// `search_text`，FTS 只认它。
+///
+/// 普通笔记 `search_text` 恒为 NULL → `COALESCE` 落回 `content` → 行为与改造前**完全一致**。
+fn migrate_v51_to_v52(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v51 -> v52 (notes.note_type + search_text — 白板笔记)");
+
+    conn.execute_batch(
+        "ALTER TABLE notes ADD COLUMN note_type TEXT NOT NULL DEFAULT 'markdown';
+
+         -- 白板专用的「可搜索文本」；普通笔记恒为 NULL
+         ALTER TABLE notes ADD COLUMN search_text TEXT;
+
+         -- 列表页要按类型过滤/加图标，未删笔记量大时全表扫不划算
+         CREATE INDEX IF NOT EXISTS idx_notes_type ON notes(note_type);
+
+         -- FTS 触发器改喂 COALESCE(search_text, content)。
+         -- 三个触发器必须同批改：delete 端用的键要和 insert 端写进去的值**逐字一致**，
+         -- 否则 fts5 的 'delete' 命令删不掉旧行，索引会越积越脏（v6 踩过这个坑）。
+         DROP TRIGGER IF EXISTS notes_fts_insert;
+         DROP TRIGGER IF EXISTS notes_fts_update;
+         DROP TRIGGER IF EXISTS notes_fts_delete;
+
+         CREATE TRIGGER notes_fts_insert AFTER INSERT ON notes BEGIN
+             INSERT INTO notes_fts(rowid, title, content)
+             VALUES (new.id, new.title, COALESCE(new.search_text, new.content));
+         END;
+
+         -- 监听列表要带上 search_text：白板保存时变的是它，不带的话索引不会刷新
+         CREATE TRIGGER notes_fts_update AFTER UPDATE OF title, content, search_text ON notes BEGIN
+             INSERT INTO notes_fts(notes_fts, rowid, title, content)
+             VALUES('delete', old.id, old.title, COALESCE(old.search_text, old.content));
+             INSERT INTO notes_fts(rowid, title, content)
+             VALUES (new.id, new.title, COALESCE(new.search_text, new.content));
+         END;
+
+         CREATE TRIGGER notes_fts_delete AFTER DELETE ON notes BEGIN
+             INSERT INTO notes_fts(notes_fts, rowid, title, content)
+             VALUES('delete', old.id, old.title, COALESCE(old.search_text, old.content));
+         END;",
+    )?;
+
+    set_version(conn, 52)?;
+    Ok(())
+}
+
+/// v52 -> v53: 修 FTS「索引内容 ≠ 原表内容」的不一致
+///
+/// v52 让触发器把 `COALESCE(search_text, content)` 写进索引，解决了白板 JSON
+/// 污染搜索的问题 —— 但 `notes_fts` 是 **external content 表**
+/// (`content=notes, content_rowid=id`)，fts5 对这类表有个硬契约：
+/// **索引里的内容必须和它按列名回原表读到的一致**。
+///
+/// 违反的后果不是搜不到（倒排索引是触发器写的，MATCH 正常），而是：
+/// - `snippet()` / `highlight()` 回原表读 `notes.content` → 白板的搜索摘要
+///   直接把 Excalidraw JSON 糊在用户脸上（`{"appState":{"gridModeEnabled":fa...`）
+/// - 任何 `INSERT INTO notes_fts(notes_fts) VALUES('rebuild')` 都会按原表重建，
+///   把白板的索引打回 JSON，v52 的努力全部作废
+/// - `integrity-check` 会判定索引损坏
+///
+/// 修法：给 notes 加一个**虚拟生成列** `fts_body = COALESCE(search_text, content)`，
+/// 让 fts5 的第二列直接绑到它。这样"触发器写进去的"和"fts5 回读的"是同一个表达式，
+/// 契约重新成立，上面三个问题一起消失。
+///
+/// 生成列是 VIRTUAL（不占存储，查询时现算），所以不会让 notes 表变大。
+fn migrate_v52_to_v53(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v52 -> v53 (FTS external-content 一致性：fts_body 生成列)");
+
+    conn.execute_batch(
+        "-- 1) 生成列：fts5 回读的就是它，与触发器写入的表达式逐字相同
+         ALTER TABLE notes ADD COLUMN fts_body TEXT
+             GENERATED ALWAYS AS (COALESCE(search_text, content)) VIRTUAL;
+
+         -- 2) 重建 fts5 表，把第二列绑到 fts_body。
+         --    列的**位置**不变（0=title, 1=正文），所以 search.rs 里的
+         --    snippet(notes_fts, 1, ...) 和 bm25(notes_fts, 5.0, 1.0) 都不用改。
+         DROP TRIGGER IF EXISTS notes_fts_insert;
+         DROP TRIGGER IF EXISTS notes_fts_update;
+         DROP TRIGGER IF EXISTS notes_fts_delete;
+         DROP TABLE IF EXISTS notes_fts;
+
+         CREATE VIRTUAL TABLE notes_fts USING fts5(
+             title, fts_body, content=notes, content_rowid=id,
+             tokenize='unicode61'
+         );
+
+         -- 3) 触发器写入同一个表达式。三个必须同批改：delete 端的键要和
+         --    insert 端写的值逐字一致，否则删不掉旧行（v6 踩过这个坑）。
+         CREATE TRIGGER notes_fts_insert AFTER INSERT ON notes BEGIN
+             INSERT INTO notes_fts(rowid, title, fts_body)
+             VALUES (new.id, new.title, COALESCE(new.search_text, new.content));
+         END;
+
+         CREATE TRIGGER notes_fts_update AFTER UPDATE OF title, content, search_text ON notes BEGIN
+             INSERT INTO notes_fts(notes_fts, rowid, title, fts_body)
+             VALUES('delete', old.id, old.title, COALESCE(old.search_text, old.content));
+             INSERT INTO notes_fts(rowid, title, fts_body)
+             VALUES (new.id, new.title, COALESCE(new.search_text, new.content));
+         END;
+
+         CREATE TRIGGER notes_fts_delete AFTER DELETE ON notes BEGIN
+             INSERT INTO notes_fts(notes_fts, rowid, title, fts_body)
+             VALUES('delete', old.id, old.title, COALESCE(old.search_text, old.content));
+         END;
+
+         -- 4) 从原表重建索引。现在 rebuild 读的是 fts_body，白板拿到的是画布文字，
+         --    与触发器口径一致 —— 这一步以后再跑多少次都是安全的。
+         INSERT INTO notes_fts(notes_fts) VALUES('rebuild');",
+    )?;
+
+    set_version(conn, 53)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// v53 的核心契约：白板的搜索**摘要**必须是画布文字，不能是 Excalidraw JSON。
+    ///
+    /// 这条锁住的是 fts5 external-content 表"索引内容必须等于按列回读原表"的要求 ——
+    /// 之前 fts5 第二列绑的是 `notes.content`，触发器写的却是 search_text，
+    /// 于是 `snippet()` 回读原表把整坨 JSON 吐给了用户。
+    #[test]
+    fn v53_snippet_uses_canvas_text_not_json() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        assert_eq!(get_version(&conn).unwrap(), SCHEMA_VERSION);
+
+        let whiteboard_json =
+            r#"{"type":"excalidraw","elements":[{"type":"text","text":"架构草图"}],"appState":{"gridModeEnabled":false}}"#;
+        conn.execute(
+            "INSERT INTO notes (title, content, note_type, search_text)
+             VALUES ('我的白板', ?1, 'whiteboard', '架构草图')",
+            [whiteboard_json],
+        )
+        .unwrap();
+
+        // snippet() 取第 1 列（正文）→ 必须是画布文字，绝不能出现 JSON 属性名
+        let snip: String = conn
+            .query_row(
+                "SELECT snippet(notes_fts, 1, '<mark>', '</mark>', '...', 32)
+                 FROM notes_fts WHERE notes_fts MATCH '架构草图'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(snip.contains("架构草图"), "摘要应含画布文字，实际: {}", snip);
+        assert!(
+            !snip.contains("appState") && !snip.contains("excalidraw"),
+            "摘要不该泄露 Excalidraw JSON，实际: {}",
+            snip
+        );
+    }
+
+    /// rebuild 之后白板索引不能退化回 JSON —— 这正是 v52 单独存在时会坏掉的地方。
+    #[test]
+    fn v53_survives_fts_rebuild() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO notes (title, content, note_type, search_text)
+             VALUES ('板', ?1, 'whiteboard', '流程图内容')",
+            // 用 r##""## 包：内容里的 `"#1e1e1e` 会把普通 r#""# 提前截断
+            [r##"{"elements":[{"type":"text","text":"流程图内容"}],"strokeColor":"#1e1e1e"}"##],
+        )
+        .unwrap();
+
+        // 模拟"重建搜索索引"这类维护操作
+        conn.execute_batch("INSERT INTO notes_fts(notes_fts) VALUES('rebuild');")
+            .unwrap();
+
+        // 重建后仍应搜得到画布文字
+        let hits: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM notes_fts WHERE notes_fts MATCH '流程图内容'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hits, 1, "rebuild 后应仍能按画布文字搜到白板");
+
+        // 且 JSON 里的属性名不该进索引
+        let noise: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM notes_fts WHERE notes_fts MATCH 'strokeColor'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(noise, 0, "rebuild 后 JSON 属性名不该被索引");
+    }
+
+    /// 普通笔记走 COALESCE 的兜底分支，行为必须和加这个特性之前完全一致
+    #[test]
+    fn v53_keeps_markdown_notes_indexed_by_content() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO notes (title, content) VALUES ('普通笔记', '正文里的关键词')",
+            [],
+        )
+        .unwrap();
+
+        let hits: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM notes_fts WHERE notes_fts MATCH '正文里的关键词'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hits, 1, "普通笔记仍应按 content 建索引");
+    }
 
     /// v51 抬默认上下文：只动仍是 32000 的**非 Ollama** 模型。
     ///

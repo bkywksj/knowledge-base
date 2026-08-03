@@ -62,6 +62,36 @@ pub struct Note {
     /// 同一 folder 内的自定义排序值，越小越靠前（间隔 1000 留空隙）
     /// 默认按 updated_at DESC 初始化；只有用户在"自定义排序"模式下拖拽过才与时间序偏离
     pub sort_order: i64,
+    /// 笔记类型："markdown"（默认）/ "whiteboard"（白板，content 是 Excalidraw JSON）。
+    /// 前端据此决定点开笔记时进 Markdown 编辑器还是白板画布。
+    pub note_type: String,
+}
+
+/// 笔记内嵌白板保存后的资源路径（都是相对 data_dir 的 POSIX 路径）。
+///
+/// 场景文件与预览图**配对命名**（`wb-<uuid>.excalidraw` / `wb-<uuid>.png`），
+/// 这样"改一块白板"永远只覆盖这两个文件，不会每存一次就在磁盘上多留一份残骸。
+#[derive(Debug, Clone, Serialize)]
+pub struct EmbeddedWhiteboardSaved {
+    /// Excalidraw 场景 JSON 文件
+    pub scene_path: String,
+    /// 供笔记里直接显示的 PNG 预览图
+    pub preview_path: String,
+}
+
+/// 笔记类型常量。故意用 &str 而不是 enum：
+/// 这个值要直接进 SQL、进同步用的 `.md` front-matter、进前端 JSON，
+/// 三处都是字符串；包一层 enum 只会到处 to_string()／parse 来回转。
+pub mod note_type {
+    /// 普通 Markdown 笔记（存量默认值）。
+    ///
+    /// Rust 侧暂时用不到它（默认值写在 schema v52 的 `DEFAULT 'markdown'` 里），
+    /// 但留着才能让这里成为「note_type 合法取值」的唯一出处 —— 否则读代码的人
+    /// 得去翻迁移脚本才知道除了 whiteboard 还有什么。
+    #[allow(dead_code)]
+    pub const MARKDOWN: &str = "markdown";
+    /// 白板笔记：`notes.content` 存 Excalidraw 场景 JSON
+    pub const WHITEBOARD: &str = "whiteboard";
 }
 
 /// AI 引用笔记里抽出的图片清单（给前端在回答下方"溯源"挂缩略图）。
@@ -183,6 +213,9 @@ pub struct SearchResult {
     pub snippet: String,
     pub updated_at: String,
     pub folder_id: Option<i64>,
+    /// 笔记类型（见 [`note_type`]）。搜索结果里要据此换图标 ——
+    /// 白板点开进的是画布而不是编辑器，长得跟普通笔记一样会让人误判。
+    pub note_type: String,
 }
 
 // ─── 回收站 ───────────────────────────────────
@@ -1608,6 +1641,16 @@ pub struct ManifestEntry {
     /// 这样"用户把笔记的所有标签删光"也能跨端传播，不会因为 empty 被当成"不动"。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    /// 笔记类型（notes.note_type）："markdown" / "whiteboard"。
+    ///
+    /// **不带这个字段白板同步就废了**：远端 `.md` 里白板正文是一坨 Excalidraw JSON，
+    /// 对端拉下来若认不出类型，就会当普通 Markdown 笔记塞进富文本编辑器 ——
+    /// 用户看到满屏 JSON，一保存原画布还被覆盖。
+    ///
+    /// 旧客户端的 manifest 没这字段 → 反序列化成 None → pull 端按 markdown 处理
+    /// （与改造前行为一致，向后兼容）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note_type: Option<String>,
 }
 
 /// V1 同步 manifest 顶层的附件清单条目（T-S022 sidecar CAS 附件同步）

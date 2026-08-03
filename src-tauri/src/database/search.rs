@@ -46,7 +46,7 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT n.id, n.title,
                     snippet(notes_fts, 1, '<mark>', '</mark>', '...', 32) as snippet,
-                    n.updated_at, n.folder_id
+                    n.updated_at, n.folder_id, n.note_type
              FROM notes_fts fts
              JOIN notes n ON fts.rowid = n.id
              WHERE notes_fts MATCH ?1
@@ -62,9 +62,12 @@ impl Database {
                 Ok(SearchResult {
                     id: row.get(0)?,
                     title: row.get(1)?,
+                    // snippet() 取的是 fts5 第 1 列 = fts_body 生成列
+                    // (= COALESCE(search_text, content))，白板拿到画布文字而非 JSON
                     snippet: row.get(2)?,
                     updated_at: row.get(3)?,
                     folder_id: row.get(4)?,
+                    note_type: row.get(5)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -85,11 +88,19 @@ impl Database {
             return Ok(Vec::new());
         }
 
-        // 构建 WHERE 条件：每个关键词匹配 title 或 content
+        // 构建 WHERE 条件：每个关键词匹配 title 或正文。
+        // 正文用 COALESCE(search_text, content) 而不是裸 content —— 白板的 content 是
+        // Excalidraw JSON，直接 LIKE 会让「strokeColor」「appState」这类属性名命中每一块白板。
+        // 与 FTS 路径（fts_body 生成列，见 schema v53）保持同一口径。
         let where_clauses: Vec<String> = keywords
             .iter()
             .enumerate()
-            .map(|(i, _)| format!("(n.title LIKE ?{0} OR n.content LIKE ?{0})", i + 1))
+            .map(|(i, _)| {
+                format!(
+                    "(n.title LIKE ?{0} OR COALESCE(n.search_text, n.content) LIKE ?{0})",
+                    i + 1
+                )
+            })
             .collect();
 
         // 标题命中表达式：任一关键词出现在 title 中即视为"标题命中"，排序优先
@@ -104,7 +115,8 @@ impl Database {
         // T-003: 过滤隐藏笔记；隐藏笔记在主搜索里完全不可见
         // ORDER BY：先按"标题命中(0) vs 仅内容命中(1)"分组，再按 updated_at DESC
         let sql = format!(
-            "SELECT n.id, n.title, n.content, n.updated_at, n.folder_id,
+            "SELECT n.id, n.title, COALESCE(n.search_text, n.content), n.updated_at, n.folder_id,
+                    n.note_type,
                     CASE WHEN ({}) THEN 0 ELSE 1 END AS _title_score
              FROM notes n
              WHERE n.is_deleted = 0 AND n.is_hidden = 0 AND ({})
@@ -129,13 +141,16 @@ impl Database {
 
         let results = stmt
             .query_map(&*params_ref, |row| {
-                let content: String = row.get(2)?;
+                // 第 2 列已在 SQL 里 COALESCE 成"可读正文"：白板拿到的是画布文字，
+                // 不是 Excalidraw JSON —— 否则摘要会把一坨 {"appState":... 糊给用户
+                let body: String = row.get(2)?;
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
-                    content,
+                    body,
                     row.get::<_, String>(3)?,
                     row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, String>(5)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -143,14 +158,15 @@ impl Database {
         // 生成带高亮的 snippet
         let results = results
             .into_iter()
-            .map(|(id, title, content, updated_at, folder_id)| {
-                let snippet = build_highlight_snippet(&content, &raw_keywords);
+            .map(|(id, title, body, updated_at, folder_id, note_type)| {
+                let snippet = build_highlight_snippet(&body, &raw_keywords);
                 SearchResult {
                     id,
                     title,
                     snippet,
                     updated_at,
                     folder_id,
+                    note_type,
                 }
             })
             .collect();

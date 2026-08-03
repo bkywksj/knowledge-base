@@ -18,6 +18,7 @@ pub mod task_categories;
 pub mod tasks;
 pub mod templates;
 pub mod url_mapping;
+pub mod whiteboard;
 
 use std::sync::Mutex;
 
