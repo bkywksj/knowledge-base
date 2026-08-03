@@ -16,7 +16,7 @@ CI：构建 Windows + macOS + Linux 安装包 → 上传到 GitHub Release（草
 > README 更新、产物下载、update.json 生成在获得产物后一次性完成并推送。
 
 > **本地不需要执行 `pnpm tauri build`**。CI 负责构建和签名。
-> CI 构建完成后，**Claude 通过 GitHub API + git credential 自动下载 draft release 的 assets**，
+> CI 构建完成后，**Claude 通过 GitHub API 自动下载 draft release 的 assets**（路线 A 走 Sigil，路线 B 走 `gh`），
 > 全程不需要用户手动下载（v1.8.1 起验证可行）。
 
 ### 支持平台
@@ -301,9 +301,14 @@ CI 构建期间不要 sleep / 不要让用户手动等。用 **ScheduleWakeup �
 ```python
 # poll_ci.py —— 通过 GitHub API 查询 v_X.Y.Z_ 的 workflow run
 import urllib.request, json, subprocess
-proc = subprocess.run(['git', 'credential', 'fill'],
-    input='protocol=https\nhost=github.com\n', capture_output=True, text=True)
-token = next(l.split('=',1)[1] for l in proc.stdout.splitlines() if l.startswith('password='))
+import os
+# 🔴 严禁 git credential fill —— 本机没存 github.com 凭据时会弹 GCM 登录框并阻塞
+#    路线 A：会话里有 mcp__sigil__* → 直接用 Sigil 能力，根本不用 token
+#    路线 B：用 gh 自带 token（不碰系统 credential helper，任何机器都不弹窗）
+token = (os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
+         or subprocess.run(['gh', 'auth', 'token'], capture_output=True, text=True).stdout.strip())
+if not token:
+    raise SystemExit('❌ 拿不到 token：先 gh auth login 或 export GH_TOKEN=<PAT>')
 
 req = urllib.request.Request('https://api.github.com/repos/bkywksj/knowledge-base/actions/runs?per_page=10')
 req.add_header('Authorization', f'Bearer {token}')
@@ -333,16 +338,21 @@ prompt: 继续 v1.8.1 发布流程：再查一次 CI workflow 状态，未完成
 
 ### 步骤 7：用 GitHub API 自动下载 13 个产物到 release 仓库
 
-CI 完成后产物在 **draft Release** 上（tag_name = `vX.Y.Z`）。用 `git credential fill` 拿 GitHub token，然后用 `Accept: application/octet-stream` 通过 assets API 直接下到 `release` 仓库目录。**全程零浏览器、零用户操作**。
+CI 完成后产物在 **draft Release** 上（tag_name = `vX.Y.Z`）。取 token 见下（🔴 **严禁 `git credential fill`**：本机没存 github.com 凭据时会弹 Git Credential Manager 登录框并阻塞；有 Sigil 就直接用 `mcp__sigil__github_release_get` / `github_download_release_asset`，无 Sigil 用 `gh`），然后用 `Accept: application/octet-stream` 通过 assets API 直接下到 `release` 仓库目录。**全程零浏览器、零用户操作**。
 
 #### 7a. 列产物清单（核对 13 个文件齐全）
 
 ```python
 # list_assets.py
 import urllib.request, json, subprocess
-proc = subprocess.run(['git', 'credential', 'fill'],
-    input='protocol=https\nhost=github.com\n', capture_output=True, text=True)
-token = next(l.split('=',1)[1] for l in proc.stdout.splitlines() if l.startswith('password='))
+import os
+# 🔴 严禁 git credential fill —— 本机没存 github.com 凭据时会弹 GCM 登录框并阻塞
+#    路线 A：会话里有 mcp__sigil__* → 直接用 Sigil 能力，根本不用 token
+#    路线 B：用 gh 自带 token（不碰系统 credential helper，任何机器都不弹窗）
+token = (os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
+         or subprocess.run(['gh', 'auth', 'token'], capture_output=True, text=True).stdout.strip())
+if not token:
+    raise SystemExit('❌ 拿不到 token：先 gh auth login 或 export GH_TOKEN=<PAT>')
 
 req = urllib.request.Request('https://api.github.com/repos/bkywksj/knowledge-base/releases?per_page=5')
 req.add_header('Authorization', f'Bearer {token}')
@@ -403,9 +413,14 @@ mkdir -p "E:/my/桌面软件tauri/knowledge-base-release/releases/vX.Y.Z"
 cd "E:/my/桌面软件tauri/knowledge_base" && PYTHONIOENCODING=utf-8 python -c "
 import urllib.request, json, subprocess, os, sys
 
-proc = subprocess.run(['git', 'credential', 'fill'],
-    input='protocol=https\nhost=github.com\n', capture_output=True, text=True)
-token = next(l.split('=',1)[1] for l in proc.stdout.splitlines() if l.startswith('password='))
+import os
+# 🔴 严禁 git credential fill —— 本机没存 github.com 凭据时会弹 GCM 登录框并阻塞
+#    路线 A：会话里有 mcp__sigil__* → 直接用 Sigil 能力，根本不用 token
+#    路线 B：用 gh 自带 token（不碰系统 credential helper，任何机器都不弹窗）
+token = (os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
+         or subprocess.run(['gh', 'auth', 'token'], capture_output=True, text=True).stdout.strip())
+if not token:
+    raise SystemExit('❌ 拿不到 token：先 gh auth login 或 export GH_TOKEN=<PAT>')
 
 VERSION = 'X.Y.Z'
 TARGET = f'E:/my/桌面软件tauri/knowledge-base-release/releases/v{VERSION}'
@@ -618,9 +633,14 @@ git push gitee main:master     # Gitee（远端分支 master；本地 main → �
 
 ```python
 import urllib.request, json, subprocess
-proc = subprocess.run(['git', 'credential', 'fill'],
-    input='protocol=https\nhost=github.com\n', capture_output=True, text=True)
-token = next(l.split('=',1)[1] for l in proc.stdout.splitlines() if l.startswith('password='))
+import os
+# 🔴 严禁 git credential fill —— 本机没存 github.com 凭据时会弹 GCM 登录框并阻塞
+#    路线 A：会话里有 mcp__sigil__* → 直接用 Sigil 能力，根本不用 token
+#    路线 B：用 gh 自带 token（不碰系统 credential helper，任何机器都不弹窗）
+token = (os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
+         or subprocess.run(['gh', 'auth', 'token'], capture_output=True, text=True).stdout.strip())
+if not token:
+    raise SystemExit('❌ 拿不到 token：先 gh auth login 或 export GH_TOKEN=<PAT>')
 
 req = urllib.request.Request('https://api.github.com/repos/bkywksj/knowledge-base/releases')
 req.add_header('Authorization', f'Bearer {token}')

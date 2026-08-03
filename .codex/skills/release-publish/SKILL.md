@@ -453,9 +453,14 @@ git push gitee main:master     # Gitee（远端分支 master；本地 main → �
 
 ```python
 import urllib.request, json, subprocess
-proc = subprocess.run(['git', 'credential', 'fill'],
-    input='protocol=https\nhost=github.com\n', capture_output=True, text=True)
-token = next(l.split('=',1)[1] for l in proc.stdout.splitlines() if l.startswith('password='))
+import os
+# 🔴 严禁 git credential fill —— 本机没存 github.com 凭据时会弹 GCM 登录框并阻塞
+#    路线 A：会话里有 mcp__sigil__* → 直接用 Sigil 能力，根本不用 token
+#    路线 B：用 gh 自带 token（不碰系统 credential helper，任何机器都不弹窗）
+token = (os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
+         or subprocess.run(['gh', 'auth', 'token'], capture_output=True, text=True).stdout.strip())
+if not token:
+    raise SystemExit('❌ 拿不到 token：先 gh auth login 或 export GH_TOKEN=<PAT>')
 
 req = urllib.request.Request('https://api.github.com/repos/bkywksj/knowledge-base/releases')
 req.add_header('Authorization', f'Bearer {token}')
