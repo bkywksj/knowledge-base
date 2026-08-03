@@ -2279,10 +2279,22 @@ fn migrate_v53_to_v54(conn: &Connection) -> Result<(), AppError> {
     }
     tx.commit()?;
 
+    // 清空增量附件扫描标记，强制下次 push 前全库重扫一遍。
+    //
+    // **必须做**，否则本次修复对存量数据无效：
+    // - 同批修复给 `attachment_scan::KNOWN_PREFIXES` 补了 `attachments/`（此前整个目录
+    //   从未参与同步）。但增量扫描只挑 `attachment_scan_at <> updated_at` 的笔记，
+    //   老笔记的标记早已对齐 → 新前缀永远不会被应用到它们身上。
+    // - 上面的 URL 归一化只改 `content`，不动 `updated_at`，同样不会触发重扫。
+    //
+    // 代价：升级后第一次 push 会全库扫一遍附件（1 万条笔记约几秒），之后恢复增量。
+    let cleared = conn.execute("UPDATE notes SET attachment_scan_at = NULL", [])?;
+
     log::info!(
-        "[v54] 归一化完成：触达 {} 条笔记，改写 {} 个素材 URL",
+        "[v54] 归一化完成：触达 {} 条笔记，改写 {} 个素材 URL；已清空 {} 条笔记的附件扫描标记（下次 push 全库重扫）",
         touched_notes,
-        rewritten_urls
+        rewritten_urls,
+        cleared
     );
 
     set_version(conn, 54)?;
@@ -2765,5 +2777,49 @@ mod v54_asset_path_tests {
             .unwrap();
         assert_eq!(content, clean);
         assert_eq!(hash_before, hash_after);
+    }
+}
+
+#[cfg(test)]
+mod v54_rescan_tests {
+    use super::*;
+
+    /// v54 必须清空 attachment_scan_at，否则同批给 KNOWN_PREFIXES 补的 `attachments/`
+    /// 对**存量笔记**完全无效 —— 增量扫描只挑标记落后的笔记，老笔记的标记早已对齐。
+    #[test]
+    fn migration_clears_attachment_scan_marker() {
+        let db = crate::database::Database::init(":memory:").unwrap();
+        let id = db
+            .create_note(&crate::models::NoteInput {
+                title: "早就扫过的老笔记".into(),
+                // 干净格式，URL 归一化不会改它 —— 正因如此才更要靠清标记来重扫
+                content: r#"<a href="kb-asset://attachments/3/spec.pdf">附件</a>"#.into(),
+                folder_id: None,
+            })
+            .unwrap()
+            .id;
+
+        let conn = db.conn_lock().unwrap();
+        // 模拟"这条笔记之前已被扫过"：标记对齐到当前 updated_at
+        conn.execute(
+            "UPDATE notes SET attachment_scan_at = updated_at WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+        let before: Option<String> = conn
+            .query_row("SELECT attachment_scan_at FROM notes WHERE id = ?1", [id], |r| r.get(0))
+            .unwrap();
+        assert!(before.is_some(), "前置条件：标记应已对齐");
+
+        set_version(&conn, 53).unwrap();
+        migrate_v53_to_v54(&conn).unwrap();
+
+        let after: Option<String> = conn
+            .query_row("SELECT attachment_scan_at FROM notes WHERE id = ?1", [id], |r| r.get(0))
+            .unwrap();
+        assert!(
+            after.is_none(),
+            "迁移后标记必须为 NULL，下次 push 才会重扫到 attachments/ 下的附件"
+        );
     }
 }
