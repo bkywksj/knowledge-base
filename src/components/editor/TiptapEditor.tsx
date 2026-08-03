@@ -249,6 +249,7 @@ import { EmbedVideo } from "./EmbedVideoNode";
 import { AllowFileLink } from "./AllowFileLink";
 import { Callout } from "./Callout";
 import { DataviewBlock } from "./DataviewBlock";
+import { WhiteboardBlock } from "./WhiteboardBlock";
 import { Toggle, ToggleSummary, ToggleContent } from "./Toggle";
 import { Columns, Column } from "./Columns";
 import "tippy.js/dist/tippy.css";
@@ -362,6 +363,8 @@ function migrateOpenMathStrings(editor: import("@tiptap/react").Editor): void {
       if (consumed.has(i)) continue;
       const c = topChildren[i];
       if (!c.node.isTextblock) continue;
+      // 代码块整段都是字面量：`$$` 在 shell 里是当前进程 PID，不是块级公式定界符
+      if (c.node.type.spec.code) continue;
       const t = c.node.textContent.trim();
       if (!t.startsWith("$$")) continue;
 
@@ -388,6 +391,9 @@ function migrateOpenMathStrings(editor: import("@tiptap/react").Editor): void {
       for (let j = i + 1; j < topChildren.length; j++) {
         const next = topChildren[j];
         if (!next.node.isTextblock) continue;
+        // 同上：代码块不能充当块级公式的闭合段，否则 `echo $$` 这种收尾的代码块
+        // 会连同上文一起被吞进 blockMath
+        if (next.node.type.spec.code) continue;
         const nt = next.node.textContent.trim();
         if (nt.endsWith("$$")) {
           // 闭合段
@@ -426,7 +432,32 @@ function migrateOpenMathStrings(editor: import("@tiptap/react").Editor): void {
     return blockedRanges.some(([f, t]) => pos >= f && pos < t);
   }
 
+  /**
+   * 给定 doc 范围内是否压到了行内代码（`code` mark）。
+   *
+   * 规则 2 为了支持 `$..$` 跨多个文本节点（中间夹加粗等 mark），是按 textblock 的
+   * textContent 整体扫的，看不见 marks；所以匹配到范围后再回查一次，命中行内代码
+   * 就放弃这次替换 —— `` `$PATH` `` 里的 `$` 是字面量。
+   */
+  const hitsCodeMark = (from: number, to: number): boolean => {
+    let hit = false;
+    tr.doc.nodesBetween(from, to, (n) => {
+      if (hit) return false;
+      if (n.isText && n.marks.some((mk) => mk.type.spec.code)) hit = true;
+    });
+    return hit;
+  };
+
   tr.doc.descendants((node, pos) => {
+    // 🔴 代码块里的 `$` 一律是字面量（shell 变量 `$PATH`、`$$`=PID、正则、模板占位符），
+    // 绝不能当公式。而 codeBlock 的 `isTextblock` 同样为 true，只判 isTextblock 拦不住它。
+    //
+    // 后果比"显示成公式"严重得多：codeBlock 的 content 是 `text*`，把 inlineMath 塞进去
+    // 是非法结构，ProseMirror 的 replace fitting 会把它连同后半段一起「顶出」代码块 ——
+    // 代码块被拦腰截断，剩余内容掉到外面变成普通段落，且随下一次保存序列化写回磁盘。
+    // 实例：代码块写 `echo "test $a $b"` → 正则吃掉 `$a $` → 代码块只剩 `echo "test`，
+    // `$b"` 变成段落里的 KaTeX 斜体。返回 false 连子节点一起跳过。
+    if (node.type.spec.code) return false;
     if (!node.isTextblock) return;
     if (isInBlockedRange(pos)) return;
     const text = node.textContent;
@@ -449,12 +480,10 @@ function migrateOpenMathStrings(editor: import("@tiptap/react").Editor): void {
       const latex = m[2];
       const dollarStart = m.index + leading.length;
       const dollarLen = latex.length + 2;
-      replaces.push({
-        from: textStartInDoc + dollarStart,
-        to: textStartInDoc + dollarStart + dollarLen,
-        latex,
-        kind: "inline",
-      });
+      const from = textStartInDoc + dollarStart;
+      const to = from + dollarLen;
+      if (hitsCodeMark(from, to)) continue;
+      replaces.push({ from, to, latex, kind: "inline" });
     }
   });
 
@@ -467,6 +496,13 @@ function migrateOpenMathStrings(editor: import("@tiptap/react").Editor): void {
       if (r.kind === "block") {
         tr.replaceWith(r.from, r.to, blockMath.create({ latex: r.latex }));
       } else {
+        // 双保险：即便上游筛选漏了，只要落点父节点是代码类（content 为 `text*`），
+        // 就宁可不转换 —— replaceWith 在这里不会抛异常，而是静默把节点顶出父节点、
+        // 拆散文档结构，catch 兜不住，只能提前拦。
+        if (tr.doc.resolve(r.from).parent.type.spec.code) {
+          console.warn("[math] 跳过代码块内的 $..$（字面量，非公式）:", r);
+          continue;
+        }
         tr.replaceWith(r.from, r.to, inlineMath.create({ latex: r.latex }));
       }
     } catch (e) {
@@ -1589,6 +1625,11 @@ export function TiptapEditor({
       EmbedVideo,
       Callout,
       DataviewBlock,
+      // 内嵌白板块：getNoteId 必须函数式取（同 SlashCommand），
+      // 否则切笔记后白板资源会存进上一篇的目录
+      WhiteboardBlock.configure({
+        getNoteId: () => noteIdRef.current,
+      }),
       Toggle,
       ToggleSummary,
       ToggleContent,

@@ -34,6 +34,7 @@ import {
   CalendarClock,
   Clock,
   Database,
+  PenTool,
   type LucideIcon,
 } from "lucide-react";
 import { imageApi, videoApi } from "@/lib/api";
@@ -262,6 +263,19 @@ const BASIC_SLASH_ITEMS: SlashCommandItem[] = [
     keywords: ["危险", "danger", "callout", "error", "wx"],
     command: ({ editor, range }) => {
       editor.chain().focus().deleteRange(range).toggleCallout("danger").run();
+    },
+  },
+
+  // ─── 内嵌白板 ───
+  {
+    key: "whiteboard",
+    title: "白板",
+    subtitle: "在笔记里插入一块可编辑的画布，平时显示为图片",
+    group: "插入",
+    icon: PenTool,
+    keywords: ["白板", "画板", "画布", "whiteboard", "draw", "excalidraw", "bb", "hb"],
+    command: ({ editor, range }) => {
+      editor.chain().focus().deleteRange(range).insertWhiteboard().run();
     },
   },
 

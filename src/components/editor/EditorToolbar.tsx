@@ -32,6 +32,7 @@ import {
   ImagePlus,
   Captions,
   Film,
+  PenTool,
   Globe,
   Paperclip,
   MapPin,
@@ -1126,6 +1127,11 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
         icon: <Film size={15} />,
         title: "插入视频",
         action: insertVideo,
+      },
+      {
+        icon: <PenTool size={15} />,
+        title: "插入白板（画流程图 / 草图，正文里显示为图片，可随时点开再改）",
+        action: () => editor.chain().focus().insertWhiteboard().run(),
       },
       {
         icon: <Globe size={15} />,

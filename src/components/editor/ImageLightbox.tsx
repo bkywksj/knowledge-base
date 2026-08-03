@@ -28,6 +28,10 @@ export function ImageLightbox({
     const onDblClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
       if (!target || target.tagName !== "IMG") return;
+      // 白板块的预览图不是「一张图」而是「一块可编辑画布的封面」——
+      // 双击它的语义是进画布编辑，不是放大看图。这里放行给白板自己处理，
+      // 否则用户双击白板只会弹出一个看图浮层，永远进不去编辑。
+      if (target.closest("[data-kb-whiteboard]")) return;
       const img = target as HTMLImageElement;
       const url = img.currentSrc || img.src;
       if (!url) return;
