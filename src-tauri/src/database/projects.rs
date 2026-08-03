@@ -231,18 +231,21 @@ impl super::Database {
         )?;
         let rows = stmt
             .query_map([], |row| {
+                // TEXT 列走降级读：本方法在同步 manifest 链路上，
+                // 一个坏 cell 不该让整次同步失败。见 database::text_health。
+                use crate::database::text_health::{get_opt_text_lossy, get_text_lossy};
                 Ok(Project {
                     id: row.get(0)?,
-                    name: row.get(1)?,
-                    description: row.get(2)?,
-                    color: row.get(3)?,
-                    start_date: row.get(4)?,
-                    end_date: row.get(5)?,
+                    name: get_text_lossy(row, 1, "projects.name")?,
+                    description: get_opt_text_lossy(row, 2, "projects.description")?,
+                    color: get_text_lossy(row, 3, "projects.color")?,
+                    start_date: get_opt_text_lossy(row, 4, "projects.start_date")?,
+                    end_date: get_opt_text_lossy(row, 5, "projects.end_date")?,
                     archived: row.get::<_, i32>(6)? != 0,
                     sort_order: row.get(7)?,
-                    created_at: row.get(8)?,
-                    updated_at: row.get(9)?,
-                    stable_uuid: row.get(10)?,
+                    created_at: get_text_lossy(row, 8, "projects.created_at")?,
+                    updated_at: get_text_lossy(row, 9, "projects.updated_at")?,
+                    stable_uuid: get_opt_text_lossy(row, 10, "projects.stable_uuid")?,
                     is_deleted: row.get::<_, i32>(11)? != 0,
                     active_task_count: 0,
                     done_task_count: 0,

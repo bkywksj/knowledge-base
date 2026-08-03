@@ -416,7 +416,14 @@ impl Database {
              ORDER BY nt.note_id, t.name",
         )?;
         let rows: Vec<(i64, String)> = stmt
-            .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
+            .query_map([], |row| {
+                // 降级读标签名：此前 `filter_map(ok)` 会把含非法 UTF-8 的标签**静默丢掉**，
+                // 表现为"某些笔记的标签跨端同步后消失"。降级读保住标签本身。
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    crate::database::text_health::get_text_lossy(row, 1, "tags.name")?,
+                ))
+            })?
             .filter_map(|r| r.ok())
             .collect();
 

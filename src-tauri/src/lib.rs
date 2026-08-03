@@ -1112,10 +1112,12 @@ pub fn run() {
             commands::system::write_text_file,
             commands::system::write_binary_file,
             commands::system::resolve_asset_absolute_path,
+            commands::system::resolve_content_asset_rel,
             commands::system::copy_theme_bg,
             commands::system::clear_theme_bg,
             commands::system::path_exists,
             commands::system::export_diagnostics,
+            commands::system::check_db_text_health,
             // 系统字体枚举（设置页自选字体，仅桌面端）
             #[cfg(desktop)]
             commands::font::list_system_fonts,

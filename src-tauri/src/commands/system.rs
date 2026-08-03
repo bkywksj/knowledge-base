@@ -20,6 +20,36 @@ pub fn resolve_asset_absolute_path(
     Ok(abs.to_string_lossy().into_owned())
 }
 
+/// 把笔记 content 里**任意历史形态**的素材 URL 解析成"本机可用的相对路径"。
+///
+/// 前端渲染兜底用：`kb-asset://<相对路径>` 是当前唯一合法形态，但存量笔记里还可能有
+/// `file:///E:/…`、`http://asset.localhost/…`、裸绝对路径这些老写法（尤其是从别的机器
+/// 同步/导入过来的内容）。这些 URL 直接丢给 WebView 必定裂图 —— 前端遇到时调本命令，
+/// 拿到相对路径后按正常 `kb-asset://` 流程渲染。
+///
+/// 返回 `Ok(None)` 表示"不是本机能渲染的本地资产"：真外链、`data:`、锚点，
+/// 或者收敛出的路径在本机数据目录下**并不存在**（缺文件时返回 None，让调用方保持原样，
+/// 而不是换成另一个同样打不开的路径）。
+///
+/// 安全：结果必经 `rel_to_abs` 校验，天然限定在 data_dir 之内，不会逃逸。
+#[tauri::command]
+pub fn resolve_content_asset_rel(
+    state: State<'_, AppState>,
+    url: String,
+) -> Result<Option<String>, String> {
+    let Some(abs) = asset_path::resolve_content_url(&url, &state.data_dir) else {
+        return Ok(None);
+    };
+    let Some(rel) = asset_path::abs_to_rel(&abs, &state.data_dir) else {
+        return Ok(None);
+    };
+    // 只在本机确实有这份文件时才认；否则返回 None 让前端保持原样
+    match asset_path::rel_to_abs(&rel, &state.data_dir) {
+        Ok(p) if p.exists() => Ok(Some(rel)),
+        _ => Ok(None),
+    }
+}
+
 /// 获取系统信息
 ///
 /// data_dir / images_dir 都从 state 取，返回的是当前生效的数据根目录
@@ -260,4 +290,28 @@ pub fn export_diagnostics(app: tauri::AppHandle) -> Result<String, String> {
 
     zip.finish().map_err(|e| format!("打包诊断失败: {e}"))?;
     Ok(zip_path.to_string_lossy().into_owned())
+}
+
+/// 数据库文本健康体检（`repair = false`）/ 一键修复（`repair = true`）
+///
+/// 扫全库关键 TEXT 列，找出含**非法 UTF-8 字节**的 cell。这类坏数据不是本应用写出来的
+/// （Rust 的 `String` 写不出非法 UTF-8），而是外部因素造成的字节级损坏：
+/// 跨平台直接拷 `app.db`（漏拷 `-wal` / 拷到一半）、数据目录放在网盘里双向同步、
+/// 磁盘坏道或异常断电导致的页损坏。
+///
+/// 症状：同步报 `Conversion error from type Text at index: N, invalid utf-8 sequence`。
+/// 现在同步链路本身已能降级跳过（见 `database::text_health`），本命令负责**永久修好**。
+///
+/// `repair = true` 会把坏 cell 用 `U+FFFD` 替换字符修正后写回，并同步重算
+/// `notes.content_hash` / `notes.title_normalized` 等派生列。
+/// 修复不可逆（原坏字节本就不是有效文本），但只影响已经损坏的那几个字符。
+#[tauri::command]
+pub fn check_db_text_health(
+    state: State<'_, AppState>,
+    repair: Option<bool>,
+) -> Result<crate::database::text_health::TextHealthReport, String> {
+    state
+        .db
+        .check_text_health(repair.unwrap_or(false))
+        .map_err(|e| e.to_string())
 }

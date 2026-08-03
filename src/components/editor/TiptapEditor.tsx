@@ -2026,6 +2026,9 @@ export function TiptapEditor({
     const dom = editor.view.dom as HTMLElement;
     // 单 editor 实例内复用 Blob URL，避免重复 invoke + 重复创建
     const blobCache = new Map<string, string>();
+    // 老形态本地路径的兜底解析缓存：原始 src → 可显示 URL（null = 解不了，别再问后端）。
+    // MutationObserver 每次 DOM 变动都会重扫，没有这层缓存会对同一张裂图反复发 IPC。
+    const foreignCache = new Map<string, string | null>();
 
     /** 历史 asset URL → .enc 文件本地绝对路径（兼容未跑 Step 4 迁移的存量笔记） */
     const extractLegacyEncPath = (src: string): string | null => {
@@ -2065,6 +2068,45 @@ export function TiptapEditor({
       }
     };
 
+    /**
+     * 兜底解析：src 是老形态的**本地路径**（`file:///E:/…`、裸绝对路径、
+     * 迁移前的 asset 协议）时，问后端要一个本机可用的相对路径再按 kb-asset 流程渲染。
+     *
+     * 为什么需要：v54 迁移会把 content 里的老路径清洗成 `kb-asset://`，但这些内容仍会
+     * 从别处回流 —— 从旧版本客户端同步下来的笔记、外部导入的 Markdown、
+     * 用户手贴的 HTML。它们带的是**另一台机器**的绝对路径，直接交给 WebView 必定裂图。
+     *
+     * 后端只在本机确实存在该文件时才返回相对路径（否则 null），所以"文件真丢了"
+     * 不会被伪装成能显示的样子。
+     */
+    const applyForeignPath = async (el: HTMLElement, src: string) => {
+      const cached = foreignCache.get(src);
+      if (cached !== undefined) {
+        if (cached) el.setAttribute("src", cached);
+        return;
+      }
+      try {
+        const rel = await systemApi.resolveContentAssetRel(src);
+        if (!rel) {
+          foreignCache.set(src, null); // 记住"解不了"，避免每次 mutation 重复 IPC
+          return;
+        }
+        const next = rel.endsWith(".enc")
+          ? null // 加密资产走 Blob 通道，不能用 asset 协议直出
+          : resolveAssetSrc(toKbAsset(rel), dataDir);
+        if (next) {
+          foreignCache.set(src, next);
+          el.setAttribute("src", next);
+        } else {
+          foreignCache.set(src, null);
+          void applyBlob(el, rel);
+        }
+      } catch (e) {
+        foreignCache.set(src, null);
+        console.warn("[asset-resolve] 老路径兜底解析失败:", src, e);
+      }
+    };
+
     const processEl = (el: HTMLElement) => {
       const src = el.getAttribute("src") ?? "";
       if (!src || src.startsWith("blob:")) return;
@@ -2083,7 +2125,21 @@ export function TiptapEditor({
 
       // 兼容老格式：未跑迁移的笔记 src 仍是 asset://...xxx.enc
       const legacy = extractLegacyEncPath(src);
-      if (legacy) void applyBlob(el, legacy);
+      if (legacy) {
+        void applyBlob(el, legacy);
+        return;
+      }
+
+      // 已经是 asset 协议实际 URL（本 observer 上一轮自己写进去的）→ 不再处理，
+      // 否则会和下面的兜底互相触发形成死循环。
+      if (src.startsWith("http://asset.localhost/") || src.startsWith("https://asset.localhost/")) {
+        return;
+      }
+      // 真外链 / data: / blob: 交给浏览器自己处理
+      if (/^(https?|data|blob):/i.test(src)) return;
+
+      // 剩下的是老形态本地路径（file:// / 裸绝对路径 / 裸相对路径）→ 走后端兜底
+      void applyForeignPath(el, src);
     };
 
     const scanAll = () => {

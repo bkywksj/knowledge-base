@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Card, Typography, Descriptions, Spin, message, Button, Tooltip, Tag, Image } from "antd";
+import { Card, Typography, Descriptions, Spin, message, Modal, Button, Tooltip, Tag, Image } from "antd";
 import { SyncOutlined, SettingOutlined } from "@ant-design/icons";
 import { FolderOpen, ExternalLink } from "lucide-react";
 import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -18,7 +18,7 @@ const ZSXQ_ID = "91839984";
 const QQ_GROUP_ID = "1090770702";
 const AUTHOR_CONTACT = "7704929366";
 
-const { Title, Text } = Typography;
+const { Title, Text, Paragraph } = Typography;
 
 /**
  * 关于页左侧锚点导航。
@@ -81,6 +81,7 @@ export default function AboutPage() {
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [dbChecking, setDbChecking] = useState(false);
   const updater = useUpdater();
 
   useEffect(() => {
@@ -119,6 +120,74 @@ export default function AboutPage() {
       message.error(`导出诊断包失败: ${e}`);
     } finally {
       setExporting(false);
+    }
+  }
+
+  /**
+   * 数据库文本体检：先只读扫描，发现问题再让用户确认是否修复。
+   *
+   * 排查的是「同步报 Conversion error from type Text at index: N, invalid utf-8」——
+   * db 文件被外部拷坏（跨平台直接拷 app.db 漏了 -wal、数据目录放网盘双向同步、
+   * 磁盘坏道）导致某个 TEXT cell 存了非法 UTF-8 字节。
+   */
+  async function handleCheckDbText() {
+    setDbChecking(true);
+    try {
+      const report = await systemApi.checkDbTextHealth(false);
+      if (report.issues.length === 0) {
+        message.success(`数据库文本正常（已扫描 ${report.scannedCells} 处）`);
+        return;
+      }
+      // 只列前 10 条，避免坏数据多时弹窗撑爆
+      const list = report.issues
+        .slice(0, 10)
+        .map((i) => `· ${i.table}.${i.column} (#${i.rowId})：${i.preview}`)
+        .join("\n");
+      const more =
+        report.issues.length > 10 ? `\n…另有 ${report.issues.length - 10} 处` : "";
+      Modal.confirm({
+        title: `发现 ${report.issues.length} 处损坏文本`,
+        width: 640,
+        content: (
+          <div>
+            <Paragraph type="secondary" style={{ fontSize: 13 }}>
+              这些内容含非法 UTF-8 字节，会让同步整体失败。成因通常是跨设备
+              <Text strong>直接拷贝 app.db</Text>
+              ，或把数据目录放在网盘里双向同步。修复会把坏字节替换成 �，
+              只影响已损坏的那几个字符，其余内容不动。
+            </Paragraph>
+            <pre
+              style={{
+                maxHeight: 240,
+                overflow: "auto",
+                fontSize: 12,
+                background: "var(--kb-bg-subtle, rgba(0,0,0,.04))",
+                padding: 8,
+                borderRadius: 4,
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {list + more}
+            </pre>
+          </div>
+        ),
+        okText: "立即修复",
+        cancelText: "暂不修复",
+        onOk: async () => {
+          const fixed = await systemApi.checkDbTextHealth(true);
+          if (fixed.errors.length > 0) {
+            message.warning(
+              `修复 ${fixed.repairedCells} 处，${fixed.errors.length} 处失败：${fixed.errors[0]}`,
+            );
+          } else {
+            message.success(`已修复 ${fixed.repairedCells} 处，可以重新同步了`);
+          }
+        },
+      });
+    } catch (e) {
+      message.error(`数据库体检失败: ${e}`);
+    } finally {
+      setDbChecking(false);
     }
   }
 
@@ -225,8 +294,12 @@ export default function AboutPage() {
                 >
                   导出诊断包
                 </Button>
+                <Button size="small" loading={dbChecking} onClick={handleCheckDbText}>
+                  数据库体检
+                </Button>
                 <Text type="secondary" style={{ fontSize: 12 }}>
-                  闪退 / 异常时点「导出诊断包」生成 zip 发给开发者排查
+                  闪退 / 异常时点「导出诊断包」生成 zip 发给开发者排查；
+                  同步报「invalid utf-8」时点「数据库体检」
                 </Text>
               </div>
             </Descriptions.Item>

@@ -27,14 +27,17 @@ impl super::Database {
         )?;
         let rows = stmt
             .query_map([], |row| {
+                // TEXT 列走降级读：本方法在同步 manifest 链路上，
+                // 一个坏 cell 不该让整次同步失败。见 database::text_health。
+                use crate::database::text_health::{get_opt_text_lossy, get_text_lossy};
                 Ok(TaskCategory {
                     id: row.get(0)?,
-                    name: row.get(1)?,
-                    color: row.get(2)?,
-                    icon: row.get(3)?,
+                    name: get_text_lossy(row, 1, "task_categories.name")?,
+                    color: get_text_lossy(row, 2, "task_categories.color")?,
+                    icon: get_opt_text_lossy(row, 3, "task_categories.icon")?,
                     sort_order: row.get(4)?,
-                    created_at: row.get(5)?,
-                    stable_uuid: row.get(6)?,
+                    created_at: get_text_lossy(row, 5, "task_categories.created_at")?,
+                    stable_uuid: get_opt_text_lossy(row, 6, "task_categories.stable_uuid")?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

@@ -15,6 +15,7 @@ import type {
   AppConfig,
   AppLockStatus,
   SystemInfo,
+  TextHealthReport,
   DashboardStats,
   Note,
   NoteImageRef,
@@ -132,6 +133,15 @@ export const systemApi = {
    * 用于附件链接点击 → opener 打开（opener 必须传绝对路径）。 */
   resolveAssetAbsolute: (rel: string) =>
     invoke<string>("resolve_asset_absolute_path", { rel }),
+  /**
+   * 把任意历史形态的素材 URL（`file://` / `http://asset.localhost/` / 裸绝对路径）
+   * 解析成本机可用的相对路径；不是本地资产或本机没这份文件时返回 null。
+   *
+   * 渲染兜底用：存量笔记（尤其从别的机器同步过来的）里可能仍有别台机器的绝对路径，
+   * 直接丢给 WebView 必定裂图。
+   */
+  resolveContentAssetRel: (url: string) =>
+    invoke<string | null>("resolve_content_asset_rel", { url }),
   /** 把任意文本写入指定路径（UTF-8）。配合 dialog.save() 用于前端导出 SVG/JSON 等。 */
   writeTextFile: (path: string, content: string) =>
     invoke<void>("write_text_file", { path, content }),
@@ -141,6 +151,17 @@ export const systemApi = {
   /** 导出诊断包（应用日志 + 崩溃日志 + 系统信息打成 zip 放桌面），返回 zip 绝对路径。
    *  用于线上闪退 / 异常时让用户一键打包日志发回（够不到机器时远程取证）。 */
   exportDiagnostics: () => invoke<string>("export_diagnostics"),
+  /**
+   * 数据库文本健康体检 / 修复。
+   *
+   * 用于排查同步报的 `Conversion error from type Text at index: N, invalid utf-8`——
+   * 该错误说明 db 文件里某个 TEXT cell 有非法 UTF-8 字节（跨平台直接拷 app.db、
+   * 网盘双向同步、磁盘损坏所致，不是应用写出来的）。
+   *
+   * @param repair 传 true 才写回修复；默认只体检不改数据。
+   */
+  checkDbTextHealth: (repair = false) =>
+    invoke<TextHealthReport>("check_db_text_health", { repair }),
 };
 
 /** 更新相关 API */

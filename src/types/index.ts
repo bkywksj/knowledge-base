@@ -28,6 +28,35 @@ export interface SystemInfo {
   imagesDir: string;
 }
 
+/** 数据库文本体检：单个含非法 UTF-8 的 cell */
+export interface TextHealthIssue {
+  table: string;
+  column: string;
+  /** 该行主键值（notes.id 等），用于定位是哪条笔记 */
+  rowId: number;
+  /** 修正后的内容预览（截断到 80 字符） */
+  preview: string;
+  /** 是否已写回修复（体检模式恒为 false） */
+  repaired: boolean;
+}
+
+/**
+ * 数据库文本体检报告。
+ *
+ * 非法 UTF-8 不是应用写出来的（Rust String 写不出），而是 db 文件被外部拷坏：
+ * 跨平台直接拷 app.db 漏了 -wal、数据目录放网盘双向同步、磁盘坏道 / 异常断电。
+ * 症状是同步报 `Conversion error from type Text at index: N`。
+ */
+export interface TextHealthReport {
+  /** 实际扫过的 TEXT cell 数 */
+  scannedCells: number;
+  issues: TextHealthIssue[];
+  /** 成功写回修复的 cell 数 */
+  repairedCells: number;
+  /** 修复过程中写回失败的说明（不中断整体流程） */
+  errors: string[];
+}
+
 // ─── 笔记 ─────────────────────────────────────
 
 /** 笔记 */

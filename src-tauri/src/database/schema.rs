@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 53;
+pub const SCHEMA_VERSION: i32 = 54;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -83,6 +83,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             50 => migrate_v50_to_v51(conn)?,
             51 => migrate_v51_to_v52(conn)?,
             52 => migrate_v52_to_v53(conn)?,
+            53 => migrate_v53_to_v54(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2208,6 +2209,187 @@ fn migrate_v52_to_v53(conn: &Connection) -> Result<(), AppError> {
     Ok(())
 }
 
+/// v53 → v54: 笔记 content 里素材路径的**全量归一化**（补 v29 的三个漏洞）
+///
+/// ## 背景：跨平台搬数据后全库裂图
+///
+/// 笔记 content 里素材的唯一合法形态是 `kb-asset://<相对 data_dir 的 POSIX 路径>`，
+/// 渲染时由前端拼当前 data_dir 解析。v29 做过一次清洗，但漏了三类：
+///
+/// 1. **v29 自己产出的坏数据**：它给 `abs_to_rel` 传的 dummy data_dir 是 `Path::new("")`，
+///    而 `Path::new("C:/x/kb_assets/a.png").strip_prefix("")` 返回 `Ok(整个绝对路径)` ——
+///    fallback 分支从未执行。于是写出 `kb-asset://C:/…/kb_assets/x.png`（rel 里含绝对路径）。
+///    前端 `resolveAssetSrc` 无条件 `dataDir + "/" + rel`，拼出的路径必然不存在 → 裂图。
+///    （`abs_to_rel` 的空 data_dir 分支已在同批修复。）
+/// 2. **`file://` 形态**：老版本拖入附件写的是 `[📎 附件](file:///E:/…/attachments/x.pdf)`。
+///    v29 的正则只认 `http://asset.localhost/` 和 `asset://localhost/`，完全没碰这类。
+/// 3. **裸绝对路径**：更早期直接把 `E:\…\kb_assets\x.png` 写进 `src` / markdown 链接。
+///
+/// 这三类的共同点是 content 里存了**某台机器的绝对路径**。同一台 Windows 机器上碰巧还能打开，
+/// 一旦同步 / 拷贝到 macOS 就全部失效 —— 正是用户反馈的"从 Windows 同步过来后，
+/// 图片地址还是 Windows 上存放的那个地址"。
+///
+/// ## 处理策略
+///
+/// 只改写**能收敛到已知资产段**（`kb_assets` / `pdfs` / `sources` / `attachments` 及 dev 变体）
+/// 的 URL；其余一律保留原样：
+/// - 真外链（`http(s)://` 非 asset.localhost）、`data:` / `blob:` / 锚点 / `mailto:` → 不动
+/// - 用户手动链接到本机其它位置的文件（不在资产目录下）→ 不动（改了反而破坏用户意图）
+///
+/// 幂等：已是干净 `kb-asset://<相对路径>` 的不会被再改；重复执行结果相同。
+fn migrate_v53_to_v54(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v53 -> v54 (笔记素材路径全量归一化 → kb-asset://<相对路径>)");
+
+    let mut stmt =
+        conn.prepare("SELECT id, content FROM notes WHERE content IS NOT NULL AND content != ''")?;
+    let rows: Vec<(i64, String)> = stmt
+        .query_map([], |r| {
+            // 降级读：坏库不该让迁移整体失败（见 database::text_health）
+            Ok((
+                r.get::<_, i64>(0)?,
+                crate::database::text_health::get_text_lossy(r, 1, "notes.content")?,
+            ))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+    drop(stmt);
+
+    log::info!("[v54] 扫描 {} 条笔记的素材路径", rows.len());
+
+    let mut touched_notes = 0usize;
+    let mut rewritten_urls = 0usize;
+
+    let tx = conn.unchecked_transaction()?;
+    for (id, content) in &rows {
+        let (new_content, n) = normalize_asset_urls_in_content(content);
+        if n == 0 {
+            continue;
+        }
+        tx.execute(
+            "UPDATE notes SET content = ?1 WHERE id = ?2",
+            rusqlite::params![new_content, id],
+        )?;
+        // content 变了，content_hash 必须跟着重算，否则同步 diff 会与远端永久对不上
+        tx.execute(
+            "UPDATE notes SET content_hash = ?1 WHERE id = ?2",
+            rusqlite::params![crate::services::hash::sha256_hex(&new_content), id],
+        )?;
+        touched_notes += 1;
+        rewritten_urls += n;
+    }
+    tx.commit()?;
+
+    log::info!(
+        "[v54] 归一化完成：触达 {} 条笔记，改写 {} 个素材 URL",
+        touched_notes,
+        rewritten_urls
+    );
+
+    set_version(conn, 54)?;
+    Ok(())
+}
+
+/// 把一段 content 里所有素材 URL 归一化为 `kb-asset://<相对路径>`。
+///
+/// 返回 `(新内容, 改写的 URL 数)`；没有任何改动时计数为 0（调用方据此跳过写库）。
+///
+/// 只处理**出现在 URL 位置**的字符串（HTML 的 `src=` / `href=` 属性、markdown 的 `](…)`），
+/// 不裸扫全文 —— 否则笔记正文里讲解路径的普通文字（"图片存在 E:\photos 下"）会被误改。
+fn normalize_asset_urls_in_content(content: &str) -> (String, usize) {
+    use regex::Regex;
+    use std::sync::OnceLock;
+
+    // `src="…"` / `href='…'`：引号种类分两个正则，因为 Rust regex 不支持反向引用配对引号
+    static RE_ATTR_DQ: OnceLock<Regex> = OnceLock::new();
+    static RE_ATTR_SQ: OnceLock<Regex> = OnceLock::new();
+    // markdown 链接 / 图片目标：`](url)` 或 `](url "title")`
+    static RE_MD: OnceLock<Regex> = OnceLock::new();
+
+    let re_attr_dq = RE_ATTR_DQ.get_or_init(|| {
+        Regex::new(r#"((?:src|href)\s*=\s*")([^"]+)(")"#)
+            .expect("正则字面量恒定，编译失败属于代码 BUG")
+    });
+    let re_attr_sq = RE_ATTR_SQ.get_or_init(|| {
+        Regex::new(r#"((?:src|href)\s*=\s*')([^']+)(')"#)
+            .expect("正则字面量恒定，编译失败属于代码 BUG")
+    });
+    let re_md = RE_MD.get_or_init(|| {
+        Regex::new(r#"(\]\()([^)\s]+)((?:\s+"[^"]*")?\))"#)
+            .expect("正则字面量恒定，编译失败属于代码 BUG")
+    });
+
+    let mut count = 0usize;
+    let mut out = content.to_string();
+
+    for re in [re_attr_dq, re_attr_sq, re_md] {
+        out = re
+            .replace_all(&out, |caps: &regex::Captures<'_>| {
+                let whole = caps.get(0).map(|m| m.as_str()).unwrap_or("").to_string();
+                let (pre, url, post) = match (caps.get(1), caps.get(2), caps.get(3)) {
+                    (Some(a), Some(b), Some(c)) => (a.as_str(), b.as_str(), c.as_str()),
+                    _ => return whole,
+                };
+                match normalize_one_asset_url(url) {
+                    Some(fixed) => {
+                        count += 1;
+                        format!("{}{}{}", pre, fixed, post)
+                    }
+                    None => whole,
+                }
+            })
+            .into_owned();
+    }
+
+    (out, count)
+}
+
+/// 单个 URL 的归一化。返回 `None` = 保持原样。
+///
+/// 判定顺序刻意做成"先排除、再收敛"，宁可不改也不瞎改。
+fn normalize_one_asset_url(url: &str) -> Option<String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // 已经是 kb-asset://：只在 rel 仍是**绝对路径**时才修（v29 遗留的坏数据）
+    if let Some(rel) = trimmed.strip_prefix("kb-asset://") {
+        let decoded = urlencoding::decode(rel)
+            .map(|c| c.into_owned())
+            .unwrap_or_else(|_| rel.to_string());
+        if !looks_absolute_path(&decoded) {
+            return None; // 干净的相对路径，不动
+        }
+        let fixed = crate::services::asset_path::abs_to_rel(
+            std::path::Path::new(&decoded),
+            std::path::Path::new(""),
+        )?;
+        // 收敛后没变化 → 不计入改写
+        if fixed == decoded {
+            return None;
+        }
+        return Some(format!("kb-asset://{}", fixed));
+    }
+
+    // 剥协议 → 拿到本地绝对路径。`resolve_content_url` 已覆盖
+    // file:// / asset://localhost/ / http://asset.localhost/ / 裸路径，
+    // 并对真外链 / data: / blob: / 锚点 / mailto: 返回 None（这些不该动）。
+    //
+    // 传空 data_dir：迁移期拿不到运行期数据目录，也不需要——真正要的是
+    // 下一步 abs_to_rel 按已知资产段截取。
+    let abs = crate::services::asset_path::resolve_content_url(trimmed, std::path::Path::new(""))?;
+    let rel = crate::services::asset_path::abs_to_rel(&abs, std::path::Path::new(""))?;
+    Some(format!("kb-asset://{}", rel))
+}
+
+/// 粗判一个字符串是否是绝对路径（Windows 盘符 / UNC / POSIX 根）
+fn looks_absolute_path(s: &str) -> bool {
+    let b = s.as_bytes();
+    let has_drive =
+        b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'/' || b[2] == b'\\');
+    has_drive || s.starts_with('/') || s.starts_with(r"\\")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2412,5 +2594,176 @@ mod tests {
         assert!(changed);
         assert!(out.contains("x%20y.zip"), "{out}");
         assert!(out.contains("p%20q.pdf"), "{out}");
+    }
+}
+
+#[cfg(test)]
+mod v54_asset_path_tests {
+    use super::*;
+
+    /// v29 遗留的坏数据：rel 里塞了整条 Windows 绝对路径 → 必须收敛成真正的相对路径。
+    /// 这类数据在 Windows 上也是裂的（前端会拼成 dataDir + "/" + "C:/..."）。
+    #[test]
+    fn fixes_kb_asset_with_absolute_rel() {
+        let src = r#"<img src="kb-asset://C:/Users/me/AppData/Roaming/com.agilefr.kb/kb_assets/images/1/x.png">"#;
+        let (out, n) = normalize_asset_urls_in_content(src);
+        assert_eq!(n, 1, "应改写 1 个, got out = {out}");
+        assert!(out.contains("kb-asset://kb_assets/images/1/x.png"), "{out}");
+        assert!(!out.contains("C:/Users"), "绝对路径必须被剥掉: {out}");
+    }
+
+    /// 干净的相对 kb-asset:// 一个都不该动（幂等性 + 不误伤）
+    #[test]
+    fn leaves_clean_kb_asset_untouched() {
+        let src = r#"<img src="kb-asset://kb_assets/images/1/x.png"><video src="kb-asset://kb_assets/videos/2/c.mp4"></video>"#;
+        let (out, n) = normalize_asset_urls_in_content(src);
+        assert_eq!(n, 0, "干净数据不应被改写");
+        assert_eq!(out, src);
+    }
+
+    /// v29 完全没处理的 file:// 附件链接（markdown link mark 形态）
+    #[test]
+    fn converts_file_url_attachment_link() {
+        let src = r#"见 [📎 报告.pdf](file:///E:/kb/attachments/5/report.pdf) 附件"#;
+        let (out, n) = normalize_asset_urls_in_content(src);
+        assert_eq!(n, 1, "{out}");
+        assert!(out.contains("](kb-asset://attachments/5/report.pdf)"), "{out}");
+    }
+
+    /// 裸绝对路径（最早期写法），出现在 src 属性里
+    #[test]
+    fn converts_bare_windows_absolute_in_src() {
+        let src = r#"<img src="E:\my\kb\dev-kb_assets\images\3\pic.png" alt="x">"#;
+        let (out, n) = normalize_asset_urls_in_content(src);
+        assert_eq!(n, 1, "{out}");
+        assert!(out.contains("kb-asset://dev-kb_assets/images/3/pic.png"), "{out}");
+    }
+
+    /// v29 处理过的两种 asset 协议，作为兜底也要能收敛（防漏网）
+    #[test]
+    fn converts_legacy_asset_protocol_forms() {
+        let src = concat!(
+            r#"<img src="http://asset.localhost/C%3A%2Fkb%2Fkb_assets%2Fimages%2F1%2Fa.png">"#,
+            r#"<img src="asset://localhost/C:/kb/pdfs/2/b.pdf">"#,
+        );
+        let (out, n) = normalize_asset_urls_in_content(src);
+        assert_eq!(n, 2, "{out}");
+        assert!(out.contains("kb-asset://kb_assets/images/1/a.png"), "{out}");
+        assert!(out.contains("kb-asset://pdfs/2/b.pdf"), "{out}");
+    }
+
+    /// 真外链、data:、锚点、mailto 一律不动 —— 改了就是破坏用户内容
+    #[test]
+    fn never_touches_external_or_special_urls() {
+        let src = concat!(
+            r#"<img src="https://example.com/pic.png">"#,
+            r#"<img src="data:image/png;base64,iVBORw0KGgo=">"#,
+            // 用 r##"…"## 是因为内部含 `"#` 序列，会提前终止 r#"…"#
+            r##"<a href="#section-1">锚点</a>"##,
+            r#"<a href="mailto:x@y.com">邮件</a>"#,
+            r#"[外链](https://github.com/a/b)"#,
+        );
+        let (out, n) = normalize_asset_urls_in_content(src);
+        assert_eq!(n, 0, "外链/特殊协议不该被改: {out}");
+        assert_eq!(out, src);
+    }
+
+    /// 不在资产目录下的本机文件（用户手动链接的外部文件）→ 保留原样，
+    /// 因为收敛后的相对路径在别的机器上同样无意义，改了反而丢失原始信息
+    #[test]
+    fn keeps_absolute_path_outside_asset_dirs() {
+        let src = r#"<a href="file:///E:/我的文档/年度报表.xlsx">报表</a>"#;
+        let (out, n) = normalize_asset_urls_in_content(src);
+        assert_eq!(n, 0, "非资产目录的路径不该被收敛: {out}");
+        assert_eq!(out, src);
+    }
+
+    /// 单引号属性也要覆盖（tiptap/外部导入的 HTML 两种引号都可能出现）
+    #[test]
+    fn handles_single_quoted_attributes() {
+        let src = r#"<img src='file:///E:/kb/kb_assets/images/9/s.png'>"#;
+        let (out, n) = normalize_asset_urls_in_content(src);
+        assert_eq!(n, 1, "{out}");
+        assert!(out.contains("kb-asset://kb_assets/images/9/s.png"), "{out}");
+    }
+
+    /// markdown 图片 + 带 title 的链接形态
+    #[test]
+    fn handles_markdown_image_and_titled_link() {
+        let src = concat!(
+            "![封面](file:///E:/kb/kb_assets/images/1/cover.png)\n",
+            "[文档](file:///E:/kb/sources/7/doc.docx \"我的文档\")",
+        );
+        let (out, n) = normalize_asset_urls_in_content(src);
+        assert_eq!(n, 2, "{out}");
+        assert!(out.contains("](kb-asset://kb_assets/images/1/cover.png)"), "{out}");
+        assert!(out.contains("](kb-asset://sources/7/doc.docx \"我的文档\")"), "{out}");
+    }
+
+    /// 迁移整体：真库上跑一遍，笔记被改写且 content_hash 同步重算
+    #[test]
+    fn migration_rewrites_notes_and_refreshes_hash() {
+        let db = crate::database::Database::init(":memory:").unwrap();
+        let id = db
+            .create_note(&crate::models::NoteInput {
+                title: "带老路径的笔记".into(),
+                content: r#"<img src="kb-asset://C:/kb/kb_assets/images/1/x.png">"#.into(),
+                folder_id: None,
+            })
+            .unwrap()
+            .id;
+
+        let conn = db.conn_lock().unwrap();
+        // Database::init 已跑到最新版本，这里把版本退回 53 再单独执行本迁移
+        set_version(&conn, 53).unwrap();
+        migrate_v53_to_v54(&conn).unwrap();
+        assert_eq!(get_version(&conn).unwrap(), 54);
+
+        let content: String = conn
+            .query_row("SELECT content FROM notes WHERE id = ?1", [id], |r| r.get(0))
+            .unwrap();
+        assert!(content.contains("kb-asset://kb_assets/images/1/x.png"), "{content}");
+        assert!(!content.contains("C:/kb"), "{content}");
+
+        let hash: String = conn
+            .query_row("SELECT content_hash FROM notes WHERE id = ?1", [id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            hash,
+            crate::services::hash::sha256_hex(&content),
+            "content 改了 content_hash 必须同步重算，否则同步 diff 与远端永久对不上"
+        );
+    }
+
+    /// 迁移幂等：干净库跑一遍什么都不改
+    #[test]
+    fn migration_is_idempotent_on_clean_db() {
+        let db = crate::database::Database::init(":memory:").unwrap();
+        let clean = r#"<img src="kb-asset://kb_assets/images/1/ok.png">正文"#;
+        let id = db
+            .create_note(&crate::models::NoteInput {
+                title: "干净笔记".into(),
+                content: clean.into(),
+                folder_id: None,
+            })
+            .unwrap()
+            .id;
+
+        let conn = db.conn_lock().unwrap();
+        let hash_before: String = conn
+            .query_row("SELECT content_hash FROM notes WHERE id = ?1", [id], |r| r.get(0))
+            .unwrap();
+
+        set_version(&conn, 53).unwrap();
+        migrate_v53_to_v54(&conn).unwrap();
+
+        let content: String = conn
+            .query_row("SELECT content FROM notes WHERE id = ?1", [id], |r| r.get(0))
+            .unwrap();
+        let hash_after: String = conn
+            .query_row("SELECT content_hash FROM notes WHERE id = ?1", [id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(content, clean);
+        assert_eq!(hash_before, hash_after);
     }
 }

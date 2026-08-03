@@ -13,6 +13,7 @@
 //! - `kb_assets/` / `dev-kb_assets/`（dev 实例前缀）
 //! - `pdfs/` / `dev-pdfs/`
 //! - `sources/` / `dev-sources/`
+//! - `attachments/` / `dev-attachments/`
 //!
 //! 跳过：http(s):// 外链、`asset:` 协议、绝对路径、含 `..` 的路径（防穿越）。
 
@@ -65,13 +66,20 @@ fn re_kb_asset() -> &'static Regex {
 }
 
 /// 已知本地资产路径前缀（含 dev 前缀变体）
-const KNOWN_PREFIXES: &[&str] = &[
+///
+/// ⚠️ 必须与 `services::asset_path::KNOWN_ASSET_SEGMENTS` 保持同步。
+/// 两者不一致的后果是**静默漏同步**：`asset_path` 认得的目录如果这里没有，
+/// 该目录下的附件永远不会被扫进 manifest，跨端拉取后就是"文件缺失"。
+/// `attachments/` 就曾因这个原因整目录漏同步（`services::attachment` 的落盘目录）。
+pub(crate) const KNOWN_PREFIXES: &[&str] = &[
     "kb_assets/",
     "dev-kb_assets/",
     "pdfs/",
     "dev-pdfs/",
     "sources/",
     "dev-sources/",
+    "attachments/",
+    "dev-attachments/",
 ];
 
 /// 判定一个相对路径是不是本地资产（用于过滤外链）
