@@ -11,6 +11,7 @@
 
 use tauri::{Emitter, Runtime};
 
+use crate::database::text_health::get_text_lossy;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::models::{SyncManifestV1, SyncPushResult};
@@ -167,12 +168,15 @@ pub fn push<R: Runtime, E: Emitter<R>>(
                 let mut stmt = conn.prepare(&sql)?;
                 let rows = stmt
                     .query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                        // 降级读：db 文件被外部拷坏时某个 cell 可能是非法 UTF-8，
+                        // 严格读会让整次 push 失败（几千条好笔记被一行坏数据拖死）。
+                        // 见 database::text_health 模块文档。
                         Ok((
                             row.get::<_, i64>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, String>(3)?,
-                            row.get::<_, String>(4)?,
+                            get_text_lossy(row, 1, "notes.stable_uuid")?,
+                            get_text_lossy(row, 2, "notes.title")?,
+                            get_text_lossy(row, 3, "notes.content")?,
+                            get_text_lossy(row, 4, "notes.updated_at")?,
                         ))
                     })?
                     .collect::<Result<Vec<_>, _>>()?;

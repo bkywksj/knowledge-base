@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use sha2::{Digest, Sha256};
 
+use crate::database::text_health::{get_opt_text_lossy, get_text_lossy};
 use crate::database::Database;
 use crate::error::AppError;
 use crate::models::{
@@ -181,23 +182,29 @@ pub fn compute_local_manifest(
         String,         // note_type
     )> = stmt
         .query_map(rusqlite::params![tombstone_cutoff], |row| {
+            // 所有 TEXT 列走降级读（`get_text_lossy`）而非 `row.get::<_, String>`：
+            // db 文件被外部拷坏（跨平台拷 app.db 漏了 -wal / 网盘双向同步冲突 / 页损坏）时，
+            // TEXT cell 可能是非法 UTF-8。严格读会让 query_map 直接 Err，
+            // 表现为"拉取失败: 数据库错误: Conversion error from type Text at index: N" ——
+            // **整次同步被一行坏数据打死**。降级读用 U+FFFD 顶上并 warn，同步照常进行；
+            // 用户可在设置页跑「数据库文本体检」把坏 cell 永久修好。见 database::text_health。
             Ok((
                 row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
+                get_text_lossy(row, 1, "notes.stable_uuid")?,
+                get_text_lossy(row, 2, "notes.title")?,
                 // content_hash 列在 v22 之后由 DAO 维护，但 ALTER TABLE 没加 NOT NULL，
                 // 理论上极老的存量行可能仍为 NULL → 兜底空串（实践中 v22 迁移已回填）。
-                row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                row.get::<_, String>(4)?,
+                get_opt_text_lossy(row, 3, "notes.content_hash")?.unwrap_or_default(),
+                get_text_lossy(row, 4, "notes.updated_at")?,
                 row.get::<_, Option<i64>>(5)?,
                 row.get::<_, i64>(6)?,
-                row.get::<_, Option<String>>(7)?,
+                get_opt_text_lossy(row, 7, "notes.deleted_at")?,
                 row.get::<_, i64>(8)?,
                 row.get::<_, Option<Vec<u8>>>(9)?,
                 row.get::<_, i64>(10)?,
-                row.get::<_, Option<String>>(11)?,
+                get_opt_text_lossy(row, 11, "notes.daily_date")?,
                 row.get::<_, i64>(12)?,
-                row.get::<_, String>(13)?,
+                get_text_lossy(row, 13, "notes.note_type")?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -210,7 +217,7 @@ pub fn compute_local_manifest(
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, Option<i64>>(1)?,
-                row.get::<_, String>(2)?,
+                get_text_lossy(row, 2, "folders.name")?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;

@@ -17,6 +17,7 @@ pub mod projects;
 pub mod task_categories;
 pub mod tasks;
 pub mod templates;
+pub mod text_health;
 pub mod url_mapping;
 pub mod whiteboard;
 
