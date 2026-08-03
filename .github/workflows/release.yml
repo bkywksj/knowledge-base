@@ -160,6 +160,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+          # 放开 Node 堆上限：tauri build 的 beforeBuildCommand 会跑 `vite build`，
+          # 而 macOS runner 上 Node 的默认 old-space 上限只有 ~2GB。自 v1.50.0 引入
+          # Excalidraw（白板）后前端涨到 9600+ 模块，terser 压缩阶段堆峰值越过 2GB，
+          # 两个 mac job 齐刷刷 "FATAL ERROR: Reached heap limit"（exit 134）而
+          # Linux / Windows runner 默认上限更高才侥幸通过。显式设 8GB 覆盖全平台。
+          NODE_OPTIONS: '--max-old-space-size=8192'
         with:
           tagName: ${{ github.ref_name }}
           releaseName: '知识库 ${{ github.ref_name }}'
