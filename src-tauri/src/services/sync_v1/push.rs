@@ -733,6 +733,7 @@ mod tests {
             daily_date: None,
             is_hidden: false,
             tags: None,
+            note_type: None,
         }
     }
 

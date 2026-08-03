@@ -1139,6 +1139,12 @@ pub fn run() {
             commands::notes::trash_notes_batch,
             commands::notes::add_tags_to_notes_batch,
             commands::notes::set_note_hidden,
+            // 白板模块（白板 = note_type='whiteboard' 的笔记，其余操作复用笔记命令）
+            commands::whiteboard::create_whiteboard,
+            commands::whiteboard::get_whiteboard_scene,
+            commands::whiteboard::save_whiteboard_scene,
+            commands::whiteboard::save_embedded_whiteboard,
+            commands::whiteboard::load_embedded_whiteboard,
             commands::notes::list_hidden_notes,
             commands::notes::list_hidden_folder_ids,
             // 隐藏笔记 PIN（UX 门禁，非真加密）

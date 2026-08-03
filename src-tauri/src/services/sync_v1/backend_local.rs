@@ -203,6 +203,7 @@ mod tests {
                 daily_date: None,
                 is_hidden: false,
                 tags: None,
+                note_type: None,
             }],
             hash_algo: Some(SyncManifestV1::HASH_ALGO_V2.into()),
             vault: None,

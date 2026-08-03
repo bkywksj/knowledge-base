@@ -158,7 +158,7 @@ pub fn compute_local_manifest(
     // 不会被同步出去（自动隔离损坏数据）。
     let mut stmt = conn.prepare(
         "SELECT id, stable_uuid, title, content_hash, updated_at, folder_id, is_deleted, deleted_at,
-                is_encrypted, encrypted_blob, is_daily, daily_date, is_hidden
+                is_encrypted, encrypted_blob, is_daily, daily_date, is_hidden, note_type
          FROM notes
          WHERE stable_uuid IS NOT NULL
            AND (is_deleted = 0 OR (is_deleted = 1 AND deleted_at IS NOT NULL AND deleted_at >= ?1))",
@@ -178,6 +178,7 @@ pub fn compute_local_manifest(
         i64,            // is_daily
         Option<String>, // daily_date
         i64,            // is_hidden
+        String,         // note_type
     )> = stmt
         .query_map(rusqlite::params![tombstone_cutoff], |row| {
             Ok((
@@ -196,6 +197,7 @@ pub fn compute_local_manifest(
                 row.get::<_, i64>(10)?,
                 row.get::<_, Option<String>>(11)?,
                 row.get::<_, i64>(12)?,
+                row.get::<_, String>(13)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -238,6 +240,7 @@ pub fn compute_local_manifest(
         is_daily_int,
         daily_date,
         is_hidden_int,
+        note_type_col,
     ) in rows
     {
         let path = folder_path_for(&folders_by_id, folder_id);
@@ -285,6 +288,13 @@ pub fn compute_local_manifest(
             daily_date: if is_daily { daily_date } else { None },
             is_hidden: is_hidden_int != 0,
             tags,
+            // 只有非默认类型才写进 manifest：markdown 是绝大多数，省掉它能让
+            // manifest 体积不因这个特性变大，也让老客户端读到的 JSON 与以前完全一致
+            note_type: if note_type_col == crate::models::note_type::MARKDOWN {
+                None
+            } else {
+                Some(note_type_col)
+            },
         });
     }
 
@@ -938,6 +948,7 @@ mod tests {
             daily_date: None,
             is_hidden: false,
             tags: None,
+            note_type: None,
         }
     }
 

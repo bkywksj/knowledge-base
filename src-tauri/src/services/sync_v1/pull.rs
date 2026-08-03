@@ -463,6 +463,18 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
                                 .errors
                                 .push(format!("对齐隐藏标记失败 {}: {}", entry.title, e));
                         }
+                        // 对齐笔记类型（白板 ↔ 普通笔记）。不对齐的话，别的设备上画的白板
+                        // 拉到本机会被当成 Markdown 笔记打开 —— 满屏 JSON，一保存画布就没了。
+                        if let Err(e) = crate::services::whiteboard::sync_note_type(
+                            db,
+                            local_id,
+                            entry.note_type.as_deref().unwrap_or(crate::models::note_type::MARKDOWN),
+                            &input.content,
+                        ) {
+                            result
+                                .errors
+                                .push(format!("对齐笔记类型失败 {}: {}", entry.title, e));
+                        }
                         // Bug 12a：按 name 替换本地 tag 关联。Option 区分新旧客户端：
                         //   None → 旧 manifest 没此字段 / 加密笔记 / tombstone → 不动
                         //   Some(_) → 替换（含 Some(vec![]) → 清空，让"用户在另一端删空标签"也能跨端传播）
@@ -509,6 +521,20 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
                                     .push(format!("新建笔记设置标签失败 {}: {}", entry.title, e));
                             }
                         }
+                        // 白板要在这里补上类型标记：create_note_with_uuid 建出来的一律是
+                        // markdown（默认值），不补的话新端点开就是一坨 Excalidraw JSON
+                        if let Some(nt) = entry.note_type.as_deref() {
+                            if let Err(e) = crate::services::whiteboard::sync_note_type(
+                                db,
+                                n.id,
+                                nt,
+                                &input.content,
+                            ) {
+                                result
+                                    .errors
+                                    .push(format!("新建笔记设置类型失败 {}: {}", entry.title, e));
+                            }
+                        }
                         Some(n.id)
                     }
                     Err(e) => {
@@ -539,7 +565,14 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
             // 新端 pull 完笔记不打开就拿不到反向链接。这里立刻按 content 重新解析
             // [[wiki]] 写 note_links 表，让反链面板第一次打开就准确。
             // 失败只记 warn 不影响主流程（反链数据可由用户编辑保存自愈）。
-            if let Err(e) = db.rebuild_note_links_from_content(local_id, &input.content) {
+            //
+            // 白板要先把画布文字抽出来再解析：它的 content 是 Excalidraw JSON，
+            // 直接跑正则会掺进属性名和 JSON 转义，解析出的链接不可靠。
+            let link_text = crate::services::whiteboard::text_for_indexing(
+                entry.note_type.as_deref().unwrap_or(crate::models::note_type::MARKDOWN),
+                &input.content,
+            );
+            if let Err(e) = db.rebuild_note_links_from_content(local_id, &link_text) {
                 log::warn!("[sync_v1] 重建反链失败 {}: {}", entry.title, e);
             }
         }
