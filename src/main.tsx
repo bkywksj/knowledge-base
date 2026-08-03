@@ -22,6 +22,15 @@ const IS_MAIN_WINDOW = (() => {
 // antd DatePicker 底层用 dayjs，默认英文；全局设成中文让月份 / 星期都本地化
 dayjs.locale("zh-cn");
 
+// 白板（Excalidraw）字体自托管根路径。
+// 不设的话它会去 CDN（esm.sh）拉字体 —— 桌面应用离线场景直接失效，而且 CSP 的
+// `font-src 'self' data:` 也会拦掉。字体由 vite.config.ts 的 kb-excalidraw-assets
+// 插件同步到 public/excalidraw/fonts，这里指向它的父目录（内部会拼 `fonts/...`）。
+// ⚠ 必须在 Excalidraw 模块被加载前赋值；白板组件是 React.lazy 动态引入的，
+//   一定晚于本文件执行，所以放这里是安全的。
+(window as Window & { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH =
+  "/excalidraw/";
+
 // ── 全局错误兜底：捕获 React ErrorBoundary 抓不到的「同步全局错误」与「未处理的 Promise
 //    rejection」，统一落后端日志（tauri-plugin-log）。让线上白屏 / 异常可远程取证，
 //    而不是石沉大海。注册得越早越好（在任何业务代码与渲染之前）。

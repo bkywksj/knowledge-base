@@ -35,3 +35,7 @@ output/
 # B 站调试产物（本地保留，不进任何远程仓库）
 bili_*.json
 .claude/scheduled_tasks.lock
+
+# 白板字体（14MB，由 vite.config.ts 的 kb-excalidraw-assets 插件
+# 从 node_modules/@excalidraw/excalidraw 自动同步，不进仓库）
+public/excalidraw/
