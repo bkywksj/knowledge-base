@@ -563,7 +563,7 @@ impl Database {
         // 查询总数（T-003: 排除隐藏笔记）
         let total: usize = conn.query_row(
             "SELECT COUNT(*) FROM note_tags nt
-             INNER JOIN notes n ON nt.note_id = n.id AND n.is_deleted = 0 AND n.is_hidden = 0
+             INNER JOIN notes n ON nt.note_id = n.id AND n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0
              WHERE nt.tag_id = ?1",
             params![tag_id],
             |row| row.get(0),
@@ -574,10 +574,10 @@ impl Database {
 
         let mut stmt = conn.prepare(
             "SELECT n.id, n.title, n.content, n.folder_id, n.is_daily, n.daily_date,
-                    n.is_pinned, n.is_hidden, n.is_encrypted, n.word_count, n.created_at, n.updated_at, n.source_file_path, n.source_file_type, n.sort_order, n.note_type
+                    n.is_pinned, n.is_hidden, n.is_encrypted, n.word_count, n.created_at, n.updated_at, n.source_file_path, n.source_file_type, n.sort_order, n.note_type, n.is_scratch
              FROM notes n
              INNER JOIN note_tags nt ON n.id = nt.note_id
-             WHERE nt.tag_id = ?1 AND n.is_deleted = 0 AND n.is_hidden = 0
+             WHERE nt.tag_id = ?1 AND n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0
              ORDER BY n.updated_at DESC
              LIMIT ?2 OFFSET ?3",
         )?;
@@ -601,6 +601,7 @@ impl Database {
                     source_file_type: row.get(13)?,
                     sort_order: row.get(14)?,
                     note_type: row.get(15)?,
+                    is_scratch: row.get::<_, i32>(16)? != 0,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

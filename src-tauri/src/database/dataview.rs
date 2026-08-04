@@ -28,7 +28,7 @@ impl super::Database {
         let mut stmt = conn.prepare(
             "SELECT id, title, updated_at
              FROM notes
-             WHERE is_deleted = 0 AND is_hidden = 0 AND is_daily = 0
+             WHERE is_deleted = 0 AND is_hidden = 0 AND is_scratch = 0 AND is_daily = 0
              ORDER BY updated_at DESC
              LIMIT ?1",
         )?;
@@ -62,7 +62,7 @@ impl super::Database {
              FROM notes n
              INNER JOIN note_tags nt ON n.id = nt.note_id
              INNER JOIN tags t ON nt.tag_id = t.id
-             WHERE n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_daily = 0
+             WHERE n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0 AND n.is_daily = 0
                AND t.name = ?1
              ORDER BY n.updated_at DESC
              LIMIT ?2",
@@ -104,7 +104,7 @@ impl super::Database {
         let sql = format!(
             "SELECT id, title, updated_at
              FROM notes
-             WHERE is_deleted = 0 AND is_hidden = 0 AND is_daily = 0
+             WHERE is_deleted = 0 AND is_hidden = 0 AND is_scratch = 0 AND is_daily = 0
                AND folder_id IN ({})
              ORDER BY updated_at DESC
              LIMIT ?",

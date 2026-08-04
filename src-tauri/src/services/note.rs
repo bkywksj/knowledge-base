@@ -206,6 +206,28 @@ impl NoteService {
         db.list_hidden_folder_ids()
     }
 
+    /// 列出"临时编辑"笔记（以临时方式打开的外部 .md）—— 用于「临时文件」面板
+    pub fn list_scratch(
+        db: &Database,
+        page: Option<usize>,
+        page_size: Option<usize>,
+    ) -> Result<PageResult<Note>, AppError> {
+        let page = page.unwrap_or(1).max(1);
+        let page_size = page_size.unwrap_or(20).clamp(1, 100);
+        let (items, total) = db.list_scratch_notes(page, page_size)?;
+        Ok(PageResult {
+            items,
+            total,
+            page,
+            page_size,
+        })
+    }
+
+    /// 设置 / 取消"临时编辑"标记（取消 = 转为正式笔记，回到主列表与搜索）
+    pub fn set_scratch(db: &Database, id: i64, scratch: bool) -> Result<(), AppError> {
+        db.set_note_scratch(id, scratch)
+    }
+
     // ─── T-007 笔记加密 ────────────────────────────
 
     /// 加密这篇笔记：读 content → vault 加密 → 写入 blob + 占位 content；

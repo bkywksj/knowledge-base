@@ -33,7 +33,7 @@ impl Database {
         fts_query: &str,
         limit: usize,
     ) -> Result<Vec<SearchResult>, AppError> {
-        // 与 LIKE fallback 路径保持一致：过滤回收站 + 隐藏笔记。
+        // 与 LIKE fallback 路径保持一致：过滤回收站 + 隐藏笔记 + 临时编辑笔记。
         // 之前 FTS5 路径漏了 is_hidden = 0，会让 FTS5 命中的隐藏笔记泄露到主搜索结果里
         //
         // 排序：bm25 自定义权重，title 列权重 5.0、content 列 1.0。
@@ -52,6 +52,7 @@ impl Database {
              WHERE notes_fts MATCH ?1
                AND n.is_deleted = 0
                AND n.is_hidden = 0
+               AND n.is_scratch = 0
              ORDER BY bm25(notes_fts, 5.0, 1.0)
                     + (julianday('now') - julianday(n.updated_at)) * 0.005
              LIMIT ?2",
@@ -119,7 +120,7 @@ impl Database {
                     n.note_type,
                     CASE WHEN ({}) THEN 0 ELSE 1 END AS _title_score
              FROM notes n
-             WHERE n.is_deleted = 0 AND n.is_hidden = 0 AND ({})
+             WHERE n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0 AND ({})
              ORDER BY _title_score ASC, n.updated_at DESC
              LIMIT ?{}",
             title_hit_expr,

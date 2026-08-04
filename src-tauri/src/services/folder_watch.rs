@@ -164,7 +164,10 @@ async fn scan_once(
     let mut ok_count = 0usize;
     for path in pending {
         let path_str = path.to_string_lossy().to_string();
-        match ImportService::import_single_markdown(&state.db, &path_str, &app_data_dir).await {
+        // as_scratch=false：监听目录是用户主动配的（剪藏落地），这些是要进知识库的正式笔记，
+        // 不是"随手打开改一下"的临时文件
+        match ImportService::import_single_markdown(&state.db, &path_str, &app_data_dir, false).await
+        {
             Ok(res) => {
                 // import_single_markdown 建笔记时 folder_id 固定为 None，这里再归位
                 if let Some(fid) = target_folder {

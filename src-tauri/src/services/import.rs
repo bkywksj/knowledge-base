@@ -591,10 +591,18 @@ impl ImportService {
     ///
     /// 返回 (note_id, was_synced)：was_synced=true 表示发生了内容同步，
     /// 前端可据此显示轻量 toast。
+    /// 打开单个外部 .md / .txt（入库 + 建立双向同步关联）
+    ///
+    /// `as_scratch`：这次打开是否按"临时编辑"处理。
+    /// - 首次打开 → 直接写入 is_scratch
+    /// - 复用已有笔记 → **只升不降**：临时笔记可以被提升为正式笔记，
+    ///   但已经是正式笔记的绝不会因为这次选了"临时"而被悄悄移出主列表
+    ///   （用户可能只是随手点错，代价是他以为笔记丢了）
     pub async fn import_single_markdown(
         db: &Database,
         file_path: &str,
         app_data_dir: &Path,
+        as_scratch: bool,
     ) -> Result<OpenMarkdownResult, AppError> {
         let path = Path::new(file_path);
 
@@ -661,9 +669,15 @@ impl ImportService {
                     );
                 }
             }
+            // 复用已有笔记时"只升不降"：选了「加入知识库」就把临时标记摘掉，
+            // 选了「临时编辑」却撞上一条正式笔记则保持原样（详见函数头注释）
+            if !as_scratch {
+                let _ = db.set_note_scratch(existing_id, false);
+            }
             return Ok(OpenMarkdownResult {
                 note_id: existing_id,
                 was_synced,
+                is_scratch: db.get_note_scratch(existing_id).unwrap_or(false),
             });
         }
 
@@ -680,6 +694,11 @@ impl ImportService {
             _ => "md",
         };
         let _ = db.set_note_source_file(note.id, Some(&canonical), Some(src_type));
+        // 首次打开：按调用方选择打临时标记。写回原文件 / 冲突检测等能力不受影响，
+        // 只是这条笔记不进主列表 / 搜索 / 双链
+        if as_scratch {
+            let _ = db.set_note_scratch(note.id, true);
+        }
 
         // 处理图片：本地相对路径（同级目录） + 外链下载（绕开微信防盗链等）
         let (processed, mappings) =
@@ -698,6 +717,7 @@ impl ImportService {
         Ok(OpenMarkdownResult {
             note_id: note.id,
             was_synced: false,
+            is_scratch: as_scratch,
         })
     }
 }

@@ -52,6 +52,11 @@ pub struct Note {
     pub is_hidden: bool,
     /// T-007: 是否加密。前端据此决定是否显示"已加密"/"解锁查看"按钮
     pub is_encrypted: bool,
+    /// 是否"临时编辑"。以临时方式打开的外部 .md：照常入库、照常写回原文件，
+    /// 但不进主列表 / 搜索 / 双链 / RAG，只在「临时文件」面板里能翻到。
+    /// 与 is_hidden 的区别：那个是隐私（配 PIN），这个只是"不想污染知识库"。
+    #[serde(default)]
+    pub is_scratch: bool,
     pub word_count: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -549,6 +554,11 @@ pub struct OpenMarkdownResult {
     pub note_id: i64,
     /// true = 检测到源文件内容有变化，已覆盖回笔记（前端可据此提示）
     pub was_synced: bool,
+    /// true = 这条笔记当前是"临时编辑"状态（不进主列表 / 搜索 / 双链）
+    ///
+    /// 注意不等于本次调用传入的 `as_scratch`：复用已有正式笔记时不会被降级成临时，
+    /// 前端要据这个**实际状态**决定是否显示"临时"提示条。
+    pub is_scratch: bool,
 }
 
 // ─── 附件 ─────────────────────────────────────

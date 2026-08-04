@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 55;
+pub const SCHEMA_VERSION: i32 = 56;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -85,6 +85,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             52 => migrate_v52_to_v53(conn)?,
             53 => migrate_v53_to_v54(conn)?,
             54 => migrate_v54_to_v55(conn)?,
+            55 => migrate_v55_to_v56(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2343,6 +2344,45 @@ fn migrate_v54_to_v55(conn: &Connection) -> Result<(), AppError> {
     }
 
     set_version(conn, 55)?;
+    Ok(())
+}
+
+/// v55 -> v56: notes 新增 is_scratch 字段（临时编辑标记）
+///
+/// ## 解决什么
+///
+/// 用户拿本应用当 markdown 编辑器改一份外部 .md（README、别处的稿子）时，
+/// 那份文件会被当成正式笔记进库，于是主列表和搜索结果里堆满了"其实不属于我知识库"
+/// 的条目。用户的原话是"能不能不入库、直接当 md 编辑器用"。
+///
+/// ## 为什么不真的"不入库"
+///
+/// 入库带来的能力（写回原文件、冲突检测、图片资产落地、下次打开复用同一条笔记）
+/// 都在 `services/source_writeback.rs` 里跑得好好的，真做成"纯文件模式"要另起
+/// 一套编辑器状态机。真正让用户不适的只是**列表被污染**，那就只解决这一件事：
+/// 照常入库，但打上标记、默认不出现在主列表 / 搜索 / 双链里。
+///
+/// ## 与 is_hidden 的区别（别合并这两个字段）
+///
+/// `is_hidden` 是隐私向的"弱隐藏"，配 PIN 保护（见 `services/hidden_pin.rs`）；
+/// `is_scratch` 是"临时"，不涉及隐私、不该要 PIN 才能查看。两者语义不同，
+/// 混在一个列表里会让用户在找临时文件时被要求输 PIN。
+///
+/// 部分索引与 idx_notes_hidden 同思路：只覆盖活跃笔记，不让回收站条目干扰热路径。
+fn migrate_v55_to_v56(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v55 -> v56 (notes.is_scratch 临时编辑标记)");
+
+    let cols = list_columns(conn, "notes")?;
+    if !cols.iter().any(|c| c == "is_scratch") {
+        conn.execute_batch("ALTER TABLE notes ADD COLUMN is_scratch INTEGER NOT NULL DEFAULT 0;")?;
+    }
+
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_notes_scratch
+         ON notes(is_scratch, updated_at DESC) WHERE is_deleted = 0;",
+    )?;
+
+    set_version(conn, 56)?;
     Ok(())
 }
 

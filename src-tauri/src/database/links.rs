@@ -145,7 +145,7 @@ impl super::Database {
                     let visible: Option<i64> = conn
                         .query_row(
                             "SELECT id FROM notes
-                             WHERE id = ?1 AND is_deleted = 0 AND is_hidden = 0",
+                             WHERE id = ?1 AND is_deleted = 0 AND is_hidden = 0 AND is_scratch = 0",
                             rusqlite::params![id],
                             |row| row.get(0),
                         )
@@ -194,7 +194,7 @@ impl super::Database {
             "SELECT nl.source_id, n.title, nl.context, n.updated_at
              FROM note_links nl
              JOIN notes n ON n.id = nl.source_id
-             WHERE nl.target_id = ?1 AND n.is_deleted = 0 AND n.is_hidden = 0
+             WHERE nl.target_id = ?1 AND n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0
              ORDER BY n.updated_at DESC",
         )?;
         let links = stmt
@@ -234,7 +234,7 @@ impl super::Database {
                 "SELECT n.id, n.title, n.updated_at
                  FROM note_links nl
                  JOIN notes n ON n.id = nl.target_id
-                 WHERE nl.source_id = ?1 AND n.is_deleted = 0 AND n.is_hidden = 0
+                 WHERE nl.source_id = ?1 AND n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0
                  ORDER BY n.updated_at DESC",
             )?;
             let rows = stmt
@@ -259,7 +259,7 @@ impl super::Database {
                 "SELECT n.id, n.title, n.updated_at
                  FROM note_links nl
                  JOIN notes n ON n.id = nl.source_id
-                 WHERE nl.target_id = ?1 AND n.is_deleted = 0 AND n.is_hidden = 0
+                 WHERE nl.target_id = ?1 AND n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0
                  ORDER BY n.updated_at DESC",
             )?;
             let rows = stmt
@@ -299,7 +299,7 @@ impl super::Database {
                             .map_err(|e| AppError::Custom(e.to_string()))?;
                         conn.query_row(
                             "SELECT id FROM notes
-                             WHERE id = ?1 AND is_deleted = 0 AND is_hidden = 0",
+                             WHERE id = ?1 AND is_deleted = 0 AND is_hidden = 0 AND is_scratch = 0",
                             rusqlite::params![id],
                             |row| row.get::<_, i64>(0),
                         )
@@ -367,7 +367,7 @@ impl super::Database {
             "SELECT n.id, n.title, f.name
              FROM notes n
              LEFT JOIN folders f ON f.id = n.folder_id
-             WHERE n.title LIKE ?1 AND n.is_deleted = 0 AND n.is_hidden = 0
+             WHERE n.title LIKE ?1 AND n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0
              ORDER BY n.updated_at DESC
              LIMIT ?2",
         )?;
@@ -417,7 +417,7 @@ impl super::Database {
                     COUNT(nt.tag_id) AS tag_count, n.folder_id
              FROM notes n
              LEFT JOIN note_tags nt ON nt.note_id = n.id
-             WHERE n.is_deleted = 0 AND n.is_hidden = 0
+             WHERE n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0
              GROUP BY n.id
              ORDER BY n.updated_at DESC",
         )?;

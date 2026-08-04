@@ -490,7 +490,7 @@ impl Database {
             .map_err(|e| AppError::Custom(e.to_string()))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type, is_scratch
              FROM notes WHERE id = ?1",
         )?;
 
@@ -513,6 +513,7 @@ impl Database {
                     source_file_type: row.get(13)?,
                     sort_order: row.get(14)?,
                     note_type: row.get(15)?,
+                    is_scratch: row.get::<_, i32>(16)? != 0,
                 })
             })
             .ok();
@@ -586,14 +587,17 @@ impl Database {
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
 
-        // 构建 WHERE 条件（始终过滤已删除 + 隐藏 + 日记）
+        // 构建 WHERE 条件（始终过滤已删除 + 隐藏 + 临时 + 日记）
         // T-003: is_hidden=0 在所有主列表入口强制过滤；隐藏笔记只能从 /hidden 专用页访问
+        // is_scratch=0 同理：以"临时编辑"方式打开的外部 .md 不进主列表，走专用面板
+        //（用户拿本应用改一份外部 README 时，不希望它混进自己的知识库列表）
         // 日记 is_daily=1 也无条件过滤：所有用户视角的「笔记列表」（主列表 / 未分类 / 文件夹）
         // 都不显示日记，日记只走 📅 每日笔记专用面板。
         // 不影响 FTS 全文搜索 / MCP / AI RAG —— 那些走独立查询路径。
         let mut conditions = vec![
             "is_deleted = 0".to_string(),
             "is_hidden = 0".to_string(),
+            "is_scratch = 0".to_string(),
             "is_daily = 0".to_string(),
         ];
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -648,7 +652,7 @@ impl Database {
             _ => "is_pinned DESC, updated_at DESC",
         };
         let data_sql = format!(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type, is_scratch
              FROM notes {} ORDER BY {} LIMIT ?{} OFFSET ?{}",
             where_clause,
             order_clause,
@@ -683,6 +687,7 @@ impl Database {
                     source_file_type: row.get(13)?,
                     sort_order: row.get(14)?,
                     note_type: row.get(15)?,
+                    is_scratch: row.get::<_, i32>(16)? != 0,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -860,7 +865,7 @@ impl Database {
         let offset = (page.saturating_sub(1)) * page_size;
         let select_sql = format!(
             "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted,
-                    word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type
+                    word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type, is_scratch
              FROM notes
              WHERE is_deleted = 0 AND is_hidden = 1{}
              ORDER BY updated_at DESC
@@ -886,6 +891,7 @@ impl Database {
                 source_file_type: row.get(13)?,
                 sort_order: row.get(14)?,
                 note_type: row.get(15)?,
+                is_scratch: row.get::<_, i32>(16)? != 0,
             })
         };
         let notes = if has_folder_param {
@@ -918,6 +924,102 @@ impl Database {
             .query_map([], |row| row.get::<_, Option<i64>>(0))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    // ─── 临时编辑（scratch）DAO ───────────────────
+
+    /// 列出"临时编辑"笔记（以临时方式打开的外部 .md）
+    ///
+    /// 与 list_notes 相反：只取 is_scratch=1。不做目录过滤 —— 临时文件本就不归属
+    /// 用户的文件夹体系，按最近改动倒序平铺即可。
+    pub fn list_scratch_notes(
+        &self,
+        page: usize,
+        page_size: usize,
+    ) -> Result<(Vec<Note>, usize), AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+
+        let total: usize = conn.query_row(
+            "SELECT COUNT(*) FROM notes WHERE is_deleted = 0 AND is_scratch = 1",
+            [],
+            |row| row.get(0),
+        )?;
+
+        let offset = (page.saturating_sub(1)) * page_size;
+        let mut stmt = conn.prepare(
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted,
+                    word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type, is_scratch
+             FROM notes
+             WHERE is_deleted = 0 AND is_scratch = 1
+             ORDER BY updated_at DESC
+             LIMIT ?1 OFFSET ?2",
+        )?;
+        let notes = stmt
+            .query_map(params![page_size as i64, offset as i64], |row| {
+                Ok(Note {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    content: row.get(2)?,
+                    folder_id: row.get(3)?,
+                    is_daily: row.get::<_, i32>(4)? != 0,
+                    daily_date: row.get(5)?,
+                    is_pinned: row.get::<_, i32>(6)? != 0,
+                    is_hidden: row.get::<_, i32>(7)? != 0,
+                    is_encrypted: row.get::<_, i32>(8)? != 0,
+                    word_count: row.get(9)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
+                    source_file_path: row.get(12)?,
+                    source_file_type: row.get(13)?,
+                    sort_order: row.get(14)?,
+                    note_type: row.get(15)?,
+                    is_scratch: row.get::<_, i32>(16)? != 0,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok((notes, total))
+    }
+
+    /// 读取笔记的"临时编辑"标记（笔记不存在按 false 处理）
+    ///
+    /// 单独开一个轻查询而不是走 get_note：调用方（打开 .md 的去重分支）只关心这一位，
+    /// 没必要把整篇 content 拉进内存。
+    pub fn get_note_scratch(&self, id: i64) -> Result<bool, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let v: Option<i32> = conn
+            .query_row(
+                "SELECT is_scratch FROM notes WHERE id = ?1 AND is_deleted = 0",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(v.unwrap_or(0) != 0)
+    }
+
+    /// 设置笔记的"临时编辑"标记
+    ///
+    /// `false` = 转为正式笔记：立刻回到主列表 / 搜索 / 双链。
+    /// 只动这一列，不碰 updated_at —— 归档动作不该让同步误判"本端改过内容"。
+    pub fn set_note_scratch(&self, id: i64, scratch: bool) -> Result<(), AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let affected = conn.execute(
+            "UPDATE notes SET is_scratch = ?1 WHERE id = ?2 AND is_deleted = 0",
+            params![if scratch { 1 } else { 0 }, id],
+        )?;
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("笔记 {} 不存在", id)));
+        }
+        Ok(())
     }
 
     // ─── 置顶 & 移动 DAO ─────────────────────────
@@ -977,9 +1079,12 @@ impl Database {
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
 
+        // 与 list_notes 的过滤口径必须完全一致：这里算的是"拖拽排序时的 ID 序列"，
+        // 少过滤一个条件就会让排序序列比列表多出条目，落库的 sort_order 全部错位
         let mut conditions = vec![
             "is_deleted = 0".to_string(),
             "is_hidden = 0".to_string(),
+            "is_scratch = 0".to_string(),
             "is_daily = 0".to_string(),
         ];
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -1171,7 +1276,7 @@ impl Database {
         // 查询分页数据
         let offset = (page.saturating_sub(1)) * page_size;
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type, is_scratch
              FROM notes WHERE is_deleted = 1
              ORDER BY deleted_at DESC
              LIMIT ?1 OFFSET ?2",
@@ -1196,6 +1301,7 @@ impl Database {
                     source_file_type: row.get(13)?,
                     sort_order: row.get(14)?,
                     note_type: row.get(15)?,
+                    is_scratch: row.get::<_, i32>(16)? != 0,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -1323,7 +1429,7 @@ impl Database {
             .map_err(|e| AppError::Custom(e.to_string()))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type, is_scratch
              FROM notes WHERE is_daily = 1 AND daily_date = ?1 AND is_deleted = 0",
         )?;
 
@@ -1346,6 +1452,7 @@ impl Database {
                     source_file_type: row.get(13)?,
                     sort_order: row.get(14)?,
                     note_type: row.get(15)?,
+                    is_scratch: row.get::<_, i32>(16)? != 0,
                 })
             })
             .ok();
@@ -1362,7 +1469,7 @@ impl Database {
 
         // 先查询是否已存在
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type, is_scratch
              FROM notes WHERE is_daily = 1 AND daily_date = ?1 AND is_deleted = 0",
         )?;
 
@@ -1385,6 +1492,7 @@ impl Database {
                     source_file_type: row.get(13)?,
                     sort_order: row.get(14)?,
                     note_type: row.get(15)?,
+                    is_scratch: row.get::<_, i32>(16)? != 0,
                 })
             })
             .ok();
@@ -1533,7 +1641,7 @@ impl Database {
         id: i64,
     ) -> Result<Note, AppError> {
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type, is_scratch
              FROM notes WHERE id = ?1",
         )?;
 
@@ -1555,6 +1663,7 @@ impl Database {
                 source_file_type: row.get(13)?,
                 sort_order: row.get(14)?,
                 note_type: row.get(15)?,
+                is_scratch: row.get::<_, i32>(16)? != 0,
             })
         })?;
 

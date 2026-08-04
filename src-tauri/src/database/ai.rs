@@ -958,7 +958,7 @@ impl Database {
             let sql = format!(
                 "SELECT n.id, n.title, n.content, ({score}) AS score
                  FROM notes n
-                 WHERE n.is_deleted = 0 AND n.is_hidden = 0 AND ({where_}){folder_clause}
+                 WHERE n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0 AND ({where_}){folder_clause}
                  ORDER BY score DESC, n.updated_at DESC
                  LIMIT ?{limit_param}",
                 score = score_sum,

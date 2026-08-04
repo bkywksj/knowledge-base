@@ -56,16 +56,25 @@ pub async fn import_selected_files(
 /// 打开单个 Markdown 文件：读取 → 创建新笔记 → 返回 note id
 ///
 /// 用于"打开 md 文件"按钮和文件关联双击，前端拿到 id 后跳转到 /notes/:id
+///
+/// `as_scratch`（可选，默认 false）：按"临时编辑"打开 —— 照常入库、照常写回原文件，
+/// 但不进主列表 / 搜索 / 双链。给"只是拿本应用改一份外部 .md"的场景用。
 #[tauri::command]
 pub async fn open_markdown_file(
     state: tauri::State<'_, AppState>,
     file_path: String,
+    as_scratch: Option<bool>,
 ) -> Result<OpenMarkdownResult, String> {
     // ⚠️ 同 import_selected_files：必须用 state.data_dir
     let app_data_dir = state.data_dir.clone();
-    services::import::ImportService::import_single_markdown(&state.db, &file_path, &app_data_dir)
-        .await
-        .map_err(|e| e.to_string())
+    services::import::ImportService::import_single_markdown(
+        &state.db,
+        &file_path,
+        &app_data_dir,
+        as_scratch.unwrap_or(false),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// 取出首次启动时由命令行带入的 .md 文件路径（幂等，取一次就清空）

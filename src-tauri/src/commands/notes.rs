@@ -176,6 +176,28 @@ pub fn list_hidden_folder_ids(
     NoteService::list_hidden_folder_ids(&state.db).map_err(|e| e.to_string())
 }
 
+/// 列出「临时编辑」笔记（分页）—— 用于侧栏「临时文件」面板
+#[tauri::command]
+pub fn list_scratch_notes(
+    state: tauri::State<'_, AppState>,
+    page: Option<usize>,
+    page_size: Option<usize>,
+) -> Result<PageResult<Note>, String> {
+    NoteService::list_scratch(&state.db, page, page_size).map_err(|e| e.to_string())
+}
+
+/// 设置 / 取消笔记的「临时编辑」标记
+///
+/// `scratch=false` = 转为正式笔记：立刻回到主列表 / 搜索 / 双链。
+#[tauri::command]
+pub fn set_note_scratch(
+    state: tauri::State<'_, AppState>,
+    id: i64,
+    scratch: bool,
+) -> Result<(), String> {
+    NoteService::set_scratch(&state.db, id, scratch).map_err(|e| e.to_string())
+}
+
 // ─── T-014 网页剪藏 ────────────────────────────
 
 /// 把网页 URL 剪藏成笔记（通过 r.jina.ai 转 markdown）
