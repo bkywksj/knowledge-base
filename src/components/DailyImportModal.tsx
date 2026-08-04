@@ -416,6 +416,15 @@ function ConvertPane({
             message={`${result.mergedNotes} 篇笔记已并入当天日记，原笔记在回收站里，需要时可以还原。`}
           />
         )}
+        {/* 日记已从日期文件夹里摘走 —— 不说明的话，用户会奇怪笔记树里的日期文件夹怎么没了 */}
+        {result.foldersRemoved > 0 && (
+          <Alert
+            type="info"
+            showIcon
+            className="mb-3"
+            message={`日记已移出日期文件夹（日记只按日期组织），${result.foldersRemoved} 个空掉的日期文件夹已一并清理。`}
+          />
+        )}
         {result.errors.length > 0 && (
           <Collapse
             size="small"

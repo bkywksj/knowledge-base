@@ -23,6 +23,7 @@ import type {
   NoteQuery,
   PageResult,
   Folder,
+  EmptyFolderInfo,
   Tag,
   SearchResult,
   NoteLink,
@@ -447,15 +448,28 @@ export const folderApi = {
   rename: (id: number, name: string) =>
     invoke<void>("rename_folder", { id, name }),
   delete: (id: number) => invoke<void>("delete_folder", { id }),
-  /** 查询子树统计：{ folders: 子孙文件夹数, notes: 子树未回收笔记数 } —— 级联删除确认弹窗用 */
+  /**
+   * 查询子树统计 —— 级联删除确认弹窗用。
+   * `notes` 只数用户在列表里看得见的笔记；`dailies` 是子树内的日记数，
+   * 它们**不会**被删除，只会因文件夹消失而回到"未分类"，所以单独一项告知用户。
+   */
   subtreeStats: (id: number) =>
-    invoke<{ folders: number; notes: number }>("folder_subtree_stats", { id }),
-  /** 级联删除：子树笔记移入回收站 + 删除子树文件夹；返回删除数量 */
-  deleteCascade: (id: number) =>
-    invoke<{ notes_trashed: number; folders_deleted: number }>(
-      "delete_folder_cascade",
+    invoke<{ folders: number; notes: number; dailies: number }>(
+      "folder_subtree_stats",
       { id },
     ),
+  /** 级联删除：子树笔记移入回收站 + 删除子树文件夹；日记只脱钩不删 */
+  deleteCascade: (id: number) =>
+    invoke<{
+      notes_trashed: number;
+      folders_deleted: number;
+      dailies_detached: number;
+    }>("delete_folder_cascade", { id }),
+  /** 扫描空文件夹（子树内无任何未回收笔记），供"清理空文件夹"预览 */
+  listEmpty: () => invoke<EmptyFolderInfo[]>("list_empty_folders"),
+  /** 清理空文件夹：后端会重新校验一次仍然为空才删，返回实际删除数 */
+  cleanupEmpty: (ids: number[]) =>
+    invoke<{ deleted: number }>("cleanup_empty_folders", { ids }),
   list: () => invoke<Folder[]>("list_folders"),
   move: (id: number, newParentId: number | null) =>
     invoke<void>("move_folder", { id, newParentId }),

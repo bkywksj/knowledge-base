@@ -173,6 +173,16 @@ export interface Folder {
   color: string | null;
 }
 
+/**
+ * 一个「空文件夹」——子树内（含自身）没有任何未回收笔记。
+ * 「导入历史日记」会建出成百上千个日期文件夹，日记摘走后就成了空壳，靠清理功能批量删。
+ */
+export interface EmptyFolderInfo {
+  id: number;
+  /** 从根到该文件夹的完整路径（`日记/2020/2020-05-26`） */
+  path: string;
+}
+
 // ─── 标签 ─────────────────────────────────────
 
 /** 标签 */
@@ -607,6 +617,8 @@ export interface DailyConvertResult {
   mergedNotes: number;
   appendedDays: number;
   skippedDays: number;
+  /** 日记摘出日期文件夹后，被顺手清掉的空文件夹数 */
+  foldersRemoved: number;
   errors: string[];
 }
 
