@@ -1,6 +1,6 @@
 use crate::database::Database;
 use crate::error::AppError;
-use crate::models::Folder;
+use crate::models::{EmptyFolderInfo, Folder};
 
 /// 文件夹服务
 pub struct FolderService;
@@ -28,8 +28,11 @@ impl FolderService {
     /// 当文件夹含有子文件夹或未回收的笔记时拒绝删除。
     /// 注：隐藏笔记 / 加密笔记 UI 默认不显示，但 is_deleted=0 仍占用文件夹 ——
     /// 错误信息显式给出数量，方便用户判断是不是有"看不见的"笔记拦着。
+    ///
+    /// 日记不算"占用"：它在笔记列表里不显示，拦着不让删会让用户对着一个看起来空的
+    /// 文件夹束手无策。删掉文件夹后日记会落到"未分类"，日记页照常可见。
     pub fn delete(db: &Database, id: i64) -> Result<(), AppError> {
-        let (sub_folders, active_notes) = db.folder_children_count(id)?;
+        let (sub_folders, active_notes, _dailies) = db.folder_children_count(id)?;
         if sub_folders > 0 || active_notes > 0 {
             let mut parts = Vec::new();
             if sub_folders > 0 {
@@ -53,16 +56,39 @@ impl FolderService {
         Ok(())
     }
 
-    /// 子树统计：返回 `(子孙文件夹数, 子树内未回收笔记数)`，供级联删除确认弹窗用。
-    pub fn subtree_stats(db: &Database, id: i64) -> Result<(i64, i64), AppError> {
+    /// 子树统计：返回 `(子孙文件夹数, 子树内未回收笔记数, 子树内日记数)`，供级联删除确认弹窗用。
+    pub fn subtree_stats(db: &Database, id: i64) -> Result<(i64, i64, i64), AppError> {
         db.folder_subtree_stats(id)
     }
 
-    /// 级联删除：子树笔记软删进回收站（可恢复）+ 物理删除子树文件夹。
-    /// 返回 `(软删笔记数, 删除文件夹数)`。与 `delete` 的区别：delete 遇非空拒绝，
-    /// 本方法在用户明确确认后强制删除（用户诉求：提醒即可，给我删的权限）。
-    pub fn delete_cascade(db: &Database, id: i64) -> Result<(usize, usize), AppError> {
+    /// 级联删除：子树普通笔记软删进回收站（可恢复）+ 物理删除子树文件夹。
+    /// 返回 `(软删笔记数, 删除文件夹数, 脱离文件夹的日记数)`。与 `delete` 的区别：
+    /// delete 遇非空拒绝，本方法在用户明确确认后强制删除（用户诉求：提醒即可，给我删的权限）。
+    pub fn delete_cascade(db: &Database, id: i64) -> Result<(usize, usize, usize), AppError> {
         db.delete_folder_cascade(id)
+    }
+
+    /// 扫描全库空文件夹（子树内无任何未回收笔记），供"清理空文件夹"预览用
+    pub fn list_empty(db: &Database) -> Result<Vec<EmptyFolderInfo>, AppError> {
+        db.list_empty_folders()
+    }
+
+    /// 清理空文件夹：删除 `ids` 中此刻仍然为空的那些。返回实际删除数。
+    ///
+    /// 重新扫一遍再取交集，而不是无脑删传进来的 id —— 用户从预览到点确认之间
+    /// 可能刚往某个文件夹里存了笔记（另一个窗口 / 同步拉回来的），那就不能再删。
+    pub fn cleanup_empty(db: &Database, ids: &[i64]) -> Result<usize, AppError> {
+        let still_empty: std::collections::HashSet<i64> = db
+            .list_empty_folders()?
+            .into_iter()
+            .map(|f| f.id)
+            .collect();
+        let targets: Vec<i64> = ids
+            .iter()
+            .copied()
+            .filter(|id| still_empty.contains(id))
+            .collect();
+        db.delete_folders_batch(&targets)
     }
 
     /// 移动文件夹（改父节点，不处理同级排序）

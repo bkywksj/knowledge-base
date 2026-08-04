@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::models::Folder;
+use crate::models::{EmptyFolderInfo, Folder};
 use crate::services::folder::FolderService;
 use crate::state::AppState;
 
@@ -9,8 +9,11 @@ use crate::state::AppState;
 pub struct FolderSubtreeStats {
     /// 子孙文件夹数（不含被删文件夹自身）
     pub folders: i64,
-    /// 子树内未回收的笔记数（含隐藏 / 加密）
+    /// 子树内未回收的笔记数（含隐藏 / 加密，不含日记）
     pub notes: i64,
+    /// 子树内的日记数 —— 删文件夹**不会**删它们，只会让它们回到"未分类"。
+    /// 单独报给用户：这些笔记在列表里看不见，不说明白就会以为文件夹是空的。
+    pub dailies: i64,
 }
 
 /// 级联删除结果
@@ -20,6 +23,15 @@ pub struct FolderCascadeResult {
     pub notes_trashed: usize,
     /// 物理删除的文件夹数
     pub folders_deleted: usize,
+    /// 因文件夹消失而回到"未分类"的日记数（内容与日期都还在）
+    pub dailies_detached: usize,
+}
+
+/// 清理空文件夹的结果
+#[derive(Debug, Serialize)]
+pub struct EmptyFolderCleanupResult {
+    /// 实际删除的文件夹数
+    pub deleted: usize,
 }
 
 /// 创建文件夹
@@ -54,8 +66,13 @@ pub fn folder_subtree_stats(
     state: tauri::State<'_, AppState>,
     id: i64,
 ) -> Result<FolderSubtreeStats, String> {
-    let (folders, notes) = FolderService::subtree_stats(&state.db, id).map_err(|e| e.to_string())?;
-    Ok(FolderSubtreeStats { folders, notes })
+    let (folders, notes, dailies) =
+        FolderService::subtree_stats(&state.db, id).map_err(|e| e.to_string())?;
+    Ok(FolderSubtreeStats {
+        folders,
+        notes,
+        dailies,
+    })
 }
 
 /// 级联删除文件夹：子树笔记移入回收站（可恢复）+ 删除子树文件夹。
@@ -65,12 +82,31 @@ pub fn delete_folder_cascade(
     state: tauri::State<'_, AppState>,
     id: i64,
 ) -> Result<FolderCascadeResult, String> {
-    let (notes_trashed, folders_deleted) =
+    let (notes_trashed, folders_deleted, dailies_detached) =
         FolderService::delete_cascade(&state.db, id).map_err(|e| e.to_string())?;
     Ok(FolderCascadeResult {
         notes_trashed,
         folders_deleted,
+        dailies_detached,
     })
+}
+
+/// 扫描空文件夹（子树内没有任何未回收笔记），供"清理空文件夹"预览
+#[tauri::command]
+pub fn list_empty_folders(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<EmptyFolderInfo>, String> {
+    FolderService::list_empty(&state.db).map_err(|e| e.to_string())
+}
+
+/// 清理空文件夹：删除 ids 中此刻仍然为空的文件夹（服务层会重新校验一次）
+#[tauri::command]
+pub fn cleanup_empty_folders(
+    state: tauri::State<'_, AppState>,
+    ids: Vec<i64>,
+) -> Result<EmptyFolderCleanupResult, String> {
+    let deleted = FolderService::cleanup_empty(&state.db, &ids).map_err(|e| e.to_string())?;
+    Ok(EmptyFolderCleanupResult { deleted })
 }
 
 /// 获取文件夹树

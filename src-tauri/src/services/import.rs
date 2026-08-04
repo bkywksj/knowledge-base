@@ -170,6 +170,8 @@ impl ImportService {
         let total = file_paths.len();
         // 本批已认领的日期 —— 保证「一天一篇」，同一天的后续文件不再认领
         let mut claimed_dates: std::collections::HashSet<String> = std::collections::HashSet::new();
+        // 被认领成日记的笔记 id —— 导入结束后统一摘出日期文件夹（见循环后的收尾）
+        let mut claimed_note_ids: Vec<i64> = Vec::new();
         let mut daily_marked = 0usize;
         let mut daily_extra_notes = 0usize;
         let mut imported = 0usize;
@@ -369,6 +371,7 @@ impl ImportService {
                                 daily_extra_notes += 1;
                             } else if db.mark_note_as_daily(note.id, &date).is_ok() {
                                 claimed_dates.insert(date);
+                                claimed_note_ids.push(note.id);
                                 daily_marked += 1;
                             }
                         }
@@ -542,6 +545,23 @@ impl ImportService {
                 Err(e) => {
                     errors.push(format!("{}: 导入失败 - {}", final_title, e));
                 }
+            }
+        }
+
+        // 日记收尾：把认领成日记的笔记摘出日期文件夹，再清掉因此变空的日期文件夹。
+        //
+        // 不这么做的话，`2020-05-26/日记.md` 导进来会留下一个"用户视角是空的"文件夹
+        // （笔记列表强制过滤 is_daily=0），删它时反被告知"还有 1 篇笔记"，
+        // 确认后当天日记进了回收站 —— 真实用户反馈的坑。日记只由 daily_date 组织即可。
+        // 同一天有多篇时只有被认领的那篇会摘走，其余普通笔记仍留在原文件夹（文件夹也就不空）。
+        if !claimed_note_ids.is_empty() {
+            match db.detach_notes_from_folders(&claimed_note_ids) {
+                Ok(folder_ids) => {
+                    if let Err(e) = db.prune_empty_folders(&folder_ids) {
+                        errors.push(format!("清理空日期文件夹失败: {}", e));
+                    }
+                }
+                Err(e) => errors.push(format!("把日记移出日期文件夹失败: {}", e)),
             }
         }
 

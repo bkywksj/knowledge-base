@@ -12,7 +12,11 @@
 //! 设计取舍（都是用户拍板的）：
 //!   · 一天多个文件 → **合并成一篇**，每段前加 `## 原标题` 分隔（不是丢弃、也不是各自成篇）
 //!   · 标题 → **保留原标题**（日记列表显示的就是 title，「工作记录」比「2020-05-15 的日记」有信息量）
-//!   · 文件夹 → **原地不动**（不改 folder_id）：日记页按日期看、笔记树保持原结构，双保险
+//!   · 文件夹 → 认领成日记后**摘出日期文件夹**（folder_id = NULL），空掉的日期文件夹顺手清掉。
+//!     早期版本是"原地不动"，想做成"日记页按日期看 + 笔记树保持原结构"的双保险，
+//!     结果是有害的：`list_notes` 一律过滤 `is_daily = 0`，日期文件夹在用户眼里是空的，
+//!     删它时却被告知"还有 1 篇笔记"，确认后当天日记被扫进回收站（真实用户反馈）。
+//!     现在日记只由 daily_date 组织，归属关系不再自相矛盾。
 //!
 //! ⚠️ 认领是 `UPDATE is_daily=1, daily_date=?`，与 `get_or_create_daily` 里既有的
 //! "认领伪日记"是同一套路子（database/notes.rs），不新建笔记 —— 避免日记增殖。
@@ -215,6 +219,8 @@ pub struct DailyConvertResult {
     pub appended_days: usize,
     /// 跳过的天数（策略所致）
     pub skipped_days: usize,
+    /// 日记摘出后被清掉的空日期文件夹数
+    pub folders_removed: usize,
     /// 出错条目（date -> 原因）
     pub errors: Vec<String>,
 }
@@ -353,12 +359,17 @@ impl DailyImportService {
         options: &DailyConvertOptions,
     ) -> Result<DailyConvertResult, AppError> {
         let mut result = DailyConvertResult::default();
+        // 认领成功的笔记 id —— 收尾时统一从日期文件夹里摘出来（见函数末尾）
+        let mut claimed_ids: Vec<i64> = Vec::new();
 
         // ① 单文件：直接认领
         for cand in &plan.single {
             if let Some(&id) = cand.note_ids.first() {
                 match db.mark_note_as_daily(id, &cand.date) {
-                    Ok(_) => result.converted_days += 1,
+                    Ok(_) => {
+                        result.converted_days += 1;
+                        claimed_ids.push(id);
+                    }
                     Err(e) => result.errors.push(format!("{}: {}", cand.date, e)),
                 }
             }
@@ -371,7 +382,10 @@ impl DailyImportService {
                 MultiFileStrategy::KeepFirst => {
                     let idx = pick_primary_index(&cand.titles, &cand.date);
                     match db.mark_note_as_daily(cand.note_ids[idx], &cand.date) {
-                        Ok(_) => result.converted_days += 1,
+                        Ok(_) => {
+                            result.converted_days += 1;
+                            claimed_ids.push(cand.note_ids[idx]);
+                        }
                         Err(e) => result.errors.push(format!("{}: {}", cand.date, e)),
                     }
                 }
@@ -379,6 +393,7 @@ impl DailyImportService {
                     Ok(merged) => {
                         result.converted_days += 1;
                         result.merged_notes += merged;
+                        claimed_ids.push(cand.note_ids[0]);
                     }
                     Err(e) => result.errors.push(format!("{}: {}", cand.date, e)),
                 },
@@ -398,6 +413,25 @@ impl DailyImportService {
                         Err(e) => result.errors.push(format!("{}: {}", cand.date, e)),
                     }
                 }
+            }
+        }
+
+        // ④ 收尾：把认领成日记的笔记从日期文件夹里摘出来，再清掉因此变空的日期文件夹。
+        //
+        // 原先的取舍是"文件夹原地不动"（日记页按日期看 + 笔记树保持原结构，双保险），
+        // 真机反馈证明这个双保险是有害的：日记在笔记列表里被 `is_daily = 0` 过滤掉，
+        // 用户看到的是个空文件夹，删它时却被告知"还有 1 篇笔记"，确认后当天日记进了回收站。
+        // 现在日记只由 daily_date 组织，日期文件夹空了就清掉，不再留下会误导人的空壳。
+        // 失败只记 error 不整体失败 —— 认领本身已经成功，不该因为收尾没做成而回退。
+        if !claimed_ids.is_empty() {
+            match db.detach_notes_from_folders(&claimed_ids) {
+                Ok(folder_ids) => match db.prune_empty_folders(&folder_ids) {
+                    Ok(n) => result.folders_removed = n,
+                    Err(e) => result.errors.push(format!("清理空日期文件夹失败: {}", e)),
+                },
+                Err(e) => result
+                    .errors
+                    .push(format!("把日记移出日期文件夹失败: {}", e)),
             }
         }
 

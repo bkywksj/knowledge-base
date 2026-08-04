@@ -417,6 +417,57 @@ impl Database {
         Ok(affected)
     }
 
+    /// 把这些笔记从各自的文件夹里摘出来（`folder_id = NULL`），返回它们原来所在的文件夹 id（去重）。
+    ///
+    /// 「导入 / 整理历史日记」专用。日记被认领后不该继续占着 `2020-05-26` 这类日期文件夹：
+    /// `list_notes` 一律过滤 `is_daily = 0`，那个文件夹在用户眼里就是个空壳，
+    /// 而删空壳时又会连带把日记扫进回收站（真实用户反馈）。摘出来后日记只由日期组织，
+    /// 归属关系不再自相矛盾。返回的旧文件夹 id 交给 `prune_empty_folders` 收尾。
+    ///
+    /// 不动 `updated_at`：这是归档整理，不该让几千篇日记一起冒泡到"最近更新"。
+    /// 按 500 一批分块 —— 几千篇日记一次性拼占位符会撞 SQLite 的变量数上限。
+    pub fn detach_notes_from_folders(&self, ids: &[i64]) -> Result<Vec<i64>, AppError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let tx = conn.transaction()?;
+        let mut folder_ids: Vec<i64> = Vec::new();
+        for chunk in ids.chunks(500) {
+            let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let args: Vec<rusqlite::types::Value> = chunk
+                .iter()
+                .map(|id| rusqlite::types::Value::Integer(*id))
+                .collect();
+
+            let select_sql = format!(
+                "SELECT DISTINCT folder_id FROM notes
+                 WHERE id IN ({}) AND folder_id IS NOT NULL",
+                placeholders
+            );
+            {
+                let mut stmt = tx.prepare(&select_sql)?;
+                let rows = stmt
+                    .query_map(params_from_iter(args.iter()), |row| row.get::<_, i64>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                folder_ids.extend(rows);
+            }
+
+            let update_sql = format!(
+                "UPDATE notes SET folder_id = NULL WHERE id IN ({})",
+                placeholders
+            );
+            tx.execute(&update_sql, params_from_iter(args.iter()))?;
+        }
+        tx.commit()?;
+        folder_ids.sort_unstable();
+        folder_ids.dedup();
+        Ok(folder_ids)
+    }
+
     /// 删除笔记（永久删除，预留给未来使用）
     #[allow(dead_code)]
     pub fn delete_note(&self, id: i64) -> Result<bool, AppError> {

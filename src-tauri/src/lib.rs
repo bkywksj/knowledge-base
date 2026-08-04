@@ -1206,6 +1206,8 @@ pub fn run() {
             commands::folders::delete_folder,
             commands::folders::folder_subtree_stats,
             commands::folders::delete_folder_cascade,
+            commands::folders::list_empty_folders,
+            commands::folders::cleanup_empty_folders,
             commands::folders::list_folders,
             commands::folders::move_folder,
             commands::folders::reorder_folders,

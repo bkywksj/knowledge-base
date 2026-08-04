@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 54;
+pub const SCHEMA_VERSION: i32 = 55;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -84,6 +84,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             51 => migrate_v51_to_v52(conn)?,
             52 => migrate_v52_to_v53(conn)?,
             53 => migrate_v53_to_v54(conn)?,
+            54 => migrate_v54_to_v55(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2298,6 +2299,50 @@ fn migrate_v53_to_v54(conn: &Connection) -> Result<(), AppError> {
     );
 
     set_version(conn, 54)?;
+    Ok(())
+}
+
+/// v54 → v55: 把日记从日期文件夹里摘出来（`folder_id = NULL`）
+///
+/// ## 背景：一个自相矛盾的归属关系
+///
+/// 「导入历史日记」按 `2020-05-26/日记.md` 的结构导入时，笔记既被标成日记
+/// （`is_daily = 1`），又留在 `2020-05-26` 这个文件夹下。而 `list_notes` 对所有
+/// 用户视角的笔记列表都强制 `is_daily = 0` —— 于是：
+///
+/// - 用户点开那个文件夹，笔记列表显示"暂无数据"，看着就是个**空文件夹**
+/// - 删它时却弹出"该文件夹下还有 1 篇笔记，将一并处理"
+/// - 确认后，那天的日记被扫进了回收站（真实用户反馈，得从回收站捞回来）
+///
+/// 根子在于"日记同时被两套体系管辖"：日记页按 `daily_date` 组织，笔记树按
+/// `folder_id` 组织，而列表又不显示日记。日期文件夹对用户没有任何信息价值
+/// （它的名字就是日记的日期），留着只会制造上面这种误删。
+///
+/// ## 这次做什么
+///
+/// 只把日记的 `folder_id` 置空，**不删任何文件夹**。空掉的日期文件夹交给
+/// 侧栏「清理空文件夹」按钮，让用户看过预览再决定 —— 批量删目录这种事不该
+/// 由一次静默的版本升级替用户做主。
+///
+/// 回收站里的日记一并处理：不然用户把这次误删的日记恢复出来，又会回到日期文件夹。
+/// 只改 `folder_id`，不动 `updated_at` / `content`，FTS 触发器（只监听 title /
+/// content / search_text）也不会被触发。
+fn migrate_v54_to_v55(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v54 -> v55 (日记脱离日期文件夹，修「看着空、删了却带走日记」)");
+
+    let detached = conn.execute(
+        "UPDATE notes SET folder_id = NULL WHERE is_daily = 1 AND folder_id IS NOT NULL",
+        [],
+    )?;
+
+    if detached > 0 {
+        log::info!(
+            "[v55] {} 篇日记已移出所在文件夹（内容与日期不变）；空掉的文件夹可在笔记侧栏「清理空文件夹」里批量删除",
+            detached
+        );
+    }
+
+    set_version(conn, 55)?;
     Ok(())
 }
 
