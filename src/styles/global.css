@@ -1627,6 +1627,13 @@ body,
   border-bottom: 0 !important;
 }
 
+/* 右键菜单指向的行：高亮底色画在 <tr> 上（见 pages/notes onRow），
+   这里把 td 底色清空让它透出来 —— antd 会给 hover / 勾选行的 td 单独上底色，
+   不清掉就会把 tr 的主色淡底整片盖住，等于没有右键反馈。 */
+.notes-list-flat .ant-table-tbody > tr.is-ctx-active > td {
+  background: transparent !important;
+}
+
 /* 设置页：左侧锚点导航 + 右侧内容区 两栏布局。
    左侧 sticky 跟随主区滚动；右侧内容区铺到接近主区域宽度，
    两侧仅留 12px 内边距避免贴边。整体不再硬限 max-width，

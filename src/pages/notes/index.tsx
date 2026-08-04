@@ -1670,15 +1670,35 @@ function DesktopNoteListPage() {
                     columnWidth: 40,
                   }}
                   components={{ body: { row: SortableTableRow } }}
-                  onRow={(record) => ({
-                    onContextMenu: (e: React.MouseEvent) => {
-                      e.preventDefault();
-                      noteCtx.open(
-                        { clientX: e.clientX, clientY: e.clientY },
-                        record,
-                      );
-                    },
-                  })}
+                  onRow={(record) => {
+                    // 右键菜单指向哪一行必须看得见：菜单弹在行外时，用户无从判断
+                    // 即将操作的是哪篇笔记。与侧栏笔记树 / 任务列表同款 contextActive 观感。
+                    const ctxActive = noteCtx.state.payload?.id === record.id;
+                    const rowSelected = selectedIds.includes(record.id);
+                    return {
+                      // is-ctx-active 会清掉 td 底色好让 tr 的灰底透出来 —— 已勾选的行不能加，
+                      // 否则右键会把 antd 的勾选主色底一起抹掉，等于右键时"选中状态丢了"
+                      className: ctxActive && !rowSelected ? "is-ctx-active" : undefined,
+                      // 已勾选行：底色照旧（主色淡底），只补一圈描边表示菜单指向它；
+                      // 未勾选行：补中性灰底 + 描边。底色不用主色淡底是为了跟勾选态区分开。
+                      style: ctxActive
+                        ? {
+                            ...(rowSelected
+                              ? {}
+                              : { background: token.colorFillTertiary }),
+                            outline: `1px solid ${token.colorPrimary}`,
+                            outlineOffset: -1,
+                          }
+                        : undefined,
+                      onContextMenu: (e: React.MouseEvent) => {
+                        e.preventDefault();
+                        noteCtx.open(
+                          { clientX: e.clientX, clientY: e.clientY },
+                          record,
+                        );
+                      },
+                    };
+                  }}
                 />
               </SortableContext>
             </DndContext>

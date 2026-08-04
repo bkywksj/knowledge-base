@@ -17,6 +17,7 @@ import {
 import {
   NotebookText,
   FolderPlus,
+  FolderX,
   ChevronDown,
   ChevronRight,
   Edit3,
@@ -49,7 +50,13 @@ import { useTabsStore } from "@/store/tabs";
 import { aiChatApi, folderApi, importApi, noteApi, searchApi, trashApi } from "@/lib/api";
 import { showExternalMdIntroOnce } from "@/lib/externalMdIntro";
 import { highlightText, highlightSnippet } from "@/lib/highlight";
-import type { Folder, Note, ScannedFile, SearchResult } from "@/types";
+import type {
+  EmptyFolderInfo,
+  Folder,
+  Note,
+  ScannedFile,
+  SearchResult,
+} from "@/types";
 import { parseEmojiPrefix } from "@/lib/treeIcons";
 import { NewNoteButton } from "@/components/NewNoteButton";
 import { FileTypeIcon } from "@/components/FileTypeIcon";
@@ -880,18 +887,24 @@ export function NotesPanel() {
     };
 
     // 先查子树统计，决定走"普通删除"还是"级联删除确认"
-    let stats = { folders: 0, notes: 0 };
+    let stats = { folders: 0, notes: 0, dailies: 0 };
     try {
       stats = await folderApi.subtreeStats(id);
     } catch {
       // 统计查询失败不阻断：按空处理走普通删除，后端非空会兜底报错
     }
+    // 日记不算"占用"：它在笔记列表里不显示，删文件夹也不会删它（只会让它回到未分类），
+    // 所以有日记的文件夹在用户眼里就是空的，照空文件夹流程走，只是文案里说明白。
     const isEmpty = stats.folders === 0 && stats.notes === 0;
 
     if (isEmpty) {
       Modal.confirm({
         title: `删除文件夹"${name}"`,
-        content: "该文件夹为空。删除后文件夹本身不可恢复。",
+        content:
+          stats.dailies > 0
+            ? `该文件夹为空，但关联着 ${stats.dailies} 篇日记（日记不在笔记列表里显示）。删除后这些日记会回到「未分类」，内容和日期都不受影响，仍可在每日笔记里查看。`
+            : "该文件夹为空。删除后文件夹本身不可恢复。",
+        width: stats.dailies > 0 ? 460 : undefined,
         okText: "删除",
         okType: "danger",
         cancelText: "取消",
@@ -927,6 +940,13 @@ export function NotesPanel() {
               </li>
             )}
             <li>本文件夹{stats.folders > 0 ? `及 ${stats.folders} 个子文件夹` : ""}一并删除</li>
+            {/* 日记在笔记列表里根本不显示，不写清楚用户会以为"文件夹是空的却说有内容" */}
+            {stats.dailies > 0 && (
+              <li>
+                {stats.dailies} 篇日记<b>不会被删除</b>，只是回到「未分类」，
+                仍可在每日笔记里查看
+              </li>
+            )}
           </ul>
         </div>
       ),
@@ -942,6 +962,80 @@ export function NotesPanel() {
               : "已删除文件夹",
           );
           finishCleanup();
+        } catch (e) {
+          message.error(String(e));
+          throw e;
+        }
+      },
+    });
+  }
+
+  /**
+   * 清理空文件夹：扫出「子树内没有任何未回收笔记」的文件夹，预览后批量删。
+   *
+   * 「导入历史日记」按 `日期文件夹/笔记.md` 建出成百上千个日期文件夹，日记摘走后
+   * 全成了空壳 —— 一个个右键删不现实，而且空壳多了侧栏树也变重。
+   * 判空口径比列表宽（日记 / 隐藏 / 加密笔记都算内容），宁可少删也不误删。
+   */
+  async function handleCleanupEmptyFolders() {
+    let list: EmptyFolderInfo[] = [];
+    try {
+      list = await folderApi.listEmpty();
+    } catch (e) {
+      message.error(String(e));
+      return;
+    }
+    if (list.length === 0) {
+      message.info("没有找到空文件夹");
+      return;
+    }
+    // 预览只列前 12 条：几百个路径全铺出来弹窗会长到没法看
+    const preview = list.slice(0, 12);
+    Modal.confirm({
+      title: "清理空文件夹",
+      width: 460,
+      content: (
+        <div style={{ fontSize: 13, lineHeight: 1.7 }}>
+          <div>
+            找到 <b>{list.length}</b> 个空文件夹（里面没有任何未回收的笔记，
+            日记也算内容）：
+          </div>
+          <div
+            style={{
+              maxHeight: 200,
+              overflow: "auto",
+              margin: "8px 0 0",
+              padding: "6px 10px",
+              background: token.colorFillQuaternary,
+              borderRadius: 6,
+              fontSize: 12,
+            }}
+          >
+            {preview.map((f) => (
+              <div key={f.id} className="truncate" title={f.path}>
+                {f.path}
+              </div>
+            ))}
+            {list.length > preview.length && (
+              <div style={{ color: token.colorTextTertiary }}>
+                …另有 {list.length - preview.length} 个
+              </div>
+            )}
+          </div>
+          <div style={{ marginTop: 8, color: token.colorTextTertiary }}>
+            文件夹删除后不可恢复；笔记不受影响。
+          </div>
+        </div>
+      ),
+      okText: `删除 ${list.length} 个`,
+      okType: "danger",
+      cancelText: "取消",
+      async onOk() {
+        try {
+          const r = await folderApi.cleanupEmpty(list.map((f) => f.id));
+          message.success(`已清理 ${r.deleted} 个空文件夹`);
+          loadFolders();
+          useAppStore.getState().bumpFoldersRefresh();
         } catch (e) {
           message.error(String(e));
           throw e;
@@ -1847,14 +1941,21 @@ export function NotesPanel() {
     const name = String(node.title ?? "");
     const { emoji, rest } = parseEmojiPrefix(name);
     const display = rest || name;
-    // 右键菜单当前指向本节点 → 文字外加 1px 描边提示
+    // 右键菜单当前指向本节点 → 灰底 + 1px 主色描边。
+    // 原来只有描边，细字号下几乎看不出来，未打开的笔记被右键时看着像"没反应"；
+    // 底色用中性灰而不是主色淡底 —— 主色淡底已经被"多选"和 antd 的"当前打开行"占着，
+    // 同色会分不清这行到底是被选中还是正被右键。
     const contextActive = contextMenu?.key === key;
-    const ctxStyle: React.CSSProperties = contextActive
+    // 描边单独拆出来：多选中的节点右键时要保留多选的底色，只让描边覆盖上去
+    const ctxOutline: React.CSSProperties = contextActive
       ? {
           outline: `1px solid ${token.colorPrimary}`,
           outlineOffset: 2,
           borderRadius: 4,
         }
+      : {};
+    const ctxStyle: React.CSSProperties = contextActive
+      ? { background: token.colorFillTertiary, ...ctxOutline }
       : {};
 
     if (isNoteKey(key)) {
@@ -1882,7 +1983,9 @@ export function NotesPanel() {
             handleTitleClick(key);
           }}
           title={name}
-          style={{ ...ctxStyle, ...multiStyle }}
+          // multiStyle 后置：多选高亮压过右键灰底（选中状态不能因为右键就没了）；
+          // ctxOutline 再压最后，保证被右键的那个节点始终有一圈主色描边
+          style={{ ...ctxStyle, ...multiStyle, ...ctxOutline }}
         >
           {emoji ? (
             <span style={{ fontSize: 14, flexShrink: 0, lineHeight: 1 }}>
@@ -2153,10 +2256,28 @@ export function NotesPanel() {
   }, [treeData, expandedKeys]);
   const treeContainerRef = useRef<HTMLDivElement>(null);
   const [treeHeight, setTreeHeight] = useState(0);
-  // 只在节点超阈值时才启用 virtual：少量节点下 virtual 模式自带的微滚动抖动反而是负优化
-  const enableVirtual = visibleNodeCount > VIRTUAL_THRESHOLD;
+  // 只在节点超阈值时才启用 virtual：少量节点下 virtual 模式自带的微滚动抖动反而是负优化。
+  //
+  // 🔴 带迟滞（>200 开、<120 才关），而且**开了就先粘住**。
+  // 原来是裸阈值 `count > 200`：几百个文件夹的库里，展开/折叠任意一个都会让可见节点数
+  // 在 200 上下横跳 → virtual 反复开关。而开关会换掉滚动容器（virtual 由 Tree 内部的
+  // 虚拟列表滚，非 virtual 由外层 div 滚），换一次 scrollTop 就归零 —— 这就是用户报的
+  // "点展开箭头随机跳回列表顶部"。中间那一帧还会全量渲染 200+ 节点，卡顿感也来自这里。
+  const [virtualLatched, setVirtualLatched] = useState(false);
   useEffect(() => {
-    if (!enableVirtual) return;
+    if (!virtualLatched && visibleNodeCount > VIRTUAL_THRESHOLD) {
+      setVirtualLatched(true);
+    } else if (virtualLatched && visibleNodeCount < VIRTUAL_THRESHOLD * 0.6) {
+      // 掉到阈值 60% 以下才关（比如用户真的删掉了大批文件夹），避免贴着阈值来回抖
+      setVirtualLatched(false);
+    }
+  }, [visibleNodeCount, virtualLatched]);
+  const enableVirtual = virtualLatched;
+  // 测高度**不依赖 enableVirtual**：原来只在 virtual 开启后才注册 ResizeObserver，
+  // 于是切到 virtual 的那一帧 treeHeight 还是 0 → Tree 拿不到 height（不虚拟、不内部滚动），
+  // 而外层容器已经按 enableVirtual 变成 overflow-hidden → 内容被截断且没有滚动条，
+  // 表现就是用户说的"卡住、滑块消失"。始终测量后，切换时高度已经就绪。
+  useEffect(() => {
     const el = treeContainerRef.current;
     if (!el) return;
     // 初次测一下（ResizeObserver 首次回调一定在 layout 后，先用 clientHeight 兜底避免首帧白）
@@ -2169,7 +2290,10 @@ export function NotesPanel() {
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [enableVirtual]);
+  }, [searchActive, folderExpanded]);
+  // 容器样式必须和"Tree 到底有没有接管滚动"完全同步：只要还没测到高度，
+  // 就保持外层可滚，绝不出现"外层不滚 + 内层也不滚"的死状态。
+  const treeVirtualActive = enableVirtual && treeHeight > 0;
 
   return (
     <div
@@ -2274,7 +2398,11 @@ export function NotesPanel() {
           Q-004：启用 virtual scroll 时本层必须 overflow-hidden + flex-col，让 Tree 占满剩余空间且自己接管滚动；
           节点数少时退化回 overflow-auto，保持旧体验 */}
       <div
-        className={enableVirtual ? "flex-1 overflow-hidden flex flex-col" : "flex-1 overflow-auto"}
+        className={
+          treeVirtualActive
+            ? "flex-1 overflow-hidden flex flex-col"
+            : "flex-1 overflow-auto"
+        }
         style={{
           minHeight: 0,
           paddingTop: 4,
@@ -2405,16 +2533,30 @@ export function NotesPanel() {
               {folderExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
               文件夹
             </span>
-            <Button
-              type="text"
-              size="small"
-              icon={<FolderPlus size={14} />}
-              onClick={(e) => {
-                e.stopPropagation();
-                setCreatingRoot(true);
-              }}
-              style={{ width: 24, height: 24, padding: 0 }}
-            />
+            <span className="flex items-center gap-0.5">
+              <Button
+                type="text"
+                size="small"
+                title="清理空文件夹"
+                icon={<FolderX size={14} />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void handleCleanupEmptyFolders();
+                }}
+                style={{ width: 24, height: 24, padding: 0 }}
+              />
+              <Button
+                type="text"
+                size="small"
+                title="新建文件夹"
+                icon={<FolderPlus size={14} />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCreatingRoot(true);
+                }}
+                style={{ width: 24, height: 24, padding: 0 }}
+              />
+            </span>
           </div>
         )}
 
@@ -2422,7 +2564,7 @@ export function NotesPanel() {
           <div
             ref={treeContainerRef}
             // Q-004：virtual 模式下让本层 flex-1 + 自己 overflow-hidden，Tree 才能拿到稳定可测的高度（外层不滚 → 内层撑满）
-            className={enableVirtual ? "flex-1 min-h-0 overflow-hidden" : undefined}
+            className={treeVirtualActive ? "flex-1 min-h-0 overflow-hidden" : undefined}
             style={{ padding: "0 12px" }}
             tabIndex={0}
             onKeyDown={handleTreeKeyDown}
@@ -2470,7 +2612,7 @@ export function NotesPanel() {
                 treeData={treeData}
                 blockNode
                 // Q-004：节点 > 阈值 + 容器已测得高度 → 启用 antd Tree 的 virtual scroll（默认 itemHeight=28）
-                {...(enableVirtual && treeHeight > 0
+                {...(treeVirtualActive
                   ? { virtual: true, height: treeHeight }
                   : {})}
                 draggable={{
