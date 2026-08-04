@@ -248,19 +248,15 @@ pub fn scan_note(
     content: &str,
 ) -> Result<usize, AppError> {
     let refs = extract_local_refs(content);
-    let mut count = 0usize;
-    for rel in refs {
-        if let Some(s) = try_resolve(data_dir, &rel) {
-            db.upsert_attachment_ref(
-                note_id,
-                &s.local_rel_path,
-                &s.sha256_hex,
-                s.size,
-                s.mime.as_deref(),
-            )?;
-            count += 1;
-        }
-    }
+    // 先把文件 IO + hash 全做完（**不持锁**），再一次性写库。
+    // 逐条 upsert 会在全库扫描时产生近万次 Mutex 加解锁，与主线程上的同步 Command
+    // 争锁 → 扫描期间点笔记转圈。见 `Database::upsert_attachment_refs_batch` 的文档。
+    let resolved: Vec<(String, String, i64, Option<String>)> = refs
+        .into_iter()
+        .filter_map(|rel| try_resolve(data_dir, &rel))
+        .map(|s| (s.local_rel_path, s.sha256_hex, s.size, s.mime))
+        .collect();
+    let count = db.upsert_attachment_refs_batch(note_id, &resolved)?;
     let _ = sha256_hex; // 防止 import 未使用警告（保留接口对齐）
     Ok(count)
 }

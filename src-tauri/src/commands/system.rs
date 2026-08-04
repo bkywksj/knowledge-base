@@ -32,22 +32,34 @@ pub fn resolve_asset_absolute_path(
 /// 而不是换成另一个同样打不开的路径）。
 ///
 /// 安全：结果必经 `rel_to_abs` 校验，天然限定在 data_dir 之内，不会逃逸。
+///
+/// **必须是 `async` + `spawn_blocking`**：Tauri 把非 async Command 放在**主线程**执行，
+/// 而本命令内部要做文件系统 stat（`exists()`）；`resolve_content_url` 的跨机重映射
+/// 兜底还可能再 stat 一次。一篇含大量老路径引用的笔记会串行发起几十上百次这样的调用，
+/// 全压在主线程上 → 窗口冻结、笔记"一直加载中"。
+/// 同款教训见 `commands::sync_v1::sync_v1_push` 的注释。
 #[tauri::command]
-pub fn resolve_content_asset_rel(
-    state: State<'_, AppState>,
+pub async fn resolve_content_asset_rel(
+    app: tauri::AppHandle,
     url: String,
 ) -> Result<Option<String>, String> {
-    let Some(abs) = asset_path::resolve_content_url(&url, &state.data_dir) else {
-        return Ok(None);
-    };
-    let Some(rel) = asset_path::abs_to_rel(&abs, &state.data_dir) else {
-        return Ok(None);
-    };
-    // 只在本机确实有这份文件时才认；否则返回 None 让前端保持原样
-    match asset_path::rel_to_abs(&rel, &state.data_dir) {
-        Ok(p) if p.exists() => Ok(Some(rel)),
-        _ => Ok(None),
-    }
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app.state::<AppState>();
+        let Some(abs) = asset_path::resolve_content_url(&url, &state.data_dir) else {
+            return Ok(None);
+        };
+        let Some(rel) = asset_path::abs_to_rel(&abs, &state.data_dir) else {
+            return Ok(None);
+        };
+        // 只在本机确实有这份文件时才认；否则返回 None 让前端保持原样
+        match asset_path::rel_to_abs(&rel, &state.data_dir) {
+            Ok(p) if p.exists() => Ok(Some(rel)),
+            _ => Ok(None),
+        }
+    })
+    .await
+    .map_err(|e| format!("解析资产路径任务异常终止: {}", e))?
 }
 
 /// 获取系统信息

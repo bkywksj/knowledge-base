@@ -110,18 +110,30 @@ pub fn get_images_dir(state: State<'_, AppState>) -> Result<String, String> {
 /// 前端用 `new Blob([bytes])` + `URL.createObjectURL` 喂给 `<img>`。
 ///
 /// 安全：rel 必须不含 `..`、不能是绝对路径，且解析后必须落在 images 目录下。
+///
+/// **必须是 `async` + `spawn_blocking`**：Tauri 把非 async Command 放在**主线程**执行，
+/// 而这里要读整个图片文件、加密图还要走一次 AES 解密。一篇笔记里有几十张图时，
+/// 这些调用会串行霸占主线程 → 整个窗口冻结、笔记"一直加载中"。
+/// 同款教训见 `commands::sync_v1::sync_v1_push` 的注释。
 #[tauri::command]
-pub fn get_image_blob(state: State<'_, AppState>, path: String) -> Result<Vec<u8>, String> {
-    // 兼容传入绝对路径的旧调用：尝试转相对，失败则当作绝对路径继续走老校验
-    let abs = match asset_path::rel_to_abs(&path, &state.data_dir) {
-        Ok(p) => p,
-        Err(_) => std::path::PathBuf::from(&path),
-    };
-    let images_root = ImageService::images_dir(&state.data_dir);
-    let images_root_str = images_root.to_string_lossy().to_string().replace('\\', "/");
-    let abs_str = abs.to_string_lossy().to_string().replace('\\', "/");
-    if !abs_str.starts_with(&images_root_str) {
-        return Err(format!("非法路径（不在 images 目录下）: {}", path));
-    }
-    ImageService::read_for_render(&state.vault, &abs.to_string_lossy()).map_err(|e| e.to_string())
+pub async fn get_image_blob(app: tauri::AppHandle, path: String) -> Result<Vec<u8>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app.state::<AppState>();
+        // 兼容传入绝对路径的旧调用：尝试转相对，失败则当作绝对路径继续走老校验
+        let abs = match asset_path::rel_to_abs(&path, &state.data_dir) {
+            Ok(p) => p,
+            Err(_) => std::path::PathBuf::from(&path),
+        };
+        let images_root = ImageService::images_dir(&state.data_dir);
+        let images_root_str = images_root.to_string_lossy().to_string().replace('\\', "/");
+        let abs_str = abs.to_string_lossy().to_string().replace('\\', "/");
+        if !abs_str.starts_with(&images_root_str) {
+            return Err(format!("非法路径（不在 images 目录下）: {}", path));
+        }
+        ImageService::read_for_render(&state.vault, &abs.to_string_lossy())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("读取图片任务异常终止: {}", e))?
 }

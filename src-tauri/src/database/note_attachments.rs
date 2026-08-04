@@ -26,7 +26,11 @@ pub struct NoteAttachmentRow {
 }
 
 impl Database {
-    /// upsert 一条笔记 → 资产的引用记录（同 note_id+rel_path 覆盖）
+    /// upsert 单条笔记 → 资产的引用记录（同 note_id+rel_path 覆盖）。
+    ///
+    /// 薄包装，委托给 [`upsert_attachment_refs_batch`]，避免两份 SQL 各自演化。
+    /// **热路径（附件扫描）不要用它**：逐条调会产生大量锁抖动，直接用批量版。
+    /// 目前主要供测试与零星单点写入使用。
     pub fn upsert_attachment_ref(
         &self,
         note_id: i64,
@@ -35,20 +39,55 @@ impl Database {
         size: i64,
         mime: Option<&str>,
     ) -> Result<(), AppError> {
+        self.upsert_attachment_refs_batch(
+            note_id,
+            &[(
+                local_rel_path.to_string(),
+                sha256_hex.to_string(),
+                size,
+                mime.map(|s| s.to_string()),
+            )],
+        )?;
+        Ok(())
+    }
+
+    /// 批量 upsert 一条笔记的全部资产引用（一次加锁 + 一个事务）。
+    ///
+    /// 相对逐条调 [`upsert_attachment_ref`] 的意义在于**减少锁抖动**：
+    /// 附件全库扫描要处理近万条引用，逐条 upsert 就是近万次
+    /// `Mutex` 加解锁。同步跑在 `spawn_blocking` 线程上，而 `get_note` 之类的
+    /// **同步 Command 跑在主线程**并争抢同一把锁 —— 高频抖动下主线程可能被饿住，
+    /// 用户体感就是"扫描期间点笔记一直转圈"。一次锁 + 一个事务同时也让写入更快。
+    ///
+    /// 入参为空时直接返回（不开事务）。返回成功写入的条数。
+    pub fn upsert_attachment_refs_batch(
+        &self,
+        note_id: i64,
+        refs: &[(String, String, i64, Option<String>)],
+    ) -> Result<usize, AppError> {
+        if refs.is_empty() {
+            return Ok(0);
+        }
         let conn = self
             .conn
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
-        conn.execute(
-            "INSERT INTO note_attachments (note_id, local_rel_path, sha256_hex, size, mime)
-             VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(note_id, local_rel_path) DO UPDATE SET
-                 sha256_hex = excluded.sha256_hex,
-                 size       = excluded.size,
-                 mime       = excluded.mime",
-            params![note_id, local_rel_path, sha256_hex, size, mime],
-        )?;
-        Ok(())
+        let tx = conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO note_attachments (note_id, local_rel_path, sha256_hex, size, mime)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(note_id, local_rel_path) DO UPDATE SET
+                     sha256_hex = excluded.sha256_hex,
+                     size       = excluded.size,
+                     mime       = excluded.mime",
+            )?;
+            for (rel, sha, size, mime) in refs {
+                stmt.execute(params![note_id, rel, sha, size, mime.as_deref()])?;
+            }
+        }
+        tx.commit()?;
+        Ok(refs.len())
     }
 
     /// 列出某笔记的所有附件引用
@@ -286,5 +325,85 @@ mod tests {
             conn.execute("DELETE FROM notes WHERE id = ?1", [nid]).unwrap();
         }
         assert!(db.list_attachments_for_note(nid).unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod batch_upsert_tests {
+    use super::*;
+    use crate::models::NoteInput;
+
+    fn mk(db: &Database, title: &str) -> i64 {
+        db.create_note(&NoteInput {
+            title: title.into(),
+            content: "x".into(),
+            folder_id: None,
+        })
+        .unwrap()
+        .id
+    }
+
+    /// 批量写入的结果必须与逐条写入等价
+    #[test]
+    fn batch_upsert_writes_all_rows() {
+        let db = Database::init(":memory:").unwrap();
+        let nid = mk(&db, "n");
+        let refs = vec![
+            ("kb_assets/images/a.png".to_string(), "h1".to_string(), 100, Some("image/png".to_string())),
+            ("pdfs/b.pdf".to_string(), "h2".to_string(), 2000, Some("application/pdf".to_string())),
+            ("attachments/3/c.zip".to_string(), "h3".to_string(), 30, None),
+        ];
+        let n = db.upsert_attachment_refs_batch(nid, &refs).unwrap();
+        assert_eq!(n, 3);
+
+        let rows = db.list_attachments_for_note(nid).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].local_rel_path, "attachments/3/c.zip");
+        assert_eq!(rows[0].mime, None, "mime 为 None 应原样落 NULL");
+    }
+
+    /// 同 (note_id, rel_path) 再写一次 → 覆盖而不是插重复行
+    #[test]
+    fn batch_upsert_overwrites_same_path() {
+        let db = Database::init(":memory:").unwrap();
+        let nid = mk(&db, "n");
+        db.upsert_attachment_refs_batch(
+            nid,
+            &[("kb_assets/x.png".into(), "old".into(), 1, None)],
+        )
+        .unwrap();
+        db.upsert_attachment_refs_batch(
+            nid,
+            &[("kb_assets/x.png".into(), "new".into(), 999, Some("image/png".into()))],
+        )
+        .unwrap();
+
+        let rows = db.list_attachments_for_note(nid).unwrap();
+        assert_eq!(rows.len(), 1, "同路径应覆盖而非新增");
+        assert_eq!(rows[0].sha256_hex, "new");
+        assert_eq!(rows[0].size, 999);
+    }
+
+    /// 空入参不开事务、不报错
+    #[test]
+    fn batch_upsert_empty_is_noop() {
+        let db = Database::init(":memory:").unwrap();
+        let nid = mk(&db, "n");
+        assert_eq!(db.upsert_attachment_refs_batch(nid, &[]).unwrap(), 0);
+        assert!(db.list_attachments_for_note(nid).unwrap().is_empty());
+    }
+
+    /// 单条包装方法与批量版行为一致（包装不能改语义）
+    #[test]
+    fn single_wrapper_matches_batch() {
+        let db = Database::init(":memory:").unwrap();
+        let nid = mk(&db, "n");
+        db.upsert_attachment_ref(nid, "pdfs/z.pdf", "hh", 42, Some("application/pdf"))
+            .unwrap();
+        let rows = db.list_attachments_for_note(nid).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].sha256_hex, "hh");
+        assert_eq!(rows[0].size, 42);
+        assert_eq!(rows[0].mime.as_deref(), Some("application/pdf"));
     }
 }
