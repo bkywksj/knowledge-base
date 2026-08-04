@@ -72,6 +72,12 @@ export interface Note {
   is_hidden: boolean;
   /** T-007: 是否加密。content 字段会是占位符，真实内容需调 decryptNote */
   is_encrypted: boolean;
+  /**
+   * 是否"临时编辑"。以临时方式打开的外部 .md：照常写回原文件，
+   * 但不进主列表 / 搜索 / 双链 / RAG，只在「临时文件」面板可见。
+   * 与 is_hidden 的区别：那个是隐私（配 PIN），这个只是"不想污染知识库"。
+   */
+  is_scratch: boolean;
   word_count: number;
   created_at: string;
   updated_at: string;
@@ -665,6 +671,11 @@ export interface OpenMarkdownResult {
   noteId: number;
   /** 检测到源文件有变化并已同步回笔记 */
   wasSynced: boolean;
+  /**
+   * 这条笔记当前是否为"临时编辑"状态。
+   * 不等于打开时传的 asScratch —— 复用一条已有正式笔记时不会被降级成临时。
+   */
+  isScratch: boolean;
 }
 
 /** 孤儿素材类型 */

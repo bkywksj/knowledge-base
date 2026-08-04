@@ -283,6 +283,12 @@ export const noteApi = {
   /** T-003: 切换"隐藏"状态；返回切换后的新状态 */
   setHidden: (id: number, hidden: boolean) =>
     invoke<boolean>("set_note_hidden", { id, hidden }),
+  /** 列出「临时编辑」笔记（以临时方式打开的外部 .md），分页 */
+  listScratch: (page = 1, pageSize = 20) =>
+    invoke<PageResult<Note>>("list_scratch_notes", { page, pageSize }),
+  /** 设置 / 取消「临时编辑」标记；false = 转为正式笔记，回到主列表与搜索 */
+  setScratch: (id: number, scratch: boolean) =>
+    invoke<void>("set_note_scratch", { id, scratch }),
   /** T-014: 网页剪藏 — 把 URL 抓成 markdown 笔记；返回新建笔记 */
   clipUrl: (url: string, folderId?: number | null) =>
     invoke<Note>("clip_url_to_note", { url, folderId: folderId ?? null }),
@@ -726,9 +732,15 @@ export const importApi = {
       policy: policy ?? "skip",
       dailyMode: dailyMode ?? false,
     }),
-  /** 打开单个 md 文件；返回 note id 与是否已同步 */
-  openMarkdownFile: (filePath: string) =>
-    invoke<OpenMarkdownResult>("open_markdown_file", { filePath }),
+  /**
+   * 打开单个 md 文件；返回 note id、是否已同步、以及是否为临时编辑。
+   *
+   * `asScratch=true`：按「临时编辑」打开 —— 照常入库、照常写回原文件，
+   * 但不进主列表 / 搜索 / 双链。用于"只是拿本应用改一份外部 .md"的场景。
+   * 复用一条已有的正式笔记时不会被降级，返回值里的 isScratch 才是真实状态。
+   */
+  openMarkdownFile: (filePath: string, asScratch = false) =>
+    invoke<OpenMarkdownResult>("open_markdown_file", { filePath, asScratch }),
 };
 
 /** 孤儿素材维护 API（图片/视频/附件/PDF/源文件统一扫描清理） */
