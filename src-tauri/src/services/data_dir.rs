@@ -81,6 +81,40 @@ fn looks_posix_absolute(path: &str) -> bool {
     p.starts_with('/') && !p.contains('\\')
 }
 
+/// 判断两个路径是否指向**同一个位置**。
+///
+/// ## 为什么必须有（数据全毁级隐患）
+///
+/// 迁移的 fallback 复制走 [`copy_file_with_progress`]，其中
+/// `File::create(dst)` 的语义是「创建**或截断**」。当 `src == dst` 时，
+/// 它会先把源文件清零，接着从空文件里读到 0 字节 —— **整个文件被抹掉**。
+///
+/// 线上真实出现过 `marker: …/data → …/data`（用户把新数据目录选成了当前目录）。
+/// 那次侥幸没出事：`run_migration` 是 rename 优先，而 POSIX 规范保证
+/// `rename(x, x)` 是 no-op 且返回成功，于是没走到 fallback。但只要 rename
+/// 因任何原因失败（权限、文件被占用、目录跨设备挂载），数据就没了。
+///
+/// 判定策略：优先 `canonicalize`（解开符号链接、`.` / `..`、Windows 大小写与
+/// 8.3 短名）；任一路径不存在时退回规范化字符串比较（去尾部分隔符，
+/// Windows 上不区分大小写）。
+fn is_same_location(a: &Path, b: &Path) -> bool {
+    if let (Ok(ca), Ok(cb)) = (a.canonicalize(), b.canonicalize()) {
+        return ca == cb;
+    }
+    normalize_path_for_compare(a) == normalize_path_for_compare(b)
+}
+
+/// `is_same_location` 的字符串兜底：统一分隔符 + 去尾部分隔符 + Windows 折大小写
+fn normalize_path_for_compare(p: &Path) -> String {
+    let s = p.to_string_lossy().replace('\\', "/");
+    let s = s.trim_end_matches('/');
+    if cfg!(windows) {
+        s.to_lowercase()
+    } else {
+        s.to_string()
+    }
+}
+
 /// 迁移 marker 文件名（位于 framework app_data_dir 内）
 pub const MIGRATION_MARKER: &str = "migration.json";
 
@@ -336,6 +370,14 @@ impl DataDirResolver {
         from_dir: &Path,
         to_dir: &str,
     ) -> Result<(), AppError> {
+        // 防护第 1 层：源 == 目标直接拒绝，连指针都不写。
+        // 「把数据迁移到当前所在目录」本身没有任何意义，放行只会让
+        // run_migration 去做自我复制（见 is_same_location 的文档）。
+        if is_same_location(from_dir, Path::new(to_dir.trim())) {
+            return Err(AppError::InvalidInput(
+                "新数据目录与当前数据目录相同，无需迁移".into(),
+            ));
+        }
         // 先按普通流程写指针
         Self::set_pending(framework_app_data_dir, to_dir)?;
         // 再写迁移 marker
@@ -400,6 +442,28 @@ impl DataDirResolver {
         let from = PathBuf::from(&marker.from);
         let to = PathBuf::from(&marker.to);
         std::fs::create_dir_all(&to)?;
+
+        // 防护第 2 层：marker 里源 == 目标 → 什么都不做，直接标记完成。
+        // set_pending_with_migration 已经在入口拦了，但老版本写下的 marker、
+        // 或用户手改过的 marker 仍可能是这种形态（线上真实出现过），
+        // 这里必须兜住 —— 否则会进入自我复制（见 is_same_location 的文档）。
+        if is_same_location(&from, &to) {
+            log::warn!(
+                "[migration] marker 的源与目标是同一目录（{}），无需迁移 —— 跳过复制并清除 marker",
+                from.display()
+            );
+            Self::mark_migration_done(framework_app_data_dir)?;
+            emit(&MigrationProgress {
+                phase: "done".into(),
+                current_file: String::new(),
+                item_index: 0,
+                item_total: 0,
+                bytes_done: 0,
+                bytes_total: 0,
+                message: "数据目录未变化，无需迁移".into(),
+            });
+            return Ok(());
+        }
 
         // 写 in_progress 状态
         let mut current = marker.clone();
@@ -560,6 +624,18 @@ fn copy_file_with_progress(
     emit: &ProgressEmitter,
     rel: &str,
 ) -> Result<(), AppError> {
+    // 防护第 3 层（最后一道）：src == dst 时**绝不能**往下走。
+    // 下面的 `File::create(dst)` 是「创建或截断」语义，会先把源文件清零，
+    // 再从空文件读到 0 字节 —— 文件内容被彻底抹掉，且不可恢复。
+    // 前两层已在入口和 marker 处拦截，这里兜住一切漏网路径。
+    if is_same_location(src, dst) {
+        log::warn!("[migration] 跳过自我复制（源与目标是同一文件）: {}", src.display());
+        // 仍要累加字节，否则进度条永远差这一截
+        if let Ok(meta) = std::fs::metadata(src) {
+            *bytes_done += meta.len();
+        }
+        return Ok(());
+    }
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -601,6 +677,12 @@ fn copy_dir_recursive(
     emit: &ProgressEmitter,
     rel: &str,
 ) -> Result<(), AppError> {
+    // 同 copy_file_with_progress：源目录 == 目标目录时递归复制毫无意义，
+    // 且会让下层对每个文件做自我复制。直接跳过。
+    if is_same_location(src, dst) {
+        log::warn!("[migration] 跳过自我复制（源与目标是同一目录）: {}", src.display());
+        return Ok(());
+    }
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
@@ -974,5 +1056,171 @@ mod cross_platform_guard_tests {
             .join(format!("kb_guard_test_{}_{}", std::process::id(), n));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+}
+
+#[cfg(test)]
+mod self_copy_guard_tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let n = N.fetch_add(1, Ordering::SeqCst);
+        let d = std::env::temp_dir().join(format!("kb_selfcopy_{}_{}_{}", tag, std::process::id(), n));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn noop_emit() -> Box<ProgressEmitter> {
+        Box::new(|_: &MigrationProgress| {})
+    }
+
+    /// 🔴 核心回归：src == dst 时**绝不能**把文件截断成 0 字节。
+    ///
+    /// 没有这道防护时，`File::create(dst)` 会先清零源文件，再从空文件读 0 字节 ——
+    /// 整个 app.db 被抹掉且不可恢复。线上真实出现过 `marker: …/data → …/data`。
+    #[test]
+    fn copy_file_never_truncates_when_src_equals_dst() {
+        let dir = temp_dir("file");
+        let f = dir.join("app.db");
+        let payload = b"SQLite format 3\x00 important user data";
+        std::fs::write(&f, payload).unwrap();
+
+        let mut done = 0u64;
+        let emit = noop_emit();
+        copy_file_with_progress(&f, &f, &mut done, payload.len() as u64, &emit, "app.db").unwrap();
+
+        let after = std::fs::read(&f).unwrap();
+        assert_eq!(after, payload, "自我复制绝不能改动文件内容（这是数据全毁级 bug）");
+        assert_eq!(done, payload.len() as u64, "进度仍应累加，否则进度条到不了 100%");
+    }
+
+    /// 路径写法不同但指向同一文件（尾部 `/`、`.` 中间段）也要挡住
+    #[test]
+    fn copy_file_guard_handles_equivalent_path_spellings() {
+        let dir = temp_dir("spell");
+        let f = dir.join("app.db");
+        let payload = b"data-must-survive";
+        std::fs::write(&f, payload).unwrap();
+
+        // 用 `<dir>/./app.db` 指向同一个文件
+        let alias = dir.join(".").join("app.db");
+        let mut done = 0u64;
+        let emit = noop_emit();
+        copy_file_with_progress(&f, &alias, &mut done, payload.len() as u64, &emit, "app.db").unwrap();
+
+        assert_eq!(std::fs::read(&f).unwrap(), payload, "等价路径写法也必须被识别为同一文件");
+    }
+
+    /// 正常的跨目录复制不能被误伤
+    #[test]
+    fn copy_file_still_works_for_distinct_paths() {
+        let src_dir = temp_dir("src");
+        let dst_dir = temp_dir("dst");
+        let src = src_dir.join("a.bin");
+        let dst = dst_dir.join("a.bin");
+        let payload = vec![7u8; 200 * 1024]; // 跨过 64KB 缓冲多轮读写
+        std::fs::write(&src, &payload).unwrap();
+
+        let mut done = 0u64;
+        let emit = noop_emit();
+        copy_file_with_progress(&src, &dst, &mut done, payload.len() as u64, &emit, "a.bin").unwrap();
+
+        assert_eq!(std::fs::read(&dst).unwrap(), payload, "正常复制必须照常工作");
+        assert_eq!(std::fs::read(&src).unwrap(), payload, "源文件不能被动");
+        assert_eq!(done, payload.len() as u64);
+    }
+
+    /// 目录级自我复制同样跳过，且目录内文件完好
+    #[test]
+    fn copy_dir_never_destroys_when_src_equals_dst() {
+        let dir = temp_dir("dir");
+        let sub = dir.join("kb_assets");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("x.png"), b"PNG-BYTES").unwrap();
+
+        let mut done = 0u64;
+        let emit = noop_emit();
+        copy_dir_recursive(&sub, &sub, &mut done, 9, &emit, "kb_assets").unwrap();
+
+        assert_eq!(std::fs::read(sub.join("x.png")).unwrap(), b"PNG-BYTES");
+    }
+
+    /// 防护第 1 层：入口拒绝「源 == 目标」的迁移请求
+    #[test]
+    fn set_pending_with_migration_rejects_same_dir() {
+        let app_data = temp_dir("entry");
+        let data = temp_dir("entry-data");
+
+        let r = DataDirResolver::set_pending_with_migration(
+            &app_data,
+            &data,
+            data.to_str().unwrap(),
+        );
+        assert!(r.is_err(), "源 == 目标必须被拒绝");
+
+        // 连指针都不该写下（失败要干净）
+        assert!(
+            !app_data.join(POINTER_FILE).exists(),
+            "拒绝时不应留下指针文件"
+        );
+        assert!(!app_data.join(MIGRATION_MARKER).exists(), "拒绝时不应留下 marker");
+    }
+
+    /// 入口对不同目录仍然放行（防护不能误伤正常迁移）
+    #[test]
+    fn set_pending_with_migration_allows_distinct_dirs() {
+        let app_data = temp_dir("ok-app");
+        let from = temp_dir("ok-from");
+        let to = temp_dir("ok-to");
+
+        DataDirResolver::set_pending_with_migration(&app_data, &from, to.to_str().unwrap())
+            .expect("不同目录应正常放行");
+        assert!(app_data.join(POINTER_FILE).exists());
+        assert!(app_data.join(MIGRATION_MARKER).exists());
+    }
+
+    /// 防护第 2 层：已存在的「源 == 目标」marker（老版本写的 / 手改的）
+    /// 必须被识别、跳过复制、并清掉 marker（否则每次启动都重试）
+    #[test]
+    fn run_migration_skips_and_clears_same_dir_marker() {
+        let app_data = temp_dir("marker-app");
+        let data = temp_dir("marker-data");
+        let f = data.join("app.db");
+        std::fs::write(&f, b"user-data").unwrap();
+
+        let marker = MigrationMarker {
+            from: data.to_string_lossy().into(),
+            to: data.to_string_lossy().into(),
+            status: MigrationStatus::Pending,
+            started_at: "2026-08-04 14:28:51".into(),
+            updated_at: "2026-08-04 14:28:51".into(),
+            completed_items: Vec::new(),
+        };
+        write_marker(&app_data, &marker).unwrap();
+
+        let emit = noop_emit();
+        DataDirResolver::run_migration(&app_data, &marker, &emit).unwrap();
+
+        assert_eq!(std::fs::read(&f).unwrap(), b"user-data", "数据必须完好");
+        assert!(
+            !app_data.join(MIGRATION_MARKER).exists(),
+            "marker 必须被清除，否则每次启动都会重跑"
+        );
+    }
+
+    #[test]
+    fn is_same_location_basics() {
+        let a = temp_dir("same-a");
+        let b = temp_dir("same-b");
+        assert!(is_same_location(&a, &a));
+        assert!(!is_same_location(&a, &b));
+        // 尾部分隔符不影响判定（走字符串兜底路径也要正确）
+        let with_slash = PathBuf::from(format!("{}/", a.to_string_lossy()));
+        assert!(is_same_location(&a, &with_slash));
+        // 不存在的路径走字符串兜底
+        let ghost = std::env::temp_dir().join("kb_ghost_never_exists_xyz");
+        assert!(is_same_location(&ghost, &ghost));
     }
 }
