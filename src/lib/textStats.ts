@@ -37,6 +37,28 @@ export function calcEditorStats(editor: Editor): EditorTextStats {
   // blockSeparator 让块边界处的英文词不被错误连接（例如代码块结束接段落）
   const text = editor.getText({ blockSeparator: "\n\n" });
 
+  let paragraphs = 0;
+  editor.state.doc.descendants((node) => {
+    if (node.type.name === "paragraph" && node.textContent.trim().length > 0) {
+      paragraphs += 1;
+    }
+    return true;
+  });
+
+  return { ...calcTextStats(text), paragraphs };
+}
+
+/**
+ * 纯文本版统计 —— 给拿不到 Editor 实例的场景用（如源码模式直接统计 markdown 原文）。
+ *
+ * 与 `calcEditorStats` 共用同一套字数 / 字符 / 阅读时长口径，保证两种编辑模式下
+ * 显示的数字一致；差别只在段落数：这里没有文档树，退化成"按空行分段"，
+ * 而富文本模式数的是 paragraph 节点。
+ *
+ * 注意：源码模式统计的是 **markdown 原文**，`#`、`*`、链接语法都会计入字符数 ——
+ * 这与所见即所得模式下"只数正文"必然有出入，属于两种模式的固有差异。
+ */
+export function calcTextStats(text: string): EditorTextStats {
   const cjkCount = (text.match(CJK_REGEX) || []).length;
   const nonCjk = text.replace(CJK_REGEX, " ");
   const engWords = nonCjk.split(/\s+/).filter(Boolean).length;
@@ -45,13 +67,10 @@ export function calcEditorStats(editor: Editor): EditorTextStats {
   const chars = [...text].length;
   const charsNoSpace = [...text.replace(/\s+/g, "")].length;
 
-  let paragraphs = 0;
-  editor.state.doc.descendants((node) => {
-    if (node.type.name === "paragraph" && node.textContent.trim().length > 0) {
-      paragraphs += 1;
-    }
-    return true;
-  });
+  // 无文档树时按空行切段（markdown 的段落分隔约定），并跳过纯空白块
+  const paragraphs = text
+    .split(/\n\s*\n/)
+    .filter((block) => block.trim().length > 0).length;
 
   const readMinutes = Math.max(1, Math.ceil(words / READ_WPM));
 

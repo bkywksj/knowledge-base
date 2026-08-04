@@ -9,14 +9,30 @@
 import { useEffect, useState } from "react";
 import { Popover, Typography } from "antd";
 import type { Editor } from "@tiptap/react";
-import { calcEditorStats, type EditorTextStats } from "@/lib/textStats";
+import { calcEditorStats, calcTextStats, type EditorTextStats } from "@/lib/textStats";
 
 const { Text } = Typography;
 
-export function EditorStats({ editor }: { editor: Editor }) {
-  const [stats, setStats] = useState<EditorTextStats>(() => calcEditorStats(editor));
+/**
+ * 两种数据源二选一：
+ * - `editor`：富文本模式，走文档树统计（段落数准确）
+ * - `text`：源码模式没有 Editor 实例，直接统计 markdown 原文
+ */
+type Props = { editor: Editor; text?: undefined } | { editor?: undefined; text: string };
+
+export function EditorStats(props: Props) {
+  const { editor, text } = props;
+  const [stats, setStats] = useState<EditorTextStats>(() =>
+    editor ? calcEditorStats(editor) : calcTextStats(text ?? ""),
+  );
 
   useEffect(() => {
+    // 源码模式：没有 editor 事件可订阅，text 变了直接重算。
+    // 输入频率由父组件的 content state 节流决定，这里不再叠一层防抖。
+    if (!editor) {
+      setStats(calcTextStats(text ?? ""));
+      return;
+    }
     let timer: number | null = null;
     const update = () => {
       if (timer != null) return;
@@ -32,7 +48,7 @@ export function EditorStats({ editor }: { editor: Editor }) {
       editor.off("create", update);
       if (timer != null) window.clearTimeout(timer);
     };
-  }, [editor]);
+  }, [editor, text]);
 
   return (
     <Popover

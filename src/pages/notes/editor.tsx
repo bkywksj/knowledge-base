@@ -16,10 +16,11 @@ import {
   Popover,
   Tree,
   Dropdown,
+  Alert,
   App as AntdApp,
   theme as antdTheme,
 } from "antd";
-import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, ChevronDown, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, MessageSquare, ListTree, Network, ExternalLink, BookOpen, FilePen, Presentation, Printer } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, ChevronDown, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, MessageSquare, ListTree, Network, ExternalLink, BookOpen, FilePen, Presentation, Printer, Code2 } from "lucide-react";
 import { CloseCircleFilled } from "@ant-design/icons";
 import { useAppStore } from "@/store";
 import { useTabsStore } from "@/store/tabs";
@@ -38,7 +39,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { relativeTime, stripHtml } from "@/lib/utils";
 import { buildTagTreeSelectData } from "@/lib/tagTree";
-import { TiptapEditor } from "@/components/editor";
+import { TiptapEditor, MarkdownSourceEditor } from "@/components/editor";
+import { showSourceModeIntroOnce } from "@/lib/sourceModeIntro";
 import { LinkStatusBar } from "@/components/editor/LinkStatusBar";
 import { EditorOutline } from "@/components/editor/EditorOutline";
 import { EditorStats } from "@/components/editor/EditorStats";
@@ -441,6 +443,7 @@ function MetaBar({
   folders,
   folderId,
   editor,
+  sourceText,
   onTagsChange,
   onFolderChange,
   onCreateTag,
@@ -451,6 +454,8 @@ function MetaBar({
   folders: Folder[];
   folderId: number | null;
   editor: any | null;
+  /** 源码模式下没有 editor 实例，改用 markdown 原文统计字数；富文本模式传 undefined */
+  sourceText?: string;
   onTagsChange: (tagIds: number[]) => void;
   onFolderChange: (folderId: number | null) => void;
   onCreateTag: (name: string) => Promise<void>;
@@ -652,11 +657,16 @@ function MetaBar({
         </div>
       </div>
 
-      {/* 字数统计：放在元数据栏末尾（与文件夹/标签同行），shrink-0 防被标签挤掉 */}
-      {editor && (
+      {/* 字数统计：放在元数据栏末尾（与文件夹/标签同行），shrink-0 防被标签挤掉。
+          源码模式下 editor 为 null，退回按 markdown 原文统计，保证字数不会凭空消失。 */}
+      {(editor || sourceText !== undefined) && (
         <div className="shrink-0 flex items-center gap-2">
           <Divider type="vertical" style={{ height: 20, margin: 0 }} />
-          <EditorStats editor={editor} />
+          {editor ? (
+            <EditorStats editor={editor} />
+          ) : (
+            <EditorStats text={sourceText ?? ""} />
+          )}
         </div>
       )}
     </div>
@@ -754,6 +764,24 @@ function DesktopNoteEditorPage() {
   // 阅读模式：初值跟全局默认（设置页可改），每篇笔记独立 state，切笔记不残留上一篇状态
   const defaultViewMode = useAppStore((s) => s.defaultViewMode);
   const [readingMode, setReadingMode] = useState<boolean>(defaultViewMode === "read");
+  /**
+   * 源码模式：直接编辑 markdown 原文，绕开 Tiptap 富文本层。
+   *
+   * 为什么需要：Tiptap 是所见即所得，正文经 ProseMirror schema 往返，
+   * schema 不认的 HTML 标签会被静默丢弃（只有白名单标签能存活），
+   * YAML front-matter、复杂 HTML、手工调格式这些场景都不顺手。
+   * 源码模式下 content 字符串原样进出，不做任何解析，彻底没有吞标签问题。
+   *
+   * 实现上零成本复用现有链路：`content` state 本身就是 markdown 字符串，
+   * 富文本模式由 TiptapEditor 的 onChange 维护它，源码模式由 textarea 直接改它，
+   * 保存（含写回外部 .md）走的是同一条 handleSave。
+   *
+   * 偏好跨笔记记忆：用 localStorage 而非 store，避免为一个编辑器局部开关
+   * 污染全局 store（与 mindMapWidth / outlineWidth 同策略）。
+   */
+  const [sourceMode, setSourceMode] = useState<boolean>(
+    () => localStorage.getItem("editor.sourceMode") === "1",
+  );
   const { openTab, updateTabTitle, setTabDirty, setDraft, getDraft, clearDraft } = useTabsStore();
   const [note, setNote] = useState<Note | null>(null);
   const [title, setTitle] = useState("");
@@ -866,7 +894,9 @@ function DesktopNoteEditorPage() {
    * 思维导图打开时自动暂时隐藏大纲——三栏（编辑器+大纲+导图）会挤压编辑可读宽度。
    * 不动用户在 store 里的偏好；mindMapOpen 切回 false 后大纲自动恢复。
    */
-  const effectiveOutlineVisible = outlineVisible && !mindMapOpen;
+  // 源码模式下不渲染 TiptapEditor，editorInstance 停留在切换前的旧文档上：
+  // 大纲会显示过时的标题、点了还跳不动。直接连同思维导图一起排除掉。
+  const effectiveOutlineVisible = outlineVisible && !mindMapOpen && !sourceMode;
 
   // 同名消歧 Modal 状态
   const [disambigOpen, setDisambigOpen] = useState(false);
@@ -1703,6 +1733,25 @@ function DesktopNoteEditorPage() {
   }
 
   /** 主动解除外部 .md 双向同步关联（用户在 UI 上点击；与 Missing Modal 走同一后端 Command） */
+  /**
+   * 临时编辑 → 正式笔记。
+   *
+   * 只摘掉 is_scratch 标记：外部 .md 关联、写回、冲突检测全部原样保留，
+   * 变化仅仅是这条笔记开始出现在主列表 / 搜索 / 双链 / AI 问答里。
+   * 不做二次确认 —— 这是个"增加可见性"的非破坏动作，反向操作也随时可做。
+   */
+  async function handleConvertScratchToNote() {
+    try {
+      await noteApi.setScratch(noteId, false);
+      setNote((prev) => (prev ? { ...prev, is_scratch: false } : prev));
+      // 主列表此前过滤掉了这条，转正后要让侧栏立刻能看到
+      useAppStore.getState().bumpNotesRefresh();
+      message.success("已转为正式笔记，现在会出现在笔记列表与搜索结果中");
+    } catch (err) {
+      message.error(`转换失败: ${err}`);
+    }
+  }
+
   function handleUnlinkSourceMd() {
     Modal.confirm({
       title: "解除与外部 .md 的双向同步？",
@@ -1897,7 +1946,12 @@ function DesktopNoteEditorPage() {
    *  对话框里可选真实打印机出纸，或「另存为 PDF」。 */
   async function handlePrint() {
     if (!editorInstance) {
-      message.warning("编辑器尚未就绪，请稍候再试");
+      // 源码模式下富文本编辑器没挂载，拿不到"屏幕上的排版"，这条链路本身就不成立
+      message.warning(
+        sourceMode
+          ? "源码模式下无法所见即所得打印，请先退出源码模式"
+          : "编辑器尚未就绪，请稍候再试",
+      );
       return;
     }
     // 图多的笔记内嵌资源要走几秒到几十秒，用可更新的 loading 报进度，
@@ -1947,7 +2001,12 @@ function DesktopNoteEditorPage() {
    *  直接粘进 Word / WPS / 邮件即所见即所得，不再出现大量空行 / 排版乱。 */
   async function handleCopyForWord() {
     if (!editorInstance) {
-      message.warning("编辑器尚未就绪，请稍候再试");
+      // 同 handlePrint：复制富文本要读编辑器实时 DOM，源码模式下没有
+      message.warning(
+        sourceMode
+          ? "源码模式下无法复制为富文本，请先退出源码模式"
+          : "编辑器尚未就绪，请稍候再试",
+      );
       return;
     }
     const hide = message.loading("正在复制为富文本…", 0);
@@ -2112,10 +2171,41 @@ function DesktopNoteEditorPage() {
           )}
         </div>
         <Space align="center">
-          <Tooltip title={readingMode ? "切换到编辑模式" : "切换到阅读模式（隐藏工具栏，不可编辑）"}>
+          <Tooltip
+            title={
+              sourceMode
+                ? "退出源码模式，回到富文本编辑"
+                : "源码模式：直接编辑 Markdown 原文（HTML / front-matter 原样保留）"
+            }
+          >
+            <Button
+              type={sourceMode ? "primary" : "default"}
+              icon={<Code2 size={16} />}
+              onClick={() => {
+                const next = !sourceMode;
+                setSourceMode(next);
+                localStorage.setItem("editor.sourceMode", next ? "1" : "0");
+                // 源码模式与阅读模式互斥：阅读态下进源码没意义（源码本身就要编辑）
+                if (next) {
+                  setReadingMode(false);
+                  showSourceModeIntroOnce();
+                }
+              }}
+            />
+          </Tooltip>
+          <Tooltip
+            title={
+              sourceMode
+                ? "源码模式下不可用（请先退出源码模式）"
+                : readingMode
+                  ? "切换到编辑模式"
+                  : "切换到阅读模式（隐藏工具栏，不可编辑）"
+            }
+          >
             <Button
               type={readingMode ? "primary" : "default"}
               icon={readingMode ? <BookOpen size={16} /> : <FilePen size={16} />}
+              disabled={sourceMode}
               onClick={() => setReadingMode((v) => !v)}
             />
           </Tooltip>
@@ -2247,6 +2337,19 @@ function DesktopNoteEditorPage() {
                         icon: <FolderOpen size={14} />,
                         onClick: () => void handleRevealSourceFile(),
                       },
+                      // 临时编辑笔记：给一条"转正"出口。不是临时笔记时整项不出现，
+                      // 避免给绝大多数正常笔记增加一个永远用不到的菜单项
+                      ...(note?.is_scratch
+                        ? [
+                            { type: "divider" as const },
+                            {
+                              key: "to-library",
+                              label: "转为正式笔记（进列表与搜索）",
+                              icon: <BookOpen size={14} />,
+                              onClick: () => void handleConvertScratchToNote(),
+                            },
+                          ]
+                        : []),
                       { type: "divider" },
                       {
                         key: "unlink",
@@ -2504,6 +2607,27 @@ function DesktopNoteEditorPage() {
             </div>
           </div>
 
+          {/* 临时编辑提示条：临时笔记不进列表 / 搜索，不明确说一句用户会以为"笔记丢了"。
+              放在元数据栏上方而不是塞进下拉菜单：这是状态告知，必须一眼可见。 */}
+          {note?.is_scratch && (
+            <Alert
+              type="info"
+              showIcon
+              banner
+              style={{ marginBottom: 8, borderRadius: 6 }}
+              message={
+                <span style={{ fontSize: 12 }}>
+                  临时编辑 —— 改动照常保存回原 .md 文件，但这条笔记不出现在笔记列表 / 搜索 / 双链中。
+                </span>
+              }
+              action={
+                <Button size="small" type="link" onClick={() => void handleConvertScratchToNote()}>
+                  转为正式笔记
+                </Button>
+              }
+            />
+          )}
+
           {/* 文件夹 + 标签元数据 */}
           <div className="editor-meta">
             <MetaBar
@@ -2512,6 +2636,7 @@ function DesktopNoteEditorPage() {
               folders={folders}
               folderId={note?.folder_id ?? null}
               editor={editorInstance}
+              sourceText={sourceMode ? content : undefined}
               onTagsChange={handleTagsChange}
               onFolderChange={handleFolderChange}
               onCreateTag={handleCreateTag}
@@ -2519,22 +2644,26 @@ function DesktopNoteEditorPage() {
             />
           </div>
 
-          {/* 内容编辑区 */}
-          <TiptapEditor
-            content={content}
-            onChange={handleContentChange}
-            placeholder="开始写点什么..."
-            noteId={noteId}
-            readingMode={readingMode}
-            initialSearch={initialSearch}
-            onWikiLinkClick={handleWikiLinkClick}
-            onAskAi={(selected) => {
-              // 选段触发 → 选段挂到抽屉的"引用 chip"，输入框留空给用户写问题
-              setAiSelection(selected);
-              setAiDrawerOpen(true);
-            }}
-            onEditorReady={setEditorInstance}
-          />
+          {/* 内容编辑区：源码模式直接编辑 markdown 原文，否则走 Tiptap 富文本 */}
+          {sourceMode ? (
+            <MarkdownSourceEditor value={content} onChange={handleContentChange} />
+          ) : (
+            <TiptapEditor
+              content={content}
+              onChange={handleContentChange}
+              placeholder="开始写点什么..."
+              noteId={noteId}
+              readingMode={readingMode}
+              initialSearch={initialSearch}
+              onWikiLinkClick={handleWikiLinkClick}
+              onAskAi={(selected) => {
+                // 选段触发 → 选段挂到抽屉的"引用 chip"，输入框留空给用户写问题
+                setAiSelection(selected);
+                setAiDrawerOpen(true);
+              }}
+              onEditorReady={setEditorInstance}
+            />
+          )}
 
           {/* 反向链接 */}
           <BacklinksPanel
