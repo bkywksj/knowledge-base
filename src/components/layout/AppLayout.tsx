@@ -8,6 +8,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { importApi } from "@/lib/api";
 import { showExternalMdIntroOnce } from "@/lib/externalMdIntro";
+import { resolveOpenMdMode } from "@/lib/openMdChoice";
 import { useAppStore } from "@/store";
 import {
   SIDE_PANEL_MIN_WIDTH,
@@ -285,12 +286,16 @@ export function AppLayout() {
 
     async function openByPath(path: string) {
       try {
-        const result = await importApi.openMarkdownFile(path);
+        // 先问以什么方式打开（已记住偏好则直接返回，不弹窗）
+        const fileName = path.split(/[\\/]/).pop() || path;
+        const mode = await resolveOpenMdMode(fileName);
+        const result = await importApi.openMarkdownFile(path, mode === "scratch");
         if (result.wasSynced) {
           message.info("已根据最新 md 文件同步笔记内容");
         }
         // Q-003：系统快捷菜单 / argv 启动场景，同样需要首次引导（用户报告就是这条路径下找不到保存）
-        showExternalMdIntroOnce();
+        // 临时编辑不需要这条引导：它讲的是"已加入知识库"，与临时模式的预期相反
+        if (!result.isScratch) showExternalMdIntroOnce();
         useAppStore.getState().bumpNotesRefresh();
         navigate(`/notes/${result.noteId}`);
       } catch (e) {

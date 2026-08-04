@@ -73,6 +73,12 @@ import { TiptapEditor } from "@/components/editor";
 import { ShareConfigModal } from "@/components/config-share/ShareConfigModal";
 import { ImportConfigModal } from "@/components/config-share/ImportConfigModal";
 import { exportAiModel, type Envelope } from "@/lib/configShare";
+import {
+  getOpenMdPreference,
+  setOpenMdPreference,
+  clearOpenMdPreference,
+  type OpenMdMode,
+} from "@/lib/openMdChoice";
 import { DEFAULT_MAX_CONTEXT } from "@/lib/aiProviderPresets";
 import type { Folder } from "@/types";
 
@@ -693,6 +699,11 @@ function DesktopSettingsPage() {
   // 默认查看模式（打开笔记时默认是"编辑"还是"阅读"）
   const defaultViewMode = useAppStore((s) => s.defaultViewMode);
   const setDefaultViewMode = useAppStore((s) => s.setDefaultViewMode);
+  // 打开外部 .md 的方式偏好。存 localStorage 而非 store —— 它只在"打开文件"那一刻
+  // 被读一次，没有组件需要订阅其变化；这里用本地 state 仅为让下拉框回显。
+  const [openMdMode, setOpenMdMode] = useState<OpenMdMode | null>(() =>
+    getOpenMdPreference(),
+  );
   const tasksDefaultView = useAppStore((s) => s.tasksDefaultView);
   const setTasksDefaultView = useAppStore((s) => s.setTasksDefaultView);
   // 大纲面板停靠位置（左 / 右）
@@ -2293,6 +2304,33 @@ function DesktopSettingsPage() {
             options={[
               { value: "edit", label: "编辑模式（默认）" },
               { value: "read", label: "阅读模式" },
+            ]}
+          />
+        </div>
+        <div
+          className="flex items-center justify-between py-1"
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", marginTop: 8, paddingTop: 12 }}
+        >
+          <div>
+            <div>打开外部 .md 文件的方式</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              「临时编辑」只当 Markdown 编辑器用：改动照常写回原文件，但不进笔记列表 / 搜索 / 双链，
+              可在笔记侧栏「临时文件」里查看或转为正式笔记。
+            </Text>
+          </div>
+          <Select<OpenMdMode | "ask">
+            value={openMdMode ?? "ask"}
+            onChange={(v) => {
+              // "ask" = 清除记忆恢复每次询问；另两个值写入偏好，之后不再弹窗
+              if (v === "ask") clearOpenMdPreference();
+              else setOpenMdPreference(v);
+              setOpenMdMode(v === "ask" ? null : v);
+            }}
+            style={{ width: 160 }}
+            options={[
+              { value: "ask", label: "每次询问（默认）" },
+              { value: "library", label: "加入知识库" },
+              { value: "scratch", label: "临时编辑" },
             ]}
           />
         </div>

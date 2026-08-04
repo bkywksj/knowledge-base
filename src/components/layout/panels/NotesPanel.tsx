@@ -9,6 +9,8 @@ import {
   message,
   Modal,
   TreeSelect,
+  Space,
+  Dropdown,
 } from "antd";
 import {
   ContextMenuOverlay,
@@ -49,6 +51,8 @@ import { MicButton } from "@/components/MicButton";
 import { useTabsStore } from "@/store/tabs";
 import { aiChatApi, folderApi, importApi, noteApi, searchApi, trashApi } from "@/lib/api";
 import { showExternalMdIntroOnce } from "@/lib/externalMdIntro";
+import { resolveOpenMdMode } from "@/lib/openMdChoice";
+import { ScratchFilesModal } from "@/components/notes/ScratchFilesModal";
 import { highlightText, highlightSnippet } from "@/lib/highlight";
 import type {
   EmptyFolderInfo,
@@ -313,6 +317,8 @@ export function NotesPanel() {
   // 后者才允许把"未分类"虚拟节点从树上隐藏。
   const [uncategorizedLoaded, setUncategorizedLoaded] = useState(false);
   const loadingUncategorizedRef = useRef(false);
+  // 「临时文件」弹层：临时笔记不进笔记树（不属于文件夹体系），按需拉起列表查看
+  const [scratchModalOpen, setScratchModalOpen] = useState(false);
 
   /** 拉某个文件夹的直属笔记（include_descendants=false） */
   async function loadNotesForFolder(folderId: number) {
@@ -728,12 +734,16 @@ export function NotesPanel() {
       });
       const path = Array.isArray(picked) ? picked[0] : picked;
       if (!path) return;
-      const result = await importApi.openMarkdownFile(path);
+      // 先问以什么方式打开（已记住偏好则直接返回，不弹窗）
+      const fileName = path.split(/[\\/]/).pop() || path;
+      const mode = await resolveOpenMdMode(fileName);
+      const result = await importApi.openMarkdownFile(path, mode === "scratch");
       if (result.wasSynced) {
         message.info("已根据最新 md 文件同步笔记内容");
       }
       // Q-003：首次打开外部 .md 弹一次说明，让用户知道"已加入本地库 + 编辑会写回原文件"
-      showExternalMdIntroOnce();
+      // 临时编辑不弹：那条说明讲的是"已加入知识库"，与临时模式的预期相反
+      if (!result.isScratch) showExternalMdIntroOnce();
       useAppStore.getState().bumpNotesRefresh();
       navigate(`/notes/${result.noteId}`);
     } catch (e) {
@@ -2372,11 +2382,37 @@ export function NotesPanel() {
             useDefaults={newNoteTarget.useDefaults}
           />
         </div>
-        <Button
-          icon={<FolderOpen size={14} />}
-          onClick={handleOpenMarkdown}
-          title="打开本机 .md 文件"
-        />
+        {/* 打开 md + 临时文件：两者是同一件事的两端（打开外部 .md / 回头找它），
+            合成一个组合按钮，不额外占用顶栏横向空间 */}
+        <Space.Compact>
+          <Button
+            icon={<FolderOpen size={14} />}
+            onClick={handleOpenMarkdown}
+            title="打开本机 .md 文件"
+          />
+          <Dropdown
+            trigger={["click"]}
+            menu={{
+              items: [
+                {
+                  key: "open",
+                  label: "打开本机 .md 文件…",
+                  icon: <FolderOpen size={14} />,
+                  onClick: () => void handleOpenMarkdown(),
+                },
+                { type: "divider" },
+                {
+                  key: "scratch",
+                  label: "临时文件…",
+                  icon: <FileText size={14} />,
+                  onClick: () => setScratchModalOpen(true),
+                },
+              ],
+            }}
+          >
+            <Button icon={<ChevronDown size={12} />} title="更多" />
+          </Dropdown>
+        </Space.Compact>
       </div>
 
       {/* 面板内搜索框：输入走后端全文搜索，结果替换下方文件夹树 */}
@@ -2870,6 +2906,12 @@ export function NotesPanel() {
           popupMatchSelectWidth={false}
         />
       </Modal>
+
+      {/* 「临时文件」列表：以临时方式打开的外部 .md（不进笔记树） */}
+      <ScratchFilesModal
+        open={scratchModalOpen}
+        onClose={() => setScratchModalOpen(false)}
+      />
     </div>
   );
 }
