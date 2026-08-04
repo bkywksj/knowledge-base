@@ -224,7 +224,14 @@ import { message, Modal, Input } from "antd";
 import { theme as antdTheme } from "antd";
 import { SUPPORTED_PROVIDERS } from "./embedVideoProviders";
 import { attachmentApi, imageApi, systemApi, videoApi } from "@/lib/api";
-import { parseKbAsset, resolveAssetSrc, toKbAsset, toKbAssetHref, KB_ASSET_SCHEME } from "@/lib/assetUrl";
+import {
+  parseKbAsset,
+  resolveAssetSrc,
+  toKbAsset,
+  toKbAssetHref,
+  needsLegacyPathResolve,
+  KB_ASSET_SCHEME,
+} from "@/lib/assetUrl";
 import { useAppStore } from "@/store";
 import { keyboardEventToAccel } from "@/lib/shortcuts/registry";
 import {
@@ -2050,6 +2057,17 @@ export function TiptapEditor({
       return decoded.endsWith(".enc") ? decoded : null;
     };
 
+    /**
+     * 写 src 前先比对当前值，相同就不写。
+     *
+     * `setAttribute` 即使写入**相同的值**也会产生 MutationObserver record（规范如此，
+     * 不做值比较）。而本 observer 的回调里又会改 src —— 少了这道比对，
+     * 任何"解析结果 == 原值"的情况都会变成无限自我触发（v1.50.0 mac 卡死事故）。
+     */
+    const setSrcIfChanged = (el: HTMLElement, next: string) => {
+      if (el.getAttribute("src") !== next) el.setAttribute("src", next);
+    };
+
     /** 走 Blob URL 通道（加密图共用）。`pathArg` 是后端能直接读的路径（相对 OR 绝对） */
     const applyBlob = async (el: HTMLElement, pathArg: string) => {
       const cached = blobCache.get(pathArg);
@@ -2082,7 +2100,7 @@ export function TiptapEditor({
     const applyForeignPath = async (el: HTMLElement, src: string) => {
       const cached = foreignCache.get(src);
       if (cached !== undefined) {
-        if (cached) el.setAttribute("src", cached);
+        if (cached) setSrcIfChanged(el, cached);
         return;
       }
       try {
@@ -2096,7 +2114,7 @@ export function TiptapEditor({
           : resolveAssetSrc(toKbAsset(rel), dataDir);
         if (next) {
           foreignCache.set(src, next);
-          el.setAttribute("src", next);
+          setSrcIfChanged(el, next);
         } else {
           foreignCache.set(src, null);
           void applyBlob(el, rel);
@@ -2117,8 +2135,7 @@ export function TiptapEditor({
         if (rel.endsWith(".enc")) {
           void applyBlob(el, rel); // 后端 get_image_blob 已能接受相对路径
         } else if (dataDir) {
-          const next = resolveAssetSrc(src, dataDir);
-          if (next !== src) el.setAttribute("src", next);
+          setSrcIfChanged(el, resolveAssetSrc(src, dataDir));
         }
         return;
       }
@@ -2130,16 +2147,14 @@ export function TiptapEditor({
         return;
       }
 
-      // 已经是 asset 协议实际 URL（本 observer 上一轮自己写进去的）→ 不再处理，
-      // 否则会和下面的兜底互相触发形成死循环。
-      if (src.startsWith("http://asset.localhost/") || src.startsWith("https://asset.localhost/")) {
-        return;
+      // 老形态本地路径（file:// / 裸绝对路径）→ 走后端兜底解析。
+      // 其余一切（各平台的运行期 asset URL、外链、data:/blob:）都不碰 ——
+      // 判定用白名单式的 needsLegacyPathResolve，绝不能改回「枚举要跳过的协议」的
+      // 黑名单写法：mac 的 asset URL 是 `asset://localhost/`、Windows 是
+      // `http://asset.localhost/`，漏掉任何一种都会让 observer 自我触发死循环。
+      if (needsLegacyPathResolve(src)) {
+        void applyForeignPath(el, src);
       }
-      // 真外链 / data: / blob: 交给浏览器自己处理
-      if (/^(https?|data|blob):/i.test(src)) return;
-
-      // 剩下的是老形态本地路径（file:// / 裸绝对路径 / 裸相对路径）→ 走后端兜底
-      void applyForeignPath(el, src);
     };
 
     const scanAll = () => {

@@ -108,3 +108,43 @@ function joinPosix(dataDir: string, rel: string): string {
   }
   return `${dataDir}/${cleanRel}`;
 }
+
+/**
+ * 判断一个 `src` 是否是「需要走后端兜底解析的**老形态本地路径**」。
+ *
+ * 只有 `file://` 和裸绝对路径（Windows 盘符 / UNC / POSIX 根）返回 true；
+ * **其它一切带 scheme 的一律返回 false**。
+ *
+ * ## 为什么必须是白名单式判断（v1.50.0 mac 卡死事故）
+ *
+ * Tauri 的 asset 协议在不同平台格式不同（`tauri/scripts/core.js` 的 `convertFileSrc`）：
+ * - Windows / Android → `http://asset.localhost/<encoded>`
+ * - macOS / Linux / iOS → `asset://localhost/<encoded>`
+ *
+ * 旧实现用「逐个枚举要跳过的协议」的黑名单写法，只列了 Windows 那种，
+ * 于是 mac 上运行期 asset URL 落进兜底分支 → 后端解析回同一个 URL →
+ * `setAttribute` 写回相同值 → 再次触发 MutationObserver → **无限同步循环**
+ * （microtask 队列永远排不空，主线程彻底冻结，表现为「打开笔记就卡死」）。
+ *
+ * 改成白名单后，任何**当前未知**的协议（未来 Tauri 换格式、新增自定义协议）
+ * 都自动落到 false，最坏情况是「不做兜底」，绝不会再形成死循环。
+ */
+export function needsLegacyPathResolve(src: string | null | undefined): boolean {
+  const s = (src ?? "").trim();
+  if (!s) return false;
+
+  // 1) Windows 盘符裸路径 —— **必须排在 scheme 判断之前**：
+  //    `C:\foo` 会被下面的通用 scheme 正则误判成 scheme 名为 "c" 的 URL。
+  if (/^[a-zA-Z]:[\\/]/.test(s)) return true;
+  // 2) UNC 路径 \\server\share\...
+  if (s.startsWith("\\\\")) return true;
+  // 3) file:// —— 老版本拖入附件写进 content 的形态
+  if (/^file:\/\//i.test(s)) return true;
+  // 4) 其它任何带 scheme 的都不碰：kb-asset: / asset: / http: / https: /
+  //    data: / blob: / mailto: …（这一条就是防死循环的结构性闸门）
+  if (/^[a-z][a-z0-9+.-]*:/i.test(s)) return false;
+  // 5) 协议相对 URL `//cdn.example.com/x.png` 是外链，不是本地路径
+  if (s.startsWith("//")) return false;
+  // 6) POSIX 裸绝对路径 /Users/... 、/home/...
+  return s.startsWith("/");
+}
