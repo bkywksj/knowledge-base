@@ -1482,6 +1482,26 @@ export function TiptapEditor({
     [],
   );
 
+  /**
+   * 「这次粘贴是用户显式要求的纯文本粘贴」标记，供 handlePaste 里的代码块自动识别（场景 F）
+   * 让路。
+   *
+   * 背景：Chromium 对「粘贴为纯文本」只把 text/plain 放进 clipboardData，text/html 一律为空
+   * ——和"剪贴板本来就只有纯文本"的普通 Ctrl+V 在事件层面**完全无法区分**。于是用户明明选了
+   * 「粘贴为纯文本」，场景 F 照样把内容包成代码块，等于无视用户的明确意图。
+   *
+   * 既然事件里没有信号，就从**触发路径**上区分：
+   * · nativeMenuPasteRef —— 右键弹出了 WebView 原生菜单（我们没 preventDefault）。原生菜单项
+   *   是 OS 级窗口，点击不会给页面派发 keydown / mousedown，所以"contextmenu 之后、没有任何
+   *   键鼠事件、直接来了 paste"必然是从这个菜单里点的粘贴。
+   * · plainPasteShortcutRef —— Ctrl/⌘+Shift+V，浏览器约定的「粘贴为纯文本」快捷键。
+   *
+   * 两者都是**一次性**的：被一次 paste 消费掉，或被任意 keydown / mousedown 清掉，
+   * 不会影响后续的普通 Ctrl+V（Ctrl+V 自带 keydown，必然先把标记清空）。
+   */
+  const nativeMenuPasteRef = useRef(false);
+  const plainPasteShortcutRef = useRef(false);
+
   const editor = useEditor({
     // 初始可编辑状态由 readingMode 决定；后续切换通过下方 useEffect 调 editor.setEditable
     editable: !readingMode,
@@ -1754,6 +1774,17 @@ export function TiptapEditor({
       // 命中即 toggleHighlight。Tiptap Highlight 内置 Mod-Shift-h 已在扩展层禁用，避免双触发。
       // getState() 取实时值，无需把 store 值塞进 useEditor 依赖（编辑器只创建一次）。
       handleKeyDown: (_view, event) => {
+        // 任何键盘输入都意味着"不是从原生右键菜单点的粘贴"（菜单项点击不产生 keydown），
+        // 顺手清掉标记，保证紧随其后的 Ctrl+V 仍走正常的代码块自动识别。
+        nativeMenuPasteRef.current = false;
+        // Ctrl/⌘+Shift+V = 浏览器的「粘贴为纯文本」，同样属于用户显式表达的纯文本意图
+        if (
+          (event.ctrlKey || event.metaKey) &&
+          event.shiftKey &&
+          (event.key === "v" || event.key === "V")
+        ) {
+          plainPasteShortcutRef.current = true;
+        }
         const accel = useAppStore.getState().editorHighlightShortcut;
         if (!accel) return false; // 空串 = 用户已禁用高亮快捷键
         const pressed = keyboardEventToAccel(event);
@@ -1813,6 +1844,13 @@ export function TiptapEditor({
         const types = Array.from(dt?.types ?? []);
         const hasText = types.includes("text/html") || types.includes("text/plain");
         const html = dt?.getData("text/html") ?? "";
+
+        // 用户是否显式要了"纯文本粘贴"（右键菜单的「粘贴为纯文本」/ Ctrl+Shift+V）。
+        // 标记一次性消费：无论本次走哪个分支，用完即清，不残留到下一次粘贴。
+        const explicitPlainPaste =
+          nativeMenuPasteRef.current || plainPasteShortcutRef.current;
+        nativeMenuPasteRef.current = false;
+        plainPasteShortcutRef.current = false;
 
         // 视频永远优先（视频文件不会和富文本混合）
         const videos = collectVideoFiles(dt);
@@ -1879,9 +1917,11 @@ export function TiptapEditor({
         // 背景：笔记以 Markdown 存储，纯文本代码当普通文本粘贴时，4 空格缩进会被 CommonMark
         // 当成缩进代码块、行首 `*` 当成列表 —— 保存往返后一段被拆成"代码+文本+代码"。
         // 触发条件（保守，防误伤）：设置开启 + 剪贴板无富文本 HTML（有 HTML 说明是富文本粘贴，
-        // 尊重原格式）+ 不是 markdown 图片文本 + 启发式判定像代码。
+        // 尊重原格式）+ 不是 markdown 图片文本 + 启发式判定像代码 +
+        // 用户没有显式要求纯文本粘贴（显式意图永远压过启发式猜测，见 explicitPlainPaste 注释）。
         if (
           useAppStore.getState().pasteCodeAsBlock &&
+          !explicitPlainPaste &&
           !html.trim() &&
           !isMarkdownImageText &&
           plainText.trim().length > 0 &&
@@ -1937,6 +1977,19 @@ export function TiptapEditor({
       // 仅处理 OS 外部文件拖入（DataTransfer.types 含 "Files"），ProseMirror 节点内部
       // 拖拽（view.dragging 非空）原样放行给 editHandlers，保持原有节点重排行为。
       handleDOMEvents: {
+        // 右键：判断接下来会不会弹 WebView 原生菜单。
+        // useEditorContextMenu 挂在同一个 DOM 上的 capture 监听会对图片 / 双链 / 附件等节点
+        // preventDefault 并弹自定义菜单——那种情况不会有原生菜单，也就不会有菜单里的粘贴。
+        // 此处是冒泡阶段（PM 的 handleDOMEvents 非 capture），能读到 capture 阶段的处理结果。
+        contextmenu: (_view, event) => {
+          nativeMenuPasteRef.current = !event.defaultPrevented;
+          return false; // 只做标记，不干预菜单本身
+        },
+        // 左键点击（关掉菜单 / 移动光标）说明用户没在原生菜单里选粘贴，清标记
+        mousedown: () => {
+          nativeMenuPasteRef.current = false;
+          return false;
+        },
         drop: (view, event) => {
           const dt = (event as DragEvent).dataTransfer;
           console.log("[pm-drop] handleDOMEvents.drop fired",
