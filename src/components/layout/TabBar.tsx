@@ -283,8 +283,13 @@ export function TabBar() {
                   color: isActive ? token.colorPrimary : token.colorTextSecondary,
                   fontSize: 13,
                   whiteSpace: "nowrap",
-                  maxWidth: 200,
-                  minWidth: 100,
+                  // tab 在 flex 容器里默认可收缩，标签一多就被压到 minWidth，
+                  // 中文只剩一两个字看不出是哪篇。改成禁止收缩 + 抬高下限：
+                  // 宽度只由标题内容在 [160, 240] 之间决定，超出总宽由外层横向滚动
+                  // （容器已是 overflowX:auto，且切换 tab 会 scrollIntoView）。
+                  flexShrink: 0,
+                  maxWidth: 240,
+                  minWidth: 160,
                   borderRadius: 8,
                   border: `1px solid ${isActive ? token.colorPrimary : "transparent"}`,
                   userSelect: "none",

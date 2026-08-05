@@ -11,8 +11,10 @@ import {
   App as AntdApp,
   Popconfirm,
   Segmented,
+  DatePicker,
   theme as antdTheme,
 } from "antd";
+import dayjs, { type Dayjs } from "dayjs";
 import {
   CheckSquare,
   Search,
@@ -42,6 +44,7 @@ import {
 import { NewTodoButton } from "@/components/NewTodoButton";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { taskApi, taskCategoryApi } from "@/lib/api";
+import { filterTasksByDateRange } from "@/lib/taskDateFilter";
 import { MicButton } from "@/components/MicButton";
 import { useAppStore } from "@/store";
 import type { Task, TaskPriority, TaskCategory, TaskStatus } from "@/types";
@@ -285,6 +288,8 @@ function DesktopTasksPage() {
   }, []);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState("");
+  /** 日期区间筛选（前端过滤，不重拉后端）：[开始, 结束]，任一端可为 null 表示不限 */
+  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Task | null>(null);
   /** 行点击 → 只读详情 Modal（与首页一致）；编辑走 hover Edit / 右键菜单 → setEditing */
@@ -435,19 +440,49 @@ function DesktopTasksPage() {
     loadTasks();
   }, [loadTasks, tasksListRefreshTick]);
 
-  const grouped = useMemo(() => groupTasks(tasks), [tasks]);
+  /** 日期筛选是否生效（两端全空 = 未启用） */
+  const dateActive = !!(dateRange?.[0] || dateRange?.[1]);
+  /** 快捷区间预设（周起始由 dayjs zh-cn locale 决定 = 周一，见 main.tsx） */
+  const datePresets = useMemo<Array<{ label: string; value: [Dayjs, Dayjs] }>>(() => {
+    const today = dayjs();
+    const yesterday = today.subtract(1, "day");
+    const lastMonth = today.subtract(1, "month");
+    return [
+      { label: "今天", value: [today, today] },
+      { label: "昨天", value: [yesterday, yesterday] },
+      { label: "最近 7 天", value: [today.subtract(6, "day"), today] },
+      { label: "最近 30 天", value: [today.subtract(29, "day"), today] },
+      { label: "本周", value: [today.startOf("week"), today.endOf("week")] },
+      { label: "本月", value: [today.startOf("month"), today.endOf("month")] },
+      { label: "上月", value: [lastMonth.startOf("month"), lastMonth.endOf("month")] },
+    ];
+  }, []);
+  /** 日历 / 甘特自带时间轴，日期区间对它们没意义，也不参与过滤 */
+  const dateFilterApplicable = viewMode !== "calendar" && viewMode !== "gantt";
+
+  /** 经日期区间过滤后的任务：列表 / 看板 / 四象限都用它，日历 / 甘特仍看全量 */
+  const visibleTasks = useMemo(() => {
+    if (!dateActive || !dateFilterApplicable) return tasks;
+    const start = dateRange?.[0] ? dateRange[0].format("YYYY-MM-DD") : null;
+    const end = dateRange?.[1] ? dateRange[1].format("YYYY-MM-DD") : null;
+    return filterTasksByDateRange(tasks, start, end);
+  }, [tasks, dateRange, dateActive, dateFilterApplicable]);
+
+  const grouped = useMemo(() => groupTasks(visibleTasks), [visibleTasks]);
 
   // "全部任务"视图底部折叠区只展示最近 7 天完成的（避免历史归档塞满主区）；
-  // 其他 filter（如 done）下不裁剪，由其自有渲染分支处理
+  // 其他 filter（如 done）下不裁剪，由其自有渲染分支处理。
+  // 日期筛选生效时也不裁剪：用户已经指定了要看的区间，再叠加"最近 7 天"
+  // 会让选了旧区间却什么都看不到。
   const recentDoneTasks = useMemo(() => {
-    if (filter !== "todo") return grouped.done;
+    if (filter !== "todo" || dateActive) return grouped.done;
     const cutoff = ymdLocal(new Date(Date.now() - 7 * 86400000));
     return grouped.done.filter((t) => {
       const day = t.completed_at?.slice(0, 10);
       // 旧数据可能缺 completed_at，宽容保留以免"消失"
       return !day || day >= cutoff;
     });
-  }, [grouped.done, filter]);
+  }, [grouped.done, filter, dateActive]);
 
   async function handleToggle(task: Task) {
     try {
@@ -516,9 +551,10 @@ function DesktopTasksPage() {
       message.error(`批量完成失败: ${e}`);
     }
   }
-  /** 全选当前可见的未完成任务（已完成的不参与，避免误操作） */
+  /** 全选当前可见的未完成任务（已完成的不参与，避免误操作）。
+   *  以日期筛选后的列表为准——屏幕上看不见的任务不该被"全选"选中。 */
   function selectAllVisible() {
-    const ids = tasks.filter((t) => t.status === 0).map((t) => t.id);
+    const ids = visibleTasks.filter((t) => t.status === 0).map((t) => t.id);
     setSelectedIds(new Set(ids));
   }
 
@@ -572,14 +608,20 @@ function DesktopTasksPage() {
             {/* 「已放弃」/「已完成」列表里全是非待办任务，"0 条未完成 · 0 条紧急"
                 纯属噪音，改报条数 */}
             {filter === "abandoned" || filter === "done" ? (
-              `共 ${tasks.length} 条`
+              `共 ${visibleTasks.length} 条`
             ) : (
               <>
-                {tasks.filter((t) => t.status === 0).length} 条未完成 ·{" "}
+                {visibleTasks.filter((t) => t.status === 0).length} 条未完成 ·{" "}
                 <span style={{ color: token.colorError }}>
-                  {tasks.filter((t) => t.status === 0 && t.priority === 0).length} 条紧急
+                  {visibleTasks.filter((t) => t.status === 0 && t.priority === 0).length} 条紧急
                 </span>
               </>
+            )}
+            {dateActive && dateFilterApplicable && (
+              <span style={{ color: token.colorTextTertiary }}>
+                {" "}
+                · 已按日期筛选
+              </span>
             )}
           </Text>
         </div>
@@ -635,24 +677,38 @@ function DesktopTasksPage() {
         </div>
       </div>
 
-      {/* 搜索 */}
-      <Input
-        placeholder="搜索任务标题 / 描述"
-        prefix={<Search size={14} style={{ color: token.colorTextQuaternary }} />}
-        suffix={
-          <MicButton
-            size="small"
-            stripTrailingPunctuation
-            onTranscribed={(text) =>
-              setKeyword((prev) => (prev ? `${prev} ${text}` : text))
-            }
+      {/* 搜索 + 日期筛选（日历 / 甘特自带时间轴，不显示日期筛选） */}
+      <div className="flex items-center gap-2 mb-3 flex-shrink-0">
+        <Input
+          placeholder="搜索任务标题 / 描述"
+          prefix={<Search size={14} style={{ color: token.colorTextQuaternary }} />}
+          suffix={
+            <MicButton
+              size="small"
+              stripTrailingPunctuation
+              onTranscribed={(text) =>
+                setKeyword((prev) => (prev ? `${prev} ${text}` : text))
+              }
+            />
+          }
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+          allowClear
+          className="flex-1 min-w-0"
+        />
+        {dateFilterApplicable && (
+          <DatePicker.RangePicker
+            value={dateRange}
+            onChange={(v) => setDateRange(v as [Dayjs | null, Dayjs | null] | null)}
+            // 允许只填一端 → 「某天之前 / 之后」的开区间筛选
+            allowEmpty={[true, true]}
+            presets={datePresets}
+            placeholder={["开始日期", "结束日期"]}
+            title="按日期筛选：未完成看截止日期，已完成 / 已放弃看完成日期"
+            style={{ width: 250, flexShrink: 0 }}
           />
-        }
-        value={keyword}
-        onChange={(e) => setKeyword(e.target.value)}
-        allowClear
-        className="mb-3 flex-shrink-0"
-      />
+        )}
+      </div>
 
       <div className="flex-1 min-h-0 overflow-auto pr-1">
       {loading ? (
@@ -661,7 +717,7 @@ function DesktopTasksPage() {
         </div>
       ) : viewMode === "kanban" ? (
         <KanbanView
-          tasks={tasks}
+          tasks={visibleTasks}
           onRefresh={loadTasks}
           onEdit={setEditing}
           onNew={(p) => {
@@ -672,7 +728,7 @@ function DesktopTasksPage() {
         />
       ) : viewMode === "quadrant" ? (
         <QuadrantView
-          tasks={tasks}
+          tasks={visibleTasks}
           onRefresh={loadTasks}
           onEdit={setEditing}
           onNew={(preset) => {
@@ -700,10 +756,13 @@ function DesktopTasksPage() {
           onRefresh={loadTasks}
           onEdit={setEditing}
         />
-      ) : tasks.length === 0 ? (
+      ) : visibleTasks.length === 0 ? (
         <Empty
           description={
-            filter === "done"
+            // 日期筛选把结果清空时，先说"是日期筛掉的"——否则用户会误以为真没任务
+            dateActive
+              ? "所选日期范围内没有任务"
+              : filter === "done"
               ? "暂无已完成任务"
               : filter === "overdue"
                 ? "太棒了，没有逾期任务 ✨"
