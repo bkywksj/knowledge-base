@@ -17,6 +17,7 @@ import { TableCell } from "@tiptap/extension-table-cell";
 import { TableHeader } from "@tiptap/extension-table-header";
 import { Fragment, type Node as PMNode } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
+import { history } from "@tiptap/pm/history";
 import { getHTMLFromFragment, mergeAttributes } from "@tiptap/core";
 import type { JSONContent } from "@tiptap/core";
 import { isWindowsPathText } from "@/lib/windowsPath";
@@ -553,6 +554,39 @@ function backfillVideoIds(editor: import("@tiptap/react").Editor): void {
     tr.setMeta("addToHistory", false);
     editor.view.dispatch(tr);
   }
+}
+
+/**
+ * 清空编辑器的撤销历史。
+ *
+ * Why：切笔记时编辑器实例是**复用**的（`notes/:id` 是同一个路由组件，`useEditor` 也没有
+ * deps），而 `setContent` 内部只是一条普通的 replace 事务 —— @tiptap/core 只给它设了
+ * `preventUpdate`，并没有设 `addToHistory: false`。于是「把 A 笔记换成 B 笔记」这一步本身
+ * 是可撤销的，上一篇的编辑步骤也原封不动留在栈里。用户在 B 笔记按 Ctrl+Z，正文会倒退成
+ * **A 笔记撤销前的内容**；撤销属于用户操作，紧接着 onUpdate → onChange → dirty →
+ * 自动保存，把 A 的正文覆盖写进 B 笔记 —— B 的内容就这么丢了。
+ *
+ * prosemirror-history 没有公开的 clear API，标准做法是把 history 插件摘掉再装回去，让它的
+ * state 重新 init 成空栈。只动 history 一个插件：查找替换 / 标题折叠 / 标题编号等其它插件的
+ * state 原样保留；再按原下标插回（而不是追加到末尾），插件顺序也保持不变。
+ */
+function resetEditorHistory(editor: import("@tiptap/react").Editor): void {
+  // prosemirror-history 的 PluginKey 名是 "history"，实际 key 字符串带 `$` 后缀。
+  // Plugin.key 在 prosemirror-state 的 .d.ts 里被标了 @internal 没导出类型，但运行时一直
+  // 存在 —— Tiptap 自己的 editor.unregisterPlugin 也正是靠它匹配的，故此处断言读取。
+  const keyOf = (p: unknown): string => (p as { key?: string }).key ?? "";
+  const index = editor.state.plugins.findIndex((p) => keyOf(p).startsWith("history$"));
+  if (index < 0) return; // undoRedo 扩展被禁用（本项目没禁），没有历史可清
+  // 沿用扩展上配置的 depth / newGroupDelay，重建后的撤销行为与原来一致
+  const options = editor.extensionManager.extensions.find(
+    (e) => e.name === "undoRedo",
+  )?.options as { depth?: number; newGroupDelay?: number } | undefined;
+  editor.unregisterPlugin("history");
+  editor.registerPlugin(history(options ?? {}), (plugin, plugins) => {
+    const next = [...plugins];
+    next.splice(index, 0, plugin);
+    return next;
+  });
 }
 
 /**
@@ -2315,9 +2349,30 @@ export function TiptapEditor({
     };
   }, [editor]);
 
-  // 外部 content 变化时同步（如初次加载）
+  // 切换笔记时清空撤销历史（详见 resetEditorHistory 的说明）。
+  //
+  // 为什么光靠下面那个 content effect 不够：noteId 来自路由参数、瞬时就变，content 要等
+  // noteApi.get 回来才变，两者不同步；而且两篇笔记内容恰好相同时（例如都还是空的）根本
+  // 不会走 setContent 分支，历史就没人清。这里按 ID 兜住，下面按内容再兜一次。
+  //
+  // 只在「有效 ID → 另一个有效 ID」时清：日记首次建档是 undefined → id，那是同一篇文档，
+  // 此刻用户可能已经写了几行，不能把他的撤销历史清掉。
+  const prevNoteIdRef = useRef(noteId);
+  useEffect(() => {
+    const prev = prevNoteIdRef.current;
+    prevNoteIdRef.current = noteId;
+    if (!editor || prev == null || noteId == null || prev === noteId) return;
+    resetEditorHistory(editor);
+  }, [noteId, editor]);
+
+  // 外部 content 变化时同步（如初次加载 / 切换笔记 / 外部文件更新 / 加解密后重载）
   useEffect(() => {
     if (!editor) return;
+    // 传进来的正是我们最后上报出去的那份 → 这只是自己 onChange 的回声，不是外部替换，跳过。
+    // onChange 有 300ms 防抖，用户在「防抖到期 → 父组件回传」这一小段里继续打字时，回传的
+    // 旧 content 会与编辑器现状不等，若不拦就会 setContent 把刚敲的字回灌掉（内容闪回 +
+    // 光标跳位）。
+    if (content === lastEmittedRef.current) return;
     const current = getEditorMarkdown(editor);
     if (content !== current) {
       isExternalUpdate.current = true;
@@ -2341,6 +2396,10 @@ export function TiptapEditor({
       // 与 onCreate 同理：DB 内容若非序列化定点，这里记录归一化结果，避免随后的
       // NodeView 属性回写触发 onUpdate 时被误判为用户编辑。
       lastEmittedRef.current = getEditorMarkdown(editor);
+      // 整篇正文刚被换掉：清空撤销历史，否则 Ctrl+Z 会撤销掉「这次替换」本身，
+      // 把上一篇的内容倒灌进当前笔记（见 resetEditorHistory）。必须放在 setContent 和
+      // 两个 migrate 之后 —— 它们各自也会产生事务。
+      resetEditorHistory(editor);
     }
   }, [content, editor]);
 
