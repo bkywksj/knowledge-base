@@ -359,8 +359,9 @@ export default function PromptsPage() {
   );
 
   return (
+    // 内容宽度不再单独限死：横向留白统一交给 AppLayout Content 的 padding
+    // （见 AppLayout.tsx 主区 padding 注释），跟笔记 / 待办 / 回收站等页一个口径
     <div
-      className="max-w-5xl mx-auto"
       onContextMenu={(e) => {
         // 顶层兜底：表格行有自己的 onContextMenu 会先 preventDefault；
         // 其他位置吞 WebView 默认菜单。input/textarea 白名单留给表单输入

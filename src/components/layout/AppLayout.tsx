@@ -601,7 +601,10 @@ export function AppLayout() {
       {!focusMode && panelShown && (
         <div
           ref={panelRef}
-          className="side-panel-enter"
+          // kb-surface：启用背景图时改由「内容区透明度」滑杆统一控制，
+          // 让侧栏和主区共用同一档不透明度（否则侧栏恒 50%、主区跟滑杆，两边对不上）。
+          // 不启用背景图时该类不生效，仍是下面这行 inline 的 `...80` 原样式。
+          className="side-panel-enter kb-surface"
           style={{
             position: "absolute",
             top: IS_MAC ? 28 : 0,
@@ -749,15 +752,23 @@ export function AppLayout() {
         {!focusMode && <TabBar />}
         <Content
           style={{
-            padding: focusMode ? 0 : 24,
+            // 🔴 四边一律写 longhand，不要再混用 `padding` shorthand。
+            // 曾经写成 `padding: 24` + `paddingLeft/Right: isPopoutWindow ? 16 : undefined`，
+            // React 是逐条 set style 的：shorthand 先展开成四边，随后两条 longhand 拿到
+            // undefined 被置空，等于把左右padding 又删掉 —— 主窗口里左右实际是 0，
+            // 只剩上下 24，页面左边贴着 ActivityBar、右边被滚动条顶出一条缝（看着不对称）。
             // popout 窗口用 OS 原生标题栏（decorations:true），顶部 ~32px 被系统占用，
-            // 给内容让位，否则编辑器 topbar 会被系统标题栏盖住
-            paddingTop: isPopoutWindow ? 32 : (focusMode ? 0 : 24),
-            // popout 模式下两侧给一点透气 padding，主窗有 SidePanel/Sider 视觉分隔，
-            // popout 内容直接贴窗框看着挤
-            paddingLeft: isPopoutWindow ? 16 : undefined,
-            paddingRight: isPopoutWindow ? 16 : undefined,
+            // 给内容让位，否则编辑器 topbar 会被系统标题栏盖住。
+            paddingTop: isPopoutWindow ? 32 : focusMode ? 0 : 24,
+            paddingBottom: focusMode ? 0 : 24,
+            // 左右取上下的一半（12）：主区横向本来就被 ActivityBar / SidePanel 挤过一道，
+            // 再留 24 会让内容显窄；上下没有这层挤压，保持 24。
+            paddingLeft: isPopoutWindow ? 16 : focusMode ? 0 : 12,
+            paddingRight: isPopoutWindow ? 16 : focusMode ? 0 : 12,
             overflow: "auto",
+            // 滚动条只占右侧，会让左右视觉留白差一个滚动条宽度；stable 让两侧都预留，
+            // 顺带消掉「内容变长冒出滚动条时整页横向抖一下」
+            scrollbarGutter: "stable both-edges",
           }}
         >
           <Outlet />
