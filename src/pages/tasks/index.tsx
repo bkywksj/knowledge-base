@@ -1250,7 +1250,7 @@ function TaskSection({
         </div>
       )}
       <div
-        className="rounded-lg border"
+        className="rounded-lg border kb-surface"
         style={{
           background: token.colorBgContainer,
           borderColor: token.colorBorderSecondary,

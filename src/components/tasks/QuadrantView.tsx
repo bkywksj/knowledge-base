@@ -138,9 +138,11 @@ export function QuadrantView({ tasks, onRefresh, onEdit, onNew }: Props) {
         return (
           <div
             key={q.key}
-            className="rounded-lg border flex flex-col"
+            className="rounded-lg border flex flex-col kb-surface-tint"
             style={{
               background: q.bg,
+              // 见 KanbanView 同处注释：保留象限语义色，只稀释不透明度
+              ["--kb-tint" as string]: q.bg,
               borderColor: isHover ? q.color : q.border,
               borderWidth: isHover ? 1.5 : 1,
               minHeight: 260,

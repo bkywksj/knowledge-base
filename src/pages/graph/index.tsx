@@ -315,7 +315,7 @@ export default function GraphPage() {
     >
       {/* 顶部工具栏 */}
       <div
-        className="flex items-center justify-between px-4 py-2 shrink-0"
+        className="flex items-center justify-between px-4 py-2 shrink-0 kb-surface"
         style={{
           borderBottom: `1px solid ${token.colorBorderSecondary}`,
           background: token.colorBgContainer,

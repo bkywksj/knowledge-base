@@ -814,10 +814,18 @@ function DesktopAiChatPage() {
   const activeConv = conversations.find((c) => c.id === activeConvId);
 
   return (
-    <div className="flex h-full" style={{ overflow: "hidden" }}>
+    // kb-surface 挂在最外层：整页是「会话列表 + 顶栏/消息区/输入区」四块拼的，
+    // 四块各自当独立玻璃面板会拼出硬接缝、且半透明叠加把不透明度乘上去。
+    // 外层统一承载底色，内部四块走 kb-surface-clear 透明化。
+    // borderRadius 让它在 Content 的 24px 留白里收成一张卡片，
+    // 跟笔记列表（同样 borderRadius: 8）口径一致，不再是贴边的硬矩形。
+    <div
+      className="flex h-full kb-surface"
+      style={{ overflow: "hidden", borderRadius: 8 }}
+    >
       {/* 左侧对话列表 */}
       <div
-        className="w-60 shrink-0 flex flex-col h-full"
+        className="w-60 shrink-0 flex flex-col h-full kb-surface-clear"
         style={{
           borderRight: `1px solid ${token.colorBorderSecondary}`,
           background: token.colorBgContainer,
@@ -1018,7 +1026,7 @@ function DesktopAiChatPage() {
           <>
             {/* 顶部栏 */}
             <div
-              className="flex items-center justify-between px-4 py-2 shrink-0"
+              className="flex items-center justify-between px-4 py-2 shrink-0 kb-surface-clear"
               style={{
                 borderBottom: `1px solid ${token.colorBorderSecondary}`,
                 background: token.colorBgContainer,
@@ -1138,7 +1146,7 @@ function DesktopAiChatPage() {
 
             {/* 消息列表 */}
             <div
-              className="flex-1 overflow-auto px-4 py-4"
+              className="flex-1 overflow-auto px-4 py-4 kb-surface-clear"
               style={{ background: token.colorBgLayout }}
             >
               {messages.length === 0 && !streaming && (
@@ -1241,7 +1249,7 @@ function DesktopAiChatPage() {
 
             {/* 输入区域（上方为附加笔记 chip 区，强制塞进上下文） */}
             <div
-              className="shrink-0 px-4 py-3"
+              className="shrink-0 px-4 py-3 kb-surface-clear"
               style={{
                 borderTop: `1px solid ${token.colorBorderSecondary}`,
                 background: token.colorBgContainer,

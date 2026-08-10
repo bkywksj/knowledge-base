@@ -189,7 +189,8 @@ export default function PushPage() {
   ];
 
   return (
-    <div className="max-w-5xl mx-auto">
+    // 横向留白统一交给 AppLayout Content 的 padding，不再单独限内容宽度
+    <div>
       <Card
         title={
           <span className="flex items-center gap-2">

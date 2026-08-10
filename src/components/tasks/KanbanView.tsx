@@ -143,9 +143,12 @@ export function KanbanView({ tasks, onRefresh, onEdit, onNew }: Props) {
             return (
               <div
                 key={col.key}
-                className="rounded-lg border flex flex-col"
+                className="rounded-lg border flex flex-col kb-surface-tint"
                 style={{
                   background: col.bg,
+                  // 自定义背景图下由 .kb-surface-tint 读这个变量，把列的语义色
+                  // 按全局面板不透明度稀释（而不是抹成中性灰，见 themes.css）
+                  ["--kb-tint" as string]: col.bg,
                   borderColor: isHover ? col.color : col.border,
                   borderWidth: isHover ? 1.5 : 1,
                   minHeight: 300,
@@ -269,9 +272,10 @@ export function KanbanView({ tasks, onRefresh, onEdit, onNew }: Props) {
           return (
             <div
               key={col.key}
-              className="rounded-lg border flex flex-col"
+              className="rounded-lg border flex flex-col kb-surface-tint"
               style={{
                 background: col.bg,
+                ["--kb-tint" as string]: col.bg,
                 borderColor: isHover ? col.color : col.border,
                 borderWidth: isHover ? 1.5 : 1,
                 minHeight: 300,

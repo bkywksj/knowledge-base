@@ -259,7 +259,8 @@ function DesktopTrashPage() {
 
   return (
     <div
-      className="max-w-4xl mx-auto h-full flex flex-col min-h-0"
+      // 横向留白统一交给 AppLayout Content 的 padding，不再单独限内容宽度
+      className="h-full flex flex-col min-h-0"
       onContextMenu={(e) => {
         // 顶层兜底：表格行有自己的 onContextMenu 会先 preventDefault；
         // 其他位置统一吞 WebView 默认菜单。input 白名单留给搜索框等
@@ -332,7 +333,7 @@ function DesktopTrashPage() {
       {data.total > 0 || loading ? (
         // 与 /notes 一样：表格 + 分页条共享同一个白色卡片，短列表底下不再露背景
         <div
-          className="flex-1 flex flex-col min-h-0"
+          className="flex-1 flex flex-col min-h-0 kb-surface"
           style={{
             background: token.colorBgContainer,
             borderRadius: 8,

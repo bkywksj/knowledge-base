@@ -167,6 +167,7 @@ export function TabBar() {
 
   return (
     <div
+      className="kb-surface"
       style={{
         display: "flex",
         alignItems: "flex-end",

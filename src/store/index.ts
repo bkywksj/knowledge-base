@@ -533,6 +533,17 @@ interface AppStore {
    */
   customBgFit: "cover" | "contain" | "center" | "repeat";
   /**
+   * 内容区面板不透明度（持久化，0.3..1）。
+   *
+   * 只在启用背景图时有视觉意义：写入 :root 的 --kb-surface-alpha，
+   * 由 themes.css 的 `.kb-surface` 规则消费，决定主区面板（笔记列表 / 待办 /
+   * AI 问答等）透出多少背景图。1 = 完全实色（等同关掉这个效果）。
+   *
+   * 下限取 0.3 而不是 0：再低文字就完全糊在背景图上了；亮色主题另有 55%
+   * 的硬下限（在 CSS 里用 max() 兜，见 themes.css）。
+   */
+  customSurfaceAlpha: number;
+  /**
    * 当前进程的系统信息（数据目录 / 版本 / 平台等）。
    * null = 启动时还没拉到；多处取 dataDir 拼接 kb-asset 资源路径。
    */
@@ -561,7 +572,9 @@ interface AppStore {
   setCustomBgBlur: (px: number) => void;
   /** 设置背景图适配模式 */
   setCustomBgFit: (fit: "cover" | "contain" | "center" | "repeat") => void;
-  /** 一键重置所有主题自定义项（开关关 + 强调色清 + 背景清 + 遮罩归零 + 模糊归零 + 适配回 cover） */
+  /** 设置内容区面板不透明度（自动 clamp 到 [0.3, 1]） */
+  setCustomSurfaceAlpha: (alpha: number) => void;
+  /** 一键重置所有主题自定义项（开关关 + 强调色清 + 背景清 + 遮罩归零 + 模糊归零 + 适配回 cover + 面板不透明度回默认） */
   resetThemeOverrides: () => void;
   /** 获取当前生效的主题 */
   activeTheme: () => ThemeMode;
@@ -886,6 +899,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   customBgDim: 0,
   customBgBlur: 0,
   customBgFit: "cover",
+  // 0.72 是「能看清背景图纹理、又不影响正文阅读」的折中默认值
+  customSurfaceAlpha: 0.72,
   instanceInfo: null,
   loadInstanceInfo: async () => {
     try {
@@ -930,6 +945,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ customBgBlur: clamped });
   },
   setCustomBgFit: (fit) => set({ customBgFit: fit }),
+  setCustomSurfaceAlpha: (alpha) => {
+    const clamped = Math.max(0.3, Math.min(1, alpha));
+    set({ customSurfaceAlpha: clamped });
+  },
   resetThemeOverrides: () =>
     set({
       themeOverridesEnabled: false,
@@ -938,6 +957,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       customBgDim: 0,
       customBgBlur: 0,
       customBgFit: "cover",
+      customSurfaceAlpha: 0.72,
     }),
   activeTheme: () => {
     const s = get();
@@ -1518,6 +1538,7 @@ export async function applyThemeOverrides(state: {
   customBgDim: number;
   customBgBlur: number;
   customBgFit: "cover" | "contain" | "center" | "repeat";
+  customSurfaceAlpha: number;
 }) {
   const root = document.documentElement;
   const body = document.body;
@@ -1607,6 +1628,15 @@ export async function applyThemeOverrides(state: {
   root.style.setProperty("--kb-custom-bg-size", bgSize);
   root.style.setProperty("--kb-custom-bg-repeat", bgRepeat);
   root.style.setProperty("--kb-custom-bg-position", bgPosition);
+
+  // ─── 内容区面板不透明度 ───
+  // 关掉主题自定义时写回 1（完全实色）而不是删变量：themes.css 里 .kb-surface
+  // 的规则本来就只在 body.has-custom-bg 下生效，但写死 1 能保证即便将来把
+  // .kb-surface 用到别处，关开关后也一定回到实色，不会残留半透明。
+  root.style.setProperty(
+    "--kb-surface-alpha",
+    String(state.themeOverridesEnabled ? state.customSurfaceAlpha : 1),
+  );
 }
 
 /** 从 tauri-plugin-store 恢复持久化的偏好（主题 + 窗口置顶） */
@@ -1838,6 +1868,10 @@ export async function loadThemeFromStore() {
     if (cbf === "cover" || cbf === "contain" || cbf === "center" || cbf === "repeat") {
       useAppStore.getState().setCustomBgFit(cbf);
     }
+    const csa = await store.get<number>("customSurfaceAlpha");
+    if (typeof csa === "number" && Number.isFinite(csa)) {
+      useAppStore.getState().setCustomSurfaceAlpha(csa);
+    }
   } catch {
     // 首次启动时 store 可能不存在
   } finally {
@@ -1925,6 +1959,7 @@ function collectPersistPayload(state: AppStore): Record<string, unknown> {
     customBgDim: state.customBgDim,
     customBgBlur: state.customBgBlur,
     customBgFit: state.customBgFit,
+    customSurfaceAlpha: state.customSurfaceAlpha,
   };
 }
 
@@ -2081,7 +2116,7 @@ useAppStore.subscribe((state) => {
 // 主题覆盖变化时实时把 --kb-primary / 背景图 / 遮罩同步到 DOM
 let _prevThemeOverrideKey = "";
 useAppStore.subscribe((state) => {
-  const key = `${state.themeOverridesEnabled}|${state.customAccent ?? ""}|${state.customBgImage ?? ""}|${state.customBgDim}|${state.customBgBlur}|${state.customBgFit}`;
+  const key = `${state.themeOverridesEnabled}|${state.customAccent ?? ""}|${state.customBgImage ?? ""}|${state.customBgDim}|${state.customBgBlur}|${state.customBgFit}|${state.customSurfaceAlpha}`;
   if (key !== _prevThemeOverrideKey) {
     _prevThemeOverrideKey = key;
     void applyThemeOverrides(state);

@@ -232,7 +232,7 @@ export default function WhiteboardPage() {
     <div className="flex flex-col h-full">
       {/* 顶栏：返回 / 标题 / 保存状态 / 删除 */}
       <div
-        className="flex items-center gap-2 px-3 py-2 shrink-0"
+        className="flex items-center gap-2 px-3 py-2 shrink-0 kb-surface"
         style={{
           borderBottom: `1px solid ${token.colorBorderSecondary}`,
           background: token.colorBgContainer,

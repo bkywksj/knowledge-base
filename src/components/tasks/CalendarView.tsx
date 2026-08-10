@@ -198,7 +198,7 @@ export function CalendarView({
     <div className="flex flex-col gap-3 h-full">
       {/* 月份导航 + 图例 */}
       <div
-        className="flex items-center justify-between px-3 py-2 rounded-t-lg border"
+        className="flex items-center justify-between px-3 py-2 rounded-t-lg border kb-surface"
         style={{
           background: token.colorBgContainer,
           borderColor: token.colorBorderSecondary,
@@ -261,7 +261,7 @@ export function CalendarView({
 
       {/* 日历网格 */}
       <div
-        className="rounded-b-lg border border-t-0 overflow-hidden flex-1 flex flex-col min-h-0"
+        className="rounded-b-lg border border-t-0 overflow-hidden flex-1 flex flex-col min-h-0 kb-surface"
         style={{
           background: token.colorBgContainer,
           borderColor: token.colorBorderSecondary,
@@ -456,7 +456,7 @@ export function CalendarView({
           e.dataTransfer.dropEffect = "move";
         }}
         onDrop={handleDropOnInbox}
-        className="rounded-lg border p-3"
+        className="rounded-lg border p-3 kb-surface"
         style={{
           background: token.colorBgContainer,
           borderColor: token.colorBorderSecondary,

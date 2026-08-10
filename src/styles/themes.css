@@ -612,6 +612,20 @@
    通用覆盖 — 所有主题共享
    ═══════════════════════════════════════════════════════════ */
 
+/* 带前后缀图标的输入框：内层 <input> 不要重复刷底色。
+   ───────────────────────────────────────────────────────────
+   上面 4 套主题都给 `.ant-input` 和 `.ant-input-affix-wrapper` **同时**上了
+   background。但带 prefix/suffix 的输入框（搜索框、带麦克风的框…）结构是
+   wrapper > input，wrapper 有 border-radius、内层 input 的 radius 是 0 —— 内层
+   那块方形色块画在圆角容器之上，把四个角「削平」，看着就是个直角框。
+   平底色下两层同色几乎看不出来，一旦启用背景图（半透明白叠在照片上）立刻扎眼。
+   antd 原生就是内层透明、由 wrapper 承担视觉，这里把它恢复回去。
+   ⚠️ 只作用于 wrapper 内的 input：独立的 .ant-input / TextArea 仍需要自己的底色。 */
+[data-theme] .ant-input-affix-wrapper > .ant-input,
+[data-theme] .ant-input-affix-wrapper > textarea.ant-input {
+  background: transparent !important;
+}
+
 /* 滚动条 */
 [data-theme] ::-webkit-scrollbar-thumb {
   background: var(--kb-scrollbar-thumb) !important;
@@ -675,7 +689,220 @@ body.has-custom-bg .ant-layout,
 body.has-custom-bg .ant-layout-content {
   background: transparent !important;
 }
-/* Sider 仍保留主题色，作为侧栏的"实色基底"，避免侧栏图标全部漂在背景图上读不出 */
+/* ActivityBar（最左侧 64px 图标栏）+ 承载它的 Sider。
+   ───────────────────────────────────────────────────────────
+   原先刻意保留实色（怕图标漂在背景图上读不出），但那样它会是整屏唯一一块
+   不透明的"贴纸"，跟旁边全玻璃的面板割裂。改为一起走毛玻璃，但**单独设
+   0.78 下限**：这是 64px 窄栏 + 10px 小字，跟着滑杆掉到 30% 会直接读不出来，
+   跟内容区不是一个可读性量级，所以不共用那档 0.55。
+
+   Sider 只做透明容器、玻璃画在 .activity-bar 上 —— 两层都上底色会叠加成
+   接近不透明（0.78 over 0.78 ≈ 0.95），等于白做。
+   自动隐藏模式下 ActivityBar 不在 Sider 里而是绝对定位浮层，
+   .activity-bar 类挂在 <nav> 本身，两种模式都覆盖得到。 */
+body.has-custom-bg .ant-layout-sider {
+  background: transparent !important;
+}
+body.has-custom-bg .activity-bar {
+  --kb-surface-alpha-eff: max(var(--kb-surface-alpha, 0.72), 0.78);
+  background: rgba(
+    var(--kb-surface-base, 255, 255, 255),
+    var(--kb-surface-alpha-eff)
+  ) !important;
+  backdrop-filter: blur(14px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(180%) !important;
+  border-right-color: var(--kb-surface-border, rgba(255, 255, 255, 0.12)) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   自定义背景 — 内容面板半透明（.kb-surface）
+   ───────────────────────────────────────────────────────────
+   上一段只把 #root / Layout 三层调透明，但**页面级内容容器的底色写在
+   JSX 内联 style 里**（`background: token.colorBgContainer`），普通类规则
+   打不过内联样式 —— 于是主区中间那块始终是实色，把背景图整片遮住。
+
+   解法用「白名单标记类」而不是全局一刀切：需要跟随背景的容器加 .kb-surface，
+   在这里统一给半透明 + 毛玻璃（`!important` 才压得住内联 background）。
+   没加类的浮层（Modal / Drawer / Dropdown / 右键菜单 / Slash 面板）天然不受
+   影响，保持实色可读 —— 这正是不用通配选择器的原因。
+
+   变量：
+   - --kb-surface-base   面板底色的 `r,g,b` 三元组（各主题各自定义，见下）
+   - --kb-surface-alpha  面板不透明度，由设置页滑杆经 store 写到 :root（0.3~1）
+   - --kb-surface-hover  行 hover 底色（必须是半透明，见下方说明）
+   ═══════════════════════════════════════════════════════════ */
+
+/* 按主题分类兜底 —— 将来新增主题忘了定义 base 也不会塌成透明。
+   ⚠️ 必须排在下面按具体主题定义之前：两者特异性同为 (0,1,0)，靠后者胜出。 */
+[data-theme-category="light"] {
+  --kb-surface-base: 255, 255, 255;
+  --kb-surface-hover: rgba(0, 0, 0, 0.05);
+  --kb-surface-border: rgba(0, 0, 0, 0.08);
+}
+[data-theme-category="dark"] {
+  --kb-surface-base: 20, 20, 28;
+  --kb-surface-hover: rgba(255, 255, 255, 0.08);
+  --kb-surface-border: rgba(255, 255, 255, 0.12);
+}
+
+/* 各主题的面板底色 = 该主题 --kb-bg-card 的 rgb 三元组形式。
+   写成三元组而不是直接复用 --kb-bg-card：后者在 light-glass 里本身就是
+   rgba(...,0.7)，再套一层 alpha 会叠加成几乎全透明。 */
+[data-theme="light-glass"],
+[data-theme="light-warm"],
+[data-theme="light-jade"] {
+  --kb-surface-base: 255, 255, 255;
+}
+[data-theme="dark-starry"] {
+  --kb-surface-base: 18, 18, 30;
+}
+[data-theme="dark-mocha"] {
+  --kb-surface-base: 36, 36, 58;
+}
+
+/* .ant-layout-content .ant-card 一并纳入：首页 / 关于 / 标签 / 提示词 / 定时推送 /
+   设置这些页面整页都是 antd Card 堆出来的，逐个加 class 既啰嗦又容易漏。
+   限定在 .ant-layout-content 之内是安全边界 —— Modal / Drawer 被 antd portal 到
+   body 根节点，不在这个作用域里，所以弹层里的 Card 仍然保持实色。 */
+body.has-custom-bg .kb-surface,
+body.has-custom-bg .ant-layout-content .ant-card {
+  --kb-surface-alpha-eff: var(--kb-surface-alpha, 0.72);
+  background: rgba(
+    var(--kb-surface-base, 255, 255, 255),
+    var(--kb-surface-alpha-eff)
+  ) !important;
+  /* blur 只加在最外这一层：WebView2 上给滚动列表的每一行都加 backdrop-filter
+     会明显掉帧，内部元素一律置 transparent（见下）即可透出这层的模糊结果 */
+  /* !important：light-glass 主题的 .ant-card 自带 `backdrop-filter: ... !important`，
+     不加就会被它压回 blur(20px) 且丢掉 saturate，同一档背景图下各主题观感不一致 */
+  backdrop-filter: blur(14px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(180%) !important;
+  /* 半透明后面板边缘会糊进背景图，补描边 + 投影把它从背景里「托」出来。
+     ⚠️ 只写 border-color 不写 border：这批容器里有的本来就没边框（笔记列表、
+     回收站），写 `border: 1px solid` 会凭空给它们加一圈线，改变原有观感。
+     border-width 为 0 时 border-color 是空操作，有边框的则被重新着色。 */
+  border-color: var(--kb-surface-border, rgba(255, 255, 255, 0.12));
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.12);
+}
+
+/* 亮色主题下白色面板压不住浅色背景图 —— 无论滑杆调到多低，实际不透明度
+   不低于 55%，否则正文直接糊在图上没法读。 */
+[data-theme-category="light"] body.has-custom-bg .kb-surface,
+[data-theme-category="light"] body.has-custom-bg .ant-layout-content .ant-card {
+  --kb-surface-alpha-eff: max(var(--kb-surface-alpha, 0.72), 0.55);
+}
+
+/* 带语义色的容器（看板列 / 四象限格）：保留原色相，只按同一档不透明度稀释。
+   这类容器的底色是**信息**（红=紧急、蓝=进行中），直接套 .kb-surface 会被抹成
+   中性灰，等于丢掉颜色编码。所以单开一个变体：用法是容器加 .kb-surface-tint，
+   并把原底色写进内联 CSS 变量 --kb-tint。 */
+body.has-custom-bg .kb-surface-tint {
+  --kb-surface-alpha-eff: var(--kb-surface-alpha, 0.72);
+  background: color-mix(
+    in srgb,
+    var(--kb-tint, transparent) calc(var(--kb-surface-alpha-eff) * 100%),
+    transparent
+  ) !important;
+  /* !important：light-glass 主题的 .ant-card 自带 `backdrop-filter: ... !important`，
+     不加就会被它压回 blur(20px) 且丢掉 saturate，同一档背景图下各主题观感不一致 */
+  backdrop-filter: blur(14px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(180%) !important;
+}
+[data-theme-category="light"] body.has-custom-bg .kb-surface-tint {
+  --kb-surface-alpha-eff: max(var(--kb-surface-alpha, 0.72), 0.55);
+}
+
+/* 设置页 / 关于页左侧的锚点导航（.anchor-page-nav）。
+   它本身**没有任何底色** —— 正常主题下靠 Content 的实色页面底衬着就能读。
+   启用背景图后 Content 变透明，这排导航就直接漂在照片上，几乎看不见。
+   这里补一块玻璃底；padding / radius 也只在这个分支加，不影响原主题下的排版。 */
+body.has-custom-bg .anchor-page-nav {
+  --kb-surface-alpha-eff: var(--kb-surface-alpha, 0.72);
+  background: rgba(
+    var(--kb-surface-base, 255, 255, 255),
+    var(--kb-surface-alpha-eff)
+  ) !important;
+  backdrop-filter: blur(14px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(180%) !important;
+  border: 1px solid var(--kb-surface-border, rgba(255, 255, 255, 0.12));
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  padding: 6px;
+}
+/* 导航是 13px 小字的窄栏，可读性量级同 ActivityBar，用同一档 0.78 下限，
+   而不是内容区那档 0.55 —— 滑杆拉到底时这排字会直接糊在照片上。 */
+[data-theme-category="light"] body.has-custom-bg .anchor-page-nav {
+  --kb-surface-alpha-eff: max(var(--kb-surface-alpha, 0.72), 0.78);
+}
+[data-theme-category="dark"] body.has-custom-bg .anchor-page-nav {
+  --kb-surface-alpha-eff: max(var(--kb-surface-alpha, 0.72), 0.78);
+}
+
+/* 处于玻璃面板内部、自身又写了内联底色的容器。
+   典型是 AI 问答页：整页由「会话列表 / 顶栏 / 消息区 / 输入区」四块拼成，
+   每块都各自 `background: token.colorBgContainer`。如果每块都当成独立
+   .kb-surface，就是四个硬边玻璃矩形拼在一起（接缝很突兀），而且两层
+   半透明叠加会把不透明度乘上去。正解是外层套一块 .kb-surface，
+   内部这些块统统 .kb-surface-clear 透明化，由外层统一承载底色。 */
+body.has-custom-bg .kb-surface-clear {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 面板内部：antd 自绘的底色一律透明。
+   不清掉的话，Table / Card 会在半透明面板之上再刷一层实色，
+   表现为「四周透明、中间表格还是实色」的割裂感。
+
+   作用域用 :is() 同时覆盖两种「面板」：
+   - .kb-surface           —— 手工标记的容器
+   - .ant-layout-content .ant-card —— Card 堆出来的页面（提示词 / 定时推送 /
+     首页 / 关于…）。只让 Card 半透明是不够的：Card 里的 Table 仍会刷实色，
+     表现就是「卡片透了、表格没透」。 */
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-table,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-table-container,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-table-content,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-table-body,
+/* 开了 sticky 表头时 antd 会多套一层 .ant-table-header.ant-table-sticky-holder
+   并给它刷 colorBgContainer —— 漏掉它，表头就是整条白带（实测踩到过） */
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-table-header,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-table-sticky-holder,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-table-thead > tr > th,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-table-thead > tr > td,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-table-tbody > tr > td,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-table-cell-fix-left,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-table-cell-fix-right,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-table-summary,
+/* 空列表占位：底色画在 <tr> 上而不是 td，只写 `> td` 会漏（实测踩到过） */
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) tr.ant-table-placeholder,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) tr.ant-table-placeholder > td,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-card,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-card-head,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-list,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-list-item,
+/* 侧栏文件夹树 / 标签树：antd Tree 自己刷 colorBgContainer，
+   不清掉就是玻璃面板里嵌一个纯白方盒子（实测踩到过） */
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-tree,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-tree-list,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-tree-list-holder,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-menu,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-collapse,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-collapse-content,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-tabs-content-holder,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-empty {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 行 hover / 选中：必须换成半透明叠加色。
+   各主题的 --kb-bg-hover 在 light-warm / light-jade 下是**实色**（#f0ebe3 等），
+   直接沿用会让鼠标划过的那一行「闪回实色」，比不做适配还难看。 */
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-table-tbody > tr:hover > td,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-table-tbody > tr.ant-table-row-selected > td,
+body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-list-item:hover {
+  background: var(--kb-surface-hover, rgba(127, 127, 127, 0.1)) !important;
+}
 
 /* 暗色主题通用 — 编辑器 */
 /* 工具栏激活态：实色主题色方块 + 白字（参考截图效果）

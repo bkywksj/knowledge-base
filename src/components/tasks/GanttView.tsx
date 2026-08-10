@@ -194,7 +194,7 @@ export function GanttView({ tasks, onEdit }: Props) {
         </div>
       ) : (
         <div
-          className="overflow-auto border rounded"
+          className="overflow-auto border rounded kb-surface"
           style={{
             borderColor: token.colorBorderSecondary,
             flex: 1,

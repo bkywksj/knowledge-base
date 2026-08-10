@@ -315,7 +315,8 @@ export default function HiddenPage() {
 
   return (
     <div
-      className="max-w-4xl mx-auto h-full flex flex-col min-h-0"
+      // 横向留白统一交给 AppLayout Content 的 padding，不再单独限内容宽度
+      className="h-full flex flex-col min-h-0"
       onContextMenu={(e) => {
         // 顶层兜底：表格行/操作有自己的 onContextMenu 会先 preventDefault；
         // 其他位置（标题、空白）走顶层吞掉默认菜单。input 白名单保留浏览器原生菜单
@@ -345,7 +346,7 @@ export default function HiddenPage() {
 
       {data.total > 0 || loading ? (
         <div
-          className="flex-1 flex flex-col min-h-0"
+          className="flex-1 flex flex-col min-h-0 kb-surface"
           style={{
             background: token.colorBgContainer,
             borderRadius: 8,

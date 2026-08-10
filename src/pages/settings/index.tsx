@@ -638,12 +638,14 @@ function DesktopSettingsPage() {
   const customBgDim = useAppStore((s) => s.customBgDim);
   const customBgBlur = useAppStore((s) => s.customBgBlur);
   const customBgFit = useAppStore((s) => s.customBgFit);
+  const customSurfaceAlpha = useAppStore((s) => s.customSurfaceAlpha);
   const setThemeOverridesEnabled = useAppStore((s) => s.setThemeOverridesEnabled);
   const setCustomAccent = useAppStore((s) => s.setCustomAccent);
   const setCustomBgImage = useAppStore((s) => s.setCustomBgImage);
   const setCustomBgDim = useAppStore((s) => s.setCustomBgDim);
   const setCustomBgBlur = useAppStore((s) => s.setCustomBgBlur);
   const setCustomBgFit = useAppStore((s) => s.setCustomBgFit);
+  const setCustomSurfaceAlpha = useAppStore((s) => s.setCustomSurfaceAlpha);
   const resetThemeOverrides = useAppStore((s) => s.resetThemeOverrides);
   const [bgPicking, setBgPicking] = useState(false);
   async function pickThemeBg() {
@@ -1860,6 +1862,35 @@ function DesktopSettingsPage() {
             onChange={setCustomBgBlur}
             disabled={!themeOverridesEnabled || !customBgImage}
             tooltip={{ formatter: (v) => `${v ?? 0}px` }}
+          />
+        </div>
+
+        <div
+          className="py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div className="flex items-center justify-between mb-1">
+            <div>
+              <div>内容区透明度</div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                主区面板（笔记列表 / 待办 / AI 问答等）的不透明度，越低越能透出背景图。
+                100% = 完全实色。亮色主题下实际不低于 55%，以保证正文可读。
+              </Text>
+            </div>
+            <Text style={{ fontSize: 12 }}>
+              {Math.round(customSurfaceAlpha * 100)}%
+            </Text>
+          </div>
+          <Slider
+            min={0.3}
+            max={1}
+            step={0.02}
+            value={customSurfaceAlpha}
+            onChange={setCustomSurfaceAlpha}
+            disabled={!themeOverridesEnabled || !customBgImage}
+            tooltip={{
+              formatter: (v) => `${Math.round((v ?? 0) * 100)}%`,
+            }}
           />
         </div>
       </Card>

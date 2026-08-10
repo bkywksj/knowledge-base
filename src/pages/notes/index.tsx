@@ -1616,7 +1616,7 @@ function DesktopNoteListPage() {
       {/* 列表视图：表格 + 分页条共享同一个白色卡片，短列表底下不再露出页面背景 */}
       {viewMode === "list" && (
         <div
-          className="flex-1 flex flex-col min-h-0 notes-list-flat"
+          className="flex-1 flex flex-col min-h-0 notes-list-flat kb-surface"
           style={{
             background: token.colorBgContainer,
             borderRadius: 8,
