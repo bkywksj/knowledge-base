@@ -610,14 +610,24 @@ pub fn run() {
             // app_config_dir 只认 tauri.conf.json 的 identifier，dev 和 prod 是同一个
             // 目录（本项目的 `-dev` 隔离是 framework_app_data_dir 自己做的，插件不知道）。
             // 不分开的话开着 dev 调窗口会把正式版的记忆冲掉。
+            //
+            // 🔴 `with_filter` 只放行 main：插件默认托管**所有**窗口，而本应用的
+            // popout-note-* / popout-mindmap-* / push-popup-* / emergency-* / quick-add
+            // 的几何都是 builder 里按 `.center()` + 固定尺寸算出来的，被插件按上次位置还原
+            // 就会错位；更麻烦的是 push-popup-{log_id} / emergency-{task_id} 的 label 一次性
+            // 不复用，条目会在存档里永久累积（插件遍历整个 cache 全量写盘，窗口关了也不删）。
+            //
+            // 🔴 `skip_initial_state("main")` 把还原时机夺回自己手里：插件的自动还原挂在
+            // `on_window_ready`，而那个回调是 `run_on_main_thread` **排队**执行的
+            // （tauri `manager/window.rs:113`），排在我们 setup 闭包**之后** —— 也就是说
+            // 在 setup 里做任何几何兜底都会被插件随后的还原原样覆盖掉。改成 setup 里自己调
+            // `restore_state` 再紧接着 clamp，顺序确定、且都发生在 `show()` 之前，不会闪。
             .plugin(
                 tauri_plugin_window_state::Builder::default()
-                    .with_state_flags(
-                        tauri_plugin_window_state::StateFlags::SIZE
-                            | tauri_plugin_window_state::StateFlags::POSITION
-                            | tauri_plugin_window_state::StateFlags::MAXIMIZED,
-                    )
+                    .with_state_flags(commands::window::TRACKED_STATE_FLAGS)
                     .with_filename(window_state_filename())
+                    .with_filter(|label| label == "main")
+                    .skip_initial_state("main")
                     .build(),
             );
     }
@@ -654,7 +664,7 @@ pub fn run() {
                 //
                 // 验证（w×h，括号内为该配置下的约束）：
                 // - 1080p 100%      (logical 1920×1080): 1440×950   屏宽 75% / 屏高 88%
-                // - 27" 2K 150% Win (logical 1707×960):  1388×845   宽走 floor 兜底，高走 88%
+                // - 27" 2K 150% Win (logical 1707×960):  1408×845   宽走 floor 兜底，高走 88%
                 // - 27" 2K 125% Win (logical 2048×1152): 1536×1014  适度放大
                 // - 27" 2K 100%     (logical 2560×1440): 1700×1050  双向撞上限
                 // - 旧本 1366×768  (logical 1366×768):  1297×730   屏幕 95%（屏比默认还小时退让）
@@ -662,27 +672,46 @@ pub fn run() {
                 // 取不到 monitor 时静默回落到 conf.json 默认尺寸。
                 //
                 // 🔴 只在「没有窗口状态存档」时才套用 —— 存档存在说明用户自己调过窗口，
-                // 该由 window-state 插件还原，这里再 set_size 就等于每次启动都把用户
-                // 拖出来的尺寸抹掉。存档不存在时插件的 restore_state 是空操作（只把当前
-                // 尺寸播种进缓存），所以两种执行顺序（插件先还原 / setup 先跑）都正确。
+                // 该按存档还原，这里再 set_size 就等于每次启动都把用户拖出来的尺寸抹掉。
                 let has_saved_window_state = app
                     .handle()
                     .path()
                     .app_config_dir()
                     .map(|dir| dir.join(window_state_filename()).exists())
                     .unwrap_or(false);
-                if !has_saved_window_state {
-                    if let Ok(Some(monitor)) = window.primary_monitor() {
-                        let phys = monitor.size();
-                        let scale = monitor.scale_factor().max(0.1);
-                        let (target_w, target_h) = services::window_size::default_window_size(
-                            phys.width as f64 / scale,
-                            phys.height as f64 / scale,
-                        );
-                        let _ = window.set_size(tauri::LogicalSize::new(target_w, target_h));
-                        let _ = window.center();
+                if has_saved_window_state {
+                    // 插件那边设了 skip_initial_state("main")，还原由这里同步发起 ——
+                    // 插件自己的自动还原排在事件循环里、晚于本闭包，那样任何几何兜底
+                    // 都会被它随后覆盖掉（详见插件注册处的注释）。
+                    use tauri_plugin_window_state::WindowExt;
+                    if let Err(e) = window.restore_state(commands::window::TRACKED_STATE_FLAGS) {
+                        log::warn!("[window] 还原窗口几何失败，保持默认尺寸: {e}");
                     }
+                } else if let Some(monitor) = window
+                    .current_monitor()
+                    .ok()
+                    .flatten()
+                    .or_else(|| window.primary_monitor().ok().flatten())
+                {
+                    let phys = monitor.size();
+                    let scale = monitor.scale_factor().max(0.1);
+                    let (target_w, target_h) = services::window_size::default_window_size(
+                        phys.width as f64 / scale,
+                        phys.height as f64 / scale,
+                    );
+                    let _ = window.set_size(tauri::LogicalSize::new(target_w, target_h));
                 }
+
+                // 🔴 兜底一律走这里，两条路径都要过：
+                // - 还原路径：插件存的是**物理**尺寸且不做任何 clamp，显示器拓扑一变
+                //   （拔掉外接屏 / 改分辨率 / 改缩放）还原出来的窗口就可能比屏幕还大、
+                //   或整个跑到屏幕外拖不回来 —— 实测混合 DPI 双屏（150% 笔记本 + 200% 4K）
+                //   在副屏调好的窗口拔屏后必现。
+                // - 首启路径：默认尺寸公式按整屏算，`center()` 也不管任务栏；改由这里
+                //   按工作区居中，竖排 / 加高任务栏下也不会被压住。
+                // 必须在 show() 之前做完，否则用户会看到窗口先歪一下再跳正。
+                commands::window::fit_into_work_area(&window, !has_saved_window_state);
+
                 let _ = window.show();
             }
 
