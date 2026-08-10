@@ -390,7 +390,7 @@ export const hiddenPinApi = {
   verify: (pin: string) => invoke<void>("verify_hidden_pin", { pin }),
   /** 清除 PIN（需当前 PIN 校验通过） */
   clear: (currentPin: string) => invoke<void>("clear_hidden_pin", { currentPin }),
-  /** 获取 PIN 提示（无则 null）—— 解锁框可展示给用户 */
+  /** 获取 PIN 提示（无则 null）—— 解锁框展示 + 修改 PIN 时预填 */
   getHint: () => invoke<string | null>("get_hidden_pin_hint"),
 };
 
@@ -419,7 +419,7 @@ export const appLockApi = {
   /** 关闭应用锁（需当前密码校验通过） */
   disable: (currentPassword: string) =>
     invoke<void>("app_lock_disable", { currentPassword }),
-  /** 获取密码提示（无则 null）—— 锁屏页可展示给用户 */
+  /** 获取密码提示（无则 null）—— 锁屏页展示 + 修改密码时预填 */
   getHint: () => invoke<string | null>("app_lock_get_hint"),
   /** 设置闲置自动锁定分钟数（0 = 关闭；后端 clamp 到 [0, 240]） */
   setAutoMinutes: (minutes: number) =>

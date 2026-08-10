@@ -189,6 +189,20 @@ function SetPasswordModal({ isChange, onClose, onDone }: SetPasswordModalProps) 
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // 修改密码时预填现有提示 —— 提交永远按"框里是什么就存什么"处理，
+  // 不预填的话用户只想改密码就会把旧提示静默清掉。
+  useEffect(() => {
+    if (!isChange) return;
+    void appLockApi
+      .getHint()
+      .then((h) => {
+        if (h && h.trim()) form.setFieldValue("hint", h);
+      })
+      .catch(() => {
+        /* 拉不到就当没提示，不打扰用户 */
+      });
+  }, [isChange, form]);
+
   async function handleOk() {
     setErrorMsg(null);
     let values: {
