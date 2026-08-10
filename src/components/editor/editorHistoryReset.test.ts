@@ -117,6 +117,32 @@ describe("编辑器撤销历史", () => {
     expect(textOf(state)).toBe("B 笔记");
   });
 
+  it("切走前存档、切回来还原 —— 回到原笔记仍能撤销自己的编辑", () => {
+    // 锁住「按笔记存档 EditorState」这个方案成立的前提：EditorState 是不可变的，
+    // 存档之后在它之上做的整篇替换、清空历史，都只产生新实例，动不到手里这份快照。
+    let state = createState("A 笔记");
+    state = typeText(state, "：改了一笔");
+
+    // 切走 A —— 连 doc、撤销栈、光标一起存档（组件里还会记一份 markdown 指纹）
+    const snapshot = { state, markdown: textOf(state) };
+
+    // 去 B：整篇替换 + 清空历史，B 里撤销不会碰到 A 的东西
+    state = replaceWholeDoc(state, "B 笔记");
+    state = resetHistory(state);
+    expect(undoDepth(state)).toBe(0);
+
+    // 切回 A：正文与存档时逐字一致 → 整份 state 原样还原
+    expect(snapshot.markdown).toBe("A 笔记：改了一笔");
+    state = snapshot.state;
+    expect(undoDepth(state)).toBeGreaterThan(0);
+
+    // A 自己的撤销历史回来了
+    undo(state, (tr) => {
+      state = state.apply(tr);
+    });
+    expect(textOf(state)).toBe("A 笔记");
+  });
+
   it("清空历史后，在当前笔记里的编辑仍可正常撤销", () => {
     let state = createState("A 笔记");
     state = replaceWholeDoc(state, "B 笔记");

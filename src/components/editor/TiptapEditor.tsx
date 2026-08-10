@@ -17,6 +17,7 @@ import { TableCell } from "@tiptap/extension-table-cell";
 import { TableHeader } from "@tiptap/extension-table-header";
 import { Fragment, type Node as PMNode } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
+import type { EditorState } from "@tiptap/pm/state";
 import { history } from "@tiptap/pm/history";
 import { getHTMLFromFragment, mergeAttributes } from "@tiptap/core";
 import type { JSONContent } from "@tiptap/core";
@@ -570,6 +571,12 @@ function backfillVideoIds(editor: import("@tiptap/react").Editor): void {
  * state 重新 init 成空栈。只动 history 一个插件：查找替换 / 标题折叠 / 标题编号等其它插件的
  * state 原样保留；再按原下标插回（而不是追加到末尾），插件顺序也保持不变。
  */
+/**
+ * 编辑态快照最多留几篇。每份快照都持有一整篇 doc 加最多 100 步撤销历史，
+ * 不设上限等于按「本次会话访问过的笔记数」漏内存。
+ */
+const NOTE_STATE_CACHE_MAX = 5;
+
 function resetEditorHistory(editor: import("@tiptap/react").Editor): void {
   // prosemirror-history 的 PluginKey 名是 "history"，实际 key 字符串带 `$` 后缀。
   // Plugin.key 在 prosemirror-state 的 .d.ts 里被标了 @internal 没导出类型，但运行时一直
@@ -2349,19 +2356,42 @@ export function TiptapEditor({
     };
   }, [editor]);
 
-  // 切换笔记时清空撤销历史（详见 resetEditorHistory 的说明）。
+  /**
+   * 每篇笔记的编辑态快照：切走时存下整份 EditorState（doc + 撤销历史 + 光标），切回来且
+   * 正文没被外部动过时原样还原 —— 撤销历史因此**跟着笔记走**，「在 A 改几笔 → 去 B →
+   * 回 A → Ctrl+Z」照样能撤销 A 里的编辑，而不会像共享一条历史那样把 B 的内容搅进来。
+   *
+   * 为什么要连 markdown 指纹一起存：切回来时正文是父组件重新从 DB / 草稿取的，若这期间
+   * 笔记被外部编辑、同步覆盖或加解密过，快照里的撤销步骤对应的是**另一份 doc**，套上去
+   * 位置全错、正文会乱 —— 那正是原 bug 的危害形式。指纹对不上就丢弃快照，降级成
+   * resetEditorHistory 的安全行为。
+   */
+  const noteStateCacheRef = useRef<
+    Map<number, { state: EditorState; markdown: string }>
+  >(new Map());
+
+  // 切换笔记：先把上一篇的编辑态存档，再把历史清干净等新正文进来。
   //
-  // 为什么光靠下面那个 content effect 不够：noteId 来自路由参数、瞬时就变，content 要等
-  // noteApi.get 回来才变，两者不同步；而且两篇笔记内容恰好相同时（例如都还是空的）根本
-  // 不会走 setContent 分支，历史就没人清。这里按 ID 兜住，下面按内容再兜一次。
+  // 为什么清历史不能只靠下面那个 content effect：noteId 来自路由参数、瞬时就变，content
+  // 要等 noteApi.get 回来才变，两者不同步；而且两篇笔记内容恰好相同时（例如都还空着）
+  // 根本不会走 setContent 分支，历史就没人清。这里按 ID 兜住，下面按内容再兜一次。
   //
-  // 只在「有效 ID → 另一个有效 ID」时清：日记首次建档是 undefined → id，那是同一篇文档，
-  // 此刻用户可能已经写了几行，不能把他的撤销历史清掉。
+  // 只处理「有效 ID → 另一个有效 ID」：日记首次建档是 undefined → id，那是同一篇文档，
+  // 此刻用户可能已经写了几行，既不该存档也不该清他的撤销历史。
   const prevNoteIdRef = useRef(noteId);
   useEffect(() => {
     const prev = prevNoteIdRef.current;
     prevNoteIdRef.current = noteId;
     if (!editor || prev == null || noteId == null || prev === noteId) return;
+    const cache = noteStateCacheRef.current;
+    // 先删再设：让 Map 的插入顺序等于 LRU 顺序，淘汰时取 keys() 的第一个即最久未用
+    cache.delete(prev);
+    cache.set(prev, { state: editor.state, markdown: getEditorMarkdown(editor) });
+    while (cache.size > NOTE_STATE_CACHE_MAX) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined) break;
+      cache.delete(oldest);
+    }
     resetEditorHistory(editor);
   }, [noteId, editor]);
 
@@ -2375,6 +2405,18 @@ export function TiptapEditor({
     if (content === lastEmittedRef.current) return;
     const current = getEditorMarkdown(editor);
     if (content !== current) {
+      if (noteId != null) {
+        // 切回一篇存过档、且正文与切走时逐字一致的笔记 → 整份 state 还原（连撤销历史和
+        // 光标一起回来），不必重新解析 markdown。用完即弃：下次切走会重新存一份新的。
+        const cached = noteStateCacheRef.current.get(noteId);
+        if (cached && cached.markdown === content) {
+          noteStateCacheRef.current.delete(noteId);
+          // updateState 不经 dispatchTransaction，不触发 onUpdate，无需 isExternalUpdate 保护
+          editor.view.updateState(cached.state);
+          lastEmittedRef.current = content;
+          return;
+        }
+      }
       isExternalUpdate.current = true;
       editor.commands.setContent(content, { emitUpdate: false });
       // T-011: 把刚 setContent 进来的 markdown 里的 $..$ / $$..$$ 升级成 math 节点
