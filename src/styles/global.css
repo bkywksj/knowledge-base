@@ -860,7 +860,10 @@ body,
 .tiptap-toolbar {
   display: flex;
   align-items: center;
-  /* 全量显示所有分组：放不下就自由换行成多行，不折叠、不横向滚动。 */
+  /* 全量显示所有分组：放不下就自由换行成多行，不折叠、不横向滚动。
+     ⚠️ 配合 EditorToolbar 的「按钮摊平成直接子元素」渲染：分组一旦被包成一层
+     inline-flex，下面的 flex:0 0 auto 会让它整组换行，在上一行右端撕出大空洞
+     （实测颜色/字体/字号/行高那组约 300px，能白掉近 280px）。别再把分组包回去。 */
   flex-wrap: wrap;
   /* 列间距：连续激活按钮（B/I/U 等）实色背景紧贴不好看，留 3px 让胶囊感分明 */
   column-gap: 3px;
@@ -878,10 +881,14 @@ body,
   flex: 0 0 auto;
 }
 
-/* 编辑器页面内的 toolbar 全宽吸顶 */
+/* 编辑器页面内的 toolbar 全宽吸顶。
+   🔴 左右内边距刻意小于正文的 48（.editor-content-area 的 padding）：工具栏有 48 个按钮、
+   总宽约 1720 逻辑像素，而 1388 宽窗口下每行只有 ~725，两边各让出 36px 直接决定了是 2 行
+   还是 3 行（12px 时每行 ~930，两行容量 1860 > 1720）。代价是按钮比正文更贴左边缘，
+   属于用观感换一行的取舍；要改回 48 就得接受多一行。 */
 .editor-content-area .tiptap-toolbar {
   margin: 0 -48px;
-  padding: 6px 48px;
+  padding: 6px 12px;
   border-left: none;
   border-right: none;
   border-top: none;
@@ -1002,10 +1009,11 @@ body,
   height: 0;
   background: transparent;
 }
-/* 编辑器页面内：跟 EditorToolbar 一样左右拉伸 -48px，撑满主区域 */
+/* 编辑器页面内：跟 EditorToolbar 一样左右拉伸 -48px，撑满主区域。
+   内边距与工具栏保持同值（12），否则两条横条的按钮起始位置会错开一截。 */
 .editor-content-area .kb-ai-bar-row {
   margin: 0 -48px;
-  padding: 6px 48px;
+  padding: 6px 12px;
 }
 /* 结果面板：浮在 bar 下方，不挤压编辑器内容 */
 .kb-ai-bar-result-overlay {

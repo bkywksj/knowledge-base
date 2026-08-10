@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useReducer } from "react";
+import { Fragment, useState, useCallback, useEffect, useMemo, useReducer } from "react";
 import type { Editor } from "@tiptap/react";
 import { Button, Divider, Tooltip, Modal, Input, message, Dropdown, Select, ColorPicker } from "antd";
 import type { MenuProps } from "antd";
@@ -1321,17 +1321,37 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
       </Tooltip>
     );
   };
-  const renderGroup = (group: ToolItem[], gi: number, leadingDivider: boolean) => (
-    <span key={gi} data-tb-group className="inline-flex items-center">
-      {leadingDivider && (
-        <Divider
-          orientation="vertical"
-          style={{ height: 18, margin: "0 1px", borderColor: "var(--ant-color-border-secondary, #f0f0f0)" }}
-        />
-      )}
-      {group.map((item, ii) => renderItem(item, ii))}
-    </span>
-  );
+  // ── 分组渲染 ──
+  //
+  // 🔴 分组**不能**整体包一层 `inline-flex` 的 span。工具栏是 `flex-wrap: wrap`
+  // （global.css:860），直接子元素又是 `flex: 0 0 auto`（:877）—— 包起来的话一个分组就成了
+  // 不可拆分的整体，塞不下就**整组**掉到下一行，在上一行右端撕出一个大洞。
+  // 实测：「字体颜色 / 荧光 / 字体(128) / 字号(56) / 行高(56)」这组约 300px，剩 277px 装不下，
+  // 整组下移，第一行右侧白掉近 280px，而这些按钮本该接在第一行右边。
+  //
+  // 改为把按钮摊平成工具栏的直接子元素，逐个流动填满每一行。唯一保留的最小绑定单元是
+  // 「分隔线 + 本组首个按钮」：分隔线单独成为 flex 子元素的话，换行时可能孤零零落在行尾或行首。
+  // 绑定粒度 ≤40px，不会再撕出大空洞。
+  const renderGroup = (group: ToolItem[], gi: number, leadingDivider: boolean) => {
+    if (group.length === 0) return null;
+    const [first, ...rest] = group;
+    return (
+      <Fragment key={gi}>
+        {leadingDivider ? (
+          <span className="inline-flex items-center">
+            <Divider
+              orientation="vertical"
+              style={{ height: 18, margin: "0 1px", borderColor: "var(--ant-color-border-secondary, #f0f0f0)" }}
+            />
+            {renderItem(first, 0)}
+          </span>
+        ) : (
+          renderItem(first, 0)
+        )}
+        {rest.map((item, ii) => renderItem(item, ii + 1))}
+      </Fragment>
+    );
+  };
 
   return (
     <>
