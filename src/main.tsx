@@ -7,6 +7,7 @@ import { error as logError } from "@tauri-apps/plugin-log";
 import App from "./App";
 import { RootErrorBoundary } from "@/components/ui/RootErrorBoundary";
 import { loadThemeFromStore, useAppStore } from "@/store";
+import { loadHomeWidgetPrefs } from "@/store/homeWidgets";
 import "./styles/global.css";
 
 // 只有主窗口才需要走"启动锁"门禁；子窗口（quick-add / 紧急提醒 / pop-out 等）
@@ -162,6 +163,10 @@ loadThemeFromStore()
     if (IS_MAIN_WINDOW) {
       await useAppStore.getState().initAppLock();
     }
+    // 首页卡片的「隐藏（眼睛）」偏好。
+    // 这里必须 await（而不是像下面几行那样 void 掉）：renderApp() 挂在 .finally 上，
+    // 等读完再渲染，本该遮住的笔记/待办才不会先明文闪一帧 —— 那一帧正是这个开关要防的。
+    await loadHomeWidgetPrefs();
     // 启动后台拉一次系统信息（数据目录 / 版本等），不阻塞首屏
     useAppStore.getState().loadInstanceInfo();
     // 拉一次"全局新建笔记"的默认文件夹 / 标签偏好，便于第一次按 Ctrl+N 就能用

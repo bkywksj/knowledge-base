@@ -69,6 +69,8 @@ import type {
 import { SubtaskList } from "@/components/tasks/SubtaskList";
 import { TaskDetailModal } from "@/components/tasks/TaskDetailModal";
 import { CreateTaskModal } from "@/components/tasks/CreateTaskModal";
+import { HideableCard } from "@/components/home/HideableCard";
+import { useHomeWidgetsStore } from "@/store/homeWidgets";
 
 const { Text } = Typography;
 
@@ -136,7 +138,9 @@ function DesktopHomePage() {
     try {
       const [notesResult, dashStats, trendData, allTodos, chats] =
         await Promise.all([
-          noteApi.list({ page: 1, page_size: 8 }),
+          // 拉 12 条而不是 8：这一批还要被 is_pinned 拆成「最近笔记」和「置顶笔记」
+          // 两卡，置顶多的用户按 8 条拉会让「最近笔记」凑不够要显示的 8 条。
+          noteApi.list({ page: 1, page_size: 12 }),
           systemApi.getDashboardStats(),
           systemApi.getWritingTrend(14),
           taskApi.list({ status: 0 }).catch(() => [] as Task[]),
@@ -479,15 +483,18 @@ function DesktopHomePage() {
       if (new Date(t.due_date!).getTime() < todayStartMs) overdue.push(t);
       else today.push(t);
     }
+    // 每段条数上限：原 5 条太少（卡片下方留白），一度提到 8 条又显得压迫，
+    // 折中取 6 条；即将到期优先级次之给 4 条。
+    // 超出部分仍由段尾「+ 还有 N 条…」引导去待办页，不改"速览"的定位。
     return {
-      overdue: overdue.slice(0, 5),
+      overdue: overdue.slice(0, 6),
       overdueTotal: overdue.length,
-      today: today.slice(0, 5),
+      today: today.slice(0, 6),
       todayTotal: today.length,
-      // 即将到期去掉 7 天上限后，只展示最靠近今天的 3 条
-      upcoming: upcomingTasks.slice(0, 3),
+      // 即将到期去掉 7 天上限后，只展示最靠近今天的几条
+      upcoming: upcomingTasks.slice(0, 4),
       upcomingTotal: upcomingTasks.length,
-      noDue: noDueTasks.slice(0, 5),
+      noDue: noDueTasks.slice(0, 6),
       noDueTotal: noDueTasks.length,
     };
   }, [todayTasks, upcomingTasks, noDueTasks]);
@@ -496,7 +503,28 @@ function DesktopHomePage() {
     todoGroups.todayTotal +
     todoGroups.upcomingTotal +
     todoGroups.noDueTotal;
-  const displayedRecent = useMemo(() => recentNotes.slice(0, 5), [recentNotes]);
+  // 与左侧待办速览卡同处一行 grid（等高拉伸）：条数跟着左卡一起走，
+  // 差太多会让某一侧底部空一大片。
+  const displayedRecent = useMemo(() => recentNotes.slice(0, 6), [recentNotes]);
+
+  // 全局隐私模式快捷键（Ctrl/⌘+Shift+H）：一键遮住首页所有卡片，
+  // 用于「有人走过来了 / 要投屏」这类临时场景。
+  // 只在首页挂载：别的页面没有可遮的卡片，全局注册纯属占用组合键。
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "h"
+      ) {
+        e.preventDefault();
+        useHomeWidgetsStore.getState().togglePrivacyMode();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   // ─── 渲染 ─────────────────────────────────────────
   return (
@@ -512,8 +540,9 @@ function DesktopHomePage() {
       }}
     >
     <div
-      // 放宽内容最大宽度（原 max-w-5xl=1024px 在大屏/全屏下两侧大量留白、内容显空）
-      className="max-w-7xl mx-auto"
+      // 不再限内容最大宽度：横向留白统一交给 AppLayout Content 的 padding，
+      // 跟知识图谱 / 笔记 / 待办 / 提示词 等页一个口径（历史上这里是 max-w-5xl →
+      // max-w-7xl，都是在单独跟"两侧留白太多"较劲，现在全站统一由一处控制）
       style={{ display: "flex", flexDirection: "column", gap: 12 }}
     >
 
@@ -669,7 +698,8 @@ function DesktopHomePage() {
 
         {/* 待办速览(三段:逾期/今日/即将到期):tasks 关闭整卡不渲染，最近笔记自动占满 */}
         {tasksEnabled && (
-        <Card
+        <HideableCard
+          widgetKey="todo"
           size="small"
           className="col-span-7"
           styles={{ body: { padding: "8px 14px" } }}
@@ -786,7 +816,7 @@ function DesktopHomePage() {
                     <li
                       className="flex items-start gap-2.5"
                       style={{
-                        padding: "4px 6px",
+                        padding: "3px 6px",
                         borderRadius: 4,
                         background: ctxActive ? token.colorPrimaryBg : "transparent",
                         transition: "background .12s",
@@ -858,13 +888,19 @@ function DesktopHomePage() {
                           )}
                           {dateLabel}
                         </div>
-                        <Text
-                          type="secondary"
-                          ellipsis
-                          style={{ fontSize: 11, display: "block", minHeight: 16 }}
-                        >
-                          {desc || "\u00A0"}
-                        </Text>
+                        {/* \u6CA1\u6709\u63CF\u8FF0\u5C31\u6574\u884C\u4E0D\u6E32\u67D3\u3002
+                            \u4EE5\u524D\u8FD9\u91CC\u7528 `desc || "\u00A0"` \u6491\u4E00\u4E2A 16px \u7A7A\u884C\u6765\u8BA9\u6240\u6709\u884C\u7B49\u9AD8\uFF0C
+                            \u4F46\u7EDD\u5927\u591A\u6570\u5F85\u529E\u90FD\u6CA1\u5199\u63CF\u8FF0 \u2014\u2014 \u7B49\u4E8E\u6BCF\u6761\u767D\u767D\u591A\u5360 16px\uFF0C
+                            \u901F\u89C8\u5361\u770B\u7740\u7A7A\u3001\u6761\u76EE\u4E00\u591A\u5C31\u5F97\u6EDA\u3002\u5B81\u53EF\u884C\u9AD8\u53C2\u5DEE\u4E5F\u8981\u7D27\u51D1\u3002 */}
+                        {desc && (
+                          <Text
+                            type="secondary"
+                            ellipsis
+                            style={{ fontSize: 11, display: "block" }}
+                          >
+                            {desc}
+                          </Text>
+                        )}
                       </div>
                     </li>
                     {expanded && hasSubtasks && (
@@ -937,7 +973,9 @@ function DesktopHomePage() {
               return (
                 <div
                   className="flex flex-col gap-3"
-                  style={{ maxHeight: 420, overflowY: "auto" }}
+                  // 卡片高度上限：420 时同屏只能看 5 条出头，一有逾期就得点进待办页；
+                  // 提到 480（约多 2 行）配合每段 6 条，超出仍可滚。
+                  style={{ maxHeight: 480, overflowY: "auto" }}
                 >
                   {sections
                     .filter((s) => s.items.length > 0)
@@ -960,7 +998,7 @@ function DesktopHomePage() {
                             · {s.total}
                           </Text>
                         </div>
-                        <ul className="flex flex-col gap-1.5 m-0 p-0 list-none">
+                        <ul className="flex flex-col gap-1 m-0 p-0 list-none">
                           {s.items.map((t) => renderTaskRow(t, s.key))}
                         </ul>
                         {s.total > s.items.length && (
@@ -984,11 +1022,12 @@ function DesktopHomePage() {
               );
             })()
           )}
-        </Card>
+        </HideableCard>
         )}
 
         {/* 最近笔记：tasks 关时占满 12 列，反之 5 列 */}
-        <Card
+        <HideableCard
+          widgetKey="recentNotes"
           size="small"
           className={tasksEnabled ? "col-span-5" : "col-span-12"}
           styles={{ body: { padding: "8px 14px" } }}
@@ -1014,7 +1053,7 @@ function DesktopHomePage() {
               description={loading ? "加载中…" : "还没有笔记"}
             />
           ) : (
-            <ul className="flex flex-col gap-2 m-0 p-0 list-none">
+            <ul className="flex flex-col gap-1 m-0 p-0 list-none">
               {displayedRecent.map((note) => {
                 const ctxActive = noteCtx.state.payload?.id === note.id;
                 return (
@@ -1022,7 +1061,7 @@ function DesktopHomePage() {
                   key={note.id}
                   className="cursor-pointer"
                   style={{
-                    padding: "4px 6px",
+                    padding: "3px 6px",
                     borderRadius: 4,
                     background: ctxActive ? token.colorPrimaryBg : "transparent",
                     transition: "background .12s",
@@ -1033,6 +1072,10 @@ function DesktopHomePage() {
                     noteCtx.open(e.nativeEvent, note);
                   }}
                 >
+                  {/* 单行：标题吃满剩余宽度，时间/字数贴右。
+                      原本是「标题一行 + 时间字数另起一行」，每条 52px；笔记标题通常很短、
+                      右侧全是空白，把 meta 收到同一行后降到 30px，同屏能多看好几条，
+                      也和下面「置顶笔记」卡的单行排版统一了。 */}
                   <div className="flex items-center gap-1.5">
                     {note.is_daily && (
                       <Tag
@@ -1045,19 +1088,19 @@ function DesktopHomePage() {
                     <Text ellipsis style={{ fontSize: 13, flex: 1, minWidth: 0 }}>
                       {note.title}
                     </Text>
+                    <Text
+                      type="secondary"
+                      style={{ fontSize: 11, flexShrink: 0 }}
+                    >
+                      {relativeTime(note.updated_at)} · {note.word_count} 字
+                    </Text>
                   </div>
-                  <Text
-                    type="secondary"
-                    style={{ fontSize: 11, display: "block", minHeight: 16 }}
-                  >
-                    {relativeTime(note.updated_at)} · {note.word_count} 字
-                  </Text>
                 </li>
               );
               })}
             </ul>
           )}
-        </Card>
+        </HideableCard>
       </div>
 
       {/* ⑤ 写作活力 — 4 指标 + 14 天迷你图 */}
@@ -1158,7 +1201,8 @@ function DesktopHomePage() {
 
       {/* ⑥ 双列:置顶笔记 + 问 AI；ai 关闭时只剩置顶笔记一列 */}
       <div className="grid grid-cols-12 gap-3">
-        <Card
+        <HideableCard
+          widgetKey="pinned"
           size="small"
           className={aiEnabled ? "col-span-5" : "col-span-12"}
           styles={{ body: { padding: "12px 14px" } }}
@@ -1198,10 +1242,11 @@ function DesktopHomePage() {
               ))}
             </ul>
           )}
-        </Card>
+        </HideableCard>
 
         {aiEnabled && (
-        <Card
+        <HideableCard
+          widgetKey="askAi"
           size="small"
           className="col-span-7"
           styles={{ body: { padding: "12px 14px" } }}
@@ -1265,7 +1310,7 @@ function DesktopHomePage() {
               输入问题回车直接发送,自动新建对话
             </Text>
           )}
-        </Card>
+        </HideableCard>
         )}
       </div>
 
