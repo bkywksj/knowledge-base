@@ -1142,4 +1142,66 @@ mod tests {
         );
         let _ = std::fs::remove_file(&target);
     }
+
+    /// 「裸机」场景（既无 LibreOffice 也无 Word/WPS COM）：`export_single_best_effort`
+    /// 会回退到本函数，且**只拿 markdown 重渲**——笔记正文里的图片是 `kb-asset://<rel>`，
+    /// 必须能顺着 assets_root 解析到真实文件并嵌进 docx。
+    ///
+    /// 这条路是纯 Rust、零外部依赖，是裸机唯一能出 Word 的通道，图片不能丢。
+    #[test]
+    fn native_export_embeds_kb_asset_image() {
+        // 真实可解码的 1×1 PNG（Pic::new 会真正解码，假 header 会 panic）
+        let b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+        let png = base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            b64,
+        )
+        .expect("测试用 base64 应可解码");
+
+        // 造一个临时 data_dir，按真实布局放一张资产图
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let data_dir = std::env::temp_dir().join(format!("kb_word_bare_metal_{}", nanos));
+        let img_dir = data_dir.join("kb_assets").join("images").join("1");
+        std::fs::create_dir_all(&img_dir).unwrap();
+        std::fs::write(img_dir.join("x.png"), &png).unwrap();
+
+        // 笔记正文里图片的真实形态
+        let markdown = "正文一段\n\n![配图](kb-asset://kb_assets/images/1/x.png)\n";
+
+        let target = tmp_docx("kb_asset_img");
+        let result = WordExportService::export_single("标题", markdown, &target, &data_dir)
+            .expect("裸机路径导出应成功");
+
+        assert_eq!(
+            result.images_embedded, 1,
+            "kb-asset:// 图片应被嵌入，实际 embedded={} missing={}",
+            result.images_embedded, result.images_missing
+        );
+        assert_eq!(result.images_missing, 0);
+
+        let _ = std::fs::remove_file(&target);
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    /// 裸机路径下图片文件真的没了 → 计 missing 并留占位文本，导出本身**不能**失败
+    /// （宁可少一张图，也不能让用户导不出来）。
+    #[test]
+    fn native_export_survives_missing_image() {
+        let data_dir = std::env::temp_dir().join("kb_word_bare_metal_missing");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let markdown = "![丢了](kb-asset://kb_assets/images/9/nope.png)";
+
+        let target = tmp_docx("kb_asset_missing");
+        let result = WordExportService::export_single("标题", markdown, &target, &data_dir)
+            .expect("图片缺失不应让导出失败");
+
+        assert_eq!(result.images_embedded, 0);
+        assert_eq!(result.images_missing, 1, "缺图应被如实统计出来");
+        assert!(target.exists(), "docx 仍应产出");
+
+        let _ = std::fs::remove_file(&target);
+    }
 }

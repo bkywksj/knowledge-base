@@ -403,9 +403,16 @@ fn html_escape(s: &str) -> String {
 
 /// 把 HTML 里 `<img src="...">` 的本地路径替换为 base64 data: URL
 ///
-/// 跳过：
-/// - 已是 `data:` URL
-/// - `http(s)://` 外链
+/// 返回 `(html, 内嵌图片数, 缺失图片数)`。**「内嵌数」是产物里自包含图片的总数**，
+/// 不是"本次新转换了几张"——已经是 `data:` 的也计入。前端 DOM 导出路径
+/// （`editorDomToSelfContainedHtml`）在 JS 侧就把图片固化成 base64 了，只数
+/// "本次新转的"会恒为 0，用户看到「嵌入图片 0 张」会以为图丢了（实际都在）。
+///
+/// 跳过不计数的只有真外链（`https://example.com/a.png` 等）——它们本就不该内嵌，
+/// 也不是"缺失"。注意 `http://asset.localhost/…` 虽是 http 开头却是**本地资源**
+/// （`convertFileSrc` 的运行期输出），必须内嵌：这个协议只在本应用 WebView 里有效，
+/// 留着原样交给 Word/WPS/LibreOffice 就是一张打不开的图。判定统一交给
+/// `resolve_content_url`，与前端 `isLocalAssetUrl` 的口径保持一致。
 fn inline_images(html: &str, assets_root: &Path) -> (String, usize, usize) {
     let re = match regex::Regex::new(r#"<img\s+[^>]*src="([^"]+)"[^>]*>"#) {
         Ok(r) => r,
@@ -417,7 +424,9 @@ fn inline_images(html: &str, assets_root: &Path) -> (String, usize, usize) {
     let result = re.replace_all(html, |caps: &regex::Captures| {
         let full_tag = &caps[0];
         let src = &caps[1];
-        if src.starts_with("data:") || src.starts_with("http://") || src.starts_with("https://") {
+        if src.starts_with("data:") {
+            // 前端已固化好的图：产物里同样是自包含的，计入内嵌数
+            inlined += 1;
             return full_tag.to_string();
         }
         match resolve_local_image(src, assets_root) {
@@ -428,7 +437,11 @@ fn inline_images(html: &str, assets_root: &Path) -> (String, usize, usize) {
                 full_tag.replace(src, &new_src)
             }
             None => {
-                missing += 1;
+                // 解析得出本地路径却读不出 = 文件真的没了，计缺失；
+                // 解析不出（真外链 / blob:）= 本就不内嵌，不计任何一边
+                if resolve_content_url(src, assets_root).is_some() {
+                    missing += 1;
+                }
                 full_tag.to_string()
             }
         }
@@ -705,6 +718,72 @@ mod tests {
         assert!(out[1].data_url.is_none(), "mailto 不内嵌");
         assert!(out[2].data_url.is_some(), "同批里的合法条目不受前面失败影响");
         let _ = std::fs::remove_file(ok);
+    }
+
+    /// 回归：前端 DOM 路径传下来的 body_html 里图片**已经是 data: URL**
+    /// （`editorDomToSelfContainedHtml` 在 JS 侧固化过）。若只数"本次新转的"，
+    /// 计数恒为 0 → 用户看到「嵌入图片 0 张」以为图丢了（其实都在 docx 里）。
+    #[test]
+    fn already_inlined_images_are_counted() {
+        let body = r#"<p>正文</p><img src="data:image/png;base64,AAAA" /><img src="data:image/png;base64,BBBB" />"#;
+        let (_html, inlined, missing) =
+            HtmlExportService::render_html_from_body("标题", body, Path::new("/nonexistent"), None);
+        assert_eq!(inlined, 2, "已是 data: 的图片也应计入内嵌数");
+        assert_eq!(missing, 0, "data: 图片不是缺失");
+    }
+
+    /// 回归：`http://asset.localhost/…` 是 `convertFileSrc` 的运行期输出，**本地资源**，
+    /// 不是外链。旧实现按 `starts_with("http://")` 一刀切跳过 → 前端因体积上限
+    /// 没内嵌的图会原样进 docx/html，换个程序打开就是死链，且既不计 embedded 也不计 missing，
+    /// 用户完全看不到丢了图。
+    #[test]
+    fn asset_localhost_url_is_inlined_not_treated_as_external() {
+        let p = temp_file("kb_test_asset_local.png", b"PNGDATA");
+        let url = format!(
+            "http://asset.localhost/{}",
+            p.to_string_lossy().replace('\\', "/")
+        );
+        let body = format!(r#"<img src="{}" />"#, url);
+
+        let (html, inlined, missing) =
+            HtmlExportService::render_html_from_body("标题", &body, Path::new("/nonexistent"), None);
+
+        assert_eq!(inlined, 1, "asset.localhost 必须被内嵌，实际 html：{html}");
+        assert_eq!(missing, 0);
+        assert!(
+            html.contains("data:image/png;base64,"),
+            "src 应被替换成 data: URL"
+        );
+        assert!(
+            !html.contains("asset.localhost"),
+            "不该残留只在本应用 WebView 里有效的 URL"
+        );
+        let _ = std::fs::remove_file(p);
+    }
+
+    /// 真外链原样保留，且不计入内嵌 / 缺失任何一边
+    #[test]
+    fn external_image_url_is_left_alone_and_uncounted() {
+        let body = r#"<img src="https://example.com/a.png" />"#;
+        let (html, inlined, missing) =
+            HtmlExportService::render_html_from_body("标题", body, Path::new("/nonexistent"), None);
+        assert_eq!(inlined, 0);
+        assert_eq!(missing, 0, "外链不是「缺失的本地图」");
+        assert!(html.contains("https://example.com/a.png"), "外链应原样保留");
+    }
+
+    /// 指向本地但文件不存在 → 计缺失（这条才是真的"图没了"）
+    #[test]
+    fn missing_local_image_is_counted_as_missing() {
+        let body = r#"<img src="kb-asset://kb_assets/images/9/nope.png" />"#;
+        let (_html, inlined, missing) = HtmlExportService::render_html_from_body(
+            "标题",
+            body,
+            Path::new("/nonexistent"),
+            None,
+        );
+        assert_eq!(inlined, 0);
+        assert_eq!(missing, 1, "本地图片读不出应计入缺失");
     }
 
     /// 空串 / 只有空白的字体值等同于没传，回退默认模板
