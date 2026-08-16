@@ -69,6 +69,7 @@ import { ShortcutsSection } from "@/components/settings/ShortcutsSection";
 import { EditorHighlightShortcutRow } from "@/components/settings/EditorHighlightShortcutRow";
 import { MCPServerSection } from "@/components/settings/MCPServerSection";
 import { OcrSection } from "@/components/settings/OcrSection";
+import { WebClipJinaKeySetting } from "@/components/settings/WebClipJinaKeySetting";
 import { TiptapEditor } from "@/components/editor";
 import { ShareConfigModal } from "@/components/config-share/ShareConfigModal";
 import { ImportConfigModal } from "@/components/config-share/ImportConfigModal";
@@ -2617,6 +2618,9 @@ function DesktopSettingsPage() {
             </div>
           )}
         </div>
+
+        {/* 网页剪藏的可选兜底 Key（默认直连原网页，不需要配） */}
+        <WebClipJinaKeySetting />
 
         {importing && importProgress && (
           <div className="mb-3">

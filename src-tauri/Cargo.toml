@@ -89,6 +89,12 @@ kb-core = { path = "kb-core" }
 # rmcp client：in-memory transport 调用同进程 KbServer（双端通用）
 # transport-child-process 仅桌面端用（spawn 外部 MCP server），移到 target.desktop
 rmcp = { version = "1.5", features = ["client"] }
+# T-014 网页剪藏 v2：Mozilla Readability 的纯 Rust 移植，本地提取网页正文。
+# 取代原先绕道 r.jina.ai 的做法（该服务已取消匿名额度 → 401，且国内移动网络常连不上）。
+# 选它而非 `readability` crate：后者 2023 年起停更；dom_smoothie 仍在活跃维护，
+# 且基于 html5ever/dom_query 纯 Rust 实现、无 C 依赖，能编进 Android NDK target。
+# 提取出的正文 HTML 再交给已有的 html2md 转 markdown，不引入第二套转换器。
+dom_smoothie = "0.18"
 # Excel / ODS 解析、Word 导出、txt 编码识别 — 双端通用纯 Rust 工具
 # 这些在原文件上面已声明 calamine / docx-rs / chardetng / encoding_rs 等，保持位置不变
 

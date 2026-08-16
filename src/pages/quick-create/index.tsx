@@ -270,7 +270,7 @@ export default function QuickCreatePage() {
           onPressEnter={submitClip}
         />
         <div className="mt-2 text-xs text-slate-400">
-          已自动从剪贴板抓 URL；后端调 reqwest+rustls 抓页面 → readability 提取正文 → 转 markdown 入库
+          已自动从剪贴板抓 URL；后端直连原网页 → readability 提取正文 → 转 markdown 入库，正文图片一并下载到本地
         </div>
       </Modal>
     </div>

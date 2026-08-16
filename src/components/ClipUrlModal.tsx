@@ -17,7 +17,7 @@ interface Props {
 /**
  * T-014 网页剪藏 Modal
  *
- * 输入 URL → 后端走 r.jina.ai 抓 markdown → 创建笔记 → 跳转到编辑器。
+ * 输入 URL → 后端直连原网页、readability 提正文转 markdown → 创建笔记 → 跳转到编辑器。
  * 失败时保留输入框，提示用户重试或换 URL。
  */
 export function ClipUrlModal({ open, folderId, onClose }: Props) {
@@ -82,7 +82,7 @@ export function ClipUrlModal({ open, folderId, onClose }: Props) {
           showIcon
           message={
             <span className="text-[12px]">
-              通过 <Text code style={{ fontSize: 11 }}>r.jina.ai</Text> 提取正文为 markdown，自动剥离侧栏 / 广告。需联网。
+              直连原网页提取正文为 markdown，自动剥离侧栏 / 广告；正文图片一并下载到本地，离线可看。需联网。
             </span>
           }
         />

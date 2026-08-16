@@ -315,16 +315,27 @@ impl NoteService {
         Ok(())
     }
 
-    /// T-014 网页剪藏：抓 URL → markdown → 创建笔记
+    /// T-014 网页剪藏：抓 URL → markdown → 创建笔记 → 正文图片落本地
     ///
-    /// `folder_id` 优先级：用户传入 > None（根目录）。Service 层只负责调用 web_clip
-    /// + create_note，不做更复杂的去重 / 标签关联（v2 可加）。
+    /// `folder_id` 优先级：用户传入 > None（根目录）。
+    ///
+    /// `app_data_dir` 必须是 `AppState.data_dir`（DataDirResolver 解析过的实际数据目录），
+    /// 不能用 framework 默认的 `app_data_dir()`——否则图片会落到用户没在用的目录里。
+    ///
+    /// 图片处理放在建笔记**之后**：`rewrite_external_images` 按 note_id 分目录落盘，
+    /// 必须先有 id。下载失败不影响剪藏本身（正文保留原始外链，仅记 warn）。
     pub async fn clip_url(
         db: &Database,
         url: &str,
         folder_id: Option<i64>,
+        app_data_dir: &std::path::Path,
     ) -> Result<Note, AppError> {
-        let clipped = crate::services::web_clip::fetch_via_jina_reader(url).await?;
+        // 用户在设置里配的 Jina API Key（可空）——仅作直连失败时的兜底，读不到就当没配
+        let jina_key = db
+            .get_config(crate::services::web_clip::JINA_KEY_CONFIG)
+            .unwrap_or(None);
+
+        let clipped = crate::services::web_clip::fetch_page(url, jina_key.as_deref()).await?;
 
         // 笔记正文头部加一行 source 元信息，方便用户回溯原文
         let body = format!(
@@ -333,11 +344,40 @@ impl NoteService {
             content = clipped.markdown,
         );
 
-        let input = NoteInput {
+        let mut input = NoteInput {
             title: clipped.title,
             content: body,
             folder_id,
         };
-        Self::create(db, &input)
+        let note = Self::create(db, &input)?;
+
+        // 正文里的 https:// 图片下载到本地（微信等站点的防盗链绕过已在该函数内处理），
+        // 否则笔记里的图迟早因 CDN 过期 / Referer 校验而裂掉。
+        match crate::services::import_attachments::rewrite_external_images(
+            &input.content,
+            note.id,
+            app_data_dir,
+        )
+        .await
+        {
+            Ok(rewrite) => {
+                if !rewrite.missing.is_empty() {
+                    log::warn!(
+                        "[web-clip] 笔记 {} 有 {} 张图片下载失败，保留原始外链",
+                        note.id,
+                        rewrite.missing.len()
+                    );
+                }
+                if rewrite.copied > 0 {
+                    input.content = rewrite.new_body;
+                    return Self::update(db, note.id, &input);
+                }
+            }
+            Err(e) => {
+                log::warn!("[web-clip] 笔记 {} 图片本地化失败：{}", note.id, e);
+            }
+        }
+
+        Ok(note)
     }
 }

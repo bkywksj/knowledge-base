@@ -200,7 +200,7 @@ pub fn set_note_scratch(
 
 // ─── T-014 网页剪藏 ────────────────────────────
 
-/// 把网页 URL 剪藏成笔记（通过 r.jina.ai 转 markdown）
+/// 把网页 URL 剪藏成笔记（直连原页 → readability 提正文 → markdown）
 ///
 /// `folder_id` 由前端透传：右键菜单触发时是该文件夹 id；全局入口可传当前选中文件夹
 /// 或 null（落根目录）。返回新建笔记，前端可立即跳转到编辑器。
@@ -210,7 +210,10 @@ pub async fn clip_url_to_note(
     url: String,
     folder_id: Option<i64>,
 ) -> Result<Note, String> {
-    NoteService::clip_url(&state.db, &url, folder_id)
+    // ⚠️ 用 state.data_dir（DataDirResolver 解析过的实际数据目录），
+    // 不能用 app.path().app_data_dir()——那是 OS 默认目录，不跟随用户改的数据目录
+    let app_data_dir = state.data_dir.clone();
+    NoteService::clip_url(&state.db, &url, folder_id, &app_data_dir)
         .await
         .map_err(|e| e.to_string())
 }
