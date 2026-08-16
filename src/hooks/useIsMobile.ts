@@ -12,6 +12,10 @@ import { useEffect, useState } from "react";
  *    方便开发期拉窄窗口模拟手机布局。
  *
  * 使用 matchMedia 而非 resize 事件：matchMedia 只在跨阈值时触发，远比 resize 高效。
+ *
+ * ⚠️ 本 Hook 只回答「走哪套组件树」，**不要**拿它判断大屏排布。
+ * 平板 / 折叠屏展开 / DeX / WSA 大窗口在这里依然是 true（它们用的仍是移动端 UI），
+ * 「几列卡片、底部 Tab 还是侧边 Rail」请用 {@link useWindowSizeClass}。
  */
 const MOBILE_BREAKPOINT = 768;
 

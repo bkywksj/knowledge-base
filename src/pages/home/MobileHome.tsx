@@ -98,7 +98,9 @@ export function MobileHome() {
   }`;
 
   return (
-    <div className="px-0 py-0 text-slate-800">
+    // 大屏（平板 / 折叠屏展开 / WSA 大窗口）限宽居中：
+    // 不限宽时数据卡会被拉成横跨全屏的长条，一个「0」孤零零挂在最左边。
+    <div className="mx-auto w-full max-w-[860px] px-0 py-0 text-slate-800">
       {/* 顶部问候 + 头像 */}
       <div className="flex items-center justify-between bg-white px-5 pt-4 pb-3">
         <div>
@@ -112,8 +114,8 @@ export function MobileHome() {
         </div>
       </div>
 
-      {/* 4 数据卡 (2x2)：每张可独立隐藏 */}
-      <div className="grid grid-cols-2 gap-2 px-4 pt-3">
+      {/* 4 数据卡：手机 2x2，≥600dp 摊成一行 4 列 */}
+      <div className="grid grid-cols-2 gap-2 px-4 pt-3 min-[600px]:grid-cols-4 min-[600px]:gap-3">
         {showItem("today_words") && (
           <button
             onClick={() => navigate("/daily")}
@@ -399,7 +401,10 @@ function WritingHeatmap({ trend }: { trend: DailyWritingStat[] }) {
   cells.push(...days);
 
   return (
-    <div className="rounded-2xl bg-white p-3">
+    // 限宽 360：格子是 aspect-square，容器一宽格子就等比膨胀成巨型色块。
+    // 360 ≈ 手机上该容器的实际宽度，大屏格子尺寸因此与手机保持一致；
+    // 手机视口本就窄于此，上限不生效。
+    <div className="w-full max-w-[360px] rounded-2xl bg-white p-3">
       {/* 列标 */}
       <div className="mb-1.5 grid grid-cols-7 text-center text-[9px] text-slate-400">
         <div>日</div>
