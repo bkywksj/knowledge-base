@@ -51,6 +51,11 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 /// 继续读只会吃满内存（移动端尤其敏感），直接截断即可——readability 只关心正文。
 const MAX_HTML_BYTES: usize = 8 * 1024 * 1024;
 
+/// 判定「确实提取到正文」的最小字符数。
+///
+/// 取 32 是保守值：短公告 / 短说明页仍能通过，而导航页残渣（`[首页](/)` 这类）会被挡下。
+const MIN_CONTENT_CHARS: usize = 32;
+
 /// 剪藏结果：标题 + 正文 markdown + 原 URL（供笔记 metadata 用）
 #[derive(Debug, Clone)]
 pub struct ClippedPage {
@@ -228,7 +233,10 @@ pub fn extract_article(html: &str, source_url: &str) -> Result<ClippedPage, AppE
     let markdown = crate::services::markdown::html_to_markdown(&content_html);
     let markdown = markdown.trim().to_string();
 
-    if markdown.is_empty() {
+    // 只判空还不够：readability 对导航页 / 登录墙 / 空壳页会「尽力」抠出一两个链接，
+    // 结果是给用户建一篇正文只有 `[首页](/)` 的垃圾笔记。用长度阈值把这类残渣一并挡掉，
+    // 让用户拿到明确的失败提示，而不是一篇需要自己回头删的空笔记。
+    if markdown.chars().count() < MIN_CONTENT_CHARS {
         return Err(AppError::Custom(
             "未能提取到正文——该页可能需要登录、由 JS 动态渲染，或本身没有文章内容".into(),
         ));
@@ -482,9 +490,19 @@ mod tests {
 
     #[test]
     fn extract_page_without_article_errors() {
-        // 只有导航、没有正文 → 应报「未能提取到正文」而不是产出垃圾笔记
+        // 只有导航、没有正文 → 应报「未能提取到正文」而不是产出垃圾笔记。
+        // readability 会从这种空壳页里抠出 `[首页](/)`，靠 MIN_CONTENT_CHARS 挡下。
         let html = "<html><body><nav><a href='/'>首页</a></nav></body></html>";
-        assert!(extract_article(html, "https://x.com").is_err());
+        let err = extract_article(html, "https://x.com").unwrap_err();
+        assert!(err.to_string().contains("未能提取到正文"));
+    }
+
+    #[test]
+    fn extract_short_but_real_article_is_kept() {
+        // 阈值不能误杀真实的短文——这段正文刚过 MIN_CONTENT_CHARS
+        let body = "<h1>短公告</h1><p>今天下午三点全体开会，地点在二楼会议室，请准时参加。</p>";
+        let page = extract_article(&article_html(body), "https://example.com/n").unwrap();
+        assert!(page.markdown.contains("二楼会议室"));
     }
 
     // ─── 懒加载图片修正 ───────────────────────────────
