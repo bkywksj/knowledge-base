@@ -1188,8 +1188,10 @@ export const dataDirApi = {
   /** T-013 完整版：写指针 + 写迁移 marker */
   setPendingWithMigration: (newPath: string) =>
     invoke<void>("set_pending_data_dir_with_migration", { newPath }),
-  /** 取消未执行的迁移 */
+  /** 取消未执行 / 失败的迁移（指针退回源目录 + 删 marker） */
   cancelPendingMigration: () => invoke<void>("cancel_pending_migration"),
+  /** 重试上次失败的迁移（marker crashed → pending，仍需重启才真正执行） */
+  retryPendingMigration: () => invoke<void>("retry_pending_migration"),
   /** 读迁移 marker（splash 窗口启动时查初始状态用）*/
   getMigrationMarker: () =>
     invoke<MigrationMarker | null>("get_migration_marker"),

@@ -127,12 +127,27 @@ export default function MigrationSplash() {
         )}
 
         {error ? (
-          <Result
-            status="error"
-            title="迁移失败"
-            subTitle={error}
-            style={{ padding: "8px 0" }}
-          />
+          <>
+            <Result
+              status="error"
+              title="迁移失败"
+              subTitle={error}
+              style={{ padding: "8px 0" }}
+            />
+            {/* 关键的安心话术：失败不会丢数据、也不会卡住启动。
+                Rust 侧失败后会把指针退回源目录并照常启动主窗口（见 lib.rs 的降级分支）。 */}
+            <Alert
+              type="info"
+              showIcon
+              message="数据没有丢失，应用会继续启动"
+              description={
+                <span style={{ fontSize: 12 }}>
+                  本次仍使用原来的数据目录。进入主界面后可在弹出的提示里选择「重试迁移」或「放弃迁移」。
+                </span>
+              }
+              style={{ marginTop: "auto" }}
+            />
+          </>
         ) : done ? (
           <Result
             status="success"

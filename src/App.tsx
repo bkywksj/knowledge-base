@@ -9,6 +9,7 @@ import { useAppStore } from "@/store";
 import { AppRouter } from "@/Router";
 import { getAntdTokens } from "@/theme/tokens";
 import { TaskReminderListener } from "@/components/tasks/TaskReminderListener";
+import { MigrationCrashNotice } from "@/components/datadir/MigrationCrashNotice";
 import { UpdaterProvider } from "@/components/updater/UpdaterProvider";
 import { AppLockGate } from "@/components/applock/AppLockGate";
 
@@ -166,6 +167,8 @@ function App() {
             )}
           </UpdaterProvider>
           {IS_MAIN_WINDOW && <TaskReminderListener />}
+          {/* 上次数据目录迁移失败时给用户重试 / 放弃的出口（marker.status=crashed 才渲染） */}
+          {IS_MAIN_WINDOW && <MigrationCrashNotice />}
         </ErrorBoundary>
       </AntdApp>
       <GlobalNativeTooltip />

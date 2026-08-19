@@ -1437,6 +1437,8 @@ export interface MigrationMarker {
   started_at: string;
   updated_at: string;
   completed_items: string[];
+  /** 上次失败原因（status="crashed" 时有值） */
+  last_error?: string | null;
 }
 
 /** 迁移进度事件（splash 窗口监听用）*/
