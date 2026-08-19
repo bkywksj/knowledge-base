@@ -52,6 +52,16 @@ pub fn cancel_pending_migration(app: tauri::AppHandle) -> Result<(), String> {
     DataDirResolver::cancel_migration(&app_data_dir).map_err(|e| e.to_string())
 }
 
+/// 重试上次失败的迁移（marker 状态 crashed → pending，指针重新指向目标目录）
+///
+/// 真正的迁移仍在下次启动的早期执行 —— 运行中的进程正握着 db 连接，
+/// 当场搬文件必然写坏数据。所以这里只重置状态，前端负责提示用户重启。
+#[tauri::command]
+pub fn retry_pending_migration(app: tauri::AppHandle) -> Result<(), String> {
+    let app_data_dir = crate::framework_app_data_dir(&app).map_err(|e| e.to_string())?;
+    DataDirResolver::retry_migration(&app_data_dir).map_err(|e| e.to_string())
+}
+
 /// 读迁移 marker（splash 窗口启动时查初始状态用）
 #[tauri::command]
 pub fn get_migration_marker(app: tauri::AppHandle) -> Result<Option<MigrationMarker>, String> {

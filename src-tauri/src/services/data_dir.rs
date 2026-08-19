@@ -338,6 +338,10 @@ pub struct MigrationMarker {
     /// 已成功复制的项（相对路径，对应 MIGRATION_ITEMS 中条目）
     #[serde(default)]
     pub completed_items: Vec<String>,
+    /// 上次失败原因（status=crashed 时有值）。
+    /// 老版本写的 marker 没有这个字段，`serde(default)` 保证仍能解析。
+    #[serde(default)]
+    pub last_error: Option<String>,
 }
 
 /// 单次迁移进度事件（emit 给 splash 窗口）
@@ -378,6 +382,9 @@ impl DataDirResolver {
                 "新数据目录与当前数据目录相同，无需迁移".into(),
             ));
         }
+        // 源目录可读性预检：把「云盘未挂载 / 网络盘断开 / 没权限」挡在**重启之前**。
+        // 不然用户点完确认才发现问题，而那时候错误只能在启动期爆出来（历史上就是那样炸的）。
+        preflight_source(from_dir)?;
         // 先按普通流程写指针
         Self::set_pending(framework_app_data_dir, to_dir)?;
         // 再写迁移 marker
@@ -388,6 +395,7 @@ impl DataDirResolver {
             started_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             updated_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             completed_items: Vec::new(),
+            last_error: None,
         };
         write_marker(framework_app_data_dir, &marker)?;
         log::info!("[migration] 已写入 marker: {} → {}", marker.from, marker.to);
@@ -417,14 +425,113 @@ impl DataDirResolver {
         Ok(())
     }
 
-    /// 启动期：取消迁移 — 删 marker + 删指针 → 下次启动回到原位置
+    /// 启动期：读出**本次启动应当执行**的迁移 marker（不该执行则返回 None）
+    ///
+    /// 与 [`read_migration_marker`](Self::read_migration_marker)（读原始内容，给 UI 用）的区别在于状态过滤：
+    ///
+    /// - `Pending`：用户刚设好、等重启执行 → 跑
+    /// - `InProgress`：上次进程在迁移途中被强杀 / 断电，没来得及标状态 → 跑
+    ///   （`completed_items` 会让它跳过已搬完的项，接着搬）
+    /// - `Crashed`：上次明确失败过 → **不跑**。失败原因通常是环境性的（网盘客户端没启动、
+    ///   移动硬盘没插），下次启动多半照样失败，无脑重跑只会让用户每次开机白等一次失败画面。
+    ///   这类 marker 交给主窗口的提示 UI，由用户排除原因后显式重试。
+    /// - `Done`：理论上不会留在盘上（完成即删 marker），兜底也不跑
+    pub fn read_startup_migration(
+        framework_app_data_dir: &Path,
+    ) -> Result<Option<MigrationMarker>, AppError> {
+        Ok(Self::read_migration_marker(framework_app_data_dir)?.filter(|m| {
+            matches!(
+                m.status,
+                MigrationStatus::Pending | MigrationStatus::InProgress
+            )
+        }))
+    }
+
+    /// 启动期：把 marker 标记为「上次崩了」并记录原因，返回更新后的 marker
+    ///
+    /// 迁移失败时必须调这个 —— 否则 marker 会停在 `InProgress` 状态原样留在盘上，
+    /// 下次启动 `read_migration_marker` 照样读到、照样重跑、照样失败：
+    /// 用户被锁在「启动即崩」的死循环里，连进应用取消迁移的机会都没有。
+    ///
+    /// marker 不存在（例如迁移刚好在删 marker 后失败）时返回 `Ok(None)`，不算错。
+    pub fn mark_migration_crashed(
+        framework_app_data_dir: &Path,
+        error: &str,
+    ) -> Result<Option<MigrationMarker>, AppError> {
+        // 必须读**盘上**的 marker 而不是内存里传入的那份：run_migration 每完成一项
+        // 就回写一次 completed_items，盘上的才是真实进度，决定要不要回滚指针全靠它。
+        let Some(mut marker) = Self::read_migration_marker(framework_app_data_dir)? else {
+            return Ok(None);
+        };
+        marker.status = MigrationStatus::Crashed;
+        marker.last_error = Some(error.to_string());
+        marker.updated_at = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        write_marker(framework_app_data_dir, &marker)?;
+        Ok(Some(marker))
+    }
+
+    /// 用户在应用里点「重试迁移」：marker 状态回到 Pending + 指针重新指向目标目录
+    ///
+    /// 指针要重新写是因为失败时可能已被 [`rollback_pointer_to`] 回滚到源目录了；
+    /// 不重写的话下次启动迁移完了指针还指着老地方，白搬一趟。
+    pub fn retry_migration(framework_app_data_dir: &Path) -> Result<(), AppError> {
+        let Some(mut marker) = Self::read_migration_marker(framework_app_data_dir)? else {
+            return Err(AppError::NotFound("没有待重试的迁移记录".into()));
+        };
+        marker.status = MigrationStatus::Pending;
+        marker.last_error = None;
+        marker.updated_at = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        write_marker(framework_app_data_dir, &marker)?;
+        Self::set_pending(framework_app_data_dir, &marker.to)?;
+        log::info!("[migration] 已重置为待迁移: {} → {}", marker.from, marker.to);
+        Ok(())
+    }
+
+    /// 迁移失败后把指针写回源目录，让**本次启动**仍旧用得上老数据
+    ///
+    /// 不能复用 [`set_pending`]：那个会 `create_dir_all` + 写探针文件，而这里的源目录
+    /// 恰恰可能是不可达 / 不可写的（云盘没挂载正是如此），探针一失败指针就回滚不了。
+    /// 这里只做纯粹的指针改写，不碰源目录本身。
+    pub fn rollback_pointer_to(
+        framework_app_data_dir: &Path,
+        from: &str,
+    ) -> Result<(), AppError> {
+        let trimmed = from.trim();
+        if trimmed.is_empty() {
+            return Err(AppError::InvalidInput("回滚目标路径为空".into()));
+        }
+        // 源就是框架默认目录 → 删指针即可（留着一个指向默认目录的指针只会让
+        // 设置页把来源显示成"自定义路径"，纯属误导）
+        if is_same_location(Path::new(trimmed), framework_app_data_dir) {
+            return Self::clear_pending(framework_app_data_dir);
+        }
+        let pointer = framework_app_data_dir.join(POINTER_FILE);
+        let tmp = framework_app_data_dir.join(format!("{}.rollback.tmp", POINTER_FILE));
+        std::fs::write(&tmp, trimmed.as_bytes())?;
+        if pointer.exists() {
+            let _ = std::fs::remove_file(&pointer);
+        }
+        std::fs::rename(&tmp, &pointer)?;
+        log::warn!("[migration] 迁移失败，指针已回滚到源目录: {}", trimmed);
+        Ok(())
+    }
+
+    /// 取消迁移 — 指针回到源目录 + 删 marker → 下次启动回到原位置
+    ///
+    /// ⚠️ 指针是**回滚到 marker.from**，不是简单删掉。删指针等于回落框架默认目录，
+    /// 而源目录本身完全可能是用户此前设的自定义路径（例如 D:\我的库）——
+    /// 那样"取消迁移"会把用户甩进一个空的默认目录，比迁移失败本身还糟。
     pub fn cancel_migration(framework_app_data_dir: &Path) -> Result<(), AppError> {
-        Self::clear_pending(framework_app_data_dir)?;
+        match Self::read_migration_marker(framework_app_data_dir)? {
+            Some(m) => Self::rollback_pointer_to(framework_app_data_dir, &m.from)?,
+            // 没有 marker 就没有"源目录"可回，只能按老语义清指针
+            None => Self::clear_pending(framework_app_data_dir)?,
+        }
         let path = framework_app_data_dir.join(MIGRATION_MARKER);
         if path.exists() {
             std::fs::remove_file(&path)?;
         }
-        log::info!("[migration] 已取消迁移：删除 marker + 指针");
+        log::info!("[migration] 已取消迁移：指针回滚到源目录 + 删除 marker");
         Ok(())
     }
 
@@ -464,6 +571,11 @@ impl DataDirResolver {
             });
             return Ok(());
         }
+
+        // 源目录可读性预检：源不可达时**一个字节都别搬**，直接带人话原因失败。
+        // 少了这道闸，错误要等到 scan 的 read_dir 或 copy 的 File::open 才炸出来，
+        // 用户拿到的只有一句 "IO 错误: 云文件提供程序未运行。 (os error 362)"。
+        preflight_source(&from)?;
 
         // 写 in_progress 状态
         let mut current = marker.clone();
@@ -575,6 +687,87 @@ struct PlanItem {
     rel: String,
     is_dir: bool,
     size: u64,
+}
+
+/// 把源目录相关的 IO 错误翻译成用户看得懂的一句话
+///
+/// 线上真实案例：用户旧机器把数据目录设在网盘挂载的 `Z:\`，重装系统后网盘客户端没装，
+/// 迁移直接抛 `IO 错误: 云文件提供程序未运行。 (os error 362)` —— 这句话对用户毫无指导性。
+fn describe_source_io_error(e: &std::io::Error) -> String {
+    #[cfg(windows)]
+    if let Some(code) = e.raw_os_error() {
+        // Windows 云文件（Cloud Files API）错误码段。OneDrive / iCloud / RaiDrive /
+        // 各类网盘挂载盘都走这套 API：文件平时只是个占位符（placeholder），
+        // 真去读内容时才由客户端回源下载；客户端没运行就报这一段错误码。
+        if (362..=400).contains(&code) {
+            return format!(
+                "源目录看起来是云盘 / 网盘挂载盘，但对应的客户端没有在运行（{}，os error {}）。\
+                 请先启动并登录该网盘客户端，确认目录能在资源管理器里正常打开文件后，再重试迁移。",
+                e, code
+            );
+        }
+        // 网络路径不可达：ERROR_BAD_NETPATH / ERROR_NETNAME_DELETED / ERROR_BAD_NET_NAME
+        if matches!(code, 53 | 64 | 67) {
+            return format!(
+                "源目录所在的网络位置连不上（{}，os error {}）。请确认网络驱动器已连接后再重试迁移。",
+                e, code
+            );
+        }
+    }
+    match e.kind() {
+        std::io::ErrorKind::PermissionDenied => format!(
+            "没有读取源数据目录的权限（{}）。可尝试以管理员身份运行，或检查该目录的访问权限。",
+            e
+        ),
+        std::io::ErrorKind::NotFound => {
+            format!("源数据目录或其中的文件已不存在（{}）。", e)
+        }
+        _ => format!("读取源数据目录失败（{}）。", e),
+    }
+}
+
+/// 迁移前的源目录可读性预检
+///
+/// 分三级探测，从便宜到贵：
+/// 1. 目录是否存在
+/// 2. 目录能否枚举（网络盘断开、权限不足在这里就现形）
+/// 3. **真读一个字节**。这一步不能省：云占位文件 stat 得到、也列得出来，
+///    只有触发 hydration（读内容）时才报 362 —— 只做 1、2 探不出问题。
+fn preflight_source(from: &Path) -> Result<(), AppError> {
+    if !from.exists() {
+        return Err(AppError::Custom(format!(
+            "源数据目录不存在：{} —— 如果它在移动硬盘 / 网盘挂载盘上，请先接上（或启动网盘客户端）再重试迁移。",
+            from.display()
+        )));
+    }
+
+    let entries = std::fs::read_dir(from).map_err(|e| {
+        AppError::Custom(format!("{}：{}", from.display(), describe_source_io_error(&e)))
+    })?;
+    for entry in entries {
+        entry.map_err(|e| {
+            AppError::Custom(format!("{}：{}", from.display(), describe_source_io_error(&e)))
+        })?;
+    }
+
+    // MIGRATION_ITEMS 里 db 排在最前，所以命中的通常就是 app.db —— 正是最该确认能读的文件。
+    // 源目录里一个待迁移文件都没有时直接放行：没东西可搬，谈不上读得动读不动。
+    for &name in MIGRATION_ITEMS {
+        let p = from.join(name);
+        if !p.is_file() {
+            continue;
+        }
+        let mut f = std::fs::File::open(&p).map_err(|e| {
+            AppError::Custom(format!("{}：{}", p.display(), describe_source_io_error(&e)))
+        })?;
+        let mut probe = [0u8; 1];
+        // 0 字节（空文件）也算读成功，只有 Err 才是真读不动
+        f.read(&mut probe).map_err(|e| {
+            AppError::Custom(format!("{}：{}", p.display(), describe_source_io_error(&e)))
+        })?;
+        break;
+    }
+    Ok(())
 }
 
 /// 扫描 source 下哪些 MIGRATION_ITEMS 存在 + 算总大小
@@ -1197,6 +1390,7 @@ mod self_copy_guard_tests {
             started_at: "2026-08-04 14:28:51".into(),
             updated_at: "2026-08-04 14:28:51".into(),
             completed_items: Vec::new(),
+            last_error: None,
         };
         write_marker(&app_data, &marker).unwrap();
 
@@ -1208,6 +1402,267 @@ mod self_copy_guard_tests {
             !app_data.join(MIGRATION_MARKER).exists(),
             "marker 必须被清除，否则每次启动都会重跑"
         );
+    }
+
+    // ─── 迁移失败恢复路径（P0/P1）───────────────────────
+
+    fn pending_marker(from: &Path, to: &Path) -> MigrationMarker {
+        MigrationMarker {
+            from: from.to_string_lossy().into(),
+            to: to.to_string_lossy().into(),
+            status: MigrationStatus::Pending,
+            started_at: "2026-08-17 16:04:14".into(),
+            updated_at: "2026-08-17 16:04:14".into(),
+            completed_items: Vec::new(),
+            last_error: None,
+        }
+    }
+
+    /// 🔴 核心回归：迁移失败必须把 marker 标成 Crashed 并记下原因。
+    /// 停在 InProgress 不动 = 下次启动照样重跑、照样失败 → 用户被锁在启动即崩的死循环里。
+    #[test]
+    fn mark_crashed_records_reason_and_status() {
+        let app_data = temp_dir("crash-app");
+        let from = temp_dir("crash-from");
+        let to = temp_dir("crash-to");
+        write_marker(&app_data, &pending_marker(&from, &to)).unwrap();
+
+        let updated = DataDirResolver::mark_migration_crashed(&app_data, "os error 362")
+            .unwrap()
+            .expect("有 marker 就该返回更新后的内容");
+        assert_eq!(updated.status, MigrationStatus::Crashed);
+
+        // 必须真的落盘，不能只改内存里那份
+        let reread = DataDirResolver::read_migration_marker(&app_data).unwrap().unwrap();
+        assert_eq!(reread.status, MigrationStatus::Crashed);
+        assert_eq!(reread.last_error.as_deref(), Some("os error 362"));
+    }
+
+    /// 没有 marker 时标记失败不算错（迁移正好在删 marker 之后失败）
+    #[test]
+    fn mark_crashed_without_marker_is_noop() {
+        let app_data = temp_dir("crash-none");
+        assert!(DataDirResolver::mark_migration_crashed(&app_data, "x")
+            .unwrap()
+            .is_none());
+    }
+
+    /// 老版本写下的 marker（没有 last_error 字段）必须仍能解析 —— 否则升级即炸
+    #[test]
+    fn marker_without_last_error_field_still_parses() {
+        let app_data = temp_dir("compat");
+        let legacy = r#"{
+            "from": "Z:\\我的库",
+            "to": "D:\\我的库",
+            "status": "in_progress",
+            "started_at": "2026-08-17 16:04:14",
+            "updated_at": "2026-08-17 16:04:14",
+            "completed_items": []
+        }"#;
+        std::fs::write(app_data.join(MIGRATION_MARKER), legacy).unwrap();
+
+        let m = DataDirResolver::read_migration_marker(&app_data).unwrap().unwrap();
+        assert_eq!(m.status, MigrationStatus::InProgress);
+        assert!(m.last_error.is_none());
+    }
+
+    /// 重试：状态回 Pending + 清掉上次的错误 + 指针重新指向目标目录
+    #[test]
+    fn retry_resets_status_and_pointer() {
+        let app_data = temp_dir("retry-app");
+        let from = temp_dir("retry-from");
+        let to = temp_dir("retry-to");
+        std::env::remove_var("KB_DATA_DIR");
+        write_marker(&app_data, &pending_marker(&from, &to)).unwrap();
+        DataDirResolver::mark_migration_crashed(&app_data, "boom").unwrap();
+        // 失败时指针被回滚到了源目录
+        DataDirResolver::rollback_pointer_to(&app_data, from.to_str().unwrap()).unwrap();
+
+        DataDirResolver::retry_migration(&app_data).unwrap();
+
+        let m = DataDirResolver::read_migration_marker(&app_data).unwrap().unwrap();
+        assert_eq!(m.status, MigrationStatus::Pending);
+        assert!(m.last_error.is_none());
+        let r = DataDirResolver::resolve(&app_data).unwrap();
+        assert_eq!(r.current_dir, to.to_string_lossy(), "指针必须重新指向目标目录");
+    }
+
+    /// 🔴 启动期必须**跳过** Crashed 的 marker。
+    /// 不跳的话：失败原因通常是环境性的（网盘没启动），下次启动照样失败，
+    /// 用户每次开机都得白等一次失败画面，而且永远等不到自己做决定的机会。
+    #[test]
+    fn startup_skips_crashed_marker() {
+        let app_data = temp_dir("startup-crashed");
+        let from = temp_dir("startup-crashed-from");
+        let to = temp_dir("startup-crashed-to");
+        write_marker(&app_data, &pending_marker(&from, &to)).unwrap();
+        DataDirResolver::mark_migration_crashed(&app_data, "os error 362").unwrap();
+
+        assert!(
+            DataDirResolver::read_startup_migration(&app_data)
+                .unwrap()
+                .is_none(),
+            "Crashed 的 marker 不该在启动期自动重跑"
+        );
+        // 但 UI 仍要能读到它（否则用户看不到失败提示、也无从重试）
+        assert!(DataDirResolver::read_migration_marker(&app_data)
+            .unwrap()
+            .is_some());
+    }
+
+    /// Pending / InProgress 必须照跑（InProgress = 上次被强杀/断电，靠 completed_items 续传）
+    #[test]
+    fn startup_runs_pending_and_in_progress() {
+        for status in [MigrationStatus::Pending, MigrationStatus::InProgress] {
+            let app_data = temp_dir("startup-run");
+            let from = temp_dir("startup-run-from");
+            let to = temp_dir("startup-run-to");
+            let mut m = pending_marker(&from, &to);
+            m.status = status;
+            write_marker(&app_data, &m).unwrap();
+
+            assert!(
+                DataDirResolver::read_startup_migration(&app_data)
+                    .unwrap()
+                    .is_some(),
+                "{:?} 状态必须在启动期执行",
+                status
+            );
+        }
+    }
+
+    /// 重试后必须重新被启动期认领 —— 否则用户点了「重试并重启」什么也不会发生
+    #[test]
+    fn startup_picks_up_marker_again_after_retry() {
+        let app_data = temp_dir("startup-retry");
+        let from = temp_dir("startup-retry-from");
+        let to = temp_dir("startup-retry-to");
+        std::env::remove_var("KB_DATA_DIR");
+        write_marker(&app_data, &pending_marker(&from, &to)).unwrap();
+        DataDirResolver::mark_migration_crashed(&app_data, "boom").unwrap();
+        assert!(DataDirResolver::read_startup_migration(&app_data)
+            .unwrap()
+            .is_none());
+
+        DataDirResolver::retry_migration(&app_data).unwrap();
+
+        assert!(
+            DataDirResolver::read_startup_migration(&app_data)
+                .unwrap()
+                .is_some(),
+            "重试后必须重新被启动期认领"
+        );
+    }
+
+    /// 放弃迁移后启动期不该再有任何动作
+    #[test]
+    fn startup_has_nothing_after_cancel() {
+        let app_data = temp_dir("startup-cancel");
+        let from = temp_dir("startup-cancel-from");
+        let to = temp_dir("startup-cancel-to");
+        std::env::remove_var("KB_DATA_DIR");
+        DataDirResolver::set_pending_with_migration(&app_data, &from, to.to_str().unwrap())
+            .unwrap();
+        DataDirResolver::cancel_migration(&app_data).unwrap();
+
+        assert!(DataDirResolver::read_startup_migration(&app_data)
+            .unwrap()
+            .is_none());
+    }
+
+    /// 没有 marker 时重试要报错，而不是静默成功
+    #[test]
+    fn retry_without_marker_errors() {
+        let app_data = temp_dir("retry-none");
+        assert!(DataDirResolver::retry_migration(&app_data).is_err());
+    }
+
+    /// 🔴 指针回滚不能依赖源目录可写 —— 源不可达正是迁移失败的主因。
+    /// 用一个不存在的源路径回滚，仍必须成功写下指针。
+    #[test]
+    fn rollback_pointer_works_even_if_source_unreachable() {
+        let app_data = temp_dir("rollback");
+        std::env::remove_var("KB_DATA_DIR");
+        let ghost = if cfg!(windows) {
+            r"Z:\我的库".to_string()
+        } else {
+            "/mnt/ghost-cloud/kb".to_string()
+        };
+
+        DataDirResolver::rollback_pointer_to(&app_data, &ghost).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(app_data.join(POINTER_FILE)).unwrap(),
+            ghost
+        );
+    }
+
+    /// 源目录就是框架默认目录时，回滚 = 删指针（留个指向默认目录的指针纯属误导）
+    #[test]
+    fn rollback_to_default_dir_clears_pointer() {
+        let app_data = temp_dir("rollback-default");
+        std::fs::write(app_data.join(POINTER_FILE), "whatever").unwrap();
+
+        DataDirResolver::rollback_pointer_to(&app_data, app_data.to_str().unwrap()).unwrap();
+        assert!(!app_data.join(POINTER_FILE).exists());
+    }
+
+    /// 🔴 取消迁移必须把指针**退回源目录**，不是无脑删指针。
+    /// 源本身是自定义路径时，删指针会把用户甩进空的默认目录 —— 比迁移失败还糟。
+    #[test]
+    fn cancel_migration_restores_source_pointer() {
+        let app_data = temp_dir("cancel-app");
+        let from = temp_dir("cancel-from");
+        let to = temp_dir("cancel-to");
+        std::env::remove_var("KB_DATA_DIR");
+        DataDirResolver::set_pending_with_migration(&app_data, &from, to.to_str().unwrap())
+            .unwrap();
+
+        DataDirResolver::cancel_migration(&app_data).unwrap();
+
+        assert!(!app_data.join(MIGRATION_MARKER).exists(), "marker 必须删掉");
+        let r = DataDirResolver::resolve(&app_data).unwrap();
+        assert_eq!(r.current_dir, from.to_string_lossy(), "必须回到源目录");
+    }
+
+    // ─── 源目录预检（P2）─────────────────────────────
+
+    /// 源目录不存在 → 预检直接失败，且提示里带上路径（用户得知道是哪个盘没接上）
+    #[test]
+    fn preflight_rejects_missing_source() {
+        let ghost = std::env::temp_dir().join("kb_preflight_never_exists_xyz");
+        let err = preflight_source(&ghost).unwrap_err().to_string();
+        assert!(err.contains("不存在"), "错误信息应说明源目录不存在: {}", err);
+    }
+
+    /// 正常可读的源目录（含 db 文件）必须放行，别误伤
+    #[test]
+    fn preflight_accepts_readable_source() {
+        let from = temp_dir("preflight-ok");
+        std::fs::write(from.join("app.db"), b"SQLite format 3\x00").unwrap();
+        std::fs::create_dir_all(from.join("kb_assets")).unwrap();
+        preflight_source(&from).unwrap();
+    }
+
+    /// 空目录也放行：没东西可搬，谈不上读得动读不动
+    #[test]
+    fn preflight_accepts_empty_source() {
+        let from = temp_dir("preflight-empty");
+        preflight_source(&from).unwrap();
+    }
+
+    /// 入口预检：源不可读时 `set_pending_with_migration` 当场就该拒绝，
+    /// 且不留下任何指针 / marker —— 用户在设置页点确认时就能看到原因，不用等重启崩一次
+    #[test]
+    fn set_pending_with_migration_rejects_unreachable_source() {
+        let app_data = temp_dir("preflight-entry");
+        let to = temp_dir("preflight-entry-to");
+        let ghost = std::env::temp_dir().join("kb_preflight_entry_ghost_xyz");
+
+        let r =
+            DataDirResolver::set_pending_with_migration(&app_data, &ghost, to.to_str().unwrap());
+        assert!(r.is_err(), "源不可达必须被拒绝");
+        assert!(!app_data.join(POINTER_FILE).exists(), "拒绝时不应留下指针");
+        assert!(!app_data.join(MIGRATION_MARKER).exists(), "拒绝时不应留下 marker");
     }
 
     #[test]

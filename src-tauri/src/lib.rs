@@ -499,13 +499,32 @@ fn run_data_dir_migration_with_splash(
         &emit_progress,
     );
 
-    match &result {
-        Ok(_) => log::info!("[migration] 迁移完成"),
-        Err(e) => log::error!("[migration] 迁移失败: {}", e),
-    }
+    // 失败画面停留久一点：这是用户唯一能看到失败原因的地方（主窗口那边的
+    // 「上次迁移未完成」提示是兜底，但错误全文只在这里）。
+    let linger_ms = match &result {
+        Ok(_) => {
+            log::info!("[migration] 迁移完成");
+            800
+        }
+        Err(e) => {
+            log::error!("[migration] 迁移失败: {}", e);
+            // 🔴 必须 emit 一条 error 进度：splash 页面的失败 UI 全靠这个事件驱动。
+            // 以前失败时直接 return Err 让 setup 崩掉，那段失败 UI 从来没被触发过，
+            // 用户只看到进度条停在 0% + 一个 panic 弹窗。
+            emit_progress(&services::data_dir::MigrationProgress {
+                phase: "error".into(),
+                current_file: String::new(),
+                item_index: 0,
+                item_total: 0,
+                bytes_done: 0,
+                bytes_total: 0,
+                message: e.to_string(),
+            });
+            6000
+        }
+    };
 
-    // 让用户看到"完成"或"失败"画面 1 秒再关
-    std::thread::sleep(std::time::Duration::from_millis(800));
+    std::thread::sleep(std::time::Duration::from_millis(linger_ms));
     let _ = splash.close();
 
     result
@@ -723,12 +742,52 @@ pub fn run() {
             // T-013 完整版：检测迁移 marker → 弹 splash 窗口跑迁移 → close splash
             // 必须放在 db init 之前（迁移会动 db 文件）
             // 仅桌面端：移动端无多窗口（splash），按 T-M013 重做迁移流程
+            //
+            // 🔴 迁移失败**绝不能**中断启动（历史教训，v1.52.0 线上事故）：
+            // 这里原来是 `?` 直接上抛，setup 返 Err → Tauri 内部 expect → panic。
+            // 用户旧数据目录在网盘挂载盘上、重装系统后客户端没运行，迁移一读源目录就报
+            // `os error 362`，于是每次启动都崩、每次 marker 都还在，形成死循环 ——
+            // 连进应用取消迁移的机会都没有。现在改为：失败只降级，marker 标 Crashed，
+            // 指针按进度回滚，应用照常起来，让用户在界面里决定重试还是放弃。
+            //
+            // 用 read_startup_migration 而非 read_migration_marker：前者按状态过滤，
+            // 把 `Crashed` 的 marker 挡在门外（失败原因多是环境性的，无脑重跑只会让用户
+            // 每次开机白等一次失败画面），交由主窗口的 MigrationCrashNotice 让用户决策。
             #[cfg(desktop)]
             if let Ok(Some(marker)) =
-                services::data_dir::DataDirResolver::read_migration_marker(&framework_app_data_dir)
+                services::data_dir::DataDirResolver::read_startup_migration(&framework_app_data_dir)
             {
-                run_data_dir_migration_with_splash(app, &framework_app_data_dir, &marker)
-                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+                if let Err(e) =
+                    run_data_dir_migration_with_splash(app, &framework_app_data_dir, &marker)
+                {
+                    log::error!("[migration] 迁移失败，降级继续启动: {}", e);
+                    match services::data_dir::DataDirResolver::mark_migration_crashed(
+                        &framework_app_data_dir,
+                        &e.to_string(),
+                    ) {
+                        // 一个文件都没搬走 → 指针回滚到源目录，本次启动仍旧用老数据
+                        // （老数据完好无损，用户至少能正常干活）。
+                        // 已经搬走一部分 → 数据分散在两处，回滚只会让用户看到"少了一半"，
+                        // 此时保持指针指向新目录，由界面提示用户重试把剩下的搬完。
+                        Ok(Some(m)) if m.completed_items.is_empty() => {
+                            if let Err(e2) =
+                                services::data_dir::DataDirResolver::rollback_pointer_to(
+                                    &framework_app_data_dir,
+                                    &m.from,
+                                )
+                            {
+                                log::error!("[migration] 指针回滚失败: {}", e2);
+                            }
+                        }
+                        Ok(Some(m)) => log::warn!(
+                            "[migration] 已迁移 {} 项后失败，指针保持指向新目录 {}，等用户在界面里重试",
+                            m.completed_items.len(),
+                            m.to
+                        ),
+                        Ok(None) => {}
+                        Err(e2) => log::error!("[migration] 标记迁移失败状态时出错: {}", e2),
+                    }
+                }
             }
 
             // T-013: 解析最终数据根目录（env > 指针文件 > 默认）
@@ -1214,6 +1273,7 @@ pub fn run() {
             commands::data_dir::clear_pending_data_dir,
             commands::data_dir::set_pending_data_dir_with_migration,
             commands::data_dir::cancel_pending_migration,
+            commands::data_dir::retry_pending_migration,
             commands::data_dir::get_migration_marker,
             // T-024 同步 V1（多端真同步 + 多 backend）
             commands::sync_v1::sync_v1_list_backends,
