@@ -68,24 +68,9 @@ impl SyncBackendImpl for WebdavBackend {
                 Ok(()) => Ok(()),
                 Err(e) => {
                     let msg = e.to_string();
-                    // 两类"MOVE 换名失败、但可安全降级为直接 PUT 覆盖 manifest.json"的场景：
-                    //   1) is_move_unsupported：飞牛 NAS（fnOS）/ 群晖等经公网反向代理暴露
-                    //      WebDAV 时，反代或上游对 MOVE 方法返回 405/501/502/400。
-                    //   2) is_move_dest_exists：坚果云不遵守 `Overwrite: T` —— 目标已存在时
-                    //      MOVE 直接返回 409 DuplicateName（"The object on path
-                    //      /manifest.json existed"）。首推能成（目标不存在），之后每次推送
-                    //      manifest.json 已存在就必挂在这。
-                    // 两者都降级成直接 PUT 覆盖 manifest.json（即 tauri-cc 一直在用的写法）：
-                    // 坚果云 PUT 支持原地覆盖，且传输不完整时不会提交半截文件，对小体积
-                    // manifest 是安全的原子写终态。
-                    let downgrade_reason = if is_move_dest_exists(&msg) {
-                        Some("目标已存在且服务器不支持 MOVE 覆盖（坚果云式 409 DuplicateName）")
-                    } else if is_move_unsupported(&msg) {
-                        Some("服务器不支持 MOVE 方法")
-                    } else {
-                        None
-                    };
-                    match downgrade_reason {
+                    // MOVE 只要不是认证失败，一律降级为直接 PUT 覆盖 manifest.json
+                    // （判定与理由见 `move_err_downgrade_reason`）
+                    match move_err_downgrade_reason(&msg) {
                         Some(reason) => {
                             log::warn!(
                                 "[sync_v1] WebDAV MOVE 换名失败（{}：{}），降级为直接 PUT manifest.json",
@@ -98,8 +83,9 @@ impl SyncBackendImpl for WebdavBackend {
                             put_res
                         }
                         None => {
-                            // 认证失败 / 网络错误等非"可降级"问题：清理 tmp 后原样上报
-                            // （清不掉也只是远端多一个无主文件，下次 GC 可以扫）
+                            // 认证失败：降级 PUT 也必然被拒，直接清理 tmp 后原样上报，
+                            // 免得再发一次注定 401 的请求、还把错误信息换成更含糊的那条
+                            // （tmp 清不掉也只是远端多一个无主文件，下次 GC 可以扫）
                             let _ = self.client.delete_file(&tmp_name).await;
                             Err(e)
                         }
@@ -288,6 +274,49 @@ pub(crate) fn is_transient_server_err(msg: &str) -> bool {
         || msg.contains("Gateway Timeout")
 }
 
+/// manifest 的 MOVE 换名失败后，该不该降级成直接 PUT 覆盖 `manifest.json`？
+///
+/// `Some(原因)` = 降级（原因只进日志）；`None` = 不降级、把错误原样上报。
+///
+/// 规则：**只要不是认证失败，一律降级**。
+///
+/// 之前这里是"状态码白名单"（405/501/502/400 + 409），每遇到一种新服务器就得补一次名单：
+/// 飞牛/群晖反代回 502、坚果云回 409 DuplicateName、某些 NAS / Alist 处理"MOVE 到已存在
+/// 目标"时直接回 500 Internal Server Error —— 500 不在名单里就直接判推送失败
+/// （用户实测症状：能拉不能推，卡在"写远端 manifest 失败"）。故改为反向判定，
+/// 不再逐个状态码打补丁。
+///
+/// 为什么这样安全：
+///   - 401/403 在 `WebDavClient::move_file` 内已被单独识别成"认证失败"，不会降级，
+///     鉴权问题仍然如实上报（`is_move_auth_failure`）。
+///   - 直接 PUT 覆盖本就是写 manifest 的合法终态（tauri-cc 一直这么写）：manifest 体积小，
+///     PUT 传输不完整时服务端不会提交半截文件。
+///   - 即便降级判断"过宽"（服务器真挂了、网络断了），降级 PUT 同样会失败并把真实错误
+///     如实上报，不会掩盖问题。
+pub(crate) fn move_err_downgrade_reason(msg: &str) -> Option<&'static str> {
+    if is_move_auth_failure(msg) {
+        None
+    } else if is_move_dest_exists(msg) {
+        Some("目标已存在且服务器不支持 MOVE 覆盖（坚果云式 409 DuplicateName）")
+    } else if is_move_unsupported(msg) {
+        Some("服务器不支持 MOVE 方法")
+    } else {
+        Some("MOVE 换名失败（服务器 500 等未分类原因）")
+    }
+}
+
+/// MOVE 的错误是"认证失败"吗？—— **唯一不降级为 PUT 的情况**（见 `move_err_downgrade_reason`）。
+///
+/// `WebDavClient::move_file` 收到 401/403 时不会带状态码上报，而是统一转成
+/// "认证失败，请检查用户名/密码"，所以这里主要认这句中文；状态码字样一并兜住，
+/// 防止将来别处构造的错误信息没走那条转换。
+///
+/// 认证失败时降级 PUT 也必然被同样拒掉，只会多发一次请求、还把清晰的"认证失败"
+/// 换成含糊的上传错误，故直接原样上报。
+pub(crate) fn is_move_auth_failure(msg: &str) -> bool {
+    msg.contains("认证失败") || msg.contains("401") || msg.contains("403")
+}
+
 /// 错误信息看着像"服务器 / 反向代理根本不支持 WebDAV MOVE 方法"吗？
 ///
 /// 飞牛 NAS（fnOS）、群晖等经公网反代暴露 WebDAV 时，MOVE 常被反代或上游拒掉：
@@ -296,11 +325,8 @@ pub(crate) fn is_transient_server_err(msg: &str) -> bool {
 /// - 502 Bad Gateway：反代无法把 MOVE 透传给上游（用户实测就是这个）
 /// - 400 Bad Request：个别反代对未知方法直接报 400
 ///
-/// 命中即把 manifest 写入降级为直接 PUT（见 `write_manifest`）。
-///
-/// 安全性：401/403 认证错误在 `WebDavClient::move_file` 内已被单独识别为"认证失败"，
-/// 不会落到这里，故不会把鉴权问题误判成"降级 PUT"；而降级 PUT 本就是写 manifest 的
-/// 合法终态——即便误判，PUT 同样失败也只会把真实错误如实上报，不会掩盖问题。
+/// ⚠️ 仅用于**在日志里写清降级原因**：是否降级由 `write_manifest` 按
+/// "非认证失败一律降级"决定，不再依赖本函数命中（500 等未分类原因同样降级）。
 pub(crate) fn is_move_unsupported(msg: &str) -> bool {
     msg.contains("405")
         || msg.contains("Method Not Allowed")
@@ -318,12 +344,10 @@ pub(crate) fn is_move_unsupported(msg: &str) -> bool {
 /// 而是返回 `409 Conflict` + `<s:exception>DuplicateName</s:exception>`（消息形如
 /// "The object on path /manifest.json existed"）。
 /// 因为 manifest 原子写是「PUT 到 .tmp → MOVE 改名到 manifest.json」，首次推送目标不存在
-/// 能成功，之后每次 manifest.json 都已存在就必挂在 409 —— 命中即降级为直接 PUT 覆盖
+/// 能成功，之后每次 manifest.json 都已存在就必挂在 409 —— 降级为直接 PUT 覆盖
 /// （见 `write_manifest`）。
 ///
-/// 说明：`manifest.json` 固定位于基目录根下、父目录用户已建好，故 MOVE 到它的 409
-/// 基本只可能是"目标已存在"；即便个别服务器的 409 另有他因（如目标父目录缺失），降级
-/// PUT 会先 `ensure_dir` 再写，同样能正确处理，不会掩盖真实错误。
+/// ⚠️ 同 `is_move_unsupported`：本函数现在只负责给日志分类降级原因，不决定是否降级。
 pub(crate) fn is_move_dest_exists(msg: &str) -> bool {
     msg.contains("DuplicateName")
         || msg.contains("existed")
@@ -420,5 +444,53 @@ mod tests {
         // 认证失败 / 临时 5xx 不属于"目标已存在"，不应命中（避免误吞真实错误）
         assert!(!is_move_dest_exists("认证失败，请检查用户名/密码"));
         assert!(!is_move_dest_exists("MOVE a -> b 失败 (502 Bad Gateway): Bad Gateway"));
+    }
+
+    #[test]
+    fn move_auth_failure_detection() {
+        // move_file 把 401/403 统一转成这句中文
+        assert!(is_move_auth_failure("认证失败，请检查用户名/密码"));
+        // 兜底：别处若带着状态码上报，同样认得出
+        assert!(is_move_auth_failure("MOVE a -> b 失败 (401 Unauthorized): "));
+        assert!(is_move_auth_failure("MOVE a -> b 失败 (403 Forbidden): "));
+        // 服务器故障 / 冲突不是认证问题
+        assert!(!is_move_auth_failure(
+            "MOVE a -> b 失败 (500 Internal Server Error): Internal Server Error"
+        ));
+        assert!(!is_move_auth_failure("MOVE a -> b 失败 (409 Conflict): "));
+    }
+
+    /// 用户实测（NAS/Alist 式 WebDAV）：MOVE 到已存在的 manifest.json 回 500 →
+    /// 旧的状态码白名单不认 500，推送直接失败（能拉不能推）。现在必须降级为 PUT。
+    #[test]
+    fn move_500_falls_back_to_put() {
+        let msg = "MOVE manifest.json.tmp.a10e41ea4a9b4ac6b1d0137314a6867e -> manifest.json 失败 (500 Internal Server Error): Internal Server Error";
+        assert!(move_err_downgrade_reason(msg).is_some());
+        // 未分类原因也要能进日志，方便下次看清是哪种服务器
+        assert_eq!(
+            move_err_downgrade_reason(msg),
+            Some("MOVE 换名失败（服务器 500 等未分类原因）")
+        );
+    }
+
+    #[test]
+    fn move_downgrade_reason_covers_known_and_unknown() {
+        // 已知分类：坚果云 409 / 反代 502 —— 降级，且原因文案区分得开
+        assert_eq!(
+            move_err_downgrade_reason("MOVE a -> b 失败 (409 Conflict): DuplicateName"),
+            Some("目标已存在且服务器不支持 MOVE 覆盖（坚果云式 409 DuplicateName）")
+        );
+        assert_eq!(
+            move_err_downgrade_reason("MOVE a -> b 失败 (502 Bad Gateway): Bad Gateway"),
+            Some("服务器不支持 MOVE 方法")
+        );
+        // 没见过的状态码一律降级（不再逐个打补丁）
+        assert!(move_err_downgrade_reason("MOVE a -> b 失败 (507 Insufficient Storage): ").is_some());
+        assert!(move_err_downgrade_reason("MOVE 失败: connection reset by peer").is_some());
+        // 唯一例外：认证失败不降级，原样上报
+        assert_eq!(
+            move_err_downgrade_reason("认证失败，请检查用户名/密码"),
+            None
+        );
     }
 }

@@ -290,9 +290,12 @@ impl WebDavClient {
     ///
     /// `Overwrite: T` 让目标已存在时直接覆盖（manifest 这场景就是要覆盖）。
     ///
-    /// ⚠️ 坚果云不遵守 `Overwrite: T`：目标已存在时不覆盖、直接回 409 DuplicateName。
-    /// 这类"MOVE 拒绝覆盖"由调用方 `backend_webdav::write_manifest` 捕获后降级为直接 PUT
-    /// （见 `is_move_dest_exists`），故本函数只需把 409 如实上报，不在此特殊处理。
+    /// ⚠️ 不是所有服务器都照 `Overwrite: T` 办事：坚果云回 409 DuplicateName、部分反代回 502、
+    /// 某些 NAS/Alist 直接回 500。这些"MOVE 换名失败"统一由调用方
+    /// `backend_webdav::write_manifest` 捕获后降级为直接 PUT（见 `move_err_downgrade_reason`），
+    /// 故本函数只需把状态码 + body 首行如实上报，不在此特殊处理。
+    ///
+    /// 唯一需要本函数区分的是 401/403：转成"认证失败"后调用方不会降级（降级也必然被拒）。
     pub async fn move_file(&self, from: &str, to: &str) -> Result<(), AppError> {
         let dest_url = self.file_url(to);
         let resp = self
