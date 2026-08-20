@@ -22,6 +22,8 @@ import {
   History,
   FileJson,
   Upload,
+  Presentation,
+  Minimize2,
 } from "lucide-react";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store";
@@ -65,6 +67,10 @@ export default function WhiteboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [historyOpen, setHistoryOpen] = useState(false);
+  /** 演示模式：画布全屏 + 只读，顶栏收起 */
+  const [presenting, setPresenting] = useState(false);
+  /** 全屏的目标元素（只让画布容器全屏，不是整个窗口） */
+  const canvasWrapRef = useRef<HTMLDivElement>(null);
   /**
    * 画布实例的重建计数。
    *
@@ -317,6 +323,44 @@ export default function WhiteboardPage() {
     },
   ];
 
+  /**
+   * 进入演示模式：画布全屏 + 只读。
+   *
+   * 用元素级 `requestFullscreen` 而不是 Tauri 的窗口全屏 API：
+   * 前者只让画布容器铺满屏幕（侧边栏、顶栏自然被盖住），且不需要额外声明 Capabilities。
+   *
+   * 全屏被浏览器策略拒绝时不当成失败：退化成"隐藏顶栏 + 只读"，
+   * 讲解白板这件事照样能做，比直接报错好。
+   */
+  const enterPresent = useCallback(async () => {
+    try {
+      await canvasWrapRef.current?.requestFullscreen();
+    } catch {
+      // 忽略：下面照样进演示态
+    }
+    setPresenting(true);
+  }, []);
+
+  const exitPresent = useCallback(async () => {
+    if (document.fullscreenElement) {
+      try {
+        await document.exitFullscreen();
+      } catch {
+        // 忽略：状态位照样清掉，不然会卡在演示态出不来
+      }
+    }
+    setPresenting(false);
+  }, []);
+
+  // 用户按 Esc 退出全屏时同步状态位 —— 否则顶栏一直藏着，看着像卡死了
+  useEffect(() => {
+    const onFsChange = () => {
+      if (!document.fullscreenElement) setPresenting(false);
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
+
   const handleDelete = useCallback(async () => {
     try {
       await noteApi.delete(noteId);
@@ -345,12 +389,13 @@ export default function WhiteboardPage() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* 顶栏：返回 / 标题 / 保存状态 / 删除 */}
+      {/* 顶栏：返回 / 标题 / 保存状态 / 删除。演示时整条收起，把屏幕让给画布 */}
       <div
         className="flex items-center gap-2 px-3 py-2 shrink-0 kb-surface"
         style={{
           borderBottom: `1px solid ${token.colorBorderSecondary}`,
           background: token.colorBgContainer,
+          display: presenting ? "none" : undefined,
         }}
       >
         <Button
@@ -376,6 +421,13 @@ export default function WhiteboardPage() {
 
         <Button
           type="text"
+          icon={<Presentation size={16} />}
+          onClick={() => void enterPresent()}
+          title="演示模式（全屏 + 只读，按 Esc 退出）"
+        />
+
+        <Button
+          type="text"
           icon={<History size={16} />}
           onClick={() => setHistoryOpen(true)}
           title="历史版本（画布自动保存，误删可回滚）"
@@ -397,8 +449,13 @@ export default function WhiteboardPage() {
         </Popconfirm>
       </div>
 
-      {/* 画布。Excalidraw 需要一个确定高度的容器，这里用 flex-1 + min-h-0 撑满剩余空间 */}
-      <div className="flex-1 min-h-0">
+      {/* 画布。Excalidraw 需要一个确定高度的容器，这里用 flex-1 + min-h-0 撑满剩余空间。
+          这个 div 同时是演示模式的全屏目标，所以要自带背景色 —— 全屏元素默认背景是黑的 */}
+      <div
+        ref={canvasWrapRef}
+        className="flex-1 min-h-0 relative"
+        style={{ background: token.colorBgContainer }}
+      >
         <Suspense
           fallback={
             <div className="flex items-center justify-center h-full">
@@ -418,8 +475,24 @@ export default function WhiteboardPage() {
             onError={() =>
               message.warning("白板内容损坏，已打开空白画布；请勿保存以免覆盖原数据")
             }
+            readOnly={presenting}
           />
         </Suspense>
+
+        {/* 演示态的退出口。必须放在全屏元素**内部**，否则全屏时点不到；
+            全屏被拒的退化路径也靠它退出（那种情况下 Esc 没有全屏可退） */}
+        {presenting && (
+          <Button
+            icon={<Minimize2 size={16} />}
+            onClick={() => void exitPresent()}
+            // 层级写死在内联样式里：Excalidraw 自己的 UI 层（--zIndex-layerUI 一系）
+            // 会盖住普通的 z-10，实测按钮会整个消失
+            style={{ position: "absolute", right: 12, top: 12, zIndex: 1002 }}
+            title="退出演示（Esc）"
+          >
+            退出演示
+          </Button>
+        )}
       </div>
 
       {/* 抽屉整体懒加载，且只有开过一次才挂载 —— 从没点过「历史版本」的用户不用为它买单 */}
