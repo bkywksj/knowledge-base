@@ -16,7 +16,7 @@ use base64::Engine;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::models::AppLockStatus;
-use crate::services::crypto;
+use crate::crypto;
 
 const KEY_HASH: &str = "app_lock_hash";
 const KEY_SALT: &str = "app_lock_salt";

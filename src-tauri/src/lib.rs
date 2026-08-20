@@ -1,6 +1,9 @@
 mod commands;
 #[cfg(desktop)]
 mod crash_handler;
+// 纯函数加密工具（无状态、不碰 DB / 业务），放顶层供 database 与 services 共同依赖；
+// 若留在 services/ 下，database 层解密字段就成了「下层反向依赖上层」。
+mod crypto;
 mod database;
 mod error;
 mod models;

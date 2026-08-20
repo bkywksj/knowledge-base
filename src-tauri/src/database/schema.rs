@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 58;
+pub const SCHEMA_VERSION: i32 = 59;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -88,6 +88,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             55 => migrate_v55_to_v56(conn)?,
             56 => migrate_v56_to_v57(conn)?,
             57 => migrate_v57_to_v58(conn)?,
+            58 => migrate_v58_to_v59(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2380,6 +2381,78 @@ fn migrate_v54_to_v55(conn: &Connection) -> Result<(), AppError> {
 /// 加一列区分而不是另起一张表：份数上限、时间窗节流、内容去重、
 /// 以及笔记删除时的 CASCADE 清理，整套逻辑原样复用。
 /// `target_path` 为 NULL = 笔记正文本身（v57 的既有语义，存量行自动落到这一档）。
+/// v58 -> v59：把存量的 API Key 就地加密。
+///
+/// 在此之前 `ai_models.api_key` 与 `app_config['asr.api_key']` 都是**明文**落库的，
+/// 拿到 app.db 就等于拿到用户所有模型服务商的 Key。加密后的威胁模型见 `crate::crypto`：
+/// 目标是"app.db 被复制到别的机器后打不开密文"，不防同机器上的恶意程序。
+///
+/// 三条容错原则（都是为了「宁可这条不加密，也不能让用户打不开应用」）：
+/// 1. **幂等**：已带 `enc:v1:` 前缀的跳过，迁移重复执行不会二次加密
+/// 2. **单条失败不中断**：某条加密失败只记 warn 并保持明文；读取侧 `decrypt_field`
+///    对无前缀内容原样返回，那条 Key 照常可用
+/// 3. **不删数据**：全程只做 UPDATE，不 DROP 不 DELETE
+fn migrate_v58_to_v59(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v58 -> v59 (API Key 加密入库)");
+
+    // ── ai_models.api_key ──
+    let models: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, api_key FROM ai_models
+             WHERE api_key IS NOT NULL AND TRIM(api_key) <> ''",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    let mut done = 0usize;
+    for (id, stored) in models {
+        if crate::crypto::is_encrypted_field(&stored) {
+            continue; // 幂等：已加密
+        }
+        match crate::crypto::encrypt_field(stored.trim()) {
+            Ok(enc) => {
+                conn.execute(
+                    "UPDATE ai_models SET api_key = ?1 WHERE id = ?2",
+                    rusqlite::params![enc, id],
+                )?;
+                done += 1;
+            }
+            Err(e) => {
+                log::warn!("[migrate v59] AI 模型 #{} 的 Key 加密失败，保持明文: {}", id, e);
+            }
+        }
+    }
+
+    // ── app_config['asr.api_key'] ──
+    let asr_key: Option<String> = conn
+        .query_row(
+            "SELECT value FROM app_config WHERE key = 'asr.api_key'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+    if let Some(stored) = asr_key {
+        let trimmed = stored.trim();
+        if !trimmed.is_empty() && !crate::crypto::is_encrypted_field(trimmed) {
+            match crate::crypto::encrypt_field(trimmed) {
+                Ok(enc) => {
+                    conn.execute(
+                        "UPDATE app_config SET value = ?1 WHERE key = 'asr.api_key'",
+                        rusqlite::params![enc],
+                    )?;
+                    done += 1;
+                }
+                Err(e) => log::warn!("[migrate v59] ASR Key 加密失败，保持明文: {}", e),
+            }
+        }
+    }
+
+    log::info!("数据库迁移: v58 -> v59 完成，已加密 {} 条 Key", done);
+    set_version(conn, 59)?;
+    Ok(())
+}
+
 fn migrate_v57_to_v58(conn: &Connection) -> Result<(), AppError> {
     log::info!("数据库迁移: v57 -> v58 (note_snapshots.target_path 内嵌白板)");
 
@@ -2922,6 +2995,96 @@ mod v54_asset_path_tests {
             .unwrap();
         assert_eq!(content, clean);
         assert_eq!(hash_before, hash_after);
+    }
+}
+
+#[cfg(test)]
+mod v59_key_encryption_tests {
+    use super::*;
+
+    /// v59 必须把存量明文 Key 就地加密，且**重复执行不能套娃**。
+    ///
+    /// 幂等性是硬要求：迁移在异常中断后会被重跑，若第二遍把密文再加密一层，
+    /// 读取侧只会解出上一层密文，等于把用户的 Key 永久锁死。
+    #[test]
+    fn migration_encrypts_plaintext_keys_idempotently() {
+        let db = crate::database::Database::init(":memory:").unwrap();
+        let conn = db.conn_lock().unwrap();
+
+        // 模拟 v58 遗留：明文 Key 直接躺在库里
+        conn.execute(
+            "INSERT INTO ai_models (name, provider, api_url, api_key, model_id, max_context)
+             VALUES ('legacy', 'custom', 'http://x', 'sk-plain-secret', 'm', 128000)",
+            [],
+        )
+        .unwrap();
+        let id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT OR REPLACE INTO app_config (key, value) VALUES ('asr.api_key', 'sk-asr-plain')",
+            [],
+        )
+        .unwrap();
+
+        // 第一遍：明文 → 密文
+        migrate_v58_to_v59(&conn).unwrap();
+        let enc1: String = conn
+            .query_row("SELECT api_key FROM ai_models WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(crate::crypto::is_encrypted_field(&enc1), "应已加密");
+        assert!(!enc1.contains("sk-plain-secret"), "库里不能残留明文");
+        assert_eq!(
+            crate::crypto::decrypt_field(&enc1).unwrap(),
+            "sk-plain-secret",
+            "解密应还原出原始 Key"
+        );
+
+        let asr1: String = conn
+            .query_row(
+                "SELECT value FROM app_config WHERE key = 'asr.api_key'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(crate::crypto::is_encrypted_field(&asr1));
+        assert_eq!(crate::crypto::decrypt_field(&asr1).unwrap(), "sk-asr-plain");
+
+        // 第二遍：幂等，密文原样不动
+        migrate_v58_to_v59(&conn).unwrap();
+        let enc2: String = conn
+            .query_row("SELECT api_key FROM ai_models WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(enc1, enc2, "重复迁移不能二次加密");
+        assert_eq!(
+            crate::crypto::decrypt_field(&enc2).unwrap(),
+            "sk-plain-secret"
+        );
+    }
+
+    /// 空 Key / 无 Key 的行不该被迁移碰到（避免把 NULL 写成一串密文）
+    #[test]
+    fn migration_skips_empty_keys() {
+        let db = crate::database::Database::init(":memory:").unwrap();
+        let conn = db.conn_lock().unwrap();
+        conn.execute(
+            "INSERT INTO ai_models (name, provider, api_url, api_key, model_id, max_context)
+             VALUES ('no-key', 'ollama', 'http://x', NULL, 'm', 128000)",
+            [],
+        )
+        .unwrap();
+        let id = conn.last_insert_rowid();
+
+        migrate_v58_to_v59(&conn).unwrap();
+
+        let after: Option<String> = conn
+            .query_row("SELECT api_key FROM ai_models WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(after, None, "NULL 应保持 NULL");
     }
 }
 

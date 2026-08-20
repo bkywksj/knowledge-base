@@ -10,7 +10,7 @@ use base64::Engine;
 
 use crate::database::Database;
 use crate::error::AppError;
-use crate::services::crypto;
+use crate::crypto;
 
 const KEY_HASH: &str = "hidden_pin_hash";
 const KEY_SALT: &str = "hidden_pin_salt";

@@ -4,10 +4,12 @@
 //! 当前仅一家：阿里云百炼 DashScope（[`dashscope`]）。
 //!
 //! 配置读写走 `app_config` 表 KV，前缀 `asr.*`，与现有 `ai_models.api_key`
-//! 风格一致（明文存储；用户在自己电脑上，且与第三方调用不可避免地共享 Key）。
+//! 风格一致 —— schema v59 起两者**都改为 AES-256-GCM 加密入库**
+//! （威胁模型见 `crate::crypto`：防 app.db 被复制到别的机器后明文泄漏）。
 
 pub mod dashscope;
 
+use crate::crypto;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::models::{AsrConfig, AsrProviderKind, AsrTestResult, TranscribeResult};
@@ -30,7 +32,9 @@ impl AsrService {
             }
         }
         if let Some(v) = db.get_config(Self::KEY_API_KEY)? {
-            cfg.api_key = v;
+            // v59 起密文入库；解密失败（换机器 / 改主机名）降级为空，
+            // 前端会显示成"未配置"引导用户重填，而不是拿密文去调 DashScope 报 401
+            cfg.api_key = crypto::decrypt_field_or_none(&v, "ASR API Key").unwrap_or_default();
         }
         if let Some(v) = db.get_config(Self::KEY_MODEL)? {
             if !v.is_empty() {
@@ -56,7 +60,8 @@ impl AsrService {
             ));
         }
         db.set_config(Self::KEY_PROVIDER, cfg.provider.as_str())?;
-        db.set_config(Self::KEY_API_KEY, &cfg.api_key)?;
+        // v59 起加密入库，防 app.db 被复制走后明文泄漏
+        db.set_config(Self::KEY_API_KEY, &crypto::encrypt_field(cfg.api_key.trim())?)?;
         db.set_config(Self::KEY_MODEL, &cfg.model)?;
         db.set_config(Self::KEY_REGION, &cfg.region)?;
         db.set_config(Self::KEY_ENABLED, if cfg.enabled { "1" } else { "0" })?;

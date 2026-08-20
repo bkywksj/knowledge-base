@@ -17,7 +17,7 @@ use zip::{ZipArchive, ZipWriter};
 use crate::database::Database;
 use crate::error::AppError;
 use crate::models::{SyncImportMode, SyncManifest, SyncResult, SyncScope, SyncStats};
-use crate::services::crypto;
+use crate::crypto;
 use crate::services::webdav::WebDavClient;
 
 const MANIFEST_VERSION: u32 = 1;

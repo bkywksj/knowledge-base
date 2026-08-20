@@ -6,7 +6,6 @@ pub mod cards;
 pub mod attachment;
 pub mod config;
 pub mod converter;
-pub mod crypto;
 pub mod daily;
 pub mod daily_import;
 pub mod data_dir;

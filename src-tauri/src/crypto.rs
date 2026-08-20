@@ -77,6 +77,70 @@ pub fn decrypt(encoded: &str) -> Result<String, AppError> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// 敏感字段的就地加密（schema v59 起用于 ai_models.api_key / asr.api_key）
+// ═══════════════════════════════════════════════════════════════════════
+
+/// 已加密字段的标记前缀。
+///
+/// 为什么要前缀：v59 迁移前入库的 Key 是**明文**，迁移后是密文，两者都存在同一列里。
+/// 靠前缀区分，读取时才能决定"要不要解密"，而不是拿明文去 base64 解码然后报错。
+/// 版本号留着是为了将来换算法（如换 KDF）时能识别旧密文。
+const FIELD_ENC_PREFIX: &str = "enc:v1:";
+
+/// 该字符串是否是本模块加密过的字段
+pub fn is_encrypted_field(stored: &str) -> bool {
+    stored.starts_with(FIELD_ENC_PREFIX)
+}
+
+/// 加密敏感字段 → `enc:v1:<base64>`
+///
+/// 空串直接原样返回：空 Key 没有加密价值，且保持"空 = 未配置"的语义，
+/// 避免前端判断 `is_empty()` 时被一串密文骗过去。
+pub fn encrypt_field(plaintext: &str) -> Result<String, AppError> {
+    if plaintext.is_empty() {
+        return Ok(String::new());
+    }
+    // 已经是密文就不再套一层（迁移可能被重复执行）
+    if is_encrypted_field(plaintext) {
+        return Ok(plaintext.to_string());
+    }
+    Ok(format!("{}{}", FIELD_ENC_PREFIX, encrypt(plaintext)?))
+}
+
+/// 解密敏感字段。
+///
+/// - 带 `enc:v1:` 前缀 → 解密
+/// - 无前缀 → 视为 v59 之前的历史明文，原样返回（向后兼容，不报错）
+pub fn decrypt_field(stored: &str) -> Result<String, AppError> {
+    match stored.strip_prefix(FIELD_ENC_PREFIX) {
+        Some(body) => decrypt(body),
+        None => Ok(stored.to_string()),
+    }
+}
+
+/// 解密敏感字段，失败时降级为 None 而不是让调用方整个查询失败。
+///
+/// 为什么需要这个降级：`derive_key()` 用 `sha256(hostname ‖ APP_SALT)` 派生密钥，
+/// **换机器或改主机名后密文就解不开了**。此时不能让 `list_ai_models()` 整个报错、
+/// 把 AI 设置页打空 —— 用户会连"重新填一个 Key"的入口都找不到。
+/// 降级成"这条没有 Key"，用户重新填一次即可恢复。
+pub fn decrypt_field_or_none(stored: &str, context: &str) -> Option<String> {
+    match decrypt_field(stored) {
+        Ok(v) if v.is_empty() => None,
+        Ok(v) => Some(v),
+        Err(e) => {
+            log::warn!(
+                "[crypto] {} 的密钥解密失败（通常是换了机器 / 改了主机名），\
+                 已降级为未配置，请重新填写: {}",
+                context,
+                e
+            );
+            None
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // T-007 笔记加密保险库（Vault）
 //
 // 与上面的 WebDAV 密码加密完全独立：
@@ -237,5 +301,54 @@ mod tests {
         let key = derive_key_fast("x", &salt);
         let blob = aead_encrypt(&key, b"abc").unwrap();
         assert!(aead_decrypt(&key, &blob[..NONCE_LEN]).is_err());
+    }
+
+    // ── 敏感字段就地加密（schema v59）──
+
+    #[test]
+    fn field_roundtrip() {
+        let plain = "sk-abcdefg1234567890";
+        let enc = encrypt_field(plain).unwrap();
+        assert!(is_encrypted_field(&enc), "加密结果应带 enc:v1: 前缀");
+        assert!(!enc.contains(plain), "密文里不能出现明文");
+        assert_eq!(decrypt_field(&enc).unwrap(), plain);
+    }
+
+    #[test]
+    fn field_empty_stays_empty() {
+        // 空 Key 不加密，保持"空 = 未配置"的语义
+        assert_eq!(encrypt_field("").unwrap(), "");
+        assert!(!is_encrypted_field(""));
+    }
+
+    #[test]
+    fn field_encrypt_is_idempotent() {
+        // 迁移可能被重复执行，不能套娃加密
+        let once = encrypt_field("sk-key").unwrap();
+        let twice = encrypt_field(&once).unwrap();
+        assert_eq!(once, twice);
+        assert_eq!(decrypt_field(&twice).unwrap(), "sk-key");
+    }
+
+    #[test]
+    fn field_plaintext_passthrough() {
+        // v59 之前入库的明文没有前缀，必须原样返回而不是报错
+        let legacy = "sk-legacy-plaintext";
+        assert_eq!(decrypt_field(legacy).unwrap(), legacy);
+    }
+
+    #[test]
+    fn field_corrupted_degrades_to_none() {
+        // 换机器 / 改主机名后密文解不开，必须降级成 None 而不是让整个查询失败
+        let broken = "enc:v1:!!!not-valid-base64!!!";
+        assert!(decrypt_field(broken).is_err());
+        assert_eq!(decrypt_field_or_none(broken, "测试"), None);
+    }
+
+    #[test]
+    fn field_or_none_maps_empty_to_none() {
+        assert_eq!(decrypt_field_or_none("", "测试"), None);
+        let enc = encrypt_field("k").unwrap();
+        assert_eq!(decrypt_field_or_none(&enc, "测试"), Some("k".into()));
     }
 }

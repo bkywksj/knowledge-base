@@ -1,3 +1,4 @@
+use crate::crypto;
 use crate::error::AppError;
 use crate::models::{AiConversation, AiMessage, AiModel, AiModelInput};
 
@@ -14,18 +15,38 @@ const DEFAULT_MAX_CONTEXT: i64 = 128_000;
 ///
 /// 列顺序约定（v25 起 9 列）：
 ///   id, name, provider, api_url, api_key, model_id, is_default, max_context, created_at
+///
+/// api_key 自 schema v59 起在库里是密文（`enc:v1:` 前缀），这里是**唯一**的读取入口，
+/// 解密放在这一层，上面 16 个 `db.get_ai_model()` / `get_default_ai_model()` 调用点
+/// 才能原样拿到明文去调服务商 —— 放高一层会让部分调用点把密文当 Key 发出去。
+/// 解密失败不让整行查询失败，降级为"这条没配 Key"（见 `decrypt_field_or_none` 注释）。
 fn row_to_ai_model(row: &rusqlite::Row) -> rusqlite::Result<AiModel> {
+    let id: i64 = row.get(0)?;
+    let stored_key: Option<String> = row.get(4)?;
     Ok(AiModel {
-        id: row.get(0)?,
+        id,
         name: row.get(1)?,
         provider: row.get(2)?,
         api_url: row.get(3)?,
-        api_key: row.get(4)?,
+        api_key: stored_key.and_then(|s| {
+            crypto::decrypt_field_or_none(&s, &format!("AI 模型 #{}", id))
+        }),
         model_id: row.get(5)?,
         is_default: row.get::<_, i32>(6)? != 0,
         max_context: row.get(7)?,
         created_at: row.get(8)?,
     })
+}
+
+/// 写库前加密 API Key。
+///
+/// 空串与 None 一律落 NULL：保持"空 = 未配置"的语义，
+/// 免得前端 `api_key ? ... : ...` 被一串密文骗过去。
+fn encrypt_api_key(raw: Option<&str>) -> Result<Option<String>, AppError> {
+    match raw.map(str::trim) {
+        Some(k) if !k.is_empty() => Ok(Some(crypto::encrypt_field(k)?)),
+        _ => Ok(None),
+    }
 }
 
 /// 标准 ai_models 查询列表达式（与 row_to_ai_model 对齐）
@@ -90,6 +111,83 @@ mod tests {
             model_id: "test-model".into(),
             max_context: None,
         }
+    }
+
+    /// 直接读库里 api_key 那一列的原始内容（绕过 row_to_ai_model 的解密）
+    fn raw_api_key(db: &Database, id: i64) -> Option<String> {
+        let conn = db.conn.lock().expect("lock");
+        conn.query_row("SELECT api_key FROM ai_models WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .expect("query raw key")
+    }
+
+    #[test]
+    fn api_key_encrypted_at_rest_but_plain_on_read() {
+        let db = temp_db();
+        let mut inp = input("with-key");
+        inp.api_key = Some("sk-secret-12345".into());
+        let created = db.create_ai_model(&inp).unwrap();
+
+        // 上层拿到的是明文（services/ai.rs 要拿它去调服务商）
+        assert_eq!(created.api_key.as_deref(), Some("sk-secret-12345"));
+
+        // 但库里落的是密文 —— 这正是 v59 想解决的：app.db 被复制走也读不出 Key
+        let raw = raw_api_key(&db, created.id).expect("库里应有值");
+        assert!(crypto::is_encrypted_field(&raw), "库里应是 enc:v1: 密文");
+        assert!(!raw.contains("sk-secret-12345"), "库里不能出现明文");
+
+        // 走 get / list 两条读取路径都应解密
+        assert_eq!(
+            db.get_ai_model(created.id).unwrap().api_key.as_deref(),
+            Some("sk-secret-12345")
+        );
+        let listed = db.list_ai_models().unwrap();
+        assert_eq!(listed[0].api_key.as_deref(), Some("sk-secret-12345"));
+    }
+
+    #[test]
+    fn api_key_update_stays_encrypted() {
+        let db = temp_db();
+        let mut inp = input("m");
+        inp.api_key = Some("sk-first".into());
+        let created = db.create_ai_model(&inp).unwrap();
+
+        inp.api_key = Some("sk-second".into());
+        let updated = db.update_ai_model(created.id, &inp).unwrap();
+        assert_eq!(updated.api_key.as_deref(), Some("sk-second"));
+
+        let raw = raw_api_key(&db, created.id).expect("库里应有值");
+        assert!(crypto::is_encrypted_field(&raw));
+        assert!(!raw.contains("sk-second"));
+    }
+
+    #[test]
+    fn empty_api_key_stored_as_null() {
+        let db = temp_db();
+        // 空串和纯空白都应落 NULL，保持"空 = 未配置"语义
+        let mut inp = input("blank");
+        inp.api_key = Some("   ".into());
+        let created = db.create_ai_model(&inp).unwrap();
+        assert_eq!(created.api_key, None);
+        assert_eq!(raw_api_key(&db, created.id), None);
+    }
+
+    #[test]
+    fn legacy_plaintext_key_still_readable() {
+        // v59 迁移若因故跳过某条（加密失败保持明文），读取侧必须仍能拿到它
+        let db = temp_db();
+        let created = db.create_ai_model(&input("legacy")).unwrap();
+        {
+            let conn = db.conn.lock().expect("lock");
+            conn.execute(
+                "UPDATE ai_models SET api_key = 'sk-plain-legacy' WHERE id = ?1",
+                [created.id],
+            )
+            .expect("inject legacy plaintext");
+        }
+        let got = db.get_ai_model(created.id).unwrap();
+        assert_eq!(got.api_key.as_deref(), Some("sk-plain-legacy"));
     }
 
     #[test]
@@ -298,6 +396,8 @@ impl Database {
         // max_context 缺省时给 128000：2026 年主流模型都是 128K 起步，
         // 老的 32000 会让 RAG / 挂载笔记白白少拿三四倍预算（见 schema v51 迁移）
         let max_ctx = input.max_context.unwrap_or(DEFAULT_MAX_CONTEXT).max(1000);
+        // v59 起 API Key 加密入库，防 app.db 被复制走后明文泄漏
+        let api_key_enc = encrypt_api_key(input.api_key.as_deref())?;
         conn.execute(
             "INSERT INTO ai_models (name, provider, api_url, api_key, model_id, max_context)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -305,7 +405,7 @@ impl Database {
                 input.name,
                 input.provider,
                 input.api_url,
-                input.api_key,
+                api_key_enc,
                 input.model_id,
                 max_ctx,
             ],
@@ -341,6 +441,8 @@ impl Database {
             .map_err(|e| AppError::Custom(e.to_string()))?;
         // 用户没传 max_context 时保持原值，避免覆盖成默认值
         let max_ctx = input.max_context.unwrap_or(DEFAULT_MAX_CONTEXT).max(1000);
+        // v59 起 API Key 加密入库，防 app.db 被复制走后明文泄漏
+        let api_key_enc = encrypt_api_key(input.api_key.as_deref())?;
         conn.execute(
             "UPDATE ai_models SET name = ?1, provider = ?2, api_url = ?3, api_key = ?4,
                  model_id = ?5, max_context = ?6
@@ -349,7 +451,7 @@ impl Database {
                 input.name,
                 input.provider,
                 input.api_url,
-                input.api_key,
+                api_key_enc,
                 input.model_id,
                 max_ctx,
                 id

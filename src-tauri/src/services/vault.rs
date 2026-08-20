@@ -26,7 +26,7 @@ use zeroize::Zeroizing;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::models::VaultStatus;
-use crate::services::crypto;
+use crate::crypto;
 
 const CFG_SALT: &str = "vault.salt";
 const CFG_VERIFIER: &str = "vault.verifier";
