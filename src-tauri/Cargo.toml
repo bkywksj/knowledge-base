@@ -87,6 +87,10 @@ rand = "0.8"
 # chardetng / encoding_rs 是纯 Rust 编码识别工具，移动端可编译
 chardetng = "0.1"
 encoding_rs = "0.8"
+# CSV 解析（P1-3a）。不手写：RFC 4180 的引号转义（""）、字段内逗号 / 换行
+# 这几条规则手写必踩坑，而 csv crate 纯 Rust、无 C 依赖、双端可编。
+# 编码嗅探复用已有的 chardetng + encoding_rs（见 services::import::read_text_auto_encoding）。
+csv = "1"
 # kb-core: 共享的 MCP server 实现（KbDb + KbServer + 27 工具），
 # 主应用在进程内 spawn KbServer，让自家 AI 对话页通过 MCP 协议消费同一套工具
 kb-core = { path = "kb-core" }
