@@ -16,6 +16,7 @@ import { aiChatApi, aiModelApi } from "@/lib/api";
 import type { AiConversation, AiMessage, AiModel } from "@/types";
 import { MobileAiModelModal } from "@/components/ai/MobileAiModelModal";
 import { useKeyboardInset } from "@/hooks/useKeyboardInset";
+import { stripPseudoToolCalls } from "@/lib/aiFilter";
 
 /**
  * 移动端 AI 对话页（设计稿：07-ai-chat.html）
@@ -468,7 +469,8 @@ function StreamingBubble({ text }: { text: string }) {
       </div>
       <div className="flex-1 min-w-0">
         <div className="rounded-2xl rounded-tl-md bg-white px-4 py-3 text-sm text-slate-700 shadow-sm whitespace-pre-wrap break-words">
-          {text}
+          {/* 与桌面端一致：剥掉伪工具调用残文与引用标记，两者都不该展示给用户 */}
+          {stripPseudoToolCalls(text)}
           <span className="ml-0.5 inline-block h-3.5 w-0.5 animate-pulse bg-[#FA8C16] align-middle" />
         </div>
       </div>

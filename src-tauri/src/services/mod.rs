@@ -3,6 +3,8 @@ pub mod app_lock;
 pub mod asr;
 pub mod asset_path;
 pub mod cards;
+// AI 回答的引用标记解析 + 白名单校验（模型自报的引用编号不可直接采信）
+pub mod citations;
 pub mod attachment;
 pub mod config;
 pub mod converter;

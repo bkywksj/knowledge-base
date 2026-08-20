@@ -6,6 +6,7 @@ import { NoteImageRefs } from "@/components/ai/NoteImageRefs";
 import { Send, StopCircle, ExternalLink, Bot, RefreshCw, Quote, X } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { aiChatApi } from "@/lib/api";
+import { stripPseudoToolCalls } from "@/lib/aiFilter";
 import type { AiConversation, AiMessage } from "@/types";
 
 const { TextArea } = Input;
@@ -312,7 +313,7 @@ export function NoteAiDrawer({
                     maxWidth: "85%",
                   }}
                 >
-                  <Markdown>{streamingText}</Markdown>
+                  <Markdown>{stripPseudoToolCalls(streamingText)}</Markdown>
                   <span
                     className="inline-block w-1.5 h-4 ml-0.5 animate-pulse"
                     style={{ background: token.colorPrimary }}
