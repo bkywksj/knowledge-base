@@ -86,8 +86,13 @@ export async function editorDomToSelfContainedHtml(
   const cls = titleClass ? ` class="${titleClass}"` : "";
   clone.insertAdjacentHTML("afterbegin", `<h1${cls}>${safeTitle}</h1>`);
 
-  // 3. 剥掉编辑态专属、不参与排版的交互元素
+  // 3. 剥掉编辑态专属、不参与排版的交互元素（含末尾的 ProseMirror 空段落）
   stripEditingArtifacts(clone);
+
+  // 3.5 标记首/末块，让导出模板把它们的外边距归零。
+  //     Word / WPS 会把 CSS margin 翻译成段落「段前/段后间距」，首个 h1 的
+  //     margin-top 就成了正文上方一段消不掉的空白（用户反馈的首行/末行空白）。
+  markFirstLastBlocks(clone);
 
   // 4. 图片固化为 base64。实时 DOM 的 <img src> 是 http://asset.localhost/… 或 blob:…，
   //    只在主文档上下文有效（blob: 尤其跨不进 iframe），必须在主文档里 fetch 固化。
@@ -371,6 +376,44 @@ function stripEditingArtifacts(root: HTMLElement): void {
   root.querySelectorAll("[contenteditable]").forEach((el) => {
     el.removeAttribute("contenteditable");
   });
+  stripTrailingEmptyBlocks(root);
+}
+
+/**
+ * 剥掉正文末尾的空块。
+ *
+ * ProseMirror 为了让光标能停在文档最后，总在末尾留一个空段落
+ *（内容只有 `<br class="ProseMirror-trailingBreak">`），用户按回车留下的空行也一样。
+ * 编辑时它是必要的落点，导出后就是纯粹的多余空白 —— Word 里表现为末行下方
+ * 一段删不掉的留白（文档最后一个段落标记本来就删不掉，用户只能改字号硬藏）。
+ *
+ * 只清「完全没有可见内容」的块：带 img / 表格 / 分隔线 / 自定义节点的一律保留，
+ * 免得把用户真正的空布局块（如占位分栏）误删。
+ */
+function stripTrailingEmptyBlocks(root: HTMLElement): void {
+  const isBlank = (el: Element): boolean => {
+    // 有实体内容（图片、分隔线、表格、mermaid、附件卡片等）就不算空
+    if (el.querySelector("img,svg,video,iframe,table,hr,input,[data-type]")) {
+      return false;
+    }
+    return el.textContent?.trim() === "";
+  };
+  // 从后往前逐个剥，直到遇上有内容的块
+  while (root.lastElementChild && isBlank(root.lastElementChild)) {
+    root.lastElementChild.remove();
+  }
+}
+
+/**
+ * 给正文首/末块打上 `kb-doc-first` / `kb-doc-last`，导出模板据此把外边距归零。
+ *
+ * 为什么要前端来标：只有这里知道剥完编辑态元素之后「首/末块」到底是哪个。
+ * 为什么用 class 而不是 `:first-child`：实测 Word / WPS 的 HTML 导入器**不认伪类**
+ *（写了等于没写），但认 class 选择器 —— 这是空白消不掉的直接原因。
+ */
+function markFirstLastBlocks(root: HTMLElement): void {
+  root.firstElementChild?.classList.add("kb-doc-first");
+  root.lastElementChild?.classList.add("kb-doc-last");
 }
 
 /**

@@ -176,14 +176,16 @@ pub fn render_note_html_for_pdf(
 
     let assets_root = state.data_dir.clone();
 
-    let (html, _inlined, _missing) =
-        services::export_html::HtmlExportService::render_html(
-            &note.title,
-            &note.content,
-            &assets_root,
-            fonts.as_ref(),
-        )
-        .map_err(|e| e.to_string())?;
+    // 目标是「打印成 PDF」，属文档版式：留白交给 @page 页边距，不叠 body 自身的
+    // margin/padding（否则纸张上下会多出一截空白）
+    let (html, _inlined, _missing) = services::export_html::HtmlExportService::render_html(
+        &note.title,
+        &note.content,
+        &assets_root,
+        fonts.as_ref(),
+        services::export_html::TemplateLayout::Document,
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(html)
 }

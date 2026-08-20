@@ -22,7 +22,7 @@ use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, T
 use crate::error::AppError;
 use crate::services::asset_path::resolve_content_url;
 use crate::services::converter::{self, DocConverter};
-use crate::services::export_html::{ExportFonts, HtmlExportService};
+use crate::services::export_html::{ExportFonts, HtmlExportService, TemplateLayout};
 use crate::services::markdown::html_to_markdown;
 
 /// GFM 扩展开关（表格 / 删除线 / 任务列表）。
@@ -109,11 +109,24 @@ impl WordExportService {
     ) -> Result<WordExportResult, AppError> {
         // 有前端 DOM 就套模板直接用（保住标题编号等只存在于渲染层的东西），
         // 否则退回 markdown 重渲
+        // TemplateLayout::Document：外层留白交给 @page 页边距，不让转换器把 body 的
+        // margin/padding 翻译成正文外多余的段落间距（用户反馈的「首行上方 / 末行下方
+        // 有一段消不掉的空白」）
         let (html, images_inlined, images_missing) = match body_html {
-            Some(body) => {
-                HtmlExportService::render_html_from_body(title, body, assets_root, fonts)
-            }
-            None => HtmlExportService::render_html(title, content, assets_root, fonts)?,
+            Some(body) => HtmlExportService::render_html_from_body(
+                title,
+                body,
+                assets_root,
+                fonts,
+                TemplateLayout::Document,
+            ),
+            None => HtmlExportService::render_html(
+                title,
+                content,
+                assets_root,
+                fonts,
+                TemplateLayout::Document,
+            )?,
         };
 
         // 临时工作目录用纯 ASCII 路径与文件名，规避部分转换器对非 ASCII 路径的兼容问题

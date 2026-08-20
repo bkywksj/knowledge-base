@@ -41,6 +41,24 @@ pub struct ExportFonts {
 const DEFAULT_BODY_FONT: &str = r#"-apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
       "PingFang SC", "Source Han Sans SC", "Noto Sans SC", "Helvetica Neue", Arial, sans-serif"#;
 
+/// 模板版式：同一份 CSS 服务两类目标，**外层留白的归属**不同。
+///
+/// 起因是用户反馈「导出的 Word 首行上方 / 末行下方有一段空白，怎么也消不掉」：
+/// Word / WPS 打开 HTML 时会把 CSS 盒模型**一比一翻译成 docx 段落属性**——
+/// `body { margin: 40px auto; padding: 0 24px 80px }` 变成正文外的额外留白，
+/// `h1 { margin-top: 1.6em }`（= 19.2pt = 384 twips）变成首个标题的「段前间距」，
+/// 叠在 2.54cm 页边距之上。用户在 Word 里改段落间距只能改到其中一层，于是"消不掉"。
+///
+/// 所以文档目标下：外层留白全部交给 `@page` 页边距（Word 的原生概念），
+/// body 自身零 margin / padding，首末元素的 margin 也归零。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemplateLayout {
+    /// 网页阅读（导出 .html）：居中窄栏 + 四周留白，独立打开就是舒服的阅读版式
+    Web,
+    /// 文档（导出 .docx / 打印）：留白交给 `@page`，避免被转换器翻译成消不掉的段落间距
+    Document,
+}
+
 /// 过滤字体串里会破坏 CSS / HTML 结构的字符。
 ///
 /// 字体名在设置页是**可手输**的，而导出的 HTML 常常要发给别人 —— `</style><script>`
@@ -73,6 +91,7 @@ impl HtmlExportService {
         markdown: &str,
         assets_root: &Path,
         fonts: Option<&ExportFonts>,
+        layout: TemplateLayout,
     ) -> Result<(String, usize, usize), AppError> {
         let mut options = Options::empty();
         options.insert(Options::ENABLE_TABLES);
@@ -87,7 +106,8 @@ impl HtmlExportService {
         // 把 <img src="..."> 中的本地路径 inline 成 base64
         let (body, inlined, missing) = inline_images(&body, assets_root);
 
-        let html = wrap_template(title, &body, fonts);
+        // markdown 里没有笔记标题（标题存在 notes 表），模板负责补一个 <h1>
+        let html = wrap_template(title, &body, fonts, layout, true);
         Ok((html, inlined, missing))
     }
 
@@ -99,7 +119,8 @@ impl HtmlExportService {
         assets_root: &Path,
         fonts: Option<&ExportFonts>,
     ) -> Result<HtmlExportResult, AppError> {
-        let (html, inlined, missing) = Self::render_html(title, markdown, assets_root, fonts)?;
+        let (html, inlined, missing) =
+            Self::render_html(title, markdown, assets_root, fonts, TemplateLayout::Web)?;
         // 把正文里指向本地文件的 <a href="..."> 附件链接换成 data: URL（带 download 属性），
         // 这样导出的单个 .html 仍是 self-contained 的：换台机器/发给别人也能点开下载附件。
         // CSS 模板里只有 `a {}` 选择器、没有真实 <a> 元素，所以直接在整段 HTML 上跑也安全。
@@ -119,14 +140,23 @@ impl HtmlExportService {
     ///
     /// 返回 `(完整 html, 内嵌图片数, 缺失图片数)`。Word 导出（走系统转换器那条）
     /// 也复用它，两边拿到的是同一份 HTML，样式与编号表现一致。
+    ///
+    /// ⚠️ `title` 只用于 `<title>`，**不再插进正文**：`body_html` 来自前端
+    /// `editorDomToSelfContainedHtml`，它已经在最前面插好了 `<h1>标题</h1>`。
+    /// 模板这边再插一次就是用户看到的「开头标题重复两遍」。
     pub fn render_html_from_body(
         title: &str,
         body_html: &str,
         assets_root: &Path,
         fonts: Option<&ExportFonts>,
+        layout: TemplateLayout,
     ) -> (String, usize, usize) {
         let (body, inlined, missing) = inline_images(body_html, assets_root);
-        (wrap_template(title, &body, fonts), inlined, missing)
+        (
+            wrap_template(title, &body, fonts, layout, false),
+            inlined,
+            missing,
+        )
     }
 
     /// 把**前端已渲染好的 HTML 片段**套上 CSS 模板写成单文件 .html。
@@ -147,7 +177,7 @@ impl HtmlExportService {
         fonts: Option<&ExportFonts>,
     ) -> Result<HtmlExportResult, AppError> {
         let (html, img_inlined, img_missing) =
-            Self::render_html_from_body(title, body_html, assets_root, fonts);
+            Self::render_html_from_body(title, body_html, assets_root, fonts, TemplateLayout::Web);
         let (html, att_inlined, att_missing) = inline_attachments(&html, assets_root);
         std::fs::write(target_path, html)?;
 
@@ -243,7 +273,17 @@ pub struct ResolvedAssetUrl {
 /// - 中文字体 fallback 链
 /// - 代码块 / 表格 / 引用基础样式
 /// - 适合阅读的最大宽度 + 行距
-fn wrap_template(title: &str, body: &str, fonts: Option<&ExportFonts>) -> String {
+///
+/// `layout` 决定外层留白归谁管（见 [`TemplateLayout`]）；
+/// `insert_title` 决定是否补一行 `<h1>` —— body 已自带标题时必须传 false，
+/// 否则导出物开头会出现两个一模一样的标题。
+fn wrap_template(
+    title: &str,
+    body: &str,
+    fonts: Option<&ExportFonts>,
+    layout: TemplateLayout,
+    insert_title: bool,
+) -> String {
     let safe_title = html_escape(title);
     // 用户设了字体就用用户的，否则保持模板自带的通用中文链（老行为）
     let body_font = fonts
@@ -256,6 +296,27 @@ fn wrap_template(title: &str, body: &str, fonts: Option<&ExportFonts>) -> String
         .and_then(sanitize_font_family)
         .map(|f| format!("\n    font-family: {};", f))
         .unwrap_or_default();
+    // 网页版式：居中窄栏 + 四周留白（老行为）。
+    // 文档版式：留白全交给 @page 页边距，body 零 margin/padding —— 否则 Word/WPS 会把
+    // 这些 CSS 盒模型值翻译成正文外多余的段落间距，用户在 Word 里怎么调都消不掉。
+    let page_css = match layout {
+        TemplateLayout::Web => {
+            "\n    max-width: 820px;\n    margin: 40px auto;\n    padding: 0 24px 80px;"
+        }
+        TemplateLayout::Document => "\n    margin: 0;\n    padding: 0;",
+    };
+    // A4 + 2.54cm 常规页边距，交给 Word 的原生页面设置概念承载留白
+    let at_page_css = match layout {
+        TemplateLayout::Web => "",
+        TemplateLayout::Document => "\n  @page { size: A4; margin: 2.54cm; }",
+    };
+    // markdown 路径的首元素恒为模板自己插的这个 h1，直接打上归零 class；
+    // 前端 DOM 路径的首/末元素由 `editorDomToSelfContainedHtml` 负责标记（它才知道是哪个）
+    let title_html = if insert_title {
+        format!(r#"<h1 class="kb-doc-first">{}</h1>"#, safe_title) + "\n"
+    } else {
+        String::new()
+    };
     format!(
         r##"<!DOCTYPE html>
 <html lang="zh-CN">
@@ -271,14 +332,11 @@ fn wrap_template(title: &str, body: &str, fonts: Option<&ExportFonts>) -> String
     --bg-quote: #f6f8fa;
     --link: #0969da;
   }}
-  * {{ box-sizing: border-box; }}
+  * {{ box-sizing: border-box; }}{at_page_css}
   body {{
     font-family: {body_font};
     color: var(--fg);
-    line-height: 1.7;
-    max-width: 820px;
-    margin: 40px auto;
-    padding: 0 24px 80px;
+    line-height: 1.7;{page_css}
     font-size: 16px;
   }}
   h1, h2, h3, h4, h5, h6 {{
@@ -378,19 +436,28 @@ fn wrap_template(title: &str, body: &str, fonts: Option<&ExportFonts>) -> String
   }}
   .tiptap-column > :first-child, [data-column] > :first-child {{ margin-top: 0; }}
   .tiptap-column > :last-child, [data-column] > :last-child {{ margin-bottom: 0; }}
+  /* 正文首/末元素的外边距归零 —— 由生成方（前端 DOM 管线 / 本模板）显式打这两个 class。
+     Word / WPS 打开 HTML 时把 CSS margin 一比一翻译成 docx 的「段前/段后间距」：
+     首个 h1 的 `margin-top: 1.6em` 就是正文上方那 19.2pt 空白（叠在页边距之上，
+     用户在 Word 里改一处还剩一处，故"怎么也消不掉"）；末元素的 margin-bottom 同理。
+     ⚠️ 必须用 class 而非 `:first-child` —— 实测 WPS/Word 的 HTML 导入器**不支持伪类**
+     （拿子选择器 + 伪类写归零规则，段前间距纹丝不动），但认 class 选择器与内联 style。 */
+  .kb-doc-first {{ margin-top: 0; }}
+  .kb-doc-last {{ margin-bottom: 0; }}
 </style>
 </head>
 <body>
 <article>
-<h1>{safe_title}</h1>
-{body}
+{title_html}{body}
 </article>
 </body>
 </html>
 "##,
         title = safe_title,
-        safe_title = safe_title,
+        title_html = title_html,
         body = body,
+        page_css = page_css,
+        at_page_css = at_page_css,
     )
 }
 
@@ -535,7 +602,13 @@ mod tests {
     fn render_html_from_body_preserves_rendered_dom() {
         let body = r#"<div class="tiptap"><h1><span class="kb-hnum">1</span>研发与制造脱节</h1><div class="kb-callout">提示</div></div>"#;
         let (html, _inlined, _missing) =
-            HtmlExportService::render_html_from_body("标题", body, Path::new("/nonexistent"), None);
+            HtmlExportService::render_html_from_body(
+                "标题",
+                body,
+                Path::new("/nonexistent"),
+                None,
+                TemplateLayout::Web,
+            );
 
         // 编号 widget 必须原样保留（用户反馈的核心诉求）
         assert!(
@@ -559,6 +632,7 @@ mod tests {
             "# 研发与制造脱节",
             Path::new("/nonexistent"),
             None,
+            TemplateLayout::Web,
         )
         .unwrap();
         assert!(
@@ -571,7 +645,13 @@ mod tests {
     #[test]
     fn template_without_fonts_keeps_default() {
         let (html, _i, _m) =
-            HtmlExportService::render_html("标题", "# 一级标题", Path::new("/nonexistent"), None)
+            HtmlExportService::render_html(
+                "标题",
+                "# 一级标题",
+                Path::new("/nonexistent"),
+                None,
+                TemplateLayout::Web,
+            )
                 .unwrap();
         assert!(
             html.contains("Microsoft YaHei"),
@@ -601,6 +681,7 @@ mod tests {
             "# 一级标题",
             Path::new("/nonexistent"),
             Some(&fonts),
+            TemplateLayout::Web,
         )
         .unwrap();
         assert!(html.contains(r#"font-family: "霞鹜文楷", serif;"#), "正文字体应写入 body");
@@ -623,6 +704,7 @@ mod tests {
             "正文",
             Path::new("/nonexistent"),
             Some(&fonts),
+            TemplateLayout::Web,
         )
         .unwrap();
         assert!(!html.contains("<script"), "不得注入 script 标签：{html}");
@@ -727,7 +809,13 @@ mod tests {
     fn already_inlined_images_are_counted() {
         let body = r#"<p>正文</p><img src="data:image/png;base64,AAAA" /><img src="data:image/png;base64,BBBB" />"#;
         let (_html, inlined, missing) =
-            HtmlExportService::render_html_from_body("标题", body, Path::new("/nonexistent"), None);
+            HtmlExportService::render_html_from_body(
+                "标题",
+                body,
+                Path::new("/nonexistent"),
+                None,
+                TemplateLayout::Web,
+            );
         assert_eq!(inlined, 2, "已是 data: 的图片也应计入内嵌数");
         assert_eq!(missing, 0, "data: 图片不是缺失");
     }
@@ -746,7 +834,13 @@ mod tests {
         let body = format!(r#"<img src="{}" />"#, url);
 
         let (html, inlined, missing) =
-            HtmlExportService::render_html_from_body("标题", &body, Path::new("/nonexistent"), None);
+            HtmlExportService::render_html_from_body(
+                "标题",
+                &body,
+                Path::new("/nonexistent"),
+                None,
+                TemplateLayout::Web,
+            );
 
         assert_eq!(inlined, 1, "asset.localhost 必须被内嵌，实际 html：{html}");
         assert_eq!(missing, 0);
@@ -766,7 +860,13 @@ mod tests {
     fn external_image_url_is_left_alone_and_uncounted() {
         let body = r#"<img src="https://example.com/a.png" />"#;
         let (html, inlined, missing) =
-            HtmlExportService::render_html_from_body("标题", body, Path::new("/nonexistent"), None);
+            HtmlExportService::render_html_from_body(
+                "标题",
+                body,
+                Path::new("/nonexistent"),
+                None,
+                TemplateLayout::Web,
+            );
         assert_eq!(inlined, 0);
         assert_eq!(missing, 0, "外链不是「缺失的本地图」");
         assert!(html.contains("https://example.com/a.png"), "外链应原样保留");
@@ -781,6 +881,7 @@ mod tests {
             body,
             Path::new("/nonexistent"),
             None,
+            TemplateLayout::Web,
         );
         assert_eq!(inlined, 0);
         assert_eq!(missing, 1, "本地图片读不出应计入缺失");
@@ -798,8 +899,134 @@ mod tests {
             "正文",
             Path::new("/nonexistent"),
             Some(&fonts),
+            TemplateLayout::Web,
         )
         .unwrap();
         assert!(html.contains("Microsoft YaHei"), "空字体值应回退默认链");
+    }
+
+    /// 回归：前端 DOM 路径的 body 自带 `<h1>`，模板不能再插一个
+    /// —— 用户反馈「导出的 Word 开头标题重复两遍」就是双重插入。
+    #[test]
+    fn body_path_does_not_duplicate_title() {
+        let body = r#"<div class="tiptap"><h1>我的笔记</h1><p>正文</p></div>"#;
+        let (html, _i, _m) = HtmlExportService::render_html_from_body(
+            "我的笔记",
+            body,
+            Path::new("/nonexistent"),
+            None,
+            TemplateLayout::Document,
+        );
+        let article = html
+            .split("<article>")
+            .nth(1)
+            .and_then(|s| s.split("</article>").next())
+            .unwrap_or_default();
+        assert_eq!(
+            article.matches("<h1").count(),
+            1,
+            "正文里应当只有 body 自带的那一个 h1，实际：{article}"
+        );
+    }
+
+    /// 对照组：markdown 路径的 body 里没有笔记标题，模板必须补上
+    #[test]
+    fn markdown_path_still_inserts_title() {
+        let (html, _i, _m) = HtmlExportService::render_html(
+            "我的笔记",
+            "正文段落",
+            Path::new("/nonexistent"),
+            None,
+            TemplateLayout::Web,
+        )
+        .unwrap();
+        assert!(
+            html.contains(r#"<h1 class="kb-doc-first">我的笔记</h1>"#),
+            "markdown 路径的标题只能由模板补，实际：{html}"
+        );
+    }
+
+    /// 回归：文档版式（Word / 打印）不得给 body 写 margin/padding
+    /// —— Word 会把它们翻译成正文外消不掉的空白，留白应交给 @page。
+    #[test]
+    fn document_layout_moves_spacing_to_at_page() {
+        let (html, _i, _m) = HtmlExportService::render_html(
+            "标题",
+            "正文",
+            Path::new("/nonexistent"),
+            None,
+            TemplateLayout::Document,
+        )
+        .unwrap();
+        let body_block = html
+            .split("body {")
+            .nth(1)
+            .and_then(|s| s.split('}').next())
+            .unwrap_or_default();
+        assert!(
+            !body_block.contains("40px") && !body_block.contains("80px"),
+            "文档版式不该保留网页阅读的外边距，实际：{body_block}"
+        );
+        assert!(
+            html.contains("@page"),
+            "文档版式应把留白交给 @page 页边距，实际：{html}"
+        );
+    }
+
+    /// 网页版式保持老行为：居中窄栏 + 四周留白，不写 @page
+    #[test]
+    fn web_layout_keeps_reading_margins() {
+        let (html, _i, _m) = HtmlExportService::render_html(
+            "标题",
+            "正文",
+            Path::new("/nonexistent"),
+            None,
+            TemplateLayout::Web,
+        )
+        .unwrap();
+        let body_block = html
+            .split("body {")
+            .nth(1)
+            .and_then(|s| s.split('}').next())
+            .unwrap_or_default();
+        assert!(
+            body_block.contains("max-width: 820px") && body_block.contains("margin: 40px auto"),
+            "网页版式应保持原阅读版式，实际：{body_block}"
+        );
+        assert!(!html.contains("@page"), "网页版式不该写 @page");
+    }
+
+    /// 回归：首/末元素外边距归零的规则必须在模板里
+    /// —— 缺了它，首个 h1 的 `margin-top: 1.6em` 会被 Word 变成 19.2pt 段前间距。
+    #[test]
+    fn template_zeroes_first_and_last_child_margins() {
+        let (html, _i, _m) = HtmlExportService::render_html(
+            "标题",
+            "正文",
+            Path::new("/nonexistent"),
+            None,
+            TemplateLayout::Document,
+        )
+        .unwrap();
+        assert!(
+            html.contains(".kb-doc-first { margin-top: 0; }"),
+            "应有首元素 margin-top 归零规则"
+        );
+        assert!(
+            html.contains(".kb-doc-last { margin-bottom: 0; }"),
+            "应有末元素 margin-bottom 归零规则"
+        );
+        // 正文首/末块的归零必须走 class：Word/WPS 的 HTML 导入器不认伪类，
+        // 曾用 `article > :first-child` 实测段前间距纹丝不动。
+        //（`.tiptap-column > :first-child` 那条是分栏内部的浏览器样式，与此无关，不在断言范围）
+        assert!(
+            !html.contains("article > :first-child"),
+            "不得用伪类给正文首块归零 —— Word/WPS 不支持，等于没修"
+        );
+        // markdown 路径的首元素（模板插的 h1）要自带 class，否则规则命中不了
+        assert!(
+            html.contains(r#"<h1 class="kb-doc-first">"#),
+            "模板插的标题应带首元素归零 class，实际：{html}"
+        );
     }
 }
