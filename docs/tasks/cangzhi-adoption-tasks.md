@@ -393,7 +393,26 @@ rank = ts_rank_cd + cjk_score
 | 向量轨（目录卡） | 只负责**找到哪张表** | 每区域**只出 1 parent + 1 child**，正文明写"不要以代表行推断全量事实"（`chunker.py:271-274`） |
 | 执行轨 | 负责**算得准** | 白名单**查询计划 JSON**（不是 SQL）→ 校验 → 执行 |
 
-#### P1-3a　解析层增强（1.5 天）
+#### P1-3a　解析层增强　✅ 已完成（b7045e8）
+
+**实际范围收窄**：只做了**当下就有用户价值**的两项 —— 合并单元格 + CSV/TSV。
+「区域切分 + 表头启发式」挪到 P1-3b：它们只有数据层存在后才有消费者，
+现在做等于为不存在的需求造抽象（P0-3 刚踩过这个反面）。
+
+- [x] **合并单元格回填**（对标项目零处理，已反向验证 `merged_cells`/`MergedCell`
+      全仓零命中）。三个实现坑：
+      ① calamine 把 `merged_regions` 放在 `Xlsx<RS>` 上，`open_workbook_auto`
+         返回的 `Sheets` 枚举**不暴露**它 → match 出 Xlsx 分支；
+         xls/xlsb/ods 按"无合并"降级而非报错
+      ② `merged_regions()` 未加载会 **panic**，必须先 `load_merged_regions()`
+      ③ `Dimensions` 是绝对坐标而 `Range` 可能有偏移，必须换算
+- [x] **CSV / TSV**（此前 `excel_parser.rs:47` 自认不支持，让用户先转 xlsx）：
+      csv crate（RFC 4180 引号/内嵌逗号手写必翻车）+ 复用已有编码嗅探（GBK）
+      + `flexible(true)` 容忍缺列
+- [x] 12 个单测 + 1 个 `#[ignore]` 真实 xlsx 端到端（纯函数覆盖不到 calamine
+      坐标系与 panic 陷阱，已用 openpyxl 造样本本地跑通）
+
+<details><summary>原计划（保留备查）</summary>
 
 - [ ] `services/excel_parser.rs` **补合并单元格**（`calamine` 的 `merged_regions`）
       —— 藏知这块是**零处理**（已反向验证：`merged_cells`/`MergedCell` 全仓零命中，
@@ -408,7 +427,14 @@ rank = ts_rank_cd + cjk_score
 > **不要抄**藏知的"语义行文本中转"（`行N｜列名=值` 存文本再正则反解）——
 > 单元格含 `｜` 就串列。Rust 直接 `Vec<HashMap<String,String>>`。
 
+</details>
+
 #### P1-3b　数据层落库（2 天，Schema v61）
+
+> ⬜ 待做。**从 P1-3a 挪来的两项**（此处才有消费者）：
+> - 区域切分：**连续 ≥2 空行才切**（藏知一行空行就切，会把一张表劈成两个数据集）
+> - 表头启发式：移植 `spreadsheet.py:104-122`（去重 / 长度≤40 / 非纯数字 /
+>   词表命中 / 第二行有数字），无表头回退 `A列/B列`，重名加 `_2`
 
 ```sql
 datasets(id, note_id/attachment_ref, sheet_name, region_index,
