@@ -23,7 +23,7 @@
 | **v59** | P0-1a | `ai_models` + `asr.api_key` 就地加密（无新表） | ✅ 85407cf |
 | ~~v60~~ | ~~P1-2~~ | P1-2 实际未用迁移（`note_tags` 主键索引已够），版本号让给 P1-3 | — |
 | **v60** | P1-3b | Excel 数据层：`datasets` / `dataset_fields` / `dataset_rows` | ✅ a3443d2 |
-| **v61** | P1-5 | 收件箱：`inbox_items` | ✅ ee9925a（后端） |
+| **v61** | P1-5 | 收件箱：`inbox_items` | ✅ ee9925a + 92bd50a |
 | **v62** | P2-1 | 切片层：`note_chunks` | ⬜ |
 | **v63** | P2-2 | 向量层：`embedding_profiles` / `chunk_embeddings` | ⬜ |
 | **v64** | P2-4 | 任务队列：`bg_jobs` | ⬜ |
@@ -568,11 +568,28 @@ dataset_rows(dataset_id, row_index, data_json)   -- SQLite JSON1
 前端拿 list 返回里的 `detailJson` 还原上下文后调对应的原有 API，成功再 `remove`。
 收件箱因此**不需要认识每一种失败类型**，加新类型时只改前端。
 
-**⬜ 未做**
-- 收件箱 UI 页面（失败项已在落库，但用户还看不到列表）
+**✅ UI 已完成（92bd50a）+ 真机验证通过**
+
+- 侧栏底部「收件箱」入口（与隐藏笔记 / 回收站同组：都是"管理类"视图）
+- 按类型分组筛选 + 失败原因（红字）+ 源路径 + `×N` 失败次数角标
+- 每条「重试」/「忽略」，顶部「清空」
+- **侧栏红色徽章**：`inboxCount` + `refreshInboxCount`，与待办红点共用渲染。
+  启动拉一次 + 落库后立刻刷新 —— 失败项不该只靠用户主动点进来才发现
+- 重试按 kind 分派（收件箱不认识每种失败类型，拿 `detailJson` 调原有 API）；
+  `import_pdf` 重试时启用 OCR（走到收件箱的多半是首轮无文字层失败的扫描件；
+  后端 `pdf.rs:126` 有 `is_available()` 守卫，引擎不在时返回可读错误）
+
+**真机验证**：v61 迁移执行（`user_version: 61`）→ 徽章显示 3 → 页面渲染 3 条 →
+点「忽略」后条目移除 + 徽章 3→2 + 筛选器因只剩一种类型自动隐藏（三处联动都对）。
+
+**编译期间复查修掉的 bug**：筛选到某类型并处理完后，Segmented 会停在已不存在的
+类型上导致列表白白显示成空的 —— 加了自动退回"全部"。
+
+**⬜ 仍未做**
 - Markdown 导入失败点：其 `errors` 是纯字符串数组（无结构化 `sourcePath`），
   接入需先改后端返回结构
-- 剪藏 / OCR 独立入口的失败点
+- 剪藏 / OCR / 数据集识别 的失败点（后端能力已就绪，只差在各自失败处调 `inboxApi.add`）
+- 除 `import_pdf` 外的重试分派
 
 <details><summary>原计划（保留备查）</summary>
 
