@@ -94,7 +94,7 @@ tags 唯一约束用例）；clippy 无新增警告；`tsc --noEmit` 通过。
 
 ---
 
-### P0-2　RRF 融合替换"主 + 填空"
+### P0-2　RRF 融合替换"主 + 填空"　✅ 已完成（67dfec2）
 
 **为什么**：`database/ai.rs:1094-1137` 现在是 LIKE 主通道 + FTS 补位，**两条通道分数不可比**，
 只是去重截断。藏知的 RRF 只有 30 行（`hybrid_retrieval.py:126-137`）：
@@ -103,31 +103,59 @@ tags 唯一约束用例）；clippy 无新增警告；`tsc --noEmit` 通过。
 score += 1.0 / (60 + rank)   # k=60，无权重，重复 id 只记首次名次
 ```
 
-- [ ] 新建 `database/fusion.rs`：`rrf_scores(rankings, k=60)`，并列按 id 升序**稳定排序**
-- [ ] `database/ai.rs:961 search_notes_for_rag` 改为两通道独立取 top-N → RRF → 截断
-- [ ] 单测：单通道退化 / 双通道交叉 / 并列稳定性 / 空输入
+- [x] 新建 `database/fusion.rs`：`rrf_scores` / `rrf_fuse`（k=60），
+      每路内部重复 id 只记首次名次，同分按 id 升序**稳定排序**
+      （浮点相等判定跨平台可能不同，不兜底会让检索结果不可复现）
+- [x] `database/ai.rs search_notes_for_rag` 改为两通道各自产出名次序列 → RRF → 截断
+- [x] 7 个单测：单路退化 / 多路命中加权 / 公式校验 / 同路去重 / 并列稳定 /
+      空输入 / 不相交交错
+
+**保留的性能取舍**：FTS 通道仍要求 `has_ascii_kw` —— SQLite 的 unicode61 对中文按
+连续 CJK 段切分，纯中文 query 跑 FTS 基本是白跑一次全表。但去掉了
+"LIKE 没查够才跑"的条件，否则 RRF 无从融合。单路时 RRF 退化为原顺序，
+故**纯中文 query 行为与改造前一致**。
 
 **注意**：藏知在 search 走**文档级**融合、ask 走**片段级**融合（`search.py:410-412` 注释解释：
-相邻切片会命中同一文档，片段级 RRF 反而不奖励一致性）。我们先做文档级，等 P2-1 切片上线后加片段级。
-
-**工作量**：0.5 天　**依赖**：无
+相邻切片会命中同一文档，片段级 RRF 反而不奖励一致性）。我们现在是文档级，
+等 P2-1 切片上线后再加片段级。
 
 ---
 
-### P0-3　召回过滤条件收敛为共享函数
+### P0-3　召回过滤条件收敛　✅ 已完成（67dfec2）
 
 **为什么**：藏知在这里栽了 —— 词法路 `search.py:788-792` 漏了 `is_current` 与
 `current_version_id`，向量路（`hybrid_retrieval.py:295-298`）和 QA 路（`qa.py:734-737`）都有，
-导致**关键词搜索捞出旧版本切片**，同一查询走不同通道结果不一致。它的 `_apply_filters`
-还在两个文件里重复实现了两份。我们现在 `database/search.rs` 与 `database/ai.rs` 已在分头写召回条件。
+导致**关键词搜索捞出旧版本切片**，同一查询走不同通道结果不一致。
 
-- [ ] 新建 `database/filters.rs`：`RecallFilters` + `where_clause()` 生成 SQL 片段与绑定参数
-- [ ] `database/search.rs:46` / `:118` 改用共享函数
-- [ ] `database/ai.rs:961` 同上
-- [ ] **约定**：显式但为空的筛选返回 `1=0`（fail-closed），绝不退化成全库
-      （抄藏知 `scope_keys.py:139-142`，注释原话："显式空选择绝不能扩成全空间查询"）
+**🔴 我们自己也踩了同一个坑，而且更严重 —— 是隐私泄露**
 
-**工作量**：0.5 天　**依赖**：建议排在 P0-2 之后（同改 `ai.rs:961`）
+`search_notes_for_rag` 两条通道的可见性过滤写法不一致：
+
+| 通道 | WHERE |
+|---|---|
+| LIKE 主通道 | `is_deleted=0 AND is_hidden=0 AND is_scratch=0` |
+| **FTS 补充通道** | 只有 `is_deleted=0` ❌ |
+
+于是 query 里**只要带一个英文词**就会走 FTS 通道，把隐藏笔记（T-003）与临时编辑的
+外部 md 捞进 RAG 上下文 —— 内容随请求发给模型服务商，并写进本地对话历史。
+而同文件的注释明写"RAG 检索结果不包含隐藏笔记（否则 AI 对话会泄露隐藏内容到历史）"。
+
+**已完成**
+
+- [x] `database/ai.rs` 新增 `RAG_VISIBILITY` 常量，两条通道**逐字复用**
+- [x] 回归测试 `rag_never_returns_hidden_or_scratch_notes` +
+      `rag_never_returns_deleted_notes`
+- [x] **反向验证测试有效性**：临时还原 bug 后该用例确实失败，
+      返回 `[1,2,3]`（正常+隐藏+临时全被召回），证实泄露路径真实存在
+
+**未做（降级为后续可选）**：原计划的 `database/filters.rs`（`RecallFilters` +
+`where_clause()` 通用筛选下推）。它服务的是 **P1-2 搜索筛选维度**（文件夹/标签/
+时间/类型），而不是本次的可见性一致性问题 —— 后者用一个常量就根治了。
+把通用 filters 结构挪到 P1-2 一并做，避免为尚不存在的需求先造抽象。
+`search.rs` 与 `ai.rs` 的筛选需求不同（全文搜索 vs RAG），届时再看是否真该共用一份。
+
+**约定（P1-2 落地时执行）**：显式但为空的筛选返回 `1=0`（fail-closed），绝不退化成全库
+（抄藏知 `scope_keys.py:139-142`，注释原话："显式空选择绝不能扩成全空间查询"）
 
 ---
 
