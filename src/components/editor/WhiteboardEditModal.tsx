@@ -10,11 +10,13 @@
  * 3. 把两个 `kb-asset://` 路径交回 NodeView 写进节点属性
  */
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { Modal, Spin, App as AntdApp } from "antd";
+import { Modal, Spin, Button, Dropdown, Tag, App as AntdApp, type MenuProps } from "antd";
+import { History } from "lucide-react";
 import { whiteboardApi } from "@/lib/api";
 import { toKbAsset } from "@/lib/assetUrl";
 import { useAppStore } from "@/store";
 import type { WhiteboardExportApi } from "@/components/whiteboard/WhiteboardCanvas";
+import type { NoteSnapshotMeta, SnapshotReason } from "@/types";
 
 // 与整页白板共用同一个画布组件，也共用它的 lazy chunk：
 // 笔记里从不插白板的用户不会为 Excalidraw 付出任何下载成本
@@ -37,6 +39,25 @@ interface Props {
   scenePath: string | null;
   onCancel: () => void;
   onSaved: (result: WhiteboardSaveResult) => void;
+}
+
+const REASON_LABEL: Record<SnapshotReason, string> = {
+  auto: "自动",
+  manual: "手动存档",
+  before_restore: "恢复前备份",
+};
+
+/** 人话时间：今天只显示时刻，更早带上日期 */
+function fmtStamp(raw: string): string {
+  const d = new Date(raw.replace(" ", "T"));
+  if (Number.isNaN(d.getTime())) return raw;
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return sameDay ? `今天 ${hm}` : `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
 }
 
 /** 从 PNG 的 base64 量出像素尺寸；失败返回 null（尺寸只是优化项，不该阻断保存） */
@@ -63,6 +84,13 @@ export function WhiteboardEditModal({
   const [loading, setLoading] = useState(true);
   const [initialScene, setInitialScene] = useState("");
   const [saving, setSaving] = useState(false);
+  /** 历史版本列表（点开下拉才拉） */
+  const [snapshots, setSnapshots] = useState<NoteSnapshotMeta[] | null>(null);
+  /**
+   * 画布实例重建计数。回滚后要用新场景重挂画布 ——
+   * Excalidraw 的 initialData 是非受控的，光 setInitialScene 改不动已挂载的画布。
+   */
+  const [canvasEpoch, setCanvasEpoch] = useState(0);
   /**
    * Modal 入场动画结束、容器尺寸稳定之后才挂载画布。
    *
@@ -106,6 +134,65 @@ export function WhiteboardEditModal({
     };
   }, [open, scenePath, message]);
 
+  /**
+   * 历史版本。只有已保存过的白板才有（新建的还没落过盘，自然没有旧版本）。
+   *
+   * 用下拉而不是抽屉：弹窗本身就占了 90vw，再叠一层抽屉会把画布挤没。
+   * 代价是没有预览，用户得靠时间选 —— 但内嵌白板是"确认才保存"的，
+   * 版本数远少于整页白板，靠时间定位够用。
+   */
+  const loadSnapshots = useCallback(async () => {
+    if (!scenePath) {
+      setSnapshots([]);
+      return;
+    }
+    try {
+      setSnapshots(await whiteboardApi.listEmbeddedSnapshots(noteId, scenePath));
+    } catch (e) {
+      setSnapshots([]);
+      message.error(`读取历史版本失败: ${e}`);
+    }
+  }, [noteId, scenePath, message]);
+
+  /** 回滚到某一版：后端换掉场景文件并回传新画布，这里换 key 重挂 */
+  const restoreSnapshot = useCallback(
+    async (snapshotId: number) => {
+      if (!scenePath) return;
+      try {
+        const scene = await whiteboardApi.restoreEmbeddedSnapshot(
+          noteId,
+          scenePath,
+          snapshotId,
+        );
+        setInitialScene(scene);
+        setCanvasEpoch((v) => v + 1);
+        setSnapshots(null);
+        message.success("已恢复到这一版（当前版本已自动留底，可再滚回来）");
+      } catch (e) {
+        message.error(`恢复失败: ${e}`);
+      }
+    },
+    [noteId, scenePath, message],
+  );
+
+  const historyMenu: MenuProps["items"] =
+    snapshots === null
+      ? [{ key: "loading", label: "加载中…", disabled: true }]
+      : snapshots.length === 0
+        ? [{ key: "empty", label: "还没有历史版本", disabled: true }]
+        : snapshots.map((s) => ({
+            key: String(s.id),
+            label: (
+              <span className="flex items-center gap-2">
+                {fmtStamp(s.created_at)}
+                <Tag style={{ marginInlineEnd: 0 }}>
+                  {REASON_LABEL[s.reason] ?? "自动"}
+                </Tag>
+              </span>
+            ),
+            onClick: () => void restoreSnapshot(s.id),
+          }));
+
   const handleSave = useCallback(async () => {
     const api = exportApiRef.current;
     // 直接问画布要最新场景，不等 800ms 防抖 —— 用户画完最后一笔就点保存是常态
@@ -141,7 +228,25 @@ export function WhiteboardEditModal({
   return (
     <Modal
       open={open}
-      title="白板"
+      title={
+        <span className="flex items-center gap-3">
+          白板
+          {/* 新建的白板还没落过盘，没有旧版本可看 —— 不给入口比给个空菜单好 */}
+          {scenePath && (
+            <Dropdown
+              menu={{ items: historyMenu }}
+              trigger={["click"]}
+              onOpenChange={(o) => {
+                if (o) void loadSnapshots();
+              }}
+            >
+              <Button size="small" icon={<History size={14} />}>
+                历史版本
+              </Button>
+            </Dropdown>
+          )}
+        </span>
+      }
       onCancel={onCancel}
       onOk={handleSave}
       okText="保存"
@@ -173,6 +278,7 @@ export function WhiteboardEditModal({
           }
         >
           <WhiteboardCanvas
+            key={canvasEpoch}
             initialScene={initialScene}
             // 不传 onSave = 不自动落盘。弹窗是「确认才保存」的语义，
             // 保存时用 exportRef.getSceneJson() 主动取当前画布

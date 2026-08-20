@@ -15,7 +15,7 @@ pub fn list_note_snapshots(
     state: tauri::State<'_, AppState>,
     note_id: i64,
 ) -> Result<Vec<NoteSnapshotMeta>, String> {
-    state.db.list_note_snapshots(note_id).map_err(|e| e.to_string())
+    state.db.list_note_snapshots(note_id, None).map_err(|e| e.to_string())
 }
 
 /// 取某一份历史版本的完整正文（预览 / 对比用）。

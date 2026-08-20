@@ -175,3 +175,47 @@ pub fn get_note_excerpts(
 ) -> Result<Vec<crate::models::NoteExcerpt>, String> {
     crate::services::note_excerpt::for_notes(&state.db, &note_ids).map_err(|e| e.to_string())
 }
+
+// ─── 内嵌白板的历史版本 ──────────────────────────────────
+
+/// 列出某块内嵌白板的历史版本。
+#[tauri::command]
+pub fn list_embedded_whiteboard_snapshots(
+    state: tauri::State<'_, AppState>,
+    note_id: i64,
+    rel_path: String,
+) -> Result<Vec<NoteSnapshotMeta>, String> {
+    whiteboard::list_embedded_snapshots(&state.db, note_id, &rel_path).map_err(|e| e.to_string())
+}
+
+/// 取某一份内嵌白板历史版本的画布（图片已内联，可直接预览）。
+#[tauri::command]
+pub fn get_embedded_whiteboard_snapshot_scene(
+    state: tauri::State<'_, AppState>,
+    snapshot_id: i64,
+) -> Result<String, String> {
+    whiteboard::embedded_snapshot_scene(&state.db, &state.vault, &state.data_dir, snapshot_id)
+        .map_err(|e| e.to_string())
+}
+
+/// 把内嵌白板回滚到某一份历史版本，返回回滚后的画布。
+///
+/// 不广播 `note:updated`：改的是笔记正文引用的那个场景文件，笔记本身没变；
+/// 发起方拿返回值自己重载画布即可。
+#[tauri::command]
+pub fn restore_embedded_whiteboard_snapshot(
+    state: tauri::State<'_, AppState>,
+    note_id: i64,
+    rel_path: String,
+    snapshot_id: i64,
+) -> Result<String, String> {
+    whiteboard::restore_embedded_snapshot(
+        &state.db,
+        &state.vault,
+        &state.data_dir,
+        note_id,
+        &rel_path,
+        snapshot_id,
+    )
+    .map_err(|e| e.to_string())
+}

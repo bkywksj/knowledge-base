@@ -16,11 +16,13 @@ use super::Database;
 
 impl Database {
     /// 存一条快照，返回新行 id。调用方负责判断"该不该存"。
+    /// `target_path`：None = 笔记正文本身；Some(相对路径) = 笔记里内嵌的那块白板。
     pub fn insert_note_snapshot(
         &self,
         note_id: i64,
         content: &str,
         reason: &str,
+        target_path: Option<&str>,
     ) -> Result<i64, AppError> {
         let conn = self
             .conn
@@ -29,9 +31,16 @@ impl Database {
 
         let content_hash = crate::services::hash::sha256_hex(content);
         conn.execute(
-            "INSERT INTO note_snapshots (note_id, content, content_hash, byte_size, reason)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![note_id, content, content_hash, content.len() as i64, reason],
+            "INSERT INTO note_snapshots (note_id, content, content_hash, byte_size, reason, target_path)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                note_id,
+                content,
+                content_hash,
+                content.len() as i64,
+                reason,
+                target_path
+            ],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -40,7 +49,11 @@ impl Database {
     ///
     /// 距今秒数在 SQL 里用 `julianday` 算好再回传，免得 Rust 侧解析
     /// `datetime('now','localtime')` 那种不带时区的字符串 —— 那是跨平台踩坑重灾区。
-    pub fn latest_snapshot_stamp(&self, note_id: i64) -> Result<Option<(String, f64)>, AppError> {
+    pub fn latest_snapshot_stamp(
+        &self,
+        note_id: i64,
+        target_path: Option<&str>,
+    ) -> Result<Option<(String, f64)>, AppError> {
         let conn = self
             .conn
             .lock()
@@ -51,10 +64,10 @@ impl Database {
                 "SELECT content_hash,
                         (julianday('now', 'localtime') - julianday(created_at)) * 86400.0
                  FROM note_snapshots
-                 WHERE note_id = ?1
+                 WHERE note_id = ?1 AND target_path IS ?2
                  ORDER BY created_at DESC, id DESC
                  LIMIT 1",
-                params![note_id],
+                params![note_id, target_path],
                 |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)),
             )
             .optional()?;
@@ -66,7 +79,11 @@ impl Database {
     /// 列表不带正文是刻意的：一块白板的快照动辄几十 KB，30 条一次性回传给前端
     /// 就是几 MB 的 IPC 负担，而列表界面只需要时间和体积。正文按需用
     /// `get_note_snapshot` 单条取。
-    pub fn list_note_snapshots(&self, note_id: i64) -> Result<Vec<NoteSnapshotMeta>, AppError> {
+    pub fn list_note_snapshots(
+        &self,
+        note_id: i64,
+        target_path: Option<&str>,
+    ) -> Result<Vec<NoteSnapshotMeta>, AppError> {
         let conn = self
             .conn
             .lock()
@@ -75,11 +92,11 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, note_id, byte_size, reason, created_at
              FROM note_snapshots
-             WHERE note_id = ?1
+             WHERE note_id = ?1 AND target_path IS ?2
              ORDER BY created_at DESC, id DESC",
         )?;
         let rows = stmt
-            .query_map(params![note_id], |r| {
+            .query_map(params![note_id, target_path], |r| {
                 Ok(NoteSnapshotMeta {
                     id: r.get(0)?,
                     note_id: r.get(1)?,
@@ -204,7 +221,12 @@ impl Database {
     }
 
     /// 只保留最近 `keep` 条，其余删除，返回删除条数。
-    pub fn prune_note_snapshots(&self, note_id: i64, keep: i64) -> Result<usize, AppError> {
+    pub fn prune_note_snapshots(
+        &self,
+        note_id: i64,
+        keep: i64,
+        target_path: Option<&str>,
+    ) -> Result<usize, AppError> {
         let conn = self
             .conn
             .lock()
@@ -214,13 +236,13 @@ impl Database {
         // 否则 LIMIT 取到哪几条是不确定的
         let deleted = conn.execute(
             "DELETE FROM note_snapshots
-             WHERE note_id = ?1 AND id NOT IN (
+             WHERE note_id = ?1 AND target_path IS ?3 AND id NOT IN (
                  SELECT id FROM note_snapshots
-                 WHERE note_id = ?1
+                 WHERE note_id = ?1 AND target_path IS ?3
                  ORDER BY created_at DESC, id DESC
                  LIMIT ?2
              )",
-            params![note_id, keep],
+            params![note_id, keep, target_path],
         )?;
         Ok(deleted)
     }
@@ -249,7 +271,7 @@ mod tests {
         let db = mem_db();
         let note_id = new_note(&db, "v1");
 
-        let sid = db.insert_note_snapshot(note_id, "画布 A", "auto").unwrap();
+        let sid = db.insert_note_snapshot(note_id, "画布 A", "auto", None).unwrap();
         let got = db.get_note_snapshot(sid).unwrap().expect("应能读回");
         assert_eq!(got.content, "画布 A");
         assert_eq!(got.note_id, note_id);
@@ -257,7 +279,7 @@ mod tests {
         assert_eq!(got.byte_size, "画布 A".len() as i64);
 
         // 列表不带正文，但条数和元信息要对
-        let list = db.list_note_snapshots(note_id).unwrap();
+        let list = db.list_note_snapshots(note_id, None).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].id, sid);
     }
@@ -267,12 +289,12 @@ mod tests {
     fn latest_stamp_tracks_newest() {
         let db = mem_db();
         let note_id = new_note(&db, "v1");
-        assert!(db.latest_snapshot_stamp(note_id).unwrap().is_none());
+        assert!(db.latest_snapshot_stamp(note_id, None).unwrap().is_none());
 
-        db.insert_note_snapshot(note_id, "旧", "auto").unwrap();
-        db.insert_note_snapshot(note_id, "新", "auto").unwrap();
+        db.insert_note_snapshot(note_id, "旧", "auto", None).unwrap();
+        db.insert_note_snapshot(note_id, "新", "auto", None).unwrap();
 
-        let (hash, age) = db.latest_snapshot_stamp(note_id).unwrap().unwrap();
+        let (hash, age) = db.latest_snapshot_stamp(note_id, None).unwrap().unwrap();
         assert_eq!(hash, crate::services::hash::sha256_hex("新"));
         // 刚写进去，age 必须接近 0（留足余量避免 CI 慢机器抖动）
         assert!(age < 60.0, "age 应接近 0，实际 {}", age);
@@ -287,15 +309,15 @@ mod tests {
         let mut ids = Vec::new();
         for i in 0..5 {
             ids.push(
-                db.insert_note_snapshot(note_id, &format!("画布 {}", i), "auto")
+                db.insert_note_snapshot(note_id, &format!("画布 {}", i), "auto", None)
                     .unwrap(),
             );
         }
 
-        let deleted = db.prune_note_snapshots(note_id, 2).unwrap();
+        let deleted = db.prune_note_snapshots(note_id, 2, None).unwrap();
         assert_eq!(deleted, 3);
 
-        let left = db.list_note_snapshots(note_id).unwrap();
+        let left = db.list_note_snapshots(note_id, None).unwrap();
         assert_eq!(left.len(), 2);
         // created_at 只精确到秒，5 条大概率同秒 —— 所以排序必须靠 id 兜底，
         // 留下的应是 id 最大的两条
@@ -310,7 +332,7 @@ mod tests {
     fn snapshots_cascade_on_note_delete() {
         let db = mem_db();
         let note_id = new_note(&db, "v1");
-        db.insert_note_snapshot(note_id, "画布", "auto").unwrap();
+        db.insert_note_snapshot(note_id, "画布", "auto", None).unwrap();
 
         {
             let conn = db.conn.lock().unwrap();
@@ -318,7 +340,7 @@ mod tests {
                 .unwrap();
         }
 
-        assert!(db.list_note_snapshots(note_id).unwrap().is_empty());
+        assert!(db.list_note_snapshots(note_id, None).unwrap().is_empty());
     }
 
     // ─── 用量与清理 ──────────────────────────────────────
@@ -330,9 +352,9 @@ mod tests {
         let small = new_note(&db, "v1");
         let big = new_note(&db, "v1");
 
-        db.insert_note_snapshot(small, "abc", "auto").unwrap();
-        db.insert_note_snapshot(big, &"x".repeat(500), "auto").unwrap();
-        db.insert_note_snapshot(big, &"y".repeat(300), "manual").unwrap();
+        db.insert_note_snapshot(small, "abc", "auto", None).unwrap();
+        db.insert_note_snapshot(big, &"x".repeat(500), "auto", None).unwrap();
+        db.insert_note_snapshot(big, &"y".repeat(300), "manual", None).unwrap();
 
         let u = db.note_snapshot_usage(10).unwrap();
         assert_eq!(u.total_count, 3);
@@ -361,12 +383,12 @@ mod tests {
         let db = mem_db();
         let a = new_note(&db, "v1");
         let b = new_note(&db, "v1");
-        db.insert_note_snapshot(a, "A", "auto").unwrap();
-        db.insert_note_snapshot(b, "B", "auto").unwrap();
+        db.insert_note_snapshot(a, "A", "auto", None).unwrap();
+        db.insert_note_snapshot(b, "B", "auto", None).unwrap();
 
         assert_eq!(db.delete_note_snapshots(a).unwrap(), 1);
-        assert!(db.list_note_snapshots(a).unwrap().is_empty());
-        assert_eq!(db.list_note_snapshots(b).unwrap().len(), 1, "不该动别的笔记");
+        assert!(db.list_note_snapshots(a, None).unwrap().is_empty());
+        assert_eq!(db.list_note_snapshots(b, None).unwrap().len(), 1, "不该动别的笔记");
     }
 
     /// 按天数清理：只删超期的，新的留下。
@@ -374,8 +396,8 @@ mod tests {
     fn delete_older_than_respects_cutoff() {
         let db = mem_db();
         let id = new_note(&db, "v1");
-        let old_id = db.insert_note_snapshot(id, "很久以前", "auto").unwrap();
-        let new_id = db.insert_note_snapshot(id, "刚刚", "auto").unwrap();
+        let old_id = db.insert_note_snapshot(id, "很久以前", "auto", None).unwrap();
+        let new_id = db.insert_note_snapshot(id, "刚刚", "auto", None).unwrap();
 
         // 把第一条的时间改成 10 天前
         {
@@ -388,9 +410,76 @@ mod tests {
         }
 
         assert_eq!(db.delete_note_snapshots_older_than(7).unwrap(), 1);
-        let left = db.list_note_snapshots(id).unwrap();
+        let left = db.list_note_snapshots(id, None).unwrap();
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].id, new_id, "只该删掉超期那条");
+    }
+
+    // ─── 内嵌白板（target_path）──────────────────────────
+
+    /// 同一条笔记里，正文与各块内嵌白板的历史必须互不干扰 ——
+    /// 靠 `target_path IS ?`（不是 `=`，SQLite 里 NULL = NULL 为假）。
+    #[test]
+    fn target_path_isolates_histories() {
+        let db = mem_db();
+        let id = new_note(&db, "v1");
+        let wb_a = "kb_assets/images/1/wb-aaa.excalidraw";
+        let wb_b = "kb_assets/images/1/wb-bbb.excalidraw";
+
+        db.insert_note_snapshot(id, "正文版本", "auto", None).unwrap();
+        db.insert_note_snapshot(id, "白板A版本", "auto", Some(wb_a)).unwrap();
+        db.insert_note_snapshot(id, "白板B版本", "auto", Some(wb_b)).unwrap();
+
+        // 各查各的，一条不多一条不少
+        let body = db.list_note_snapshots(id, None).unwrap();
+        assert_eq!(body.len(), 1, "正文历史不该混进白板的");
+        let a = db.list_note_snapshots(id, Some(wb_a)).unwrap();
+        assert_eq!(a.len(), 1);
+        assert_eq!(
+            db.get_note_snapshot(a[0].id).unwrap().unwrap().content,
+            "白板A版本"
+        );
+        let b = db.list_note_snapshots(id, Some(wb_b)).unwrap();
+        assert_eq!(b.len(), 1);
+    }
+
+    /// 份数上限按 target 独立算：一条笔记插了几块白板，
+    /// 不该让它们互相挤掉对方的历史。
+    #[test]
+    fn prune_is_scoped_to_target() {
+        let db = mem_db();
+        let id = new_note(&db, "v1");
+        let wb = "kb_assets/images/1/wb-x.excalidraw";
+
+        for i in 0..4 {
+            db.insert_note_snapshot(id, &format!("正文{}", i), "auto", None).unwrap();
+            db.insert_note_snapshot(id, &format!("白板{}", i), "auto", Some(wb)).unwrap();
+        }
+
+        // 只裁白板那一档
+        db.prune_note_snapshots(id, 2, Some(wb)).unwrap();
+        assert_eq!(db.list_note_snapshots(id, Some(wb)).unwrap().len(), 2);
+        assert_eq!(
+            db.list_note_snapshots(id, None).unwrap().len(),
+            4,
+            "裁白板不该动到正文历史"
+        );
+    }
+
+    /// 节流/去重看的也必须是同一个 target 的最近一份。
+    #[test]
+    fn latest_stamp_is_scoped_to_target() {
+        let db = mem_db();
+        let id = new_note(&db, "v1");
+        let wb = "kb_assets/images/1/wb-x.excalidraw";
+
+        db.insert_note_snapshot(id, "正文", "auto", None).unwrap();
+        // 白板那一档还没有任何快照 → 必须是 None，而不是拿到正文那条
+        assert!(db.latest_snapshot_stamp(id, Some(wb)).unwrap().is_none());
+
+        db.insert_note_snapshot(id, "白板", "auto", Some(wb)).unwrap();
+        let (hash, _) = db.latest_snapshot_stamp(id, Some(wb)).unwrap().unwrap();
+        assert_eq!(hash, crate::services::hash::sha256_hex("白板"));
     }
 
     #[test]
@@ -398,8 +487,8 @@ mod tests {
         let db = mem_db();
         let a = new_note(&db, "v1");
         let b = new_note(&db, "v1");
-        db.insert_note_snapshot(a, "A", "auto").unwrap();
-        db.insert_note_snapshot(b, "B", "auto").unwrap();
+        db.insert_note_snapshot(a, "A", "auto", None).unwrap();
+        db.insert_note_snapshot(b, "B", "auto", None).unwrap();
 
         assert_eq!(db.delete_all_note_snapshots().unwrap(), 2);
         assert_eq!(db.note_snapshot_usage(10).unwrap().total_count, 0);

@@ -401,6 +401,32 @@ export const whiteboardApi = {
   saveLibrary: (content: string) =>
     invoke<void>("save_whiteboard_library", { content }),
 
+  // ─── 内嵌白板的历史版本 ──────────────────────────────
+  //
+  // 与整页白板分开：内嵌白板的场景存在独立文件里，靠 (noteId, relPath) 定位，
+  // 后端用 note_snapshots.target_path 区分同一条笔记下的正文与各块白板。
+
+  /** 列出某块内嵌白板的历史版本 */
+  listEmbeddedSnapshots: (noteId: number, relPath: string) =>
+    invoke<NoteSnapshotMeta[]>("list_embedded_whiteboard_snapshots", {
+      noteId,
+      relPath,
+    }),
+  /** 取某一份内嵌白板历史版本的画布（图片已内联） */
+  getEmbeddedSnapshotScene: (snapshotId: number) =>
+    invoke<string>("get_embedded_whiteboard_snapshot_scene", { snapshotId }),
+  /** 回滚内嵌白板到某一份历史版本，返回回滚后的画布 */
+  restoreEmbeddedSnapshot: (
+    noteId: number,
+    relPath: string,
+    snapshotId: number,
+  ) =>
+    invoke<string>("restore_embedded_whiteboard_snapshot", {
+      noteId,
+      relPath,
+      snapshotId,
+    }),
+
   /**
    * 批量取笔记摘要，供画布上的「笔记卡片」显示。
    * 每次打开白板调一次 —— 卡片显示的是笔记**当前**内容，不是插入那刻的快照。

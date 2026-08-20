@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 57;
+pub const SCHEMA_VERSION: i32 = 58;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -87,6 +87,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             54 => migrate_v54_to_v55(conn)?,
             55 => migrate_v55_to_v56(conn)?,
             56 => migrate_v56_to_v57(conn)?,
+            57 => migrate_v57_to_v58(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2370,6 +2371,33 @@ fn migrate_v54_to_v55(conn: &Connection) -> Result<(), AppError> {
 /// 混在一个列表里会让用户在找临时文件时被要求输 PIN。
 ///
 /// 部分索引与 idx_notes_hidden 同思路：只覆盖活跃笔记，不让回收站条目干扰热路径。
+/// v58：快照支持「笔记内嵌的白板块」。
+///
+/// 笔记正文走 notes 表，而正文里插的白板块存的是独立文件
+/// （`kb_assets/images/<note_id>/wb-<uuid>.excalidraw`）—— 两者不是一回事，
+/// 但都属于同一条笔记、都需要"覆盖前留底"。
+///
+/// 加一列区分而不是另起一张表：份数上限、时间窗节流、内容去重、
+/// 以及笔记删除时的 CASCADE 清理，整套逻辑原样复用。
+/// `target_path` 为 NULL = 笔记正文本身（v57 的既有语义，存量行自动落到这一档）。
+fn migrate_v57_to_v58(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v57 -> v58 (note_snapshots.target_path 内嵌白板)");
+
+    let cols = list_columns(conn, "note_snapshots")?;
+    if !cols.iter().any(|c| c == "target_path") {
+        conn.execute_batch("ALTER TABLE note_snapshots ADD COLUMN target_path TEXT;")?;
+    }
+
+    // 查询一律带 target_path 条件，索引跟着带上，否则一条笔记有多块白板时会全表扫
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_note_snapshots_target
+         ON note_snapshots(note_id, target_path, created_at DESC);",
+    )?;
+
+    set_version(conn, 58)?;
+    Ok(())
+}
+
 /// v57：笔记内容快照表（白板"画了一下午被一次误操作覆盖"的兜底）。
 ///
 /// 为什么必须有：白板是 800ms 防抖**自动**保存的，用户误删一大片图形后不需要做任何事，

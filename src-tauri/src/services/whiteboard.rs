@@ -441,6 +441,24 @@ pub fn save_embedded_scene(
         stored.into_bytes()
     };
     let scene_abs = dir.join(format!("{}.{}{}", stem, EMBEDDED_SCENE_EXT, enc_suffix));
+
+    // 覆盖之前留一份旧画布（仅"改已有白板"时；新建没有旧版本可留）。
+    //
+    // 加密笔记跳过：快照存在库里是明文，给加密笔记留底等于把内容漏出去 ——
+    // 与 `services::snapshot` 对加密笔记的处理保持一致。
+    if let Some(rel) = rel_path {
+        if !is_encrypted {
+            match std::fs::read_to_string(&scene_abs) {
+                Ok(old) => {
+                    crate::services::snapshot::capture_embedded(db, note_id, rel, &old);
+                }
+                // 文件不存在 = 路径变了或首次写，没有旧版本可留，正常继续
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => log::warn!("[whiteboard] 读旧内嵌白板失败，跳过留底: {}", e),
+            }
+        }
+    }
+
     std::fs::write(&scene_abs, &scene_bytes)?;
 
     // ── 预览图
@@ -546,7 +564,7 @@ pub fn load_scene(
 
 /// 列出这块白板的历史版本（不含正文）。
 pub fn list_snapshots(db: &Database, note_id: i64) -> Result<Vec<NoteSnapshotMeta>, AppError> {
-    db.list_note_snapshots(note_id)
+    db.list_note_snapshots(note_id, None)
 }
 
 /// 取某一份历史版本的画布，图片已内联，可直接丢给 Excalidraw 预览。
@@ -603,6 +621,81 @@ pub fn restore_snapshot(
 /// 返回 false 表示内容与上一份存档完全相同，没有必要再存。
 pub fn create_snapshot(db: &Database, note_id: i64) -> Result<bool, AppError> {
     crate::services::snapshot::capture_manual(db, note_id)
+}
+
+// ─── 内嵌白板的历史版本 ──────────────────────────────────
+
+/// 列出某块内嵌白板的历史版本。
+pub fn list_embedded_snapshots(
+    db: &Database,
+    note_id: i64,
+    rel_path: &str,
+) -> Result<Vec<NoteSnapshotMeta>, AppError> {
+    crate::services::snapshot::list_embedded(db, note_id, rel_path)
+}
+
+/// 取某一份内嵌白板历史版本的画布（图片已内联，可直接渲染预览）。
+pub fn embedded_snapshot_scene(
+    db: &Database,
+    vault: &RwLock<VaultState>,
+    data_dir: &Path,
+    snapshot_id: i64,
+) -> Result<String, AppError> {
+    let snap = db
+        .get_note_snapshot(snapshot_id)?
+        .ok_or_else(|| AppError::NotFound(format!("历史版本 {} 不存在", snapshot_id)))?;
+    if snap.content.trim().is_empty() {
+        return Ok(serde_json::to_string(&empty_scene())?);
+    }
+    let mut scene = parse_scene(&snap.content)?;
+    inline_files(&mut scene, vault, data_dir);
+    Ok(serde_json::to_string(&scene)?)
+}
+
+/// 把内嵌白板回滚到某一份历史版本，返回回滚后的画布（图片已内联）。
+///
+/// 回滚前先把当前画布另存一份，所以点错了还能再滚回来。
+///
+/// 与整页白板不同，这里**不**重建 search_text 与双链：内嵌白板不是一条笔记，
+/// 它的内容本来就不进搜索索引（宿主笔记的正文才进）。
+pub fn restore_embedded_snapshot(
+    db: &Database,
+    vault: &RwLock<VaultState>,
+    data_dir: &Path,
+    note_id: i64,
+    rel_path: &str,
+    snapshot_id: i64,
+) -> Result<String, AppError> {
+    let snap = db
+        .get_note_snapshot(snapshot_id)?
+        .ok_or_else(|| AppError::NotFound(format!("历史版本 {} 不存在", snapshot_id)))?;
+    if snap.note_id != note_id {
+        return Err(AppError::InvalidInput("该历史版本不属于这条笔记".into()));
+    }
+
+    // 加密笔记的场景文件是密文，快照里存的是明文 —— 两者不该互相写入
+    if db.get_note_is_encrypted(note_id)? {
+        return Err(AppError::InvalidInput(
+            "加密笔记的内嵌白板暂不支持恢复历史版本".into(),
+        ));
+    }
+
+    let abs = asset_path::rel_to_abs(rel_path, data_dir)
+        .map_err(|e| AppError::InvalidInput(format!("白板路径非法: {}", e)))?;
+
+    // 覆盖前留底，让回滚本身也可撤销
+    if let Ok(current) = std::fs::read_to_string(&abs) {
+        crate::services::snapshot::capture_embedded_before_restore(
+            db, note_id, rel_path, &current,
+        );
+    }
+
+    // 校验一次再写：坏数据写进去，用户下次点开就是空白板且原内容已被覆盖
+    parse_scene(&snap.content)?;
+    std::fs::write(&abs, snap.content.as_bytes())?;
+
+    // 回传时内联图片，前端可直接渲染
+    load_embedded_scene(vault, data_dir, rel_path)
 }
 
 // ─── 素材库 ──────────────────────────────────────────────────

@@ -67,7 +67,7 @@ fn old_content_for_snapshot(db: &Database, note_id: i64) -> Option<String> {
 pub fn capture_auto(db: &Database, note_id: i64) -> bool {
     // 先做时间窗判断再读正文：白板每次保存都会走这里，而正文动辄几百 KB，
     // 绝大多数调用都会被节流挡掉 —— 不该为了挡掉的这些去拉一遍整块画布
-    let last_hash = match db.latest_snapshot_stamp(note_id) {
+    let last_hash = match db.latest_snapshot_stamp(note_id, None) {
         Ok(Some((hash, age_sec))) => {
             if age_sec < AUTO_MIN_INTERVAL_SEC {
                 return false;
@@ -102,7 +102,7 @@ pub fn capture_auto(db: &Database, note_id: i64) -> bool {
         }
     }
 
-    write(db, note_id, &content, reason::AUTO)
+    write(db, note_id, &content, reason::AUTO, None)
 }
 
 /// 用户主动存档：跳过节流，但仍然去重（内容没变就没必要多存一份）。
@@ -119,12 +119,12 @@ pub fn capture_manual(db: &Database, note_id: i64) -> Result<bool, AppError> {
             MAX_BYTES / 1024 / 1024
         )));
     }
-    if let Ok(Some((last_hash, _))) = db.latest_snapshot_stamp(note_id) {
+    if let Ok(Some((last_hash, _))) = db.latest_snapshot_stamp(note_id, None) {
         if crate::services::hash::sha256_hex(&content) == last_hash {
             return Ok(false);
         }
     }
-    Ok(write(db, note_id, &content, reason::MANUAL))
+    Ok(write(db, note_id, &content, reason::MANUAL, None))
 }
 
 /// 回滚前给"当前版本"留底，让回滚本身也能被撤销。
@@ -137,7 +137,7 @@ pub fn capture_before_restore(db: &Database, note_id: i64) -> bool {
     if content.len() > MAX_BYTES {
         return false;
     }
-    write(db, note_id, &content, reason::BEFORE_RESTORE)
+    write(db, note_id, &content, reason::BEFORE_RESTORE, None)
 }
 
 /// 把普通笔记回滚到某一份历史版本。
@@ -183,6 +183,78 @@ pub fn restore(db: &Database, note_id: i64, snapshot_id: i64) -> Result<Note, Ap
     )
 }
 
+// ─── 笔记内嵌的白板块 ────────────────────────────────────
+//
+// 与上面几个函数的根本区别：内嵌白板的内容不在 `notes.content` 里，
+// 而在磁盘上的独立文件（`kb_assets/images/<note_id>/wb-<uuid>.excalidraw`）。
+// 所以内容必须由调用方读好传进来 —— 让快照策略去碰文件系统和解密逻辑，
+// 会把这一层的职责搅浑。
+
+/// 内嵌白板覆盖保存前留底。`old_content` 是**即将被覆盖的那一版**场景 JSON。
+///
+/// 走与笔记正文相同的时间窗节流 + 内容去重：内嵌白板虽然是"确认才保存"
+/// （不像整页白板那样自动存），但用户反复微调时照样能一分钟点好几次保存。
+pub fn capture_embedded(
+    db: &Database,
+    note_id: i64,
+    rel_path: &str,
+    old_content: &str,
+) -> bool {
+    if old_content.trim().is_empty() || old_content.len() > MAX_BYTES {
+        return false;
+    }
+
+    let target = Some(rel_path);
+    let last_hash = match db.latest_snapshot_stamp(note_id, target) {
+        Ok(Some((hash, age_sec))) => {
+            if age_sec < AUTO_MIN_INTERVAL_SEC {
+                return false;
+            }
+            Some(hash)
+        }
+        Ok(None) => None,
+        Err(e) => {
+            log::warn!("[snapshot] 查内嵌白板最近快照失败，跳过: {}", e);
+            return false;
+        }
+    };
+    if let Some(last) = last_hash {
+        if crate::services::hash::sha256_hex(old_content) == last {
+            return false;
+        }
+    }
+
+    write(db, note_id, old_content, reason::AUTO, target)
+}
+
+/// 列出某块内嵌白板的历史版本。
+pub fn list_embedded(
+    db: &Database,
+    note_id: i64,
+    rel_path: &str,
+) -> Result<Vec<crate::models::NoteSnapshotMeta>, AppError> {
+    db.list_note_snapshots(note_id, Some(rel_path))
+}
+
+/// 回滚前给内嵌白板的当前版本留底（不节流，与 `capture_before_restore` 同理）。
+pub fn capture_embedded_before_restore(
+    db: &Database,
+    note_id: i64,
+    rel_path: &str,
+    current: &str,
+) -> bool {
+    if current.trim().is_empty() || current.len() > MAX_BYTES {
+        return false;
+    }
+    write(
+        db,
+        note_id,
+        current,
+        reason::BEFORE_RESTORE,
+        Some(rel_path),
+    )
+}
+
 // ─── 用量与清理（设置页）──────────────────────────────────
 //
 // 快照是"悄悄攒数据"的功能：每条笔记留 30 份，重度使用下库会稳步变大，
@@ -221,12 +293,22 @@ pub fn clear_all(db: &Database) -> Result<usize, AppError> {
 }
 
 /// 实际落库 + 裁剪超额份数。
-fn write(db: &Database, note_id: i64, content: &str, reason: &str) -> bool {
-    if let Err(e) = db.insert_note_snapshot(note_id, content, reason) {
+///
+/// `target`：None = 笔记正文；Some(相对路径) = 笔记内嵌的那块白板。
+/// 份数上限按 target 独立计算 —— 一条笔记里插了三块白板，
+/// 不该让它们互相挤掉对方的历史。
+fn write(
+    db: &Database,
+    note_id: i64,
+    content: &str,
+    reason: &str,
+    target: Option<&str>,
+) -> bool {
+    if let Err(e) = db.insert_note_snapshot(note_id, content, reason, target) {
         log::warn!("[snapshot] 笔记 {} 写快照失败: {}", note_id, e);
         return false;
     }
-    if let Err(e) = db.prune_note_snapshots(note_id, MAX_PER_NOTE) {
+    if let Err(e) = db.prune_note_snapshots(note_id, MAX_PER_NOTE, target) {
         // 裁剪失败只是留多了几份，不影响正确性
         log::warn!("[snapshot] 笔记 {} 裁剪旧快照失败: {}", note_id, e);
     }
@@ -258,7 +340,7 @@ mod tests {
         let db = mem_db();
         let id = new_note(&db, "画布 v1");
         assert!(capture_auto(&db, id));
-        assert_eq!(db.list_note_snapshots(id).unwrap().len(), 1);
+        assert_eq!(db.list_note_snapshots(id, None).unwrap().len(), 1);
     }
 
     /// 白板每停手一次就保存一次，紧接着的第二次必须被时间窗挡掉，
@@ -272,7 +354,7 @@ mod tests {
         // 即便内容变了，只要还在时间窗内就不再存
         db.update_note_content(id, "画布 v2").unwrap();
         assert!(!capture_auto(&db, id), "时间窗内不该重复存");
-        assert_eq!(db.list_note_snapshots(id).unwrap().len(), 1);
+        assert_eq!(db.list_note_snapshots(id, None).unwrap().len(), 1);
     }
 
     /// 加密笔记的 `get_note` 返回的是占位符而不是真内容 —— 存下来毫无意义，
@@ -287,7 +369,7 @@ mod tests {
                 .unwrap();
         }
         assert!(!capture_auto(&db, id));
-        assert!(db.list_note_snapshots(id).unwrap().is_empty());
+        assert!(db.list_note_snapshots(id, None).unwrap().is_empty());
     }
 
     /// 刚建出来还没画过的白板没什么好留的。
@@ -296,7 +378,7 @@ mod tests {
         let db = mem_db();
         let id = new_note(&db, "");
         assert!(!capture_auto(&db, id));
-        assert!(db.list_note_snapshots(id).unwrap().is_empty());
+        assert!(db.list_note_snapshots(id, None).unwrap().is_empty());
     }
 
     /// 回滚前的兜底不受时间窗限制 —— 没有它，"恢复"就成了不可逆操作。
@@ -309,7 +391,7 @@ mod tests {
             capture_before_restore(&db, id),
             "回滚兜底必须无视时间窗写进去"
         );
-        assert_eq!(db.list_note_snapshots(id).unwrap().len(), 2);
+        assert_eq!(db.list_note_snapshots(id, None).unwrap().len(), 2);
     }
 
     /// 手动存档同样绕过时间窗，但内容没变就不必占一个位置。
@@ -322,7 +404,7 @@ mod tests {
             !capture_manual(&db, id).unwrap(),
             "内容没变时不该重复存档"
         );
-        assert_eq!(db.list_note_snapshots(id).unwrap().len(), 1);
+        assert_eq!(db.list_note_snapshots(id, None).unwrap().len(), 1);
     }
 
     // ─── 回滚 ────────────────────────────────────────────────
@@ -345,7 +427,7 @@ mod tests {
         let db = mem_db();
         let id = new_note(&db, "第一版");
         assert!(capture_manual(&db, id).unwrap());
-        let snap_id = db.list_note_snapshots(id).unwrap()[0].id;
+        let snap_id = db.list_note_snapshots(id, None).unwrap()[0].id;
 
         set_content(&db, id, "笔记", "第二版");
 
@@ -353,7 +435,7 @@ mod tests {
         assert_eq!(restored.content, "第一版", "正文应回到旧版");
         assert_eq!(restored.title, "笔记", "标题不该被回滚带走");
 
-        let metas = db.list_note_snapshots(id).unwrap();
+        let metas = db.list_note_snapshots(id, None).unwrap();
         assert!(
             metas.iter().any(|m| m.reason == reason::BEFORE_RESTORE),
             "回滚前必须给'第二版'留底，否则滚回来就没了"
@@ -376,7 +458,7 @@ mod tests {
             )
             .unwrap();
         assert!(capture_manual(&db, wb.id).unwrap());
-        let snap_id = db.list_note_snapshots(wb.id).unwrap()[0].id;
+        let snap_id = db.list_note_snapshots(wb.id, None).unwrap()[0].id;
 
         assert!(restore(&db, wb.id, snap_id).is_err());
     }
@@ -388,7 +470,7 @@ mod tests {
         let a = new_note(&db, "A 的内容");
         let b = new_note(&db, "B 的内容");
         assert!(capture_manual(&db, a).unwrap());
-        let a_snap = db.list_note_snapshots(a).unwrap()[0].id;
+        let a_snap = db.list_note_snapshots(a, None).unwrap()[0].id;
 
         assert!(restore(&db, b, a_snap).is_err());
     }
