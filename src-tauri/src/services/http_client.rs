@@ -16,6 +16,10 @@ use reqwest::Client;
 static SHARED: OnceLock<Client> = OnceLock::new();
 static SHARED_NO_PROXY: OnceLock<Client> = OnceLock::new();
 static SHARED_WEBDAV: OnceLock<Client> = OnceLock::new();
+static SHARED_GUARDED: OnceLock<Client> = OnceLock::new();
+
+/// 受控抓取（剪藏 / 外链图片）的连接超时。对方无响应时早点失败，别吊住用户。
+const GUARDED_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// WebDAV 连接（TCP + TLS 握手）超时。移动网络切换 / 半开连接下，若不设此值，
 /// reqwest 默认**无限等待**建连，整个同步 command 永不返回、前端一直卡"同步中"。
@@ -55,6 +59,26 @@ pub fn shared_webdav() -> &'static Client {
         Client::builder()
             .connect_timeout(WEBDAV_CONNECT_TIMEOUT)
             .read_timeout(WEBDAV_READ_TIMEOUT)
+            .build()
+            .unwrap_or_else(|_| Client::new())
+    })
+}
+
+/// 受控抓取专用 Client：**禁用自动重定向**。
+///
+/// 供网页剪藏与外链图片下载使用 —— 这两条路径的 URL 不完全受用户控制
+/// （剪藏的重定向目标由对方服务器决定；图片 URL 来自笔记正文，可能是导入的第三方内容）。
+///
+/// 为什么必须禁用自动重定向：`shared()` 默认最多跟随 10 跳，而**中间每一跳都不经过
+/// 我们的 SSRF 校验** —— 攻击者只要给一个公网短链，302 到 `http://127.0.0.1:8080/…`
+/// 就绕过了全部防护。禁用后由调用方逐跳 `url_safety::validate_url_with_dns` 复校验。
+///
+/// 见 [`crate::services::url_safety`]。
+pub fn shared_guarded() -> &'static Client {
+    SHARED_GUARDED.get_or_init(|| {
+        Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(GUARDED_CONNECT_TIMEOUT)
             .build()
             .unwrap_or_else(|_| Client::new())
     })

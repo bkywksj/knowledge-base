@@ -6,7 +6,11 @@
 
 use crate::error::AppError;
 use crate::services::http_client;
+use crate::services::url_safety;
 use reqwest::header;
+
+/// 手动跟随重定向的最大跳数（图床 CDN 常有 1~2 跳）
+const MAX_REDIRECTS: usize = 5;
 
 /// 桌面 Chrome UA。reqwest 默认 UA 形如 `reqwest/0.12`，部分图床直接拒服务。
 const DEFAULT_UA: &str =
@@ -26,30 +30,55 @@ pub async fn fetch_image_bytes(
     url: &str,
     referer_override: Option<&str>,
 ) -> Result<(Vec<u8>, String), AppError> {
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err(AppError::InvalidInput(format!(
-            "不支持的 URL scheme: {}",
-            url
-        )));
-    }
-
-    let parsed = reqwest::Url::parse(url)
-        .map_err(|e| AppError::InvalidInput(format!("URL 无效: {}", e)))?;
+    // SSRF 校验：图片 URL 来自**笔记正文**（导入的第三方 .md、剪藏回来的页面、
+    // 别人分享的文件），用户往往根本没看过就被自动请求 —— 比剪藏更隐蔽的攻击面。
+    // 这里做完整校验（含 DNS），下面的重定向再逐跳复校验。
+    let (parsed, _ips) = url_safety::validate_url_with_dns(url).await?;
 
     let referer = match referer_override {
         Some(r) if !r.is_empty() => r.to_string(),
         _ => smart_referer(&parsed),
     };
 
-    let resp = http_client::shared()
-        .get(url)
-        .header(header::USER_AGENT, DEFAULT_UA)
-        .header(header::REFERER, &referer)
-        .header(header::ACCEPT, "image/*,*/*;q=0.8")
-        .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
-        .send()
-        .await
-        .map_err(|e| AppError::Custom(format!("请求失败: {}", e)))?;
+    // 图床跨域跳转很常见（CDN 302 到实际存储），必须自己逐跳跟随并复校验：
+    // 用自动跟随的 client 等于给"公网图片 URL → 302 内网"留了后门。
+    let mut current = parsed;
+    let mut hops = 0usize;
+    let resp = loop {
+        let resp = http_client::shared_guarded()
+            .get(current.clone())
+            .header(header::USER_AGENT, DEFAULT_UA)
+            .header(header::REFERER, &referer)
+            .header(header::ACCEPT, "image/*,*/*;q=0.8")
+            .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
+            .send()
+            .await
+            .map_err(|e| AppError::Custom(format!("请求失败: {}", e)))?;
+
+        if resp.status().is_redirection() {
+            let next = resp
+                .headers()
+                .get(header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .and_then(|loc| current.join(&loc).ok());
+            if let Some(next_url) = next {
+                hops += 1;
+                if hops > MAX_REDIRECTS {
+                    return Err(AppError::Custom(format!(
+                        "图片链接重定向次数过多（超过 {} 次）",
+                        MAX_REDIRECTS
+                    )));
+                }
+                // 每一跳都重新过 SSRF 校验
+                let (checked, _) = url_safety::validate_url_with_dns(next_url.as_str()).await?;
+                current = checked;
+                continue;
+            }
+        }
+        break resp;
+    };
 
     if !resp.status().is_success() {
         return Err(AppError::Custom(format!(

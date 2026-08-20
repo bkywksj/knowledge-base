@@ -47,7 +47,11 @@ tauri-plugin-process = "2"
 # reqwest：移动端 NDK 不带 OpenSSL，统一用 rustls-tls（桌面端也能用，行为一致；
 # 系统证书池靠 rustls-native-certs 加载，避免迁移成本）
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "rustls-tls-native-roots"] }
-tokio = { version = "1", features = ["sync", "fs", "io-util", "rt", "rt-multi-thread"] }
+# net：url_safety 的 SSRF 校验直接用 tokio::net::lookup_host 做 DNS 解析。
+# 实测不写这条也能编过（reqwest→hyper-util 会间接启用 net），但那是**隐式**的：
+# 哪天 reqwest 换掉或改了 feature 结构，就会突然报 "lookup_host not found"，
+# 而这种报错很难联想到是 feature 缺失。用到什么就显式声明什么。
+tokio = { version = "1", features = ["sync", "fs", "io-util", "rt", "rt-multi-thread", "net"] }
 # S3 协议 backend（T-024b / T-M026）：改用 rusty-s3（纯 Rust SigV4 签名库，零 HTTP/TLS 依赖），
 # 由上面的 reqwest（rustls，移动端已验证可用）执行签名后的请求 → 桌面/移动端统一，彻底摆脱
 # rust-s3 0.34 硬拉 hyper-tls→native-tls→openssl 导致 Android NDK 编不过的问题。

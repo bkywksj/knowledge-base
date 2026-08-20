@@ -78,6 +78,8 @@ pub mod task_reminder;
 pub mod tasks;
 pub mod template;
 pub mod trash;
+// 出网 URL 的 SSRF 校验，仅供剪藏 / 外链图片用（AI / WebDAV / S3 走用户自填地址，不适用）
+pub mod url_safety;
 pub mod vault;
 pub mod video;
 pub mod web_clip;

@@ -24,7 +24,13 @@ use std::time::Duration;
 
 use crate::error::AppError;
 use crate::services::http_client;
+use crate::services::url_safety;
 use dom_smoothie::Readability;
+
+/// 手动跟随重定向的最大跳数。
+///
+/// 正常短链最多两三跳；给到 5 已经宽松，再多基本是跳转陷阱。
+const MAX_REDIRECTS: usize = 5;
 
 /// Jina Reader 的代理前缀（仅兜底路径使用）
 const JINA_READER_PREFIX: &str = "https://r.jina.ai/";
@@ -91,19 +97,13 @@ pub async fn fetch_page(url: &str, jina_key: Option<&str>) -> Result<ClippedPage
     })
 }
 
-/// 校验并规整 URL
+/// 校验并规整 URL。
+///
+/// 只做**静态**校验（协议 / userinfo / 本机地址 / IP 字面量）：这里是入口处的快速拒绝，
+/// 真正的 DNS 解析校验在 `fetch_html` 里逐跳做 —— 因为重定向目标同样需要校验，
+/// 只在入口查一次挡不住 302 到内网。
 fn validate_url(url: &str) -> Result<String, AppError> {
-    let url = url.trim();
-    if url.is_empty() {
-        return Err(AppError::InvalidInput("URL 不能为空".into()));
-    }
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err(AppError::InvalidInput(format!(
-            "URL 必须以 http:// 或 https:// 开头：{}",
-            url
-        )));
-    }
-    Ok(url.to_string())
+    url_safety::validate_url(url).map(|u| u.to_string())
 }
 
 // ─── 直连路径（主路径）────────────────────────────────────
@@ -119,18 +119,53 @@ async fn fetch_direct(url: &str) -> Result<ClippedPage, AppError> {
 /// 最终 URL 要回传：短链 / 跳转页很常见，用最终 URL 做 readability 的 base
 /// 才能把页内相对链接正确补全成绝对地址。
 async fn fetch_html(url: &str) -> Result<(String, String), AppError> {
-    let resp = http_client::shared()
-        .get(url)
-        .header(reqwest::header::USER_AGENT, BROWSER_UA)
-        .header(
-            reqwest::header::ACCEPT,
-            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        )
-        .header(reqwest::header::ACCEPT_LANGUAGE, "zh-CN,zh;q=0.9,en;q=0.8")
-        .timeout(FETCH_TIMEOUT)
-        .send()
-        .await
-        .map_err(|e| AppError::Custom(format!("访问网页失败：{}", friendly_reqwest_err(&e))))?;
+    // 逐跳自己走重定向：客户端禁用了自动跟随，每一跳都要重新过 SSRF 校验。
+    // 若沿用默认的自动跟随，一个公网短链 302 到 http://127.0.0.1:8080/ 就能绕过全部防护。
+    let mut current = url.to_string();
+    let mut visited: Vec<String> = Vec::new();
+    let resp = loop {
+        let (validated, _ips) = url_safety::validate_url_with_dns(&current).await?;
+        let normalized = validated.to_string();
+
+        // 循环跳转（A→B→A）会一直耗到跳数上限，直接判定并给出可读原因
+        if visited.iter().any(|v| v == &normalized) {
+            return Err(AppError::Custom("该链接在重定向中循环跳转".into()));
+        }
+        visited.push(normalized);
+        if visited.len() > MAX_REDIRECTS + 1 {
+            return Err(AppError::Custom(format!(
+                "重定向次数过多（超过 {} 次）",
+                MAX_REDIRECTS
+            )));
+        }
+
+        let resp = http_client::shared_guarded()
+            .get(validated.clone())
+            .header(reqwest::header::USER_AGENT, BROWSER_UA)
+            .header(
+                reqwest::header::ACCEPT,
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            )
+            .header(reqwest::header::ACCEPT_LANGUAGE, "zh-CN,zh;q=0.9,en;q=0.8")
+            .timeout(FETCH_TIMEOUT)
+            .send()
+            .await
+            .map_err(|e| AppError::Custom(format!("访问网页失败：{}", friendly_reqwest_err(&e))))?;
+
+        // 3xx + Location → 解析成绝对地址后进入下一轮校验
+        if resp.status().is_redirection() {
+            match redirect_target(&resp, &validated) {
+                Some(next) => {
+                    log::debug!("[web-clip] 重定向 {} → {}", validated, next);
+                    current = next;
+                    continue;
+                }
+                // 3xx 但没有可用的 Location：当普通响应处理，走下面的状态码分支报错
+                None => break resp,
+            }
+        }
+        break resp;
+    };
 
     let status = resp.status();
     if !status.is_success() {
@@ -179,6 +214,24 @@ async fn fetch_html(url: &str) -> Result<(String, String), AppError> {
     };
 
     Ok((decode_html(slice, content_type.as_deref()), final_url))
+}
+
+/// 从 3xx 响应里取出下一跳的**绝对** URL。
+///
+/// `Location` 常是相对路径（`/next`、`../a`），必须按当前 URL 做 base 解析成绝对地址，
+/// 否则下一轮 `validate_url_with_dns` 会因为"不是合法 URL"而误报。
+fn redirect_target(resp: &reqwest::Response, base: &reqwest::Url) -> Option<String> {
+    let location = resp
+        .headers()
+        .get(reqwest::header::LOCATION)?
+        .to_str()
+        .ok()?
+        .trim()
+        .to_string();
+    if location.is_empty() {
+        return None;
+    }
+    base.join(&location).ok().map(|u| u.to_string())
 }
 
 /// 把响应字节按正确编码解成字符串。
@@ -589,6 +642,23 @@ mod tests {
         assert!(validate_url("ftp://x.com").is_err());
         assert!(validate_url("").is_err());
         assert!(validate_url("  https://x.com  ").is_ok());
+    }
+
+    /// 剪藏入口必须挡住内网地址：用户可能被诱导粘贴一个指向自己路由器 / 本地服务的链接。
+    /// 逐跳的重定向校验在 `fetch_html` 里，这里钉住入口这一道。
+    #[test]
+    fn validate_url_rejects_internal_targets() {
+        for u in [
+            "http://127.0.0.1:8080/admin",
+            "http://localhost/",
+            "http://192.168.1.1/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[::1]/",
+            "http://example.com@127.0.0.1/",
+            "file:///etc/passwd",
+        ] {
+            assert!(validate_url(u).is_err(), "{} 不该被允许剪藏", u);
+        }
     }
 
     // ─── Jina 兜底路径解析（保留 v1 单测）───────────────
