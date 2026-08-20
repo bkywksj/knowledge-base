@@ -286,6 +286,7 @@ const SETTINGS_NAV_ITEMS: { id: string; label: string }[] = [
   { id: "settings-sync", label: "同步备份" },
   { id: "settings-mcp", label: "MCP 服务器" },
   { id: "settings-ocr", label: "本地 OCR" },
+  { id: "settings-snapshots", label: "历史版本" },
   { id: "settings-orphan-assets", label: "孤儿素材清理" },
   { id: "settings-community", label: "作者 & 社区" },
 ];

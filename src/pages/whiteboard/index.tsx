@@ -26,7 +26,6 @@ import {
   Upload,
   Presentation,
   Minimize2,
-  Workflow,
   StickyNote,
 } from "lucide-react";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -75,8 +74,6 @@ export default function WhiteboardPage() {
   const [presenting, setPresenting] = useState(false);
   /** 全屏的目标元素（只让画布容器全屏，不是整个窗口） */
   const canvasWrapRef = useRef<HTMLDivElement>(null);
-  /** 画布挂载后填入「打开 Mermaid 转图」的触发函数 */
-  const mermaidRef = useRef<(() => void) | null>(null);
   /** 画布挂载后填入「插入笔记卡片」的函数 */
   const insertCardRef = useRef<((noteId: number) => Promise<void>) | null>(null);
   /** 选笔记弹窗 */
@@ -476,19 +473,6 @@ export default function WhiteboardPage() {
 
         <Button
           type="text"
-          icon={<Workflow size={16} />}
-          onClick={() => {
-            if (!mermaidRef.current) {
-              message.warning("画布还没加载完，请稍候");
-              return;
-            }
-            mermaidRef.current();
-          }}
-          title="Mermaid 转图形（粘贴 mermaid 代码，转成可编辑图形）"
-        />
-
-        <Button
-          type="text"
           icon={<Presentation size={16} />}
           onClick={() => void enterPresent()}
           title="演示模式（全屏 + 只读，按 Esc 退出）"
@@ -544,7 +528,6 @@ export default function WhiteboardPage() {
               message.warning("白板内容损坏，已打开空白画布；请勿保存以免覆盖原数据")
             }
             readOnly={presenting}
-            mermaidRef={mermaidRef}
             insertCardRef={insertCardRef}
           />
         </Suspense>

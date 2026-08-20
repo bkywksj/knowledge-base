@@ -194,13 +194,6 @@ interface Props {
    */
   readOnly?: boolean;
   /**
-   * 外层用来接收「打开 Mermaid 转图对话框」能力的 ref。
-   *
-   * 与 exportRef 同理：入口按钮画在页面顶栏（静态 import），但要打开的对话框
-   * 归 Excalidraw 管，只能由本组件（lazy 内）用 imperative API 触发。
-   */
-  mermaidRef?: React.MutableRefObject<(() => void) | null>;
-  /**
    * 外层用来接收「插入笔记卡片」能力的 ref。
    *
    * 与 exportRef / mermaidRef 同理：选笔记的弹窗画在页面里（静态 import），
@@ -254,7 +247,6 @@ export default function WhiteboardCanvas({
   onOpenNote,
   exportRef,
   readOnly = false,
-  mermaidRef,
   insertCardRef,
 }: Props) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -445,6 +437,53 @@ export default function WhiteboardCanvas({
     return true;
   }, [serializeCurrent]);
 
+  /**
+   * 打开白板时把卡片刷成笔记的最新内容。
+   *
+   * 这是卡片区别于"贴一段死文字"的关键：笔记在别处改了，下次打开白板就能看到新的。
+   *
+   * 🔴 **触发时机必须由 onChange 驱动，不能在 effect 里 setTimeout。**
+   * 踩过的坑：`initialData.libraryItems` 是个 Promise，Excalidraw 会等它 resolve
+   * 才完成场景恢复。effect 里 setTimeout(0) 去读场景拿到的是**空数组**，
+   * 于是"一张卡片都没有"，直接跳过刷新且再也不重试 —— 表现为卡片永远停在旧内容。
+   * onChange 第一次触发时场景一定已经装好了。
+   */
+  const cardsRefreshedRef = useRef(false);
+  const refreshCards = useCallback(async () => {
+    // 只读（历史版本预览）要的是"那一版当时的样子"，拿今天的笔记内容刷新它是错的
+    if (readOnly || cardsRefreshedRef.current) return;
+    const api = apiRef.current;
+    if (!api) return;
+
+    const ids = collectCardNoteIds(api.getSceneElementsIncludingDeleted());
+    if (ids.length === 0) {
+      // 这块白板没有卡片 —— 标记完成，省得每次 onChange 都重新扫一遍
+      cardsRefreshedRef.current = true;
+      return;
+    }
+    // 先置位再 await：onChange 高频触发，不占位会并发打出好几个请求
+    cardsRefreshedRef.current = true;
+
+    try {
+      const excerpts = await whiteboardApi.noteExcerpts(ids);
+      const next = refreshNoteCards(
+        api.getSceneElementsIncludingDeleted(),
+        excerpts,
+      );
+      // null = 所有卡片内容都没变，跳过 updateScene
+      if (!next) return;
+      api.updateScene({
+        elements: next,
+        // 不进撤销栈：这是"同步笔记最新内容"，不是用户的编辑动作，
+        // 撤销它没有意义反而会让画布和笔记对不上
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+    } catch (e) {
+      // 刷新失败就让卡片保持上次的内容 —— 比让整个白板打不开好
+      console.warn("[whiteboard] 刷新笔记卡片失败:", e);
+    }
+  }, [readOnly]);
+
   const handleChange = useCallback(
     (
       elements: readonly ExcalidrawElement[],
@@ -455,10 +494,12 @@ export default function WhiteboardCanvas({
       // 每次都 serializeAsJSON 会让大画布卡顿。真正序列化推迟到 flush。
       latestRef.current = { elements, appState, files };
       syncRoundness(elements, appState);
+      // 首次 onChange = 场景已装载完成，这时才能可靠地扫到卡片（见 refreshCards 的说明）
+      void refreshCards();
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(flush, SAVE_DEBOUNCE_MS);
     },
-    [flush, syncRoundness],
+    [flush, syncRoundness, refreshCards],
   );
 
   // 关窗 / 切走时兜底存一次：防抖窗口内直接关掉应用会丢掉最后 800ms 的编辑。
@@ -590,52 +631,6 @@ export default function WhiteboardCanvas({
     apiRef.current = api;
   }, []);
 
-  /**
-   * 打开白板时把卡片刷成笔记的最新内容。
-   *
-   * 这是卡片区别于"贴一段死文字"的关键：笔记在别处改了，下次打开白板就能看到新的。
-   * 只读模式跳过 —— 历史版本预览要的是"那一版当时的样子"，
-   * 拿今天的笔记内容去刷新它是错的。
-   */
-  useEffect(() => {
-    if (readOnly) return;
-    let cancelled = false;
-
-    // 等画布挂载：excalidrawAPI 回调可能晚于本 effect
-    const timer = setTimeout(() => {
-      void (async () => {
-        const api = apiRef.current;
-        if (!api || cancelled) return;
-        const elements = api.getSceneElementsIncludingDeleted();
-        const ids = collectCardNoteIds(elements);
-        if (ids.length === 0) return;
-        try {
-          const excerpts = await whiteboardApi.noteExcerpts(ids);
-          if (cancelled) return;
-          const next = refreshNoteCards(
-            api.getSceneElementsIncludingDeleted(),
-            excerpts,
-          );
-          // null = 所有卡片内容都没变，跳过 updateScene
-          if (!next) return;
-          api.updateScene({
-            elements: next,
-            // 不进撤销栈：这是"同步笔记最新内容"，不是用户的编辑动作，
-            // 撤销它没有意义反而会让画布和笔记对不上
-            captureUpdate: CaptureUpdateAction.NEVER,
-          });
-        } catch (e) {
-          // 刷新失败就让卡片保持上次的内容 —— 比让整个白板打不开好
-          console.warn("[whiteboard] 刷新笔记卡片失败:", e);
-        }
-      })();
-    }, 0);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [readOnly]);
 
   /** 把「插入笔记卡片」交给外层 */
   useEffect(() => {
@@ -664,26 +659,6 @@ export default function WhiteboardCanvas({
       insertCardRef.current = null;
     };
   }, [insertCardRef]);
-
-  /**
-   * 把「打开 Mermaid 转图」交给外层顶栏。
-   *
-   * 直接改 appState.openDialog 而不是挂 `<TTDDialogTrigger>`：后者会往
-   * Excalidraw 自己的工具栏里塞一个入口，且默认打开需要联网的 text-to-diagram 页签。
-   * 这里指定 tab: "mermaid" 直达离线可用的那一页。
-   */
-  useEffect(() => {
-    if (!mermaidRef) return;
-    mermaidRef.current = () => {
-      apiRef.current?.updateScene({
-        appState: { openDialog: { name: "ttd", tab: "mermaid" } },
-        captureUpdate: CaptureUpdateAction.NEVER,
-      });
-    };
-    return () => {
-      mermaidRef.current = null;
-    };
-  }, [mermaidRef]);
 
   /**
    * 素材库变更 → 防抖落盘。
@@ -738,6 +713,12 @@ export default function WhiteboardCanvas({
           `__fallback` 是官方的「没有 AI 后端」模式：只保留 Mermaid 这一页，
           隐藏需要调远端的「文本转图」。单机知识库没有那个服务端，
           留着入口只会让用户点了报错。
+
+          🔴 **入口只能用 Excalidraw 自己的**（画布工具栏最右「更多工具」→
+          「Mermaid 至 Excalidraw」）。试过在应用顶栏加按钮走
+          `updateScene({appState:{openDialog:…}})` —— 不生效：openDialog 是瞬时 UI 态，
+          updateScene 的 appState 会经 restore 过滤把它剔掉。
+          Excalidraw 内部设它一律走自己的 setAppState，没有对外暴露的等价 API。
         */}
         <TTDDialog __fallback />
       </Excalidraw>
