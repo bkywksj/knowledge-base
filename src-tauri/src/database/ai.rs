@@ -147,6 +147,76 @@ mod tests {
         // 库里没东西；删一个不存在的 id 不应报错
         db.delete_ai_model(999).unwrap();
     }
+
+    // ─── RAG 检索的正文口径（白板不能把 Excalidraw JSON 喂给模型）──────────
+
+    /// 建一条白板笔记：`content` 是画布 JSON，`search_text` 是画布上的纯文字。
+    fn make_whiteboard(db: &Database, title: &str, canvas_text: &str) -> i64 {
+        // 用 r##"…"## 而不是 r#"…"#：JSON 里的颜色值 "#ffffff" 含 `"#`，
+        // 正好撞上单井号原始字符串的终止符，会把字符串提前截断
+        let scene = format!(
+            r##"{{"type":"excalidraw","appState":{{"viewBackgroundColor":"#ffffff","gridModeEnabled":false}},"elements":[{{"type":"text","backgroundColor":"transparent","text":"{}"}}]}}"##,
+            canvas_text
+        );
+        db.create_whiteboard(
+            &crate::models::NoteInput {
+                title: title.into(),
+                content: scene,
+                folder_id: None,
+            },
+            canvas_text,
+        )
+        .unwrap()
+        .id
+    }
+
+    /// 命中白板时，回传给模型的必须是画布文字，绝不能是那坨 Excalidraw JSON ——
+    /// 后者模型看不懂，还白白挤占上下文。
+    #[test]
+    fn rag_returns_canvas_text_for_whiteboard() {
+        let db = temp_db();
+        make_whiteboard(&db, "架构图", "订单服务拆分方案");
+
+        let hits = db.search_notes_for_rag("订单服务拆分方案", 5, None).unwrap();
+        assert_eq!(hits.len(), 1, "画布文字应能被检索到");
+        assert!(hits[0].2.contains("订单服务拆分方案"));
+        assert!(
+            !hits[0].2.contains("appState") && !hits[0].2.contains("excalidraw"),
+            "回传的正文不该是 Excalidraw JSON，实际: {}",
+            hits[0].2
+        );
+    }
+
+    /// 反向契约：JSON 里的属性名不该把白板召回来。
+    /// 修复前搜 "backgroundColor" 会命中每一块白板，纯粹是噪声。
+    #[test]
+    fn rag_ignores_json_property_names() {
+        let db = temp_db();
+        make_whiteboard(&db, "架构图", "订单服务拆分方案");
+
+        let hits = db.search_notes_for_rag("backgroundColor", 5, None).unwrap();
+        assert!(
+            hits.is_empty(),
+            "画布 JSON 的属性名不该造成召回，实际命中 {} 条",
+            hits.len()
+        );
+    }
+
+    /// 普通笔记的 search_text 恒为 NULL（见 schema v52），检索必须照常回退到正文。
+    #[test]
+    fn rag_still_matches_plain_notes() {
+        let db = temp_db();
+        db.create_note(&crate::models::NoteInput {
+            title: "会议记录".into(),
+            content: "讨论了订单服务拆分方案".into(),
+            folder_id: None,
+        })
+        .unwrap();
+
+        let hits = db.search_notes_for_rag("订单服务拆分方案", 5, None).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].2.contains("讨论了订单服务拆分方案"));
+    }
 }
 
 impl Database {
@@ -859,6 +929,19 @@ impl Database {
             .collect()
     }
 
+    /// RAG 检索的「正文口径」。
+    ///
+    /// 白板笔记的 `content` 是一整坨 Excalidraw JSON（颜色值、元素 id、坐标、属性名），
+    /// 直接拿它检索有两层害处：JSON 里的属性名会造成误召回；一旦被召回，
+    /// 塞进上下文的是模型看不懂的 JSON —— 白烧 token 还挤掉了真正有用的笔记。
+    ///
+    /// `search_text` 存的正是画布上的纯文字（schema v52 为此而加，普通笔记恒为 NULL）。
+    /// 这里的 `COALESCE` 与 v52 那三个 FTS 触发器**逐字同一口径**，
+    /// 保证 LIKE 通道和 FTS 通道检索的是同一份文本。
+    /// 刻意不加 `NULLIF(...,'')`：画布没有任何文字时 search_text 是空串，
+    /// 那就该匹配不到，而不是退回去拿 JSON 碰运气。
+    const RAG_TEXT: &'static str = "COALESCE(n.search_text, n.content)";
+
     /// 转义 FTS5 特殊字符
     fn escape_fts5(term: &str) -> String {
         // 用双引号包裹以转义特殊字符
@@ -941,7 +1024,13 @@ impl Database {
             let content_exprs: Vec<String> = like_keywords
                 .iter()
                 .enumerate()
-                .map(|(i, _)| format!("(CASE WHEN n.content LIKE ?{0} THEN 1 ELSE 0 END)", i + 1))
+                .map(|(i, _)| {
+                    format!(
+                        "(CASE WHEN {text} LIKE ?{0} THEN 1 ELSE 0 END)",
+                        i + 1,
+                        text = Self::RAG_TEXT
+                    )
+                })
                 .collect();
             let score_sum = format!(
                 "({}) + ({})",
@@ -951,16 +1040,23 @@ impl Database {
             let where_clauses: Vec<String> = like_keywords
                 .iter()
                 .enumerate()
-                .map(|(i, _)| format!("(n.title LIKE ?{0} OR n.content LIKE ?{0})", i + 1))
+                .map(|(i, _)| {
+                    format!(
+                        "(n.title LIKE ?{0} OR {text} LIKE ?{0})",
+                        i + 1,
+                        text = Self::RAG_TEXT
+                    )
+                })
                 .collect();
 
             // T-003: RAG 检索结果不包含隐藏笔记（否则 AI 对话会泄露隐藏内容到历史）
             let sql = format!(
-                "SELECT n.id, n.title, n.content, ({score}) AS score
+                "SELECT n.id, n.title, {text}, ({score}) AS score
                  FROM notes n
                  WHERE n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0 AND ({where_}){folder_clause}
                  ORDER BY score DESC, n.updated_at DESC
                  LIMIT ?{limit_param}",
+                text = Self::RAG_TEXT,
                 score = score_sum,
                 where_ = where_clauses.join(" OR "),
                 folder_clause = folder_clause,
@@ -1003,13 +1099,16 @@ impl Database {
                 .collect::<Vec<_>>()
                 .join(" OR ");
             let fts_sql = format!(
-                "SELECT n.id, n.title, n.content
+                // MATCH 那一侧本来就查的是 search_text（v52 起 FTS 索引的就是
+                // COALESCE(search_text, content)），这里只需把回传的正文口径对齐
+                "SELECT n.id, n.title, {text}
                  FROM notes_fts fts
                  JOIN notes n ON n.id = fts.rowid
                  WHERE notes_fts MATCH ?1
                    AND n.is_deleted = 0{folder_clause}
                  ORDER BY rank
                  LIMIT ?2",
+                text = Self::RAG_TEXT,
                 folder_clause = folder_clause,
             );
             if let Ok(mut stmt) = conn.prepare(&fts_sql) {
