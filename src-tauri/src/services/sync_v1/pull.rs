@@ -444,6 +444,14 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
                     }
                     continue; // 不 update_note、不 upsert_remote_state → 保留本地，等用户在设置页解决
                 }
+                // 远端内容即将盖掉本地这一版，先留个底。
+                //
+                // 这是最该有快照的场景：用户什么都没做，一次 pull 就把本地内容换了。
+                // 走 capture_auto（带时间窗节流）而不是强制写入 —— 节流在这里语义正好：
+                // 一个窗口内第一次覆盖留下的是**用户自己的版本**，后面几次留的只是
+                // "已经被远端覆盖过的版本"，价值低得多。
+                crate::services::snapshot::capture_auto(db, local_id);
+
                 // pull 是被动接收 → updated_at 用远端 entry 的值，不冒泡到 now（修同步震荡 / 时间失真）
                 match db.update_note_synced(local_id, &input, &entry.updated_at) {
                     Ok(_) => {

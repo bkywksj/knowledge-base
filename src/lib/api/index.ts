@@ -116,6 +116,7 @@ import type {
   PushPopupData,
   EmbeddedWhiteboardSaved,
   NoteSnapshotMeta,
+  NoteSnapshot,
 } from "@/types";
 
 /** 系统相关 API */
@@ -266,6 +267,24 @@ export const noteApi = {
   list: (query: NoteQuery = {}) =>
     invoke<PageResult<Note>>("list_notes", { query }),
   togglePin: (id: number) => invoke<boolean>("toggle_pin", { id }),
+
+  // ─── 历史版本 ────────────────────────────────────────────
+  //
+  // 后端在每次覆盖正文前留底（保存 / 同步 pull 都接了），带时间窗节流与内容去重。
+  // 白板另有一套（whiteboardApi.*Snapshot*）：它要额外做画布图片内联。
+
+  /** 列出历史版本（不含正文，只有时间 / 体积 / 来源） */
+  listSnapshots: (noteId: number) =>
+    invoke<NoteSnapshotMeta[]>("list_note_snapshots", { noteId }),
+  /** 取某一份历史版本的完整正文 */
+  getSnapshot: (snapshotId: number) =>
+    invoke<NoteSnapshot>("get_note_snapshot", { snapshotId }),
+  /** 手动存一个版本。返回 false = 与上一份存档内容相同，没存 */
+  createSnapshot: (noteId: number) =>
+    invoke<boolean>("create_note_snapshot", { noteId }),
+  /** 回滚正文到某一份历史版本（后端会先把当前版本另存一份，点错了还能滚回来） */
+  restoreSnapshot: (noteId: number, snapshotId: number) =>
+    invoke<Note>("restore_note_snapshot", { noteId, snapshotId }),
   moveToFolder: (noteId: number, folderId?: number | null) =>
     invoke<void>("move_note_to_folder", { noteId, folderId }),
   /** 批量重排同 folder 内笔记的 sort_order；调用方传该 folder 内**完整**的 ID 顺序 */

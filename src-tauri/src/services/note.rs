@@ -60,6 +60,10 @@ impl NoteService {
         if input.title.trim().is_empty() {
             return Err(AppError::InvalidInput("笔记标题不能为空".into()));
         }
+        // 覆盖之前留一份旧正文（自带时间窗节流 + 内容去重，见 services::snapshot）。
+        // 必须在 update_note 之前 —— 此刻库里还是上一版；也必须在这一层而不是 DAO 里，
+        // 因为 capture_auto 会自己去 get_note，在 DAO 的锁内再调会把同一个 Mutex 锁死。
+        crate::services::snapshot::capture_auto(db, id);
         db.update_note(id, input)
     }
 

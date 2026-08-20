@@ -13,6 +13,7 @@
 
 use crate::database::Database;
 use crate::error::AppError;
+use crate::models::Note;
 
 /// 自动快照的最小间隔（秒）。10 分钟 ≈ 连续画一小时留 6 份。
 const AUTO_MIN_INTERVAL_SEC: f64 = 600.0;
@@ -139,6 +140,49 @@ pub fn capture_before_restore(db: &Database, note_id: i64) -> bool {
     write(db, note_id, &content, reason::BEFORE_RESTORE)
 }
 
+/// 把普通笔记回滚到某一份历史版本。
+///
+/// 回滚前先把**当前**正文另存一份（`before_restore`），所以点错了还能再滚回来 ——
+/// 没有这一步的话，"恢复"就是个不可逆操作，比不提供还危险。
+///
+/// **只回滚正文，不动标题**：快照存的就只有 content。用户改标题与改正文是两件事，
+/// 恢复旧正文时把标题一起换掉往往不是他想要的。
+///
+/// 白板走不通这条路：它的 content 是 Excalidraw JSON，回写时还要重建
+/// `search_text` 与画布双链 —— 那套在 `services::whiteboard::restore_snapshot`。
+pub fn restore(db: &Database, note_id: i64, snapshot_id: i64) -> Result<Note, AppError> {
+    let snap = db
+        .get_note_snapshot(snapshot_id)?
+        .ok_or_else(|| AppError::NotFound(format!("历史版本 {} 不存在", snapshot_id)))?;
+    if snap.note_id != note_id {
+        // 防前端传串了 id 把 A 的内容盖到 B 上
+        return Err(AppError::InvalidInput("该历史版本不属于这条笔记".into()));
+    }
+
+    let note = db
+        .get_note(note_id)?
+        .ok_or_else(|| AppError::NotFound(format!("笔记 {} 不存在", note_id)))?;
+    if note.note_type == crate::models::note_type::WHITEBOARD {
+        return Err(AppError::InvalidInput(
+            "白板请在白板页恢复历史版本".into(),
+        ));
+    }
+    if note.is_encrypted {
+        // 加密笔记的 content 是占位符，回滚等于把占位符写成正文
+        return Err(AppError::InvalidInput("加密笔记暂不支持恢复历史版本".into()));
+    }
+
+    capture_before_restore(db, note_id);
+    db.update_note(
+        note_id,
+        &crate::models::NoteInput {
+            title: note.title,
+            content: snap.content,
+            folder_id: note.folder_id,
+        },
+    )
+}
+
 /// 实际落库 + 裁剪超额份数。
 fn write(db: &Database, note_id: i64, content: &str, reason: &str) -> bool {
     if let Err(e) = db.insert_note_snapshot(note_id, content, reason) {
@@ -242,5 +286,73 @@ mod tests {
             "内容没变时不该重复存档"
         );
         assert_eq!(db.list_note_snapshots(id).unwrap().len(), 1);
+    }
+
+    // ─── 回滚 ────────────────────────────────────────────────
+
+    fn set_content(db: &Database, id: i64, title: &str, content: &str) {
+        db.update_note(
+            id,
+            &NoteInput {
+                title: title.into(),
+                content: content.into(),
+                folder_id: None,
+            },
+        )
+        .unwrap();
+    }
+
+    /// 回滚要把正文换回旧版，同时**必须**给当前版本留底 —— 否则"恢复"就是不可逆的。
+    #[test]
+    fn restore_rolls_back_and_keeps_undo() {
+        let db = mem_db();
+        let id = new_note(&db, "第一版");
+        assert!(capture_manual(&db, id).unwrap());
+        let snap_id = db.list_note_snapshots(id).unwrap()[0].id;
+
+        set_content(&db, id, "笔记", "第二版");
+
+        let restored = restore(&db, id, snap_id).unwrap();
+        assert_eq!(restored.content, "第一版", "正文应回到旧版");
+        assert_eq!(restored.title, "笔记", "标题不该被回滚带走");
+
+        let metas = db.list_note_snapshots(id).unwrap();
+        assert!(
+            metas.iter().any(|m| m.reason == reason::BEFORE_RESTORE),
+            "回滚前必须给'第二版'留底，否则滚回来就没了"
+        );
+    }
+
+    /// 白板的 content 是 Excalidraw JSON，回写还要重建 search_text 与画布双链，
+    /// 必须走 services::whiteboard 那条路，这里要挡住。
+    #[test]
+    fn restore_rejects_whiteboard() {
+        let db = mem_db();
+        let wb = db
+            .create_whiteboard(
+                &NoteInput {
+                    title: "画布".into(),
+                    content: r#"{"type":"excalidraw","elements":[]}"#.into(),
+                    folder_id: None,
+                },
+                "",
+            )
+            .unwrap();
+        assert!(capture_manual(&db, wb.id).unwrap());
+        let snap_id = db.list_note_snapshots(wb.id).unwrap()[0].id;
+
+        assert!(restore(&db, wb.id, snap_id).is_err());
+    }
+
+    /// 防前端把 id 传串，拿 A 的历史盖到 B 上。
+    #[test]
+    fn restore_rejects_foreign_snapshot() {
+        let db = mem_db();
+        let a = new_note(&db, "A 的内容");
+        let b = new_note(&db, "B 的内容");
+        assert!(capture_manual(&db, a).unwrap());
+        let a_snap = db.list_note_snapshots(a).unwrap()[0].id;
+
+        assert!(restore(&db, b, a_snap).is_err());
     }
 }

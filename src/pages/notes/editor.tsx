@@ -1,5 +1,10 @@
-import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense, type ReactNode } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+
+/** 历史版本抽屉：不点开就不加载（大多数编辑会话根本用不到） */
+const NoteSnapshotDrawer = lazy(
+  () => import("@/components/notes/NoteSnapshotDrawer"),
+);
 import {
   Input,
   Button,
@@ -20,7 +25,7 @@ import {
   App as AntdApp,
   theme as antdTheme,
 } from "antd";
-import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, ChevronDown, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, MessageSquare, ListTree, Network, ExternalLink, BookOpen, FilePen, Presentation, Printer, Code2 } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, ChevronDown, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, MessageSquare, ListTree, Network, ExternalLink, BookOpen, FilePen, Presentation, Printer, Code2, History } from "lucide-react";
 import { CloseCircleFilled } from "@ant-design/icons";
 import { useAppStore } from "@/store";
 import { useTabsStore } from "@/store/tabs";
@@ -789,6 +794,8 @@ function DesktopNoteEditorPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  /** 历史版本抽屉 */
+  const [historyOpen, setHistoryOpen] = useState(false);
   /** 思维导图视图：在编辑器右侧以 flex 分栏方式渲染（不是浮层） */
   const [mindMapOpen, setMindMapOpen] = useState(false);
   /** 幻灯片演示模式：fixed 全屏覆盖，按 `<hr>` 分页 */
@@ -1526,6 +1533,32 @@ function DesktopNoteEditorPage() {
     }
   }
 
+  /**
+   * 打开历史版本。
+   *
+   * 有未保存改动时先落一次库：否则用户在抽屉里恢复旧版后，编辑器里那些还没保存的
+   * 改动会被新正文直接顶掉，而且它们从没进过快照 —— 等于凭空消失。
+   * 先保存还有个好处：这一版会作为"当前版本"进入回滚前的兜底存档。
+   */
+  async function openHistory() {
+    if (dirty) await handleSave(true);
+    setHistoryOpen(true);
+  }
+
+  /** 回滚成功后用新正文重载编辑器（后端已落库，所以顺手清掉 dirty） */
+  const handleSnapshotRestored = useCallback(
+    (restored: string) => {
+      setContent(restored);
+      setDirty(false);
+      // updated_at 之类的元信息也变了，顺手刷一次；失败不影响正文已恢复这件事
+      void noteApi
+        .get(noteId)
+        .then(setNote)
+        .catch(() => {});
+    },
+    [noteId],
+  );
+
   async function handleTogglePin() {
     try {
       const isPinned = await noteApi.togglePin(noteId);
@@ -2215,6 +2248,9 @@ function DesktopNoteEditorPage() {
               onClick={() => setFocusMode(!focusMode)}
             />
           </Tooltip>
+          <Tooltip title="历史版本（保存 / 同步覆盖前会自动留底）">
+            <Button icon={<History size={16} />} onClick={() => void openHistory()} />
+          </Tooltip>
           <Tooltip title={note?.is_pinned ? "取消置顶" : "置顶"}>
             <Button
               type={note?.is_pinned ? "primary" : "default"}
@@ -2820,6 +2856,30 @@ function DesktopNoteEditorPage() {
           navigate(`/notes/${id}`);
         }}
       />
+
+      {/* 历史版本抽屉：开过一次才挂载，没点过的用户不用为它买单 */}
+      {historyOpen && (
+        <Suspense fallback={null}>
+          <NoteSnapshotDrawer
+            open={historyOpen}
+            onClose={() => setHistoryOpen(false)}
+            noteId={noteId}
+            onRestored={handleSnapshotRestored}
+          />
+        </Suspense>
+      )}
+
+      {/* 历史版本抽屉：开过一次才挂载，从没点过的用户不用为它买单 */}
+      {historyOpen && (
+        <Suspense fallback={null}>
+          <NoteSnapshotDrawer
+            open={historyOpen}
+            onClose={() => setHistoryOpen(false)}
+            noteId={noteId}
+            onRestored={handleSnapshotRestored}
+          />
+        </Suspense>
+      )}
 
       {/* 幻灯片演示：fixed 全屏覆盖，按 <hr> 分页 */}
       <SlideshowView

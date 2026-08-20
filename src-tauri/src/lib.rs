@@ -1218,6 +1218,10 @@ pub fn run() {
             // 笔记模块
             commands::notes::create_note,
             commands::notes::update_note,
+            commands::snapshot::list_note_snapshots,
+            commands::snapshot::get_note_snapshot,
+            commands::snapshot::create_note_snapshot,
+            commands::snapshot::restore_note_snapshot,
             commands::notes::delete_note,
             commands::notes::get_note,
             commands::notes::get_notes_images,

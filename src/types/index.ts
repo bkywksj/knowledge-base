@@ -131,6 +131,11 @@ export interface NoteSnapshotMeta {
   created_at: string;
 }
 
+/** 历史版本的完整内容（预览 / 回滚用）。与 Rust `models::NoteSnapshot` 对齐 */
+export interface NoteSnapshot extends NoteSnapshotMeta {
+  content: string;
+}
+
 /**
  * AI 引用笔记里抽出的图片清单（回答下方"溯源"挂缩略图）。
  * 与 Rust models::NoteImageRef 对齐。
