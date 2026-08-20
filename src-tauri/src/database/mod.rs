@@ -1,5 +1,8 @@
 pub mod ai;
 pub mod cards;
+// 中文查询的加权 n-gram 展开（FTS5 unicode61 把连续汉字并成一个长 token，
+// 前缀匹配与 LIKE 都覆盖不到"词在中间"的情况）
+pub mod cjk;
 pub mod dataview;
 pub mod folders;
 // 多路召回融合（RRF）：LIKE 与 FTS5 的分数量纲不同，只能按名次融合

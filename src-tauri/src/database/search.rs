@@ -82,34 +82,62 @@ impl Database {
         limit: usize,
     ) -> Result<Vec<SearchResult>, AppError> {
         let raw_keywords: Vec<&str> = query.split_whitespace().filter(|s| !s.is_empty()).collect();
-        // 提取搜索词（按空格分隔，每个词用 LIKE 匹配）
-        let keywords: Vec<String> = raw_keywords.iter().map(|s| format!("%{}%", s)).collect();
 
-        if keywords.is_empty() {
+        // 中文加权 n-gram 展开（见 database::cjk）。
+        //
+        // 为什么不再是"按空格切 + 每段 LIKE %词%"：FTS5 的 unicode61 把连续汉字并成
+        // 一个长 token，用户搜「本地说明」而笔记里写的是「本地仓库说明」时，
+        // FTS 的前缀匹配（`本地说明*`）和这里的 `%本地说明%` **都会 miss** ——
+        // 而这正是中文用户最常见的输入方式（不自觉加空格分词）。
+        //
+        // 展开后：token 之间 AND（空格 = 用户明确的收窄意图），
+        // token 内部按权重累加过及格线（整体 5 / 3-gram 2 / 2-gram 1，线是 2）。
+        let groups = super::cjk::expand_query(query);
+        if groups.is_empty() {
             return Ok(Vec::new());
         }
 
-        // 构建 WHERE 条件：每个关键词匹配 title 或正文。
+        // 每个模式一个占位符，按顺序编号；同一个模式在 title / 正文里复用同一编号
+        let mut patterns: Vec<String> = Vec::new();
+        // 每组的 (占位符起始下标, 组内模式数, 该组权重, 及格线)
+        let mut group_meta: Vec<(usize, usize, Vec<i32>, i32)> = Vec::new();
+        for g in &groups {
+            let start = patterns.len();
+            let weights: Vec<i32> = g.patterns.iter().map(|p| p.weight).collect();
+            patterns.extend(g.patterns.iter().map(|p| format!("%{}%", p.term)));
+            group_meta.push((start, g.patterns.len(), weights, g.threshold));
+        }
+
         // 正文用 COALESCE(search_text, content) 而不是裸 content —— 白板的 content 是
         // Excalidraw JSON，直接 LIKE 会让「strokeColor」「appState」这类属性名命中每一块白板。
         // 与 FTS 路径（fts_body 生成列，见 schema v53）保持同一口径。
-        let where_clauses: Vec<String> = keywords
+        const BODY: &str = "COALESCE(n.search_text, n.content)";
+
+        // 每组生成一个"加权累加 >= 及格线"的条件，组间 AND
+        let where_clauses: Vec<String> = group_meta
             .iter()
-            .enumerate()
-            .map(|(i, _)| {
-                format!(
-                    "(n.title LIKE ?{0} OR COALESCE(n.search_text, n.content) LIKE ?{0})",
-                    i + 1
-                )
+            .map(|(start, count, weights, threshold)| {
+                let score: String = (0..*count)
+                    .map(|i| {
+                        let ph = start + i + 1;
+                        format!(
+                            "(CASE WHEN n.title LIKE ?{ph} OR {BODY} LIKE ?{ph} THEN {w} ELSE 0 END)",
+                            ph = ph,
+                            w = weights[i],
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" + ");
+                format!("(({}) >= {})", score, threshold)
             })
             .collect();
 
-        // 标题命中表达式：任一关键词出现在 title 中即视为"标题命中"，排序优先
-        // 同样的占位符复用，无需新绑定
-        let title_hit_expr: String = keywords
+        // 标题命中表达式：任一模式出现在 title 中即视为"标题命中"，排序优先。
+        // 只看整体模式（每组第一个，权重最高的那个）—— 用 2-gram 判定标题命中
+        // 会让"标题里碰巧有两个字"的笔记冒到前面，反而不准。
+        let title_hit_expr: String = group_meta
             .iter()
-            .enumerate()
-            .map(|(i, _)| format!("n.title LIKE ?{}", i + 1))
+            .map(|(start, _, _, _)| format!("n.title LIKE ?{}", start + 1))
             .collect::<Vec<_>>()
             .join(" OR ");
 
@@ -125,13 +153,13 @@ impl Database {
              LIMIT ?{}",
             title_hit_expr,
             where_clauses.join(" AND "),
-            keywords.len() + 1
+            patterns.len() + 1
         );
 
         let mut stmt = conn.prepare(&sql)?;
 
         // 绑定参数
-        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = keywords
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = patterns
             .iter()
             .map(|k| Box::new(k.clone()) as Box<dyn rusqlite::types::ToSql>)
             .collect();
@@ -157,10 +185,27 @@ impl Database {
             .collect::<Result<Vec<_>, _>>()?;
 
         // 生成带高亮的 snippet
+        //
+        // 🔴 高亮必须用**和召回同一套词元**：笔记是靠「本地」+「说明」两个 n-gram
+        // 命中的，若这里只拿用户原样输入的「本地说明」去 find，必然找不到
+        // → 退化成"截前 140 字、零高亮"，用户看不出为什么这条被搜出来。
+        // （对标项目正是栽在这里：召回用 n-gram、高亮用整句，中文高亮基本失效。）
+        //
+        // 顺序：先放用户原词（最长、最精确，优先作为定位锚点），
+        // 再放展开出的 n-gram 作兜底。
+        let mut highlight_terms: Vec<&str> = raw_keywords.clone();
+        for g in &groups {
+            for p in &g.patterns {
+                if !highlight_terms.iter().any(|t| *t == p.term) {
+                    highlight_terms.push(&p.term);
+                }
+            }
+        }
+
         let results = results
             .into_iter()
             .map(|(id, title, body, updated_at, folder_id, note_type)| {
-                let snippet = build_highlight_snippet(&body, &raw_keywords);
+                let snippet = build_highlight_snippet(&body, &highlight_terms);
                 SearchResult {
                     id,
                     title,
@@ -289,4 +334,109 @@ fn sanitize_fts_query(query: &str) -> String {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::Database;
+    use crate::models::NoteInput;
+
+    fn temp_db() -> Database {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("kb_search_{}_{}", std::process::id(), n));
+        std::fs::create_dir_all(&dir).unwrap();
+        Database::init(dir.join("t.db").to_str().unwrap()).expect("init db")
+    }
+
+    fn add(db: &Database, title: &str, content: &str) -> i64 {
+        db.create_note(&NoteInput {
+            title: title.into(),
+            content: content.into(),
+            folder_id: None,
+        })
+        .expect("create note")
+        .id
+    }
+
+    /// P1-1 的核心场景：用户搜「本地说明」，笔记里写的是「本地仓库说明」。
+    ///
+    /// 改造前 FTS 前缀匹配（`本地说明*`）与 LIKE（`%本地说明%`）都会 miss ——
+    /// 中文用户不会自觉加空格分词，这是最常见的召回缺口。
+    #[test]
+    fn recalls_non_contiguous_chinese_query() {
+        let db = temp_db();
+        let target = add(&db, "本地仓库说明", "介绍如何在本地搭建仓库");
+        let hits = db.search_notes("本地说明", 20).unwrap();
+        let ids: Vec<i64> = hits.iter().map(|r| r.id).collect();
+        assert!(
+            ids.contains(&target),
+            "「本地说明」应能召回「本地仓库说明」，实际: {:?}",
+            ids
+        );
+    }
+
+    /// 反面：只碰巧撞上一个通用二字词的笔记不该被召回（及格线 = 2 的意义）
+    #[test]
+    fn rejects_weak_single_bigram_match() {
+        let db = temp_db();
+        add(&db, "会议纪要", "今天的说明会推迟到下周");
+        let hits = db.search_notes("本地说明", 20).unwrap();
+        assert!(
+            hits.is_empty(),
+            "只命中一个通用二字词不该召回，实际: {:?}",
+            hits.iter().map(|r| &r.title).collect::<Vec<_>>()
+        );
+    }
+
+    /// 空格是用户明确的收窄意图：两个 token 都要命中
+    #[test]
+    fn space_separated_tokens_are_and() {
+        let db = temp_db();
+        let both = add(&db, "Docker 部署手册", "docker 部署流程");
+        add(&db, "Docker 入门", "docker 基础概念");
+        let hits = db.search_notes("docker 部署", 20).unwrap();
+        let ids: Vec<i64> = hits.iter().map(|r| r.id).collect();
+        assert!(ids.contains(&both));
+        assert_eq!(ids.len(), 1, "只含 docker 不含部署的不该召回，实际: {:?}", ids);
+    }
+
+    /// 高亮必须与召回用同一套词元 —— 否则 snippet 退化成"截前 140 字、零高亮"，
+    /// 用户看不出这条为什么被搜出来。对标项目正是栽在这里。
+    #[test]
+    fn highlight_uses_same_terms_as_recall() {
+        let db = temp_db();
+        add(
+            &db,
+            "无关标题",
+            "前面是一大段无关的铺垫文字用来把关键词推到后面去，\
+             这样如果高亮定位失败就只会看到这段铺垫。真正的内容是本地仓库说明。",
+        );
+        let hits = db.search_notes("本地说明", 20).unwrap();
+        assert_eq!(hits.len(), 1, "应召回 1 条");
+        assert!(
+            hits[0].snippet.contains("<mark>"),
+            "snippet 必须有高亮，实际: {}",
+            hits[0].snippet
+        );
+    }
+
+    /// 隐藏 / 临时 / 回收站笔记在主搜索里不可见（T-003）
+    #[test]
+    fn respects_visibility_flags() {
+        let db = temp_db();
+        let visible = add(&db, "本地仓库说明", "正常笔记");
+        let hidden = add(&db, "本地仓库说明私密", "隐藏笔记");
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute("UPDATE notes SET is_hidden = 1 WHERE id = ?1", [hidden])
+                .unwrap();
+        }
+        let hits = db.search_notes("本地说明", 20).unwrap();
+        let ids: Vec<i64> = hits.iter().map(|r| r.id).collect();
+        assert!(ids.contains(&visible));
+        assert!(!ids.contains(&hidden), "隐藏笔记不该出现在搜索结果");
+    }
 }
