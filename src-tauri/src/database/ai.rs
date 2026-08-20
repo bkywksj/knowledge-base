@@ -23,14 +23,18 @@ const DEFAULT_MAX_CONTEXT: i64 = 128_000;
 fn row_to_ai_model(row: &rusqlite::Row) -> rusqlite::Result<AiModel> {
     let id: i64 = row.get(0)?;
     let stored_key: Option<String> = row.get(4)?;
+    let api_key =
+        stored_key.and_then(|s| crypto::decrypt_field_or_none(&s, &format!("AI 模型 #{}", id)));
     Ok(AiModel {
         id,
         name: row.get(1)?,
         provider: row.get(2)?,
         api_url: row.get(3)?,
-        api_key: stored_key.and_then(|s| {
-            crypto::decrypt_field_or_none(&s, &format!("AI 模型 #{}", id))
-        }),
+        // has_api_key 在这里算：Command 层擦掉明文后，前端仍能知道"配没配"。
+        // 注意用解密**后**的值判断 —— 解密失败（换机器）时等同未配置，
+        // 与前端"请重新填写"的提示一致
+        has_api_key: api_key.is_some(),
+        api_key,
         model_id: row.get(5)?,
         is_default: row.get::<_, i32>(6)? != 0,
         max_context: row.get(7)?,
@@ -226,6 +230,80 @@ mod tests {
         let created = db.create_ai_model(&inp).unwrap();
         assert_eq!(created.api_key, None);
         assert_eq!(raw_api_key(&db, created.id), None);
+    }
+
+    // ─── P0-1b：Key 三态更新 ───────────────────
+
+    /// 🔴 最关键的一条：Key 对前端不回显，用户只改模型名时表单里的 Key 是空的。
+    /// 若把"不传"当清除，**改个名字就会静默弄丢 Key**，下次对话才报鉴权失败。
+    #[test]
+    fn update_without_key_keeps_existing() {
+        let db = temp_db();
+        let mut inp = input("m");
+        inp.api_key = Some("sk-keep-me".into());
+        let created = db.create_ai_model(&inp).unwrap();
+
+        // 模拟"只改名字"：api_key 字段不传
+        inp.name = "改过名字".into();
+        inp.api_key = None;
+        let updated = db.update_ai_model(created.id, &inp).unwrap();
+
+        assert_eq!(updated.name, "改过名字");
+        assert_eq!(
+            updated.api_key.as_deref(),
+            Some("sk-keep-me"),
+            "不传 api_key 时必须保持原值，否则改名就丢 Key"
+        );
+        assert!(updated.has_api_key);
+    }
+
+    /// 显式传空串 = 用户主动清除
+    #[test]
+    fn update_with_empty_key_clears_it() {
+        let db = temp_db();
+        let mut inp = input("m");
+        inp.api_key = Some("sk-old".into());
+        let created = db.create_ai_model(&inp).unwrap();
+
+        inp.api_key = Some("".into());
+        let updated = db.update_ai_model(created.id, &inp).unwrap();
+        assert_eq!(updated.api_key, None, "空串应清除 Key");
+        assert!(!updated.has_api_key);
+        assert_eq!(raw_api_key(&db, created.id), None, "库里也应是 NULL");
+    }
+
+    #[test]
+    fn update_with_new_key_replaces_it() {
+        let db = temp_db();
+        let mut inp = input("m");
+        inp.api_key = Some("sk-old".into());
+        let created = db.create_ai_model(&inp).unwrap();
+
+        inp.api_key = Some("sk-new".into());
+        let updated = db.update_ai_model(created.id, &inp).unwrap();
+        assert_eq!(updated.api_key.as_deref(), Some("sk-new"));
+        // 换新值同样要加密入库
+        let raw = raw_api_key(&db, created.id).unwrap();
+        assert!(crypto::is_encrypted_field(&raw));
+        assert!(!raw.contains("sk-new"));
+    }
+
+    /// has_api_key 必须跟着实际状态走 —— 前端全靠它显示"已保存 / 未配置"
+    #[test]
+    fn has_api_key_reflects_actual_state() {
+        let db = temp_db();
+        let without = db.create_ai_model(&input("no-key")).unwrap();
+        assert!(!without.has_api_key);
+
+        let mut inp = input("with-key");
+        inp.api_key = Some("sk-x".into());
+        let with = db.create_ai_model(&inp).unwrap();
+        assert!(with.has_api_key);
+
+        // 列表路径同样要带上
+        let listed = db.list_ai_models().unwrap();
+        let m = listed.iter().find(|m| m.id == with.id).unwrap();
+        assert!(m.has_api_key);
     }
 
     #[test]
@@ -496,22 +574,51 @@ impl Database {
             .map_err(|e| AppError::Custom(e.to_string()))?;
         // 用户没传 max_context 时保持原值，避免覆盖成默认值
         let max_ctx = input.max_context.unwrap_or(DEFAULT_MAX_CONTEXT).max(1000);
-        // v59 起 API Key 加密入库，防 app.db 被复制走后明文泄漏
-        let api_key_enc = encrypt_api_key(input.api_key.as_deref())?;
-        conn.execute(
-            "UPDATE ai_models SET name = ?1, provider = ?2, api_url = ?3, api_key = ?4,
-                 model_id = ?5, max_context = ?6
-             WHERE id = ?7",
-            rusqlite::params![
-                input.name,
-                input.provider,
-                input.api_url,
-                api_key_enc,
-                input.model_id,
-                max_ctx,
-                id
-            ],
-        )?;
+
+        // API Key 三态（见 AiModelInput::api_key 注释）：
+        //   None      → 整条 SQL 不碰 api_key 列，保持原值
+        //   Some("")  → 清成 NULL
+        //   Some(k)   → 加密后替换
+        //
+        // 🔴 为什么必须区分：Key 对前端不回显，用户只改模型名时表单里的 Key 是空的。
+        // 若把"空"当清除，**改个名字就会把 Key 弄丢** —— 而且是静默弄丢，
+        // 下次对话才报鉴权失败，很难联想到是改名导致的。
+        match &input.api_key {
+            None => {
+                conn.execute(
+                    "UPDATE ai_models SET name = ?1, provider = ?2, api_url = ?3,
+                         model_id = ?4, max_context = ?5
+                     WHERE id = ?6",
+                    rusqlite::params![
+                        input.name,
+                        input.provider,
+                        input.api_url,
+                        input.model_id,
+                        max_ctx,
+                        id
+                    ],
+                )?;
+            }
+            Some(_) => {
+                // v59 起 API Key 加密入库，防 app.db 被复制走后明文泄漏。
+                // encrypt_api_key 对空串 / 纯空白返回 None → 落 NULL，即"清除"
+                let api_key_enc = encrypt_api_key(input.api_key.as_deref())?;
+                conn.execute(
+                    "UPDATE ai_models SET name = ?1, provider = ?2, api_url = ?3, api_key = ?4,
+                         model_id = ?5, max_context = ?6
+                     WHERE id = ?7",
+                    rusqlite::params![
+                        input.name,
+                        input.provider,
+                        input.api_url,
+                        api_key_enc,
+                        input.model_id,
+                        max_ctx,
+                        id
+                    ],
+                )?;
+            }
+        }
         drop(conn);
         self.get_ai_model(id)
     }

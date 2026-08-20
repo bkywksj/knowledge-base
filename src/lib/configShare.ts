@@ -175,13 +175,19 @@ export function exportSyncBackend(b: SyncBackend): Envelope {
   });
 }
 
-/** 把 AiModel 序列化（含 api_key） */
-export function exportAiModel(m: AiModel): Envelope {
+/**
+ * 把 AiModel 序列化（含 api_key）。
+ *
+ * 🔴 `apiKey` 必须由调用方**显式传入** —— P0-1b 起 `m.api_key` 恒为 null，
+ * 明文只能临时调 `aiModelApi.getApiKey(id)` 取。做成必填参数是为了让
+ * 每个分享入口都被迫走那一步，而不是静默导出一个没 Key 的空壳。
+ */
+export function exportAiModel(m: AiModel, apiKey: string | null): Envelope {
   return envelope("ai-model", {
     name: m.name,
     provider: m.provider,
     api_url: m.api_url,
-    api_key: m.api_key,
+    api_key: apiKey,
     model_id: m.model_id,
     max_context: m.max_context,
   });

@@ -12,19 +12,42 @@ use crate::state::AppState;
 
 // ─── AI 模型 Commands ────────────────────────
 
-/// 获取所有 AI 模型
+/// 擦掉返回给前端的 API Key 明文（P0-1b）。
+///
+/// `has_api_key` 已由 DAO 层算好，前端据此显示"已保存 / 未配置"即可。
+///
+/// **为什么在 Command 层擦而不是更底层**：`services/ai.rs` 有 16 处
+/// `db.get_ai_model()` 拿明文去调服务商，底层擦掉那些全得改且极易漏。
+/// Command 层是"数据离开 Rust 进程"的唯一出口，在这里擦既完整又不影响内部使用。
+fn sanitize_model(mut m: AiModel) -> AiModel {
+    m.api_key = None;
+    m
+}
+
+/// 获取所有 AI 模型（不含 Key 明文）
 #[tauri::command]
 pub fn list_ai_models(state: State<'_, AppState>) -> Result<Vec<AiModel>, String> {
-    state.db.list_ai_models().map_err(|e| e.to_string())
+    state
+        .db
+        .list_ai_models()
+        .map(|v| v.into_iter().map(sanitize_model).collect())
+        .map_err(|e| e.to_string())
 }
 
 /// 创建 AI 模型
 #[tauri::command]
 pub fn create_ai_model(state: State<'_, AppState>, input: AiModelInput) -> Result<AiModel, String> {
-    state.db.create_ai_model(&input).map_err(|e| e.to_string())
+    state
+        .db
+        .create_ai_model(&input)
+        .map(sanitize_model)
+        .map_err(|e| e.to_string())
 }
 
-/// 更新 AI 模型
+/// 更新 AI 模型。
+///
+/// `input.api_key` 是三态：字段缺失 = 保持原值，`""` = 清除，其它 = 替换
+/// （见 `AiModelInput::api_key`）。
 #[tauri::command]
 pub fn update_ai_model(
     state: State<'_, AppState>,
@@ -34,6 +57,44 @@ pub fn update_ai_model(
     state
         .db
         .update_ai_model(id, &input)
+        .map(sanitize_model)
+        .map_err(|e| e.to_string())
+}
+
+/// 取某个模型的 API Key 明文。
+///
+/// **仅供"分享配置"这类用户显式发起的导出使用** —— 平时列表/详情一律不带明文
+/// （见 [`sanitize_model`]）。单独开一个 Command 而不是让 list 带上，
+/// 是为了让"明文离开进程"这件事在代码里有唯一、可审计的入口。
+#[tauri::command]
+pub fn get_ai_model_api_key(state: State<'_, AppState>, id: i64) -> Result<Option<String>, String> {
+    state
+        .db
+        .get_ai_model(id)
+        .map(|m| m.api_key)
+        .map_err(|e| e.to_string())
+}
+
+/// 测试**已保存**模型的连通性（按 id）。
+///
+/// 与 [`test_ai_model`] 的分工：那个收完整 input，供"还没保存的新模型"在 Modal 里试；
+/// 这个按 id 取库里的明文自测，供列表里已存在的模型用 —— 因为前端已经拿不到明文了。
+#[tauri::command]
+pub async fn test_saved_ai_model(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<AiModelTestResult, String> {
+    let m = state.db.get_ai_model(id).map_err(|e| e.to_string())?;
+    let input = AiModelInput {
+        name: m.name,
+        provider: m.provider,
+        api_url: m.api_url,
+        api_key: m.api_key,
+        model_id: m.model_id,
+        max_context: Some(m.max_context),
+    };
+    AiService::test_model_connection(&input)
+        .await
         .map_err(|e| e.to_string())
 }
 

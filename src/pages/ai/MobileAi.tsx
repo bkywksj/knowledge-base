@@ -297,9 +297,19 @@ export function MobileAi() {
           </div>
           <div className="flex gap-2">
             <button
-              onClick={() => {
-                if (defaultModel) setShareEnv(exportAiModel(defaultModel));
-                else message.warning("请先配置一个 AI 模型");
+              onClick={async () => {
+                if (!defaultModel) {
+                  message.warning("请先配置一个 AI 模型");
+                  return;
+                }
+                // Key 明文不随列表返回（P0-1b），分享时按 id 单独取
+                let key: string | null = null;
+                try {
+                  key = await aiModelApi.getApiKey(defaultModel.id);
+                } catch (e) {
+                  message.warning(`未能读取 API Key（${e}），分享内容不含密钥`);
+                }
+                setShareEnv(exportAiModel(defaultModel, key));
               }}
               aria-label="分享当前模型"
               className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 active:bg-slate-200"

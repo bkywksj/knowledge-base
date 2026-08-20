@@ -62,7 +62,7 @@ npx tsc --noEmit
 **方法论**：改完安全/正确性代码后**临时还原 bug 跑一遍测试**，确认用例真的会失败。
 上述 1、2 都是这样确认的 —— 否则可能写了个永远为真的假测试。
 
-**剩余待办**：P0-1b（Key 不回显 + 三态更新，需先改 `configShare.ts`）。
+P0 已全部完成（P0-1b 见下）。
 
 ## 阶段 P1 —— 用户直接可感知　✅ 全部完成
 
@@ -115,20 +115,45 @@ tags 唯一约束用例）；clippy 无新增警告；`tsc --noEmit` 通过。
 
 ---
 
-### P0-1b　Key 不回显 + 三态更新　⬜ 待做
+### P0-1b　Key 不回显 + 三态更新　✅ 已完成
 
 **为什么拆出来**：`src/lib/configShare.ts:178-184` 有「把 AiModel 序列化（**含 api_key**）」
 的配置分享功能，直接砍掉 `api_key` 返回会**破坏配置分享**。P0-1a 已达成核心威胁模型
 （防 app.db 被复制走后明文泄漏），回显问题风险面大得多，单独做。
 
-- [ ] `database/ai.rs` UPDATE 实现三态：`None`=保持不变 / `Some("")`=清除 / `Some(k)`=替换
-      （抄藏知 `settings_ai.py:139-206` 的 keep/replace/clear）
-- [ ] `models/mod.rs` `AiModel` 增加 `has_api_key: bool`
-- [ ] 列表/详情不返回明文；配置分享改走**显式** Command（用户主动点"分享配置"才导出明文）
-- [ ] 前端输入框 placeholder "已保存（留空保持不变）"
-- [ ] `src/lib/configShare.ts` 相应改造
+- [x] `database/ai.rs` UPDATE 实现三态：`None`=保持不变 / `Some("")`=清除 / `Some(k)`=替换
+      （抄藏知 `settings_ai.py:139-206` 的 keep/replace/clear）。实现上分成两条 SQL，
+      `None` 分支**整列不出现在 UPDATE 里**，比"先读旧值再写回"少一次读且无竞态
+- [x] `models/mod.rs` `AiModel` 增加 `has_api_key: bool`，由**解密后**的值算
+      （换机器解密失败读作"没配"，正好对上"请重新填写"的提示）
+- [x] 列表/详情不返回明文：擦除放在 **Command 层**（`sanitize_model`），
+      不能再往下沉 —— `services/ai.rs` 有 16 处 `db.get_ai_model()` 要拿明文去调供应商，
+      Command 层才是"数据离开 Rust 进程"的唯一出口
+- [x] 配置分享改走显式 Command `get_ai_model_api_key(id)`（明文离开进程的唯一入口，可审计）；
+      `exportAiModel(m, apiKey)` 把 Key 提成**必填第二参**，逼每个分享入口都走那一步，
+      而不是静默导出一个没 Key 的空壳
+- [x] 已保存模型的"测试连接"改走 `test_saved_ai_model(id)` —— 前端已拿不到明文，拼不出 input
+- [x] 前端输入框 placeholder "已保存，留空则不修改" + extra 说明
+- [x] 🔴 保存时**删字段**而非传空串：Key 不回显 ⇒ 用户只改模型名时表单里 Key 是空的，
+      传 `""` 后端会当"清除"，于是静默丢 Key、下次对话才报鉴权失败
+- [x] 补「清除已保存的密钥」勾选框：三态把"留空"占用成了"保持不变"，
+      不补这个开关用户就**再也删不掉**已存的 Key（三态方案自带的能力缺口）
 
-**工作量**：0.5~1 天
+**验证**：4 个新 DAO 单测（保持/替换/清除/`has_api_key`），`database::ai` 17 个全过；
+Rust 775 passed（只剩 2 个长期已知失败）；clippy 无 error；`tsc --noEmit` 通过；
+前端 286 单测全过。
+
+**真机验证**（直接读 dev-app.db 比对密文，不看 UI 自述）：
+
+| 动作 | 期望 | 实测 |
+|---|---|---|
+| 编辑框打开 | Key 不回显，placeholder「已保存，留空则不修改」 | ✅ |
+| 只改名后保存 | 密文 **逐字节不变** | ✅ `sha256[:12]` 前后都是 `9eb99f2379db`、长度都是 91 |
+| 改回原名再保存 | 同上 | ✅ 仍是 `9eb99f2379db` |
+| 点分享 → 复制为 ai.profile | 明文 Key 出现在导出里 | ✅ `sk-…` 完整（验证后已清剪贴板） |
+| 勾「清除已保存的密钥」保存 | 该行 Key 变 NULL，**其它行不受影响** | ✅ 临时模型置 NULL，真实模型仍 91 字节 |
+
+清除那条特意建了个一次性模型验证再删掉，没拿用户真实 Key 做实验。
 
 ---
 

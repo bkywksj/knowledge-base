@@ -1372,6 +1372,9 @@ pub fn run() {
             commands::ai::delete_ai_model,
             commands::ai::set_default_ai_model,
             commands::ai::test_ai_model,
+            // P0-1b：Key 不回显后，已保存模型的测试与分享各自走显式入口
+            commands::ai::test_saved_ai_model,
+            commands::ai::get_ai_model_api_key,
             commands::ai::list_ai_conversations,
             commands::ai::create_ai_conversation,
             commands::ai::delete_ai_conversation,

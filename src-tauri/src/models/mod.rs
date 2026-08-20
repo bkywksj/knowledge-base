@@ -465,8 +465,18 @@ pub struct AiModel {
     pub provider: String,
     /// API 基础 URL
     pub api_url: String,
-    /// API Key（可为空，如 Ollama 本地模型）
+    /// API Key（可为空，如 Ollama 本地模型）。
+    ///
+    /// 🔴 **Rust 内部持有明文，但 Command 层返回给前端前会擦成 None**
+    /// （见 `commands::ai::sanitize_model`）。前端一律用 [`Self::has_api_key`]
+    /// 判断"配没配"，需要明文时走显式的 `get_ai_model_api_key`。
+    ///
+    /// 为什么不在更底层擦：`services/ai.rs` 有 16 处 `db.get_ai_model()`
+    /// 拿它去调服务商，底层擦掉那些全得改，且极易漏。
     pub api_key: Option<String>,
+    /// 是否配了 API Key。前端据此显示"已保存 / 未配置"，不需要拿到明文。
+    #[serde(default)]
+    pub has_api_key: bool,
     /// 模型标识 (如 gpt-4o-mini, claude-sonnet-4-20250514, llama3)
     pub model_id: String,
     /// 是否为默认模型
@@ -497,6 +507,19 @@ pub struct AiModelInput {
     pub name: String,
     pub provider: String,
     pub api_url: String,
+    /// API Key，**更新时是三态语义**（抄藏知 `settings_ai.py:139-206` 的 keep/replace/clear）：
+    ///
+    /// | 值 | 含义 |
+    /// |---|---|
+    /// | 字段缺失 / `None` | **保持原值不变** |
+    /// | `Some("")` | 清除 |
+    /// | `Some(k)` | 替换成 k |
+    ///
+    /// 为什么需要三态：Key 对前端不回显（见 [`AiModel::api_key`]），
+    /// 用户只改模型名时表单里的 Key 是空的 —— 若把空当"清除"，
+    /// **改个名字就会把 Key 弄丢**。
+    ///
+    /// 新建（create）时没有"原值"可保持，`None` 就是没配。
     pub api_key: Option<String>,
     pub model_id: String,
     /// 可选：缺省时按 32000 入库（覆盖大多数中端模型）

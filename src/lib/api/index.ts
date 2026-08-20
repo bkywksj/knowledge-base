@@ -717,6 +717,18 @@ export const aiModelApi = {
   /** 测试模型连通性。入参用未保存的 AiModelInput，方便 Modal 表单里直接试。 */
   test: (input: AiModelInput) =>
     invoke<AiModelTestResult>("test_ai_model", { input }),
+  /**
+   * 测试**已保存**模型（按 id，后端自取明文）。
+   *
+   * 列表里的模型必须用这个 —— 前端已经拿不到 Key 明文了（P0-1b）。
+   */
+  testSaved: (id: number) =>
+    invoke<AiModelTestResult>("test_saved_ai_model", { id }),
+  /**
+   * 取 Key 明文。**仅供"分享配置"这类用户显式发起的导出**，
+   * 别拿它去做展示或判断（判断用 `has_api_key`）。
+   */
+  getApiKey: (id: number) => invoke<string | null>("get_ai_model_api_key", { id }),
 };
 
 /** AI 对话 API */

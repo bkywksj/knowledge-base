@@ -31,7 +31,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useLocation } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
-import type { AiModel, AiModelInput, ImportResult, ImportProgress, ImportConflictPolicy, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput } from "@/types";
+import type { AiModel, AiModelInput, AiModelTestResult, ImportResult, ImportProgress, ImportConflictPolicy, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput } from "@/types";
 import { systemApi, aiModelApi, importApi, exportApi, folderApi, templateApi, pdfApi, sourceFileApi, autostartApi, configApi, windowApi } from "@/lib/api";
 import {
   useAppStore,
@@ -346,6 +346,13 @@ function DesktopSettingsPage() {
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelModalOpen, setModelModalOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<AiModel | null>(null);
+  /**
+   * "清除已保存的 API Key"。
+   *
+   * 单独开个开关是因为三态把"留空"占用成了"保持不变"——
+   * 没有这个开关，用户就再也删不掉已存的 Key 了。
+   */
+  const [clearApiKey, setClearApiKey] = useState(false);
   const [form] = Form.useForm<AiModelInput>();
   // 表单内 provider 变化 → 动态占位
   const watchedProvider = Form.useWatch("provider", form) || "ollama";
@@ -1186,11 +1193,13 @@ function DesktopSettingsPage() {
 
   function openEditModel(model: AiModel) {
     setEditingModel(model);
+    setClearApiKey(false);
     form.setFieldsValue({
       name: model.name,
       provider: model.provider,
       api_url: model.api_url,
-      api_key: model.api_key,
+      // P0-1b：Key 不回显。留空 = 保持原值（后端三态），用户想换才填新的
+      api_key: "",
       model_id: model.model_id,
       max_context: model.max_context,
     });
@@ -1211,6 +1220,13 @@ function DesktopSettingsPage() {
           : DEFAULT_MAX_CONTEXT,
       };
       if (editingModel) {
+        // P0-1b 三态：Key 不回显，所以"表单里是空的"= 用户没动它 = 保持原值。
+        // 必须**删掉字段**而不是传空串 —— 传空串后端会当成"清除"，
+        // 于是只改个模型名就把 Key 弄丢了（而且是静默的，下次对话才报鉴权失败）。
+        // 真想删 Key 走 clearApiKey 开关（显式传 ""）。
+        const key = (values.api_key ?? "").trim();
+        if (clearApiKey) payload.api_key = "";
+        else if (!key) delete (payload as { api_key?: unknown }).api_key;
         await aiModelApi.update(editingModel.id, payload);
         message.success("模型已更新");
       } else {
@@ -1246,19 +1262,20 @@ function DesktopSettingsPage() {
   }
 
   /**
-   * 跑一次模型连通性测试。
+   * 跑一次模型连通性测试（结果展示逻辑，两个入口共用）。
    *
-   * 两个入口共用：
-   * - 表格行内"测试"按钮：传 record（已保存模型，rowId = record.id）
-   * - Modal 里"测试连接"按钮：传当前表单值（未保存，rowId = -1 占位）
-   *
-   * 失败信息行数往往较多（含 hint + 详情），用 `Modal.error` 多行展示，
-   * 与 ai/index.tsx 里 send 失败的处理保持一致。
+   * `run` 由调用方决定走哪个 Command —— 已保存模型按 id（后端自取 Key），
+   * 未保存表单按 input。失败信息行数往往较多（含 hint + 详情），
+   * 用 `Modal.error` 多行展示，与 ai/index.tsx 里 send 失败的处理保持一致。
    */
-  async function runModelTest(input: AiModelInput, rowId: number, label: string) {
+  async function runTestWith(
+    run: () => Promise<AiModelTestResult>,
+    rowId: number,
+    label: string,
+  ) {
     setTestingModelId(rowId);
     try {
-      const result = await aiModelApi.test(input);
+      const result = await run();
       const tail = result.sample ? ` · 样本: "${result.sample}"` : "";
       message.success(`✓ [${label}] 连接成功 · 延迟 ${result.latency_ms}ms${tail}`);
     } catch (e) {
@@ -1276,19 +1293,39 @@ function DesktopSettingsPage() {
     }
   }
 
+  /** Modal 里"测试连接"：拿当前表单值试（模型还没保存，只能带明文 Key 走） */
+  function runModelTest(input: AiModelInput, rowId: number, label: string) {
+    return runTestWith(() => aiModelApi.test(input), rowId, label);
+  }
+
+  /** 表格行内"测试"：按 id 走，Key 明文不出后端 */
+  function runSavedModelTest(id: number, label: string) {
+    return runTestWith(() => aiModelApi.testSaved(id), id, label);
+  }
+
+  /**
+   * 分享模型配置：这是明文 Key 唯一会回到前端的地方，且由用户点击触发。
+   *
+   * 取不到 Key（换机器解密失败）也照常出二维码 —— 对方导入后补填即可，
+   * 总比整个分享失败强。
+   */
+  async function handleShareModel(record: AiModel) {
+    let key: string | null = null;
+    try {
+      key = await aiModelApi.getApiKey(record.id);
+    } catch (e) {
+      message.warning(`未能读取 API Key（${e}），分享内容不含密钥`);
+    }
+    setShareEnv(exportAiModel(record, key));
+  }
+
+  /**
+   * 列表里点"测试"：走按 id 的 Command，后端自取 Key 明文。
+   *
+   * 不能像以前那样在前端拼 input —— P0-1b 起 `record.api_key` 恒为 null。
+   */
   function handleTestRow(record: AiModel) {
-    runModelTest(
-      {
-        name: record.name,
-        provider: record.provider,
-        api_url: record.api_url,
-        api_key: record.api_key,
-        model_id: record.model_id,
-        max_context: record.max_context,
-      },
-      record.id,
-      record.name,
-    );
+    runSavedModelTest(record.id, record.name);
   }
 
   async function handleTestForm() {
@@ -1387,7 +1424,7 @@ function DesktopSettingsPage() {
             type="text"
             size="small"
             icon={<Share2 size={14} />}
-            onClick={() => setShareEnv(exportAiModel(record))}
+            onClick={() => handleShareModel(record)}
             title="分享到其他设备（含加密）"
           />
           <Popconfirm
@@ -3153,8 +3190,33 @@ function DesktopSettingsPage() {
             <Input placeholder={DEFAULT_URLS[watchedProvider] || "https://api.openai.com/v1"} />
           </Form.Item>
 
-          <Form.Item name="api_key" label="API Key">
-            <Input.Password placeholder="sk-... (Ollama 无需填写)" />
+          <Form.Item
+            name="api_key"
+            label="API Key"
+            extra={
+              editingModel?.has_api_key ? (
+                <div className="flex flex-col gap-1">
+                  <span>已保存密钥（出于安全不回显）。留空 = 保持不变，填新值 = 替换。</span>
+                  <Checkbox
+                    checked={clearApiKey}
+                    onChange={(e) => setClearApiKey(e.target.checked)}
+                  >
+                    清除已保存的密钥（改用无需鉴权的服务时勾选）
+                  </Checkbox>
+                </div>
+              ) : undefined
+            }
+          >
+            <Input.Password
+              disabled={clearApiKey}
+              placeholder={
+                clearApiKey
+                  ? "保存后将清空"
+                  : editingModel?.has_api_key
+                    ? "已保存，留空则不修改"
+                    : "sk-... (Ollama 无需填写)"
+              }
+            />
           </Form.Item>
 
           <Form.Item

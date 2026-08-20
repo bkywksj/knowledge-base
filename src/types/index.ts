@@ -486,7 +486,14 @@ export interface AiModel {
   /** 模型提供商: openai / claude / ollama */
   provider: string;
   api_url: string;
+  /**
+   * 🔴 **恒为 null** —— Command 层会擦掉明文（P0-1b）。
+   * 判断"配没配"用 {@link has_api_key}；需要明文（分享配置）走
+   * `aiModelApi.getApiKey(id)`，那是明文离开进程的唯一入口。
+   */
   api_key: string | null;
+  /** 是否已配置 API Key */
+  has_api_key: boolean;
   /** 模型标识 (如 gpt-4o-mini, claude-sonnet-4-20250514, llama3) */
   model_id: string;
   is_default: boolean;
@@ -500,6 +507,15 @@ export interface AiModelInput {
   name: string;
   provider: string;
   api_url: string;
+  /**
+   * API Key，**更新时是三态**：
+   * - 字段缺失 / `undefined` → 保持原值不变
+   * - `""` → 清除
+   * - 其它 → 替换
+   *
+   * 🔴 因为 Key 不回显，用户只改模型名时表单里的 Key 是空的 ——
+   * 此时必须**省略该字段**，传空串会把 Key 清掉。
+   */
   api_key?: string | null;
   model_id: string;
   /** 可选：缺省时后端按 32000 入库 */
