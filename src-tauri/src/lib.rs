@@ -1250,6 +1250,7 @@ pub fn run() {
             commands::whiteboard::restore_whiteboard_snapshot,
             commands::whiteboard::get_whiteboard_library,
             commands::whiteboard::save_whiteboard_library,
+            commands::whiteboard::get_note_excerpts,
             commands::notes::list_hidden_notes,
             commands::notes::list_hidden_folder_ids,
             commands::notes::list_scratch_notes,

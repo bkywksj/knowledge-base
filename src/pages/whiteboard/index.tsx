@@ -8,6 +8,8 @@ import {
   Popconfirm,
   Typography,
   Dropdown,
+  Modal,
+  List,
   App as AntdApp,
   theme as antdTheme,
   type MenuProps,
@@ -25,11 +27,12 @@ import {
   Presentation,
   Minimize2,
   Workflow,
+  StickyNote,
 } from "lucide-react";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store";
-import { noteApi, whiteboardApi, systemApi } from "@/lib/api";
-import type { Note } from "@/types";
+import { noteApi, whiteboardApi, systemApi, searchApi } from "@/lib/api";
+import type { Note, SearchResult } from "@/types";
 // 仅类型导入：`import type` 会被编译期擦除，不会把 Excalidraw 拉进本页面的 chunk
 import type { WhiteboardExportApi } from "@/components/whiteboard/WhiteboardCanvas";
 
@@ -74,6 +77,13 @@ export default function WhiteboardPage() {
   const canvasWrapRef = useRef<HTMLDivElement>(null);
   /** 画布挂载后填入「打开 Mermaid 转图」的触发函数 */
   const mermaidRef = useRef<(() => void) | null>(null);
+  /** 画布挂载后填入「插入笔记卡片」的函数 */
+  const insertCardRef = useRef<((noteId: number) => Promise<void>) | null>(null);
+  /** 选笔记弹窗 */
+  const [cardPickerOpen, setCardPickerOpen] = useState(false);
+  const [cardQuery, setCardQuery] = useState("");
+  const [cardResults, setCardResults] = useState<SearchResult[]>([]);
+  const [cardSearching, setCardSearching] = useState(false);
   /**
    * 画布实例的重建计数。
    *
@@ -326,6 +336,41 @@ export default function WhiteboardPage() {
     },
   ];
 
+  /** 选笔记弹窗里的搜索。空关键词不搜 —— 全库列表对"找某条笔记"没帮助 */
+  const searchForCard = useCallback(async (q: string) => {
+    setCardQuery(q);
+    if (!q.trim()) {
+      setCardResults([]);
+      return;
+    }
+    setCardSearching(true);
+    try {
+      setCardResults(await searchApi.search(q, 20));
+    } catch {
+      setCardResults([]);
+    } finally {
+      setCardSearching(false);
+    }
+  }, []);
+
+  /** 把选中的笔记作为卡片插进画布中心 */
+  const insertCard = useCallback(
+    async (targetId: number) => {
+      if (!insertCardRef.current) {
+        message.warning("画布还没加载完，请稍候");
+        return;
+      }
+      try {
+        await insertCardRef.current(targetId);
+        setCardPickerOpen(false);
+        message.success("已插入笔记卡片（笔记内容变化时卡片会自动更新）");
+      } catch (e) {
+        message.error(`插入失败: ${e}`);
+      }
+    },
+    [message],
+  );
+
   /**
    * 进入演示模式：画布全屏 + 只读。
    *
@@ -424,6 +469,13 @@ export default function WhiteboardPage() {
 
         <Button
           type="text"
+          icon={<StickyNote size={16} />}
+          onClick={() => setCardPickerOpen(true)}
+          title="插入笔记卡片（把笔记内容摊在画布上，笔记改了卡片跟着变）"
+        />
+
+        <Button
+          type="text"
           icon={<Workflow size={16} />}
           onClick={() => {
             if (!mermaidRef.current) {
@@ -493,6 +545,7 @@ export default function WhiteboardPage() {
             }
             readOnly={presenting}
             mermaidRef={mermaidRef}
+            insertCardRef={insertCardRef}
           />
         </Suspense>
 
@@ -511,6 +564,53 @@ export default function WhiteboardPage() {
           </Button>
         )}
       </div>
+
+      {/* 选笔记 → 插入卡片 */}
+      <Modal
+        open={cardPickerOpen}
+        onCancel={() => setCardPickerOpen(false)}
+        footer={null}
+        title="插入笔记卡片"
+        destroyOnClose
+      >
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          卡片显示笔记的标题与开头部分，笔记内容变化时卡片会自动更新。
+        </Text>
+        <Input.Search
+          autoFocus
+          allowClear
+          placeholder="搜索笔记标题或内容…"
+          className="mt-3"
+          loading={cardSearching}
+          onChange={(e) => void searchForCard(e.target.value)}
+        />
+        <List
+          className="mt-2"
+          size="small"
+          style={{ maxHeight: 320, overflow: "auto" }}
+          dataSource={cardResults}
+          locale={{
+            emptyText: cardQuery.trim() ? "没有匹配的笔记" : "输入关键词开始搜索",
+          }}
+          renderItem={(item) => (
+            <List.Item
+              className="cursor-pointer"
+              onClick={() => void insertCard(item.id)}
+            >
+              <List.Item.Meta
+                title={item.title || "未命名"}
+                description={
+                  <span
+                    style={{ fontSize: 12 }}
+                    // snippet 由后端生成，含 <mark> 高亮标记
+                    dangerouslySetInnerHTML={{ __html: item.snippet }}
+                  />
+                }
+              />
+            </List.Item>
+          )}
+        />
+      </Modal>
 
       {/* 抽屉整体懒加载，且只有开过一次才挂载 —— 从没点过「历史版本」的用户不用为它买单 */}
       {historyOpen && (

@@ -44,6 +44,7 @@ pub mod mcp_client;
 #[cfg(desktop)]
 pub mod mcp_http;
 pub mod note;
+pub mod note_excerpt;
 #[cfg(desktop)]
 pub mod ocr;
 // macOS 零二进制 OCR（Apple Vision FFI）；仅 macOS 编译

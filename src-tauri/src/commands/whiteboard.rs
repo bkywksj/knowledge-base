@@ -162,3 +162,16 @@ pub fn save_whiteboard_library(
 ) -> Result<(), String> {
     whiteboard::save_library(&state.data_dir, &content).map_err(|e| e.to_string())
 }
+
+// ─── 笔记卡片 ────────────────────────────────────────────────
+
+/// 批量取笔记摘要，供白板上的「笔记卡片」显示。
+///
+/// 每次打开白板都会调一次：卡片显示的是笔记**当前**内容，而不是插入那一刻的快照。
+#[tauri::command]
+pub fn get_note_excerpts(
+    state: tauri::State<'_, AppState>,
+    note_ids: Vec<i64>,
+) -> Result<Vec<crate::models::NoteExcerpt>, String> {
+    crate::services::note_excerpt::for_notes(&state.db, &note_ids).map_err(|e| e.to_string())
+}

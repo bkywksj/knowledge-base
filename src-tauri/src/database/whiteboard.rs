@@ -9,6 +9,7 @@
 //!   后者是 FTS 的实际索引源，见 schema v52。
 
 use rusqlite::params;
+use rusqlite::OptionalExtension;
 
 use crate::error::AppError;
 use crate::models::{note_type, Note, NoteInput};
@@ -16,6 +17,26 @@ use crate::models::{note_type, Note, NoteInput};
 use super::Database;
 
 impl Database {
+    /// 读白板的可搜索文字（画布上的文本，schema v52 的 `notes.search_text`）。
+    ///
+    /// 普通笔记这一列恒为 NULL，所以返回 Option 而不是空串 ——
+    /// 调用方能区分"这是白板但画布没字"和"这压根不是白板"。
+    pub fn get_note_search_text(&self, id: i64) -> Result<Option<String>, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let v = conn
+            .query_row(
+                "SELECT search_text FROM notes WHERE id = ?1",
+                rusqlite::params![id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(v)
+    }
+
     /// 新建一块白板（`notes` 表里 `note_type='whiteboard'` 的一行）。
     ///
     /// 排序值沿用 `create_note` 的规则：排到所属 folder 末尾（MAX+1000），

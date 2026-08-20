@@ -146,6 +146,20 @@ export interface SnapshotNoteUsage {
   byte_size: number;
 }
 
+/**
+ * 白板「笔记卡片」要显示的笔记摘要。与 Rust `models::NoteExcerpt` 对齐。
+ *
+ * 卡片是活的：每次打开白板都重新取一次，笔记改了卡片跟着变。
+ */
+export interface NoteExcerpt {
+  note_id: number;
+  title: string;
+  /** 已转纯文本并截断的正文；笔记不存在 / 已加密时是提示文案 */
+  excerpt: string;
+  /** 笔记已删除 —— 卡片显示成失效样式 */
+  missing: boolean;
+}
+
 /** 全库历史版本用量总览。与 Rust `models::SnapshotUsage` 对齐 */
 export interface SnapshotUsage {
   total_count: number;

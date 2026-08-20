@@ -2296,3 +2296,16 @@ pub struct SnapshotUsage {
     /// 占用最大的前 N 条笔记（不是全量 —— 几百条明细没人会逐条看）
     pub top_notes: Vec<SnapshotNoteUsage>,
 }
+
+/// 白板上「笔记卡片」要展示的笔记摘要。
+///
+/// 卡片是活的：每次打开白板都按 note_id 重新取一次，笔记改了卡片跟着变。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteExcerpt {
+    pub note_id: i64,
+    pub title: String,
+    /// 正文摘要（已转纯文本并截断）。笔记不存在 / 已加密时是提示文案
+    pub excerpt: String,
+    /// 笔记已删除或查不到 —— 前端据此把卡片显示成"失效"样式
+    pub missing: bool,
+}

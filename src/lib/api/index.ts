@@ -118,6 +118,7 @@ import type {
   NoteSnapshotMeta,
   NoteSnapshot,
   SnapshotUsage,
+  NoteExcerpt,
 } from "@/types";
 
 /** 系统相关 API */
@@ -399,6 +400,13 @@ export const whiteboardApi = {
   /** 覆盖写素材库 */
   saveLibrary: (content: string) =>
     invoke<void>("save_whiteboard_library", { content }),
+
+  /**
+   * 批量取笔记摘要，供画布上的「笔记卡片」显示。
+   * 每次打开白板调一次 —— 卡片显示的是笔记**当前**内容，不是插入那刻的快照。
+   */
+  noteExcerpts: (noteIds: number[]) =>
+    invoke<NoteExcerpt[]>("get_note_excerpts", { noteIds }),
 };
 
 /** T-003 隐藏笔记专用 API（/hidden 页面） */

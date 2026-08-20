@@ -18,6 +18,11 @@ import type {
 } from "@excalidraw/excalidraw/types";
 import { InputNumber, Slider, theme as antdTheme } from "antd";
 import { whiteboardApi } from "@/lib/api";
+import {
+  buildNoteCard,
+  collectCardNoteIds,
+  refreshNoteCards,
+} from "./noteCards";
 import "@excalidraw/excalidraw/index.css";
 
 /**
@@ -195,6 +200,13 @@ interface Props {
    * 归 Excalidraw 管，只能由本组件（lazy 内）用 imperative API 触发。
    */
   mermaidRef?: React.MutableRefObject<(() => void) | null>;
+  /**
+   * 外层用来接收「插入笔记卡片」能力的 ref。
+   *
+   * 与 exportRef / mermaidRef 同理：选笔记的弹窗画在页面里（静态 import），
+   * 但把卡片放进画布这件事只能由本组件（lazy 内）做。
+   */
+  insertCardRef?: React.MutableRefObject<((noteId: number) => Promise<void>) | null>;
 }
 
 /** Blob → base64（去掉 `data:*;base64,` 前缀），配合 systemApi.writeBinaryFile 落盘 */
@@ -243,6 +255,7 @@ export default function WhiteboardCanvas({
   exportRef,
   readOnly = false,
   mermaidRef,
+  insertCardRef,
 }: Props) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 上一次「已交给上层保存」的 JSON。用来挡掉 onChange 的空转（选中、hover、
@@ -576,6 +589,81 @@ export default function WhiteboardCanvas({
   const handleApi = useCallback((api: ExcalidrawImperativeAPI) => {
     apiRef.current = api;
   }, []);
+
+  /**
+   * 打开白板时把卡片刷成笔记的最新内容。
+   *
+   * 这是卡片区别于"贴一段死文字"的关键：笔记在别处改了，下次打开白板就能看到新的。
+   * 只读模式跳过 —— 历史版本预览要的是"那一版当时的样子"，
+   * 拿今天的笔记内容去刷新它是错的。
+   */
+  useEffect(() => {
+    if (readOnly) return;
+    let cancelled = false;
+
+    // 等画布挂载：excalidrawAPI 回调可能晚于本 effect
+    const timer = setTimeout(() => {
+      void (async () => {
+        const api = apiRef.current;
+        if (!api || cancelled) return;
+        const elements = api.getSceneElementsIncludingDeleted();
+        const ids = collectCardNoteIds(elements);
+        if (ids.length === 0) return;
+        try {
+          const excerpts = await whiteboardApi.noteExcerpts(ids);
+          if (cancelled) return;
+          const next = refreshNoteCards(
+            api.getSceneElementsIncludingDeleted(),
+            excerpts,
+          );
+          // null = 所有卡片内容都没变，跳过 updateScene
+          if (!next) return;
+          api.updateScene({
+            elements: next,
+            // 不进撤销栈：这是"同步笔记最新内容"，不是用户的编辑动作，
+            // 撤销它没有意义反而会让画布和笔记对不上
+            captureUpdate: CaptureUpdateAction.NEVER,
+          });
+        } catch (e) {
+          // 刷新失败就让卡片保持上次的内容 —— 比让整个白板打不开好
+          console.warn("[whiteboard] 刷新笔记卡片失败:", e);
+        }
+      })();
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [readOnly]);
+
+  /** 把「插入笔记卡片」交给外层 */
+  useEffect(() => {
+    if (!insertCardRef) return;
+    insertCardRef.current = async (noteId: number) => {
+      const api = apiRef.current;
+      if (!api) return;
+      const [ex] = await whiteboardApi.noteExcerpts([noteId]);
+      if (!ex) return;
+
+      // 放在当前视口中心：画布可能已经滚到别处，固定坐标会把卡片扔到看不见的地方
+      const { scrollX, scrollY, zoom, width, height } = api.getAppState();
+      const card = buildNoteCard(ex, {
+        x: -scrollX + width / 2 / zoom.value - 130,
+        y: -scrollY + height / 2 / zoom.value - 80,
+        width: 260,
+        height: 160,
+      });
+
+      api.updateScene({
+        elements: [...api.getSceneElementsIncludingDeleted(), ...card],
+        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+      });
+    };
+    return () => {
+      insertCardRef.current = null;
+    };
+  }, [insertCardRef]);
 
   /**
    * 把「打开 Mermaid 转图」交给外层顶栏。
