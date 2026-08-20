@@ -1,0 +1,239 @@
+//! 笔记内容快照 DAO（schema v57 的 `note_snapshots` 表）。
+//!
+//! 快照解决的是"自动保存把内容覆盖没了"这一类事故 —— 白板尤其突出：
+//! 画布是 800ms 防抖自动落库的，用户误删一大片图形**什么都不用做**，改动就已经进库，
+//! 而撤销栈只活在内存里，关掉应用就没了。
+//!
+//! 这一层只管存取，**不含任何"该不该存"的策略**（节流 / 去重 / 配额都在
+//! `services::snapshot` 里），保持 DAO 单一职责。
+
+use rusqlite::{params, OptionalExtension};
+
+use crate::error::AppError;
+use crate::models::{NoteSnapshot, NoteSnapshotMeta};
+
+use super::Database;
+
+impl Database {
+    /// 存一条快照，返回新行 id。调用方负责判断"该不该存"。
+    pub fn insert_note_snapshot(
+        &self,
+        note_id: i64,
+        content: &str,
+        reason: &str,
+    ) -> Result<i64, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+
+        let content_hash = crate::services::hash::sha256_hex(content);
+        conn.execute(
+            "INSERT INTO note_snapshots (note_id, content, content_hash, byte_size, reason)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![note_id, content, content_hash, content.len() as i64, reason],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// 最近一条快照的 `(内容哈希, 距今秒数)`，没有快照则 None。
+    ///
+    /// 距今秒数在 SQL 里用 `julianday` 算好再回传，免得 Rust 侧解析
+    /// `datetime('now','localtime')` 那种不带时区的字符串 —— 那是跨平台踩坑重灾区。
+    pub fn latest_snapshot_stamp(&self, note_id: i64) -> Result<Option<(String, f64)>, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+
+        let row = conn
+            .query_row(
+                "SELECT content_hash,
+                        (julianday('now', 'localtime') - julianday(created_at)) * 86400.0
+                 FROM note_snapshots
+                 WHERE note_id = ?1
+                 ORDER BY created_at DESC, id DESC
+                 LIMIT 1",
+                params![note_id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)),
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    /// 列出某条笔记的全部快照（**不含 content**）。
+    ///
+    /// 列表不带正文是刻意的：一块白板的快照动辄几十 KB，30 条一次性回传给前端
+    /// 就是几 MB 的 IPC 负担，而列表界面只需要时间和体积。正文按需用
+    /// `get_note_snapshot` 单条取。
+    pub fn list_note_snapshots(&self, note_id: i64) -> Result<Vec<NoteSnapshotMeta>, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, note_id, byte_size, reason, created_at
+             FROM note_snapshots
+             WHERE note_id = ?1
+             ORDER BY created_at DESC, id DESC",
+        )?;
+        let rows = stmt
+            .query_map(params![note_id], |r| {
+                Ok(NoteSnapshotMeta {
+                    id: r.get(0)?,
+                    note_id: r.get(1)?,
+                    byte_size: r.get(2)?,
+                    reason: r.get(3)?,
+                    created_at: r.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// 取单条快照的完整内容。
+    pub fn get_note_snapshot(&self, id: i64) -> Result<Option<NoteSnapshot>, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+
+        let row = conn
+            .query_row(
+                "SELECT id, note_id, content, byte_size, reason, created_at
+                 FROM note_snapshots WHERE id = ?1",
+                params![id],
+                |r| {
+                    Ok(NoteSnapshot {
+                        id: r.get(0)?,
+                        note_id: r.get(1)?,
+                        content: r.get(2)?,
+                        byte_size: r.get(3)?,
+                        reason: r.get(4)?,
+                        created_at: r.get(5)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    /// 只保留最近 `keep` 条，其余删除，返回删除条数。
+    pub fn prune_note_snapshots(&self, note_id: i64, keep: i64) -> Result<usize, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+
+        // created_at 只精确到秒，同一秒内可能有多条，所以排序要带 id 兜底，
+        // 否则 LIMIT 取到哪几条是不确定的
+        let deleted = conn.execute(
+            "DELETE FROM note_snapshots
+             WHERE note_id = ?1 AND id NOT IN (
+                 SELECT id FROM note_snapshots
+                 WHERE note_id = ?1
+                 ORDER BY created_at DESC, id DESC
+                 LIMIT ?2
+             )",
+            params![note_id, keep],
+        )?;
+        Ok(deleted)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::models::NoteInput;
+
+    fn mem_db() -> crate::database::Database {
+        crate::database::Database::init(":memory:").unwrap()
+    }
+
+    fn new_note(db: &crate::database::Database, content: &str) -> i64 {
+        db.create_note(&NoteInput {
+            title: "白板".into(),
+            content: content.into(),
+            folder_id: None,
+        })
+        .unwrap()
+        .id
+    }
+
+    #[test]
+    fn insert_and_read_back() {
+        let db = mem_db();
+        let note_id = new_note(&db, "v1");
+
+        let sid = db.insert_note_snapshot(note_id, "画布 A", "auto").unwrap();
+        let got = db.get_note_snapshot(sid).unwrap().expect("应能读回");
+        assert_eq!(got.content, "画布 A");
+        assert_eq!(got.note_id, note_id);
+        assert_eq!(got.reason, "auto");
+        assert_eq!(got.byte_size, "画布 A".len() as i64);
+
+        // 列表不带正文，但条数和元信息要对
+        let list = db.list_note_snapshots(note_id).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, sid);
+    }
+
+    /// 节流与去重都依赖这条：它必须给出最近一份的哈希，且 age 是"刚刚"。
+    #[test]
+    fn latest_stamp_tracks_newest() {
+        let db = mem_db();
+        let note_id = new_note(&db, "v1");
+        assert!(db.latest_snapshot_stamp(note_id).unwrap().is_none());
+
+        db.insert_note_snapshot(note_id, "旧", "auto").unwrap();
+        db.insert_note_snapshot(note_id, "新", "auto").unwrap();
+
+        let (hash, age) = db.latest_snapshot_stamp(note_id).unwrap().unwrap();
+        assert_eq!(hash, crate::services::hash::sha256_hex("新"));
+        // 刚写进去，age 必须接近 0（留足余量避免 CI 慢机器抖动）
+        assert!(age < 60.0, "age 应接近 0，实际 {}", age);
+    }
+
+    /// 份数上限：超出的从最旧开始删，最新的必须留下。
+    #[test]
+    fn prune_keeps_newest_only() {
+        let db = mem_db();
+        let note_id = new_note(&db, "v1");
+
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            ids.push(
+                db.insert_note_snapshot(note_id, &format!("画布 {}", i), "auto")
+                    .unwrap(),
+            );
+        }
+
+        let deleted = db.prune_note_snapshots(note_id, 2).unwrap();
+        assert_eq!(deleted, 3);
+
+        let left = db.list_note_snapshots(note_id).unwrap();
+        assert_eq!(left.len(), 2);
+        // created_at 只精确到秒，5 条大概率同秒 —— 所以排序必须靠 id 兜底，
+        // 留下的应是 id 最大的两条
+        let left_ids: Vec<i64> = left.iter().map(|s| s.id).collect();
+        assert!(left_ids.contains(&ids[4]), "最新一份必须留下");
+        assert!(left_ids.contains(&ids[3]));
+    }
+
+    /// 笔记永久删除后快照不能变成孤儿数据（靠 FOREIGN KEY ... ON DELETE CASCADE，
+    /// 前提是 Database::init 里开了 PRAGMA foreign_keys=ON）。
+    #[test]
+    fn snapshots_cascade_on_note_delete() {
+        let db = mem_db();
+        let note_id = new_note(&db, "v1");
+        db.insert_note_snapshot(note_id, "画布", "auto").unwrap();
+
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute("DELETE FROM notes WHERE id = ?1", [note_id])
+                .unwrap();
+        }
+
+        assert!(db.list_note_snapshots(note_id).unwrap().is_empty());
+    }
+}

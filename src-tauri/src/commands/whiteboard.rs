@@ -4,7 +4,7 @@
 //! `update_note` / `delete_note` …）。这里只放白板独有的两条：
 //! 建一块空白板、保存画布。
 
-use crate::models::{EmbeddedWhiteboardSaved, Note};
+use crate::models::{EmbeddedWhiteboardSaved, Note, NoteSnapshotMeta};
 use crate::services::whiteboard;
 use crate::state::AppState;
 use tauri::{Emitter, Manager};
@@ -88,4 +88,77 @@ pub fn save_whiteboard_scene(
         }),
     );
     Ok(())
+}
+
+// ─── 历史版本 ────────────────────────────────────────────────
+
+/// 列出白板的历史版本（不含画布正文，只有时间 / 体积 / 来源）。
+#[tauri::command]
+pub fn list_whiteboard_snapshots(
+    state: tauri::State<'_, AppState>,
+    note_id: i64,
+) -> Result<Vec<NoteSnapshotMeta>, String> {
+    whiteboard::list_snapshots(&state.db, note_id).map_err(|e| e.to_string())
+}
+
+/// 取某一份历史版本的画布内容（图片已内联，可直接渲染预览）。
+#[tauri::command]
+pub fn get_whiteboard_snapshot_scene(
+    state: tauri::State<'_, AppState>,
+    snapshot_id: i64,
+) -> Result<String, String> {
+    whiteboard::snapshot_scene(&state.db, &state.vault, &state.data_dir, snapshot_id)
+        .map_err(|e| e.to_string())
+}
+
+/// 手动存一个版本。返回 false = 内容与上一份存档相同，没存。
+#[tauri::command]
+pub fn create_whiteboard_snapshot(
+    state: tauri::State<'_, AppState>,
+    note_id: i64,
+) -> Result<bool, String> {
+    whiteboard::create_snapshot(&state.db, note_id).map_err(|e| e.to_string())
+}
+
+/// 把白板回滚到某一份历史版本（回滚前会自动把当前版本另存一份）。
+///
+/// 与 `save_whiteboard_scene` 一样广播 `note:updated` —— 回滚改的是笔记内容，
+/// 别的窗口（笔记列表 / 弹出窗）得跟着刷新。这里**不带** sourceLabel：
+/// 发起方自己也需要重新加载画布，不能像常规保存那样忽略自己发出的事件。
+#[tauri::command]
+pub fn restore_whiteboard_snapshot(
+    state: tauri::State<'_, AppState>,
+    window: tauri::Window,
+    note_id: i64,
+    snapshot_id: i64,
+) -> Result<(), String> {
+    whiteboard::restore_snapshot(
+        &state.db,
+        &state.vault,
+        &state.data_dir,
+        note_id,
+        snapshot_id,
+    )
+    .map_err(|e| e.to_string())?;
+    let _ = window
+        .app_handle()
+        .emit("note:updated", serde_json::json!({ "id": note_id }));
+    Ok(())
+}
+
+// ─── 素材库 ──────────────────────────────────────────────────
+
+/// 读用户的白板素材库（`.excalidrawlib` 原文）。没存过返回空串。
+#[tauri::command]
+pub fn get_whiteboard_library(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    whiteboard::load_library(&state.data_dir).map_err(|e| e.to_string())
+}
+
+/// 覆盖写素材库。前端在用户增删素材时（防抖后）调用。
+#[tauri::command]
+pub fn save_whiteboard_library(
+    state: tauri::State<'_, AppState>,
+    content: String,
+) -> Result<(), String> {
+    whiteboard::save_library(&state.data_dir, &content).map_err(|e| e.to_string())
 }

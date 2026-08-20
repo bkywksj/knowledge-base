@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 
 use crate::database::Database;
 use crate::error::AppError;
-use crate::models::{EmbeddedWhiteboardSaved, Note, NoteInput};
+use crate::models::{EmbeddedWhiteboardSaved, Note, NoteInput, NoteSnapshotMeta};
 use crate::services::{
     asset_path,
     image::ImageService,
@@ -345,6 +345,12 @@ pub fn save_scene(
     externalize_files(&mut scene, db, vault, data_dir, id);
     // 把画布里的 [[双链]] 落成元素 link，下次打开就有可点的链接角标
     apply_wiki_links(&mut scene, db);
+
+    // 覆盖之前留一份旧内容（自带节流 + 去重，见 services::snapshot）。
+    // 位置很关键：必须在 update 之前，此刻库里还是上一版画布。
+    // 校验之后才做，是不想为一次注定失败的保存白存一份快照。
+    crate::services::snapshot::capture_auto(db, id);
+
     let search_text = extract_text(&scene);
     let stored = serde_json::to_string(&scene)?;
     db.update_whiteboard_scene(id, &stored, &search_text)?;
@@ -530,6 +536,115 @@ pub fn load_scene(
     let mut scene = parse_scene(&note.content)?;
     inline_files(&mut scene, vault, data_dir);
     Ok(serde_json::to_string(&scene)?)
+}
+
+// ─── 历史版本（快照）────────────────────────────────────────
+//
+// 存取策略在 `services::snapshot`，这里只做"白板要额外做的那一步"：
+// 快照里存的是**外置后**的画布（图片是 `kb-asset://` 引用），
+// 预览前必须和 `load_scene` 一样内联回 base64，否则画布上全是裂图。
+
+/// 列出这块白板的历史版本（不含正文）。
+pub fn list_snapshots(db: &Database, note_id: i64) -> Result<Vec<NoteSnapshotMeta>, AppError> {
+    db.list_note_snapshots(note_id)
+}
+
+/// 取某一份历史版本的画布，图片已内联，可直接丢给 Excalidraw 预览。
+pub fn snapshot_scene(
+    db: &Database,
+    vault: &RwLock<VaultState>,
+    data_dir: &Path,
+    snapshot_id: i64,
+) -> Result<String, AppError> {
+    let snap = db
+        .get_note_snapshot(snapshot_id)?
+        .ok_or_else(|| AppError::NotFound(format!("历史版本 {} 不存在", snapshot_id)))?;
+    if snap.content.trim().is_empty() {
+        return Ok(serde_json::to_string(&empty_scene())?);
+    }
+    let mut scene = parse_scene(&snap.content)?;
+    inline_files(&mut scene, vault, data_dir);
+    Ok(serde_json::to_string(&scene)?)
+}
+
+/// 把白板回滚到某一份历史版本。
+///
+/// 回滚前会先把**当前**画布另存一份（`before_restore`），所以点错了还能再滚回来 ——
+/// 没有这一步的话，"恢复"就是个不可逆操作，比不提供还危险。
+///
+/// 回滚走的是完整的 `save_scene` 链路而不是直接写库：搜索索引、双链、
+/// content_hash 都要跟着这一版重建，否则库里会留下一堆对不上的派生数据。
+///
+/// 一个已知的降级：若快照引用的图片附件已被孤儿清理删掉，回滚后那张图会显示成占位框
+/// （`inline_files` 读不到就保持引用原样）。画布其余部分不受影响。
+pub fn restore_snapshot(
+    db: &Database,
+    vault: &RwLock<VaultState>,
+    data_dir: &Path,
+    note_id: i64,
+    snapshot_id: i64,
+) -> Result<(), AppError> {
+    let snap = db
+        .get_note_snapshot(snapshot_id)?
+        .ok_or_else(|| AppError::NotFound(format!("历史版本 {} 不存在", snapshot_id)))?;
+    if snap.note_id != note_id {
+        // 防的是前端传串了 id 把 A 白板的内容盖到 B 白板上
+        return Err(AppError::InvalidInput(
+            "该历史版本不属于这块白板".into(),
+        ));
+    }
+
+    crate::services::snapshot::capture_before_restore(db, note_id);
+    // 快照正文已是外置形态，再走一遍 externalize 是幂等的（非 dataURL 直接跳过）
+    save_scene(db, vault, data_dir, note_id, &snap.content)
+}
+
+/// 用户主动存一个版本（不受自动快照的时间窗节流限制）。
+/// 返回 false 表示内容与上一份存档完全相同，没有必要再存。
+pub fn create_snapshot(db: &Database, note_id: i64) -> Result<bool, AppError> {
+    crate::services::snapshot::capture_manual(db, note_id)
+}
+
+// ─── 素材库 ──────────────────────────────────────────────────
+//
+// Excalidraw 的"素材库"（用户收藏的图形组件）默认只活在组件内存里 —— 宿主不接管的话，
+// 用户辛苦攒的一套图标关掉应用就没了，更别说换设备。
+//
+// 存成 data_dir 根下的一个标准 `.excalidrawlib` 文件而不是塞进 SQLite：
+// - 它本身就是 Excalidraw 生态的通用格式，用户可以直接拿走 / 分享 / 导进别的白板工具
+// - 素材里带图片时体积可观（base64），不该混进按行读写的配置表
+// - 跟着数据目录走，换机器搬目录即可
+
+/// 素材库文件名（放 data_dir 根，与 theme-bg 同级）
+const LIBRARY_FILE: &str = "whiteboard-library.excalidrawlib";
+
+/// 读素材库原文。没有这个文件（从没存过）返回空串，前端按"空库"处理。
+pub fn load_library(data_dir: &Path) -> Result<String, AppError> {
+    let path = data_dir.join(LIBRARY_FILE);
+    if !path.exists() {
+        return Ok(String::new());
+    }
+    Ok(std::fs::read_to_string(&path)?)
+}
+
+/// 写素材库。
+///
+/// 落盘前先验一次 JSON：素材库是覆盖写的，一旦写进去一坨坏数据，
+/// 用户下次打开画布就是空库且原内容不可恢复 —— 和画布保存同样的道理。
+pub fn save_library(data_dir: &Path, content: &str) -> Result<(), AppError> {
+    let value: Value = serde_json::from_str(content)
+        .map_err(|e| AppError::InvalidInput(format!("素材库不是合法 JSON: {}", e)))?;
+    if !value
+        .get("libraryItems")
+        .map(|v| v.is_array())
+        .unwrap_or(false)
+    {
+        return Err(AppError::InvalidInput(
+            "素材库缺少 libraryItems 数组".into(),
+        ));
+    }
+    std::fs::write(data_dir.join(LIBRARY_FILE), content)?;
+    Ok(())
 }
 
 #[cfg(test)]

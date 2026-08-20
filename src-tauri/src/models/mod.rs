@@ -2248,3 +2248,31 @@ pub struct PushPopupData {
     pub status: String,
     pub run_at: String,
 }
+
+// ─── 笔记内容快照 ─────────────────────────────
+
+/// 快照元信息（列表用，**不含正文**）。
+///
+/// 一块白板的快照几十 KB 起步，列表一次拉几十条正文就是好几 MB 的 IPC 负担，
+/// 而列表界面只需要时间和体积 —— 正文按需单条取（`get_note_snapshot`）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteSnapshotMeta {
+    pub id: i64,
+    pub note_id: i64,
+    /// 正文字节数，界面上给用户一个"这一版有多大"的直观量
+    pub byte_size: i64,
+    /// 触发来源："auto"（自动保存前）/ "manual"（用户手动存档）/ "before_restore"（回滚前的兜底）
+    pub reason: String,
+    pub created_at: String,
+}
+
+/// 快照完整内容（预览 / 回滚用）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteSnapshot {
+    pub id: i64,
+    pub note_id: i64,
+    pub content: String,
+    pub byte_size: i64,
+    pub reason: String,
+    pub created_at: String,
+}

@@ -124,6 +124,29 @@ pub fn write_text_file(path: String, content: String) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| format!("写入文件失败 {}: {}", path, e))
 }
 
+/// 读取用户选中的文本文件（UTF-8）。`write_text_file` 的对称操作，
+/// 给"导入 .excalidraw / .json 之类小文本"用。
+///
+/// 上限 32MB：这个命令服务的是配置 / 场景一类的小文件，用户在对话框里误选一个
+/// 几 GB 的日志或视频时，应该立刻报错而不是把整个文件读进内存再把应用拖死。
+///
+/// 安全：路径由用户在原生 Open 对话框中选定；非 UTF-8 的文件直接报错而不是猜编码 ——
+/// 猜错编码得到的是一堆乱码，比明确失败更难排查。
+#[tauri::command]
+pub fn read_text_file(path: String) -> Result<String, String> {
+    const MAX_BYTES: u64 = 32 * 1024 * 1024;
+
+    let meta = std::fs::metadata(&path).map_err(|e| format!("读取文件失败 {}: {}", path, e))?;
+    if meta.len() > MAX_BYTES {
+        return Err(format!(
+            "文件 {} MB 过大（上限 {} MB）",
+            meta.len() / 1024 / 1024,
+            MAX_BYTES / 1024 / 1024
+        ));
+    }
+    std::fs::read_to_string(&path).map_err(|e| format!("读取文件失败 {}: {}", path, e))
+}
+
 /// 把 base64 编码的二进制数据写入指定路径。用于导出 PNG / PDF 等需要走原生 Save 对话框
 /// 的二进制文件——前端先调 `tauri-plugin-dialog::save()` 拿到目标路径，再把 base64
 /// 后的数据传到这里。

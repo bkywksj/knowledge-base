@@ -10,6 +10,7 @@ pub mod prompt;
 pub mod push;
 pub mod schema;
 pub mod search;
+pub mod snapshots;
 pub mod sync;
 pub mod sync_v1;
 pub mod tags;

@@ -66,6 +66,7 @@ pub mod search;
 #[cfg(desktop)]
 pub mod shortcut;
 pub mod skills;
+pub mod snapshot;
 pub mod source_file;
 pub mod source_writeback;
 pub mod sync;

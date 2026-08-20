@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 56;
+pub const SCHEMA_VERSION: i32 = 57;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -86,6 +86,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             53 => migrate_v53_to_v54(conn)?,
             54 => migrate_v54_to_v55(conn)?,
             55 => migrate_v55_to_v56(conn)?,
+            56 => migrate_v56_to_v57(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2369,6 +2370,37 @@ fn migrate_v54_to_v55(conn: &Connection) -> Result<(), AppError> {
 /// 混在一个列表里会让用户在找临时文件时被要求输 PIN。
 ///
 /// 部分索引与 idx_notes_hidden 同思路：只覆盖活跃笔记，不让回收站条目干扰热路径。
+/// v57：笔记内容快照表（白板"画了一下午被一次误操作覆盖"的兜底）。
+///
+/// 为什么必须有：白板是 800ms 防抖**自动**保存的，用户误删一大片图形后不需要做任何事，
+/// 改动就已经落库；撤销栈又只活在内存里，关掉应用就没了 —— 在此之前，
+/// 这种情况下用户没有任何找回内容的手段。
+///
+/// 表设计成 note_id 通用（不是 whiteboard_id）：普通笔记将来要接版本历史时直接复用，
+/// 不用再迁一次库。`ON DELETE CASCADE` + 库里已开 `PRAGMA foreign_keys=ON`，
+/// 笔记永久删除时快照自动清干净，不留孤儿数据。
+fn migrate_v56_to_v57(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v56 -> v57 (note_snapshots 内容快照)");
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS note_snapshots (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_id      INTEGER NOT NULL,
+            content      TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            byte_size    INTEGER NOT NULL,
+            reason       TEXT NOT NULL DEFAULT 'auto',
+            created_at   DATETIME DEFAULT (datetime('now', 'localtime')),
+            FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
+        );
+         CREATE INDEX IF NOT EXISTS idx_note_snapshots_note
+         ON note_snapshots(note_id, created_at DESC);",
+    )?;
+
+    set_version(conn, 57)?;
+    Ok(())
+}
+
 fn migrate_v55_to_v56(conn: &Connection) -> Result<(), AppError> {
     log::info!("数据库迁移: v55 -> v56 (notes.is_scratch 临时编辑标记)");
 
