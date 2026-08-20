@@ -20,7 +20,7 @@
 
 | 版本 | 任务 | 内容 | 状态 |
 |------|------|------|------|
-| **v59** | P0-1 | `ai_models` API Key 就地加密（无新表） | ⬜ |
+| **v59** | P0-1a | `ai_models` + `asr.api_key` 就地加密（无新表） | ✅ 85407cf |
 | **v60** | P1-2 | 搜索筛选辅助索引 | ⬜ |
 | **v61** | P1-3 | Excel 数据层：`datasets` / `dataset_fields` / `dataset_rows` | ⬜ |
 | **v62** | P1-5 | 收件箱：`inbox_items` | ⬜ |
@@ -46,32 +46,51 @@ npx tsc --noEmit
 
 ## 阶段 P0 —— 安全债与低成本高收益
 
-### P0-1　API Key 加密入库 🔴
+### P0-1a　API Key 加密入库　✅ 已完成（85407cf）
 
 **为什么**：`database/ai.rs:302-310`（INSERT）与 `:345-352`（UPDATE）直接写明文 `api_key`；
-而 `services/crypto.rs:41` 的 AES-256-GCM `encrypt()` 早就存在，只给了 WebDAV/备份密码用。
+而 AES-256-GCM `encrypt()` 早就存在，只给了 WebDAV/备份密码用。
 ASR key 同样明文（`services/asr/mod.rs:6-7` 注释自认）。
 
-**改动清单**
+**已完成**
 
-- [ ] `database/schema.rs` 新增 `migrate_v58_to_v59`：遍历 `ai_models`，非空 `api_key` →
-      加密后写回，加 `enc:v1:` 前缀区分；**幂等**（重复跑不二次加密）
-- [ ] `services/crypto.rs` 新增 `encrypt_field` / `decrypt_field`（带前缀 + 容错）
-- [ ] `database/ai.rs` INSERT / UPDATE 前加密
+- [x] **`crypto` 从 `services/` 提升为顶层模块**（计划外，但必需）：它是无状态纯函数工具，
+      留在 `services/` 会让 database 层解密字段变成「下层反向依赖上层」，破坏三层架构。
+      成本仅 6 行（1 处 mod 声明 + 4 处 use 路径），`git mv` 保留了历史
+- [x] `crypto.rs` 新增 `encrypt_field` / `decrypt_field` / `decrypt_field_or_none` /
+      `is_encrypted_field`，密文带 `enc:v1:` 前缀
+- [x] `database/schema.rs` `migrate_v58_to_v59`：存量明文就地加密。三条容错原则 ——
+      幂等（已加密跳过）/ 单条失败只记 warn 保持明文 / 全程只 UPDATE 不删数据
+- [x] `database/ai.rs` INSERT / UPDATE 前加密（`encrypt_api_key` 辅助函数，空串落 NULL）
+- [x] `database/ai.rs` 解密放在 **`row_to_ai_model`（读取唯一入口）** ——
+      上层 16 个 `get_ai_model` / `get_default_ai_model` 调用点零改动即可拿明文；
+      放高一层会让部分调用点把密文当 Key 发给服务商
+- [x] `services/asr/mod.rs` 读写两处同样加解密
+- [x] 12 个单测：往返 / 空值 / 幂等 / 明文兼容 / 损坏降级 / 落库密文读出明文 / 迁移幂等
+
+**风险点已处理**：`crypto.rs derive_key()` 是 `sha256(hostname ‖ APP_SALT)`，
+**换机器或改主机名后解不开** → `decrypt_field_or_none` 降级为「未配置」并记 warn，
+不让 `list_ai_models` 整个失败（否则用户连重填 Key 的入口都找不到）。
+
+**验收结果**：`cargo test` 670 passed（另 2 个失败是既有的 dataview flaky 与
+tags 唯一约束用例）；clippy 无新增警告；`tsc --noEmit` 通过。
+
+---
+
+### P0-1b　Key 不回显 + 三态更新　⬜ 待做
+
+**为什么拆出来**：`src/lib/configShare.ts:178-184` 有「把 AiModel 序列化（**含 api_key**）」
+的配置分享功能，直接砍掉 `api_key` 返回会**破坏配置分享**。P0-1a 已达成核心威胁模型
+（防 app.db 被复制走后明文泄漏），回显问题风险面大得多，单独做。
+
 - [ ] `database/ai.rs` UPDATE 实现三态：`None`=保持不变 / `Some("")`=清除 / `Some(k)`=替换
       （抄藏知 `settings_ai.py:139-206` 的 keep/replace/clear）
-- [ ] `database/ai.rs:23` 读取处按前缀解密；无前缀视为历史明文（兼容）
 - [ ] `models/mod.rs` `AiModel` 增加 `has_api_key: bool`
-- [ ] 前端不回显明文，输入框 placeholder 显示"已保存（留空保持不变）"
+- [ ] 列表/详情不返回明文；配置分享改走**显式** Command（用户主动点"分享配置"才导出明文）
+- [ ] 前端输入框 placeholder "已保存（留空保持不变）"
+- [ ] `src/lib/configShare.ts` 相应改造
 
-**风险点（必须处理）**：`crypto.rs:27 derive_key()` 是 `sha256(hostname ‖ APP_SALT)` ——
-**换机器或改主机名后解不开**。因此：
-- `decrypt` 失败 **不 panic、不让整个列表查询失败**，降级为"密钥失效，请重新填写"
-- 迁移函数必须幂等
-
-**验收**：新建模型后直接查库看不到明文；换主机名后 App 不崩、给出可操作提示；旧库升级后原有模型仍可用。
-
-**工作量**：0.5~1 天　**依赖**：无
+**工作量**：0.5~1 天
 
 ---
 
