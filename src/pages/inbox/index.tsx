@@ -13,7 +13,8 @@ import {
   theme as antdTheme,
 } from "antd";
 import { RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
-import { inboxApi, pdfApi } from "@/lib/api";
+import { inboxApi, pdfApi, noteApi } from "@/lib/api";
+import { importWordFiles } from "@/lib/wordImport";
 import { useAppStore } from "@/store";
 import type { InboxItem, InboxKind } from "@/types";
 
@@ -107,9 +108,19 @@ export default function InboxPage() {
             true,
           );
           ok = r.some((x) => x.noteId != null);
-          if (!ok) {
-            message.warning(`仍然失败：${r[0]?.error ?? "未知原因"}`);
-          }
+          if (!ok) message.warning(`仍然失败：${r[0]?.error ?? "未知原因"}`);
+          break;
+        }
+        case "import_word": {
+          const r = await importWordFiles([item.source], detail.folderId ?? null);
+          ok = r.some((x) => x.noteId != null);
+          if (!ok) message.warning(`仍然失败：${r[0]?.error ?? "未知原因"}`);
+          break;
+        }
+        case "clip": {
+          // 剪藏失败常是临时的（限流 / 网络抖动），重试成功率不低
+          await noteApi.clipUrl(item.source, detail.folderId ?? null);
+          ok = true;
           break;
         }
         default:

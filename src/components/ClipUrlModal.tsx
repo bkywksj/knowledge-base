@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Modal, Input, Alert, Typography, message } from "antd";
 import { Globe } from "lucide-react";
-import { noteApi } from "@/lib/api";
+import { noteApi, inboxApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import { useNavigate } from "react-router-dom";
 
@@ -51,6 +51,19 @@ export function ClipUrlModal({ open, folderId, onClose }: Props) {
       navigate(`/notes/${note.id}`);
     } catch (e) {
       message.error(`剪藏失败：${e}`);
+      // P1-5：失败的 URL 落进收件箱。网页剪藏失败常是临时性的
+      // （对方限流 / 需要登录 / 网络抖动），过一阵重试往往就成了 ——
+      // 但前提是那个 URL 还找得回来，而 message 一闪就没了。
+      void inboxApi
+        .add({
+          kind: "clip",
+          source: trimmed,
+          title: trimmed,
+          reason: String(e),
+          detailJson: JSON.stringify({ folderId: folderId ?? null }),
+        })
+        .then(() => useAppStore.getState().refreshInboxCount())
+        .catch((err) => console.error("[inbox] 记录剪藏失败项时出错:", err));
       setLoading(false);
     }
   }

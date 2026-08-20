@@ -9,6 +9,7 @@ import type { NavigateFunction } from "react-router-dom";
 import { noteApi, importApi, pdfApi, ocrApi, inboxApi, sourceFileApi, tagApi, folderApi, whiteboardApi } from "./api";
 import { importWordFiles } from "./wordImport";
 import { useAppStore } from "@/store";
+import type { InboxKind } from "@/types";
 
 /**
  * 导入完成后的统一跳转规则（业界 Bear / Apple Notes / VS Code 路线）：
@@ -272,7 +273,7 @@ export async function importPdfsFlow(
             const ocrFail = r2.filter((r) => r.noteId === null);
             if (ocrOk.length > 0)
               message.success(`OCR 成功导入 ${ocrOk.length} 个扫描件`);
-            if (ocrFail.length > 0) showPdfFailModal(ocrFail, "OCR 后仍失败", folderId);
+            if (ocrFail.length > 0) showImportFailModal(ocrFail, "OCR 后仍失败", "import_pdf", folderId);
             useAppStore.getState().bumpNotesRefresh();
             const ocrIds = ocrOk
               .map((r) => r.noteId)
@@ -286,7 +287,7 @@ export async function importPdfsFlow(
       });
     } else if (fail.length > 0) {
       // 无扫描件可 OCR，或引擎不可用 → 直接列失败清单
-      showPdfFailModal(fail, `${fail.length} 个 PDF 导入失败`, folderId);
+      showImportFailModal(fail, `${fail.length} 个 PDF 导入失败`, "import_pdf", folderId);
     }
 
     useAppStore.getState().bumpNotesRefresh();
@@ -297,19 +298,26 @@ export async function importPdfsFlow(
   }
 }
 
-/** PDF 导入失败清单弹窗（抽出复用） */
-function showPdfFailModal(
+/**
+ * 批量导入的失败清单弹窗 —— PDF / Word 共用。
+ *
+ * 两者的失败结构本来就一样（`sourcePath` + `error`），弹窗内容也一样；
+ * 各写一份意味着"落库 + 提示"这套逻辑要维护两遍，加第三种格式时还会再抄一遍。
+ *
+ * P1-5：失败项同时**落库排队**。此前这个弹窗关掉就没了 —— 一次导入几十个文件、
+ * 失败七八个，用户得自己记住是哪几个、为什么失败，体验很糟。
+ */
+function showImportFailModal(
   fail: { sourcePath: string; error?: string | null }[],
   title: string,
+  kind: InboxKind,
   folderId?: number | null,
 ): void {
-  // P1-5：失败项落库排队。此前这个弹窗关掉就没了 —— 一次导入几十个 PDF、
-  // 失败七八个，用户得自己记住是哪几个、为什么失败，体验很糟。
-  // 落库失败不影响弹窗展示（收件箱是增强，不是前置条件）。
+  // 落库失败不影响弹窗展示（收件箱是增强，不是前置条件）
   void Promise.all(
     fail.map((r) =>
       inboxApi.add({
-        kind: "import_pdf",
+        kind,
         source: r.sourcePath,
         title: r.sourcePath.split(/[\\/]/).pop() ?? r.sourcePath,
         reason: r.error ?? "未知原因",
