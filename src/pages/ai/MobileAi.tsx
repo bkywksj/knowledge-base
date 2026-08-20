@@ -12,15 +12,22 @@ import {
   Link2,
   Share2,
   Download,
+  Pencil,
+  Trash2,
+  CheckSquare,
+  Square,
+  Eraser,
 } from "lucide-react";
 import { ShareConfigModal } from "@/components/config-share/ShareConfigModal";
 import { ImportConfigModal } from "@/components/config-share/ImportConfigModal";
 import { exportAiModel, type Envelope } from "@/lib/configShare";
-import { message } from "antd";
+import { Input, Modal, message } from "antd";
 import { aiChatApi, aiModelApi } from "@/lib/api";
 import type { AiConversation, AiModel } from "@/types";
 import { relativeTime } from "@/lib/utils";
 import { MobileAiModelModal } from "@/components/ai/MobileAiModelModal";
+import { useLongPress } from "@/hooks/useLongPress";
+import { ActionSheet, type ActionSheetItem } from "@/components/mobile/ActionSheet";
 
 /**
  * 移动端 AI 助手列表页（设计稿：06-ai.html）
@@ -35,7 +42,17 @@ import { MobileAiModelModal } from "@/components/ai/MobileAiModelModal";
  * 跳转：
  * - 点击对话 / FAB / 快捷入口 → 暂走 /ai?conv=ID（桌面 AiChatPage 已支持），
  *   等 MobileAiChat 做完再换 /ai-chat/:id
+ *
+ * 对话管理（此前完全缺失：「管理」按钮 navigate("/ai") 指向本页 = 点了没反应，
+ * 且没有任何删除入口，历史只增不减）：
+ * - 长按单条 → ActionSheet：重命名 / 删除
+ * - 顶部「管理」→ ActionSheet：进入多选批量删除 / 一键清理 N 天前的对话
+ * 后端能力早已具备（delete_ai_conversation / delete_ai_conversations_before /
+ * rename_ai_conversation），桌面端 pages/ai/index.tsx 一直在用，这里只是接上。
  */
+
+/** 「清理更早对话」可选的保留天数 */
+const CLEANUP_DAYS = [7, 30, 90];
 
 interface QuickEntry {
   key: string;
@@ -81,6 +98,17 @@ export function MobileAi() {
   const [addModelOpen, setAddModelOpen] = useState(false);
   const [shareEnv, setShareEnv] = useState<Envelope | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  // ── 对话管理 ──
+  /** 长按单条唤起的动作面板 */
+  const [sheetConv, setSheetConv] = useState<AiConversation | null>(null);
+  /** 顶部「管理」唤起的动作面板 */
+  const [manageSheetOpen, setManageSheetOpen] = useState(false);
+  /** 多选模式（批量删除） */
+  const [manageMode, setManageMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  /** 重命名弹窗：非 null = 正在重命名该对话 */
+  const [renameConv, setRenameConv] = useState<AiConversation | null>(null);
+  const [renameText, setRenameText] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -116,6 +144,135 @@ export function MobileAi() {
   function openConversation(conv: AiConversation) {
     navigate(`/ai-chat/${conv.id}`);
   }
+
+  function exitManageMode() {
+    setManageMode(false);
+    setSelectedIds([]);
+  }
+
+  function toggleSelected(id: number) {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  }
+
+  /** 删除若干对话（逐条调后端，失败的计数汇报，不中断其余） */
+  async function deleteConversations(ids: number[]) {
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await aiChatApi.deleteConversation(id);
+      } catch (e) {
+        failed += 1;
+        console.error("[MobileAi] 删除对话失败:", id, e);
+      }
+    }
+    if (failed > 0) message.warning(`${ids.length - failed} 条已删除，${failed} 条失败`);
+    else message.success(`已删除 ${ids.length} 条`);
+    await load();
+  }
+
+  function confirmDeleteOne(conv: AiConversation) {
+    Modal.confirm({
+      title: `删除「${conv.title || "未命名对话"}」？`,
+      content: "对话及其全部消息将被永久删除，不可恢复。",
+      okText: "删除",
+      okType: "danger",
+      cancelText: "取消",
+      onOk: () => deleteConversations([conv.id]),
+    });
+  }
+
+  function confirmDeleteSelected() {
+    if (selectedIds.length === 0) return;
+    const ids = [...selectedIds];
+    Modal.confirm({
+      title: `删除选中的 ${ids.length} 条对话？`,
+      content: "对话及其全部消息将被永久删除，不可恢复。",
+      okText: "删除",
+      okType: "danger",
+      cancelText: "取消",
+      onOk: async () => {
+        await deleteConversations(ids);
+        exitManageMode();
+      },
+    });
+  }
+
+  /** 清理 N 天前的对话（后端一次性按时间删，比逐条选快得多） */
+  function confirmCleanupBefore(days: number) {
+    Modal.confirm({
+      title: `清理 ${days} 天前的对话？`,
+      content: `最近 ${days} 天内更新过的对话会保留，更早的将被永久删除。`,
+      okText: "清理",
+      okType: "danger",
+      cancelText: "取消",
+      onOk: async () => {
+        try {
+          const removed = await aiChatApi.deleteConversationsBefore(days);
+          message.success(removed > 0 ? `已清理 ${removed} 条` : "没有更早的对话");
+          await load();
+        } catch (e) {
+          message.error(`清理失败: ${e}`);
+        }
+      },
+    });
+  }
+
+  async function submitRename() {
+    if (!renameConv) return;
+    const title = renameText.trim();
+    if (!title) return;
+    try {
+      await aiChatApi.renameConversation(renameConv.id, title);
+      setRenameConv(null);
+      await load();
+    } catch (e) {
+      message.error(`重命名失败: ${e}`);
+    }
+  }
+
+  /** 长按单条对话的操作项 */
+  const convSheetItems: ActionSheetItem[] = sheetConv
+    ? [
+        {
+          key: "rename",
+          label: "重命名",
+          icon: <Pencil size={20} />,
+          onClick: () => {
+            setRenameText(sheetConv.title || "");
+            setRenameConv(sheetConv);
+          },
+        },
+        {
+          key: "delete",
+          label: "删除",
+          icon: <Trash2 size={20} />,
+          danger: true,
+          onClick: () => confirmDeleteOne(sheetConv),
+        },
+      ]
+    : [];
+
+  /** 顶部「管理」的操作项 */
+  const manageSheetItems: ActionSheetItem[] = [
+    {
+      key: "multi",
+      label: "批量选择删除",
+      icon: <CheckSquare size={20} />,
+      onClick: () => {
+        setSelectedIds([]);
+        setManageMode(true);
+      },
+    },
+    ...CLEANUP_DAYS.map((d) => ({
+      key: `cleanup-${d}`,
+      label: `清理 ${d} 天前的对话`,
+      icon: <Eraser size={20} />,
+      danger: true,
+      onClick: () => confirmCleanupBefore(d),
+    })),
+  ];
 
   async function createNew() {
     try {
@@ -221,12 +378,17 @@ export function MobileAi() {
 
         {/* 对话历史标题 */}
         <div className="flex items-center justify-between px-4 pt-1 pb-1 text-xs font-medium text-slate-400">
-          <span>对话历史</span>
+          <span>
+            对话历史
+            {manageMode && selectedIds.length > 0 && ` · 已选 ${selectedIds.length}`}
+          </span>
           <button
-            onClick={() => navigate("/ai")}
+            onClick={() =>
+              manageMode ? exitManageMode() : setManageSheetOpen(true)
+            }
             className="text-[#1677FF]"
           >
-            管理
+            {manageMode ? "完成" : "管理"}
           </button>
         </div>
 
@@ -251,13 +413,54 @@ export function MobileAi() {
               modelName={
                 models.find((m) => m.id === conv.model_id)?.name ?? "未知模型"
               }
-              onClick={() => openConversation(conv)}
+              manageMode={manageMode}
+              selected={selectedIds.includes(conv.id)}
+              onClick={() =>
+                manageMode ? toggleSelected(conv.id) : openConversation(conv)
+              }
+              onLongPress={() => {
+                if (!manageMode) setSheetConv(conv);
+              }}
             />
           ))
         )}
       </div>
 
-      {/* FAB（替代全局蓝色 + FAB，MobileLayout 已感知 /ai 隐藏全局 FAB） */}
+      {/* 多选模式底部操作条（悬在 Tab 之上） */}
+      {manageMode && (
+        <div
+          className="fixed inset-x-0 z-30 flex items-center gap-3 border-t border-slate-200 bg-white px-4 py-2"
+          style={{ bottom: `calc(64px + env(safe-area-inset-bottom, 0px))` }}
+        >
+          <button
+            onClick={() =>
+              setSelectedIds(
+                selectedIds.length === conversations.length
+                  ? []
+                  : conversations.map((c) => c.id),
+              )
+            }
+            className="rounded-full bg-slate-100 px-4 text-sm font-medium text-slate-600 active:bg-slate-200"
+            style={{ minHeight: 44 }}
+          >
+            {selectedIds.length === conversations.length && conversations.length > 0
+              ? "取消全选"
+              : "全选"}
+          </button>
+          <button
+            onClick={confirmDeleteSelected}
+            disabled={selectedIds.length === 0}
+            className="flex-1 rounded-full bg-[#ff4d4f] text-sm font-medium text-white active:opacity-80 disabled:opacity-40"
+            style={{ minHeight: 44 }}
+          >
+            删除{selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
+          </button>
+        </div>
+      )}
+
+      {/* FAB（替代全局蓝色 + FAB，MobileLayout 已感知 /ai 隐藏全局 FAB）
+          多选模式下隐藏，避免与底部批量操作条抢位 */}
+      {!manageMode && (
       <button
         onClick={createNew}
         aria-label="新对话"
@@ -268,6 +471,44 @@ export function MobileAi() {
       >
         <MessageSquarePlus size={24} />
       </button>
+      )}
+
+      {/* 长按单条对话唤起 */}
+      <ActionSheet
+        open={sheetConv !== null}
+        title={sheetConv?.title || "未命名对话"}
+        items={convSheetItems}
+        onClose={() => setSheetConv(null)}
+      />
+
+      {/* 顶部「管理」唤起 */}
+      <ActionSheet
+        open={manageSheetOpen}
+        title="管理对话历史"
+        items={manageSheetItems}
+        onClose={() => setManageSheetOpen(false)}
+      />
+
+      {/* 重命名对话 */}
+      <Modal
+        title="重命名对话"
+        open={renameConv !== null}
+        onCancel={() => setRenameConv(null)}
+        onOk={submitRename}
+        okText="保存"
+        cancelText="取消"
+        okButtonProps={{ disabled: !renameText.trim() }}
+        destroyOnClose
+      >
+        <Input
+          autoFocus
+          value={renameText}
+          onChange={(e) => setRenameText(e.target.value)}
+          placeholder="对话标题"
+          onPressEnter={submitRename}
+          maxLength={100}
+        />
+      </Modal>
 
       <MobileAiModelModal
         open={addModelOpen}
@@ -296,24 +537,48 @@ export function MobileAi() {
 function ConversationCard({
   conv,
   modelName,
+  manageMode,
+  selected,
   onClick,
+  onLongPress,
 }: {
   conv: AiConversation;
   modelName: string;
+  manageMode: boolean;
+  selected: boolean;
   onClick: () => void;
+  onLongPress: () => void;
 }) {
   const hasNotes = conv.attached_note_ids && conv.attached_note_ids.length > 0;
+  // 长按 = 桌面右键：唤起重命名 / 删除面板；轻点仍进对话（多选模式下则是切换选中）
+  const longPress = useLongPress(onLongPress, { onClick });
 
   return (
-    <button
-      onClick={onClick}
-      className="block w-full px-4 mb-2 text-left active:opacity-80"
+    <div
+      {...longPress}
+      role="button"
+      className="block w-full select-none px-4 mb-2 text-left active:opacity-80"
+      style={{ WebkitTouchCallout: "none" }}
     >
-      <div className="rounded-2xl bg-white p-4">
+      <div
+        className={`rounded-2xl bg-white p-4 ${
+          selected ? "ring-2 ring-[#FA8C16]" : ""
+        }`}
+      >
         <div className="flex items-start gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-orange-100">
-            <MessageCircle size={16} className="text-[#FA8C16]" />
-          </div>
+          {manageMode ? (
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center">
+              {selected ? (
+                <CheckSquare size={20} className="text-[#FA8C16]" />
+              ) : (
+                <Square size={20} className="text-slate-300" />
+              )}
+            </div>
+          ) : (
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-orange-100">
+              <MessageCircle size={16} className="text-[#FA8C16]" />
+            </div>
+          )}
           <div className="min-w-0 flex-1">
             <h3 className="truncate text-base font-semibold text-slate-900">
               {conv.title || "未命名对话"}
@@ -333,6 +598,6 @@ function ConversationCard({
           </div>
         </div>
       </div>
-    </button>
+    </div>
   );
 }
