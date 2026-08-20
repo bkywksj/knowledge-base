@@ -8,6 +8,7 @@ import {
   folderApi,
   configApi,
   appLockApi,
+  inboxApi,
   setExportFontsProvider,
 } from "@/lib/api";
 import type { HeadingNumberFormat } from "@/lib/headingNumber";
@@ -54,7 +55,8 @@ export type ActiveView =
   | "push"
   | "about"
   | "trash"
-  | "hidden";
+  | "hidden"
+  | "inbox";
 
 /** SidePanel 宽度范围（px），避免用户拖到极端值 */
 export const SIDE_PANEL_MIN_WIDTH = 200;
@@ -327,6 +329,13 @@ interface AppStore {
   tasksListRefreshTick: number;
   /** 未完成 + 紧急的任务数（用于侧边栏红色 Badge） */
   urgentTodoCount: number;
+  /**
+   * 收件箱待处理数（导入 / OCR / 剪藏失败项，用于侧边栏 Badge）。
+   *
+   * 失败项不该只靠用户主动点进收件箱才发现 —— 侧栏挂个数字，
+   * 才对得起"落库排队"这件事本身。
+   */
+  inboxCount: number;
   /** 窗口置顶状态（UI 真相源；托盘 CheckMenuItem 通过事件同步） */
   alwaysOnTop: boolean;
   /** 当前活动视图（Activity Bar 模式）；与 URL 双向同步 */
@@ -600,6 +609,8 @@ interface AppStore {
   bumpTasksListRefresh: () => void;
   /** 重新拉取任务统计（任务变更后调用，用于刷新侧边栏 Badge） */
   refreshTaskStats: () => Promise<void>;
+  /** 重拉收件箱待处理数（侧边栏 Badge）。失败静默——徽章不该让页面报错 */
+  refreshInboxCount: () => Promise<void>;
   /**
    * 设置窗口置顶。
    * - skipEmit=true：不再通知 Rust 侧（用于从 Rust 过来的事件回流，避免循环）
@@ -790,6 +801,7 @@ export const OPTIONAL_VIEWS: readonly ActiveView[] = [
   "prompts",
   "push",
   "hidden",
+  "inbox",
 ] as const;
 
 /**
@@ -849,6 +861,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   tasksListRefreshTick: 0,
   taskStatsTick: 0,
   urgentTodoCount: 0,
+  inboxCount: 0,
   alwaysOnTop: false,
   activeView: "notes",
   enabledViews: new Set(DEFAULT_ENABLED_VIEWS),
@@ -977,6 +990,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
   bumpTagsRefresh: () => set((s) => ({ tagsRefreshTick: s.tagsRefreshTick + 1 })),
   bumpTasksListRefresh: () =>
     set((s) => ({ tasksListRefreshTick: s.tasksListRefreshTick + 1 })),
+  refreshInboxCount: async () => {
+    try {
+      const counts = await inboxApi.counts();
+      set({ inboxCount: counts.reduce((sum, [, n]) => sum + n, 0) });
+    } catch {
+      // 静默：收件箱徽章只是提示，拉不到不该打扰用户
+    }
+  },
   refreshTaskStats: async () => {
     try {
       const stats = await taskApi.stats();

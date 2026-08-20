@@ -8,6 +8,7 @@ import {
   Bot,
   Sparkles,
   EyeOff,
+  Inbox,
   Boxes,
 } from "lucide-react";
 import { useAppStore, OPTIONAL_VIEWS, type ActiveView } from "@/store";
@@ -74,6 +75,12 @@ const MODULES: ModuleMeta[] = [
     label: "隐藏笔记",
     desc: "PIN 锁保护的私密笔记空间",
     icon: <EyeOff size={16} />,
+  },
+  {
+    view: "inbox",
+    label: "收件箱",
+    desc: "导入 / 识别 / 剪藏失败的项在这里排队重试",
+    icon: <Inbox size={16} />,
   },
 ];
 

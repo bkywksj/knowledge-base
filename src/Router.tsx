@@ -7,6 +7,7 @@ import NoteEditorPage from "@/pages/notes/editor";
 import SearchPage from "@/pages/search";
 import TagsPage from "@/pages/tags";
 import TrashPage from "@/pages/trash";
+import InboxPage from "@/pages/inbox";
 import DailyPage from "@/pages/daily";
 import SettingsPage from "@/pages/settings";
 import AboutPage from "@/pages/about";
@@ -103,6 +104,7 @@ const router = createHashRouter([
       { path: "search", element: <SearchPage /> },
       { path: "tags", element: <TagsPage /> },
       { path: "trash", element: <TrashPage /> },
+      { path: "inbox", element: <InboxPage /> },
       { path: "hidden", element: <HiddenPage /> },
       { path: "daily", element: <DailyPage /> },
       { path: "graph", element: <GraphPage /> },

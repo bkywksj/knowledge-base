@@ -317,7 +317,10 @@ function showPdfFailModal(
         detailJson: JSON.stringify({ folderId: folderId ?? null }),
       }),
     ),
-  ).catch((e) => console.error("[inbox] 记录导入失败项时出错:", e));
+  )
+    // 落库后立刻刷新侧栏徽章，否则用户要等下次启动才看到数字
+    .then(() => useAppStore.getState().refreshInboxCount())
+    .catch((e) => console.error("[inbox] 记录导入失败项时出错:", e));
 
   Modal.warning({
     title,
