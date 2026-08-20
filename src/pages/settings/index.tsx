@@ -69,6 +69,7 @@ import { ShortcutsSection } from "@/components/settings/ShortcutsSection";
 import { EditorHighlightShortcutRow } from "@/components/settings/EditorHighlightShortcutRow";
 import { MCPServerSection } from "@/components/settings/MCPServerSection";
 import { OcrSection } from "@/components/settings/OcrSection";
+import { SnapshotSection } from "@/components/settings/SnapshotSection";
 import { WebClipJinaKeySetting } from "@/components/settings/WebClipJinaKeySetting";
 import { TiptapEditor } from "@/components/editor";
 import { ShareConfigModal } from "@/components/config-share/ShareConfigModal";
@@ -2886,6 +2887,11 @@ function DesktopSettingsPage() {
 
       {/* #9 本地 OCR：图片 / 扫描件 PDF 识别 */}
       <OcrSection />
+
+      {/* 维护：历史版本用量与清理 */}
+      <div id="settings-snapshots">
+        <SnapshotSection />
+      </div>
 
       {/* 维护：孤儿素材清理（5 类素材统一） */}
       <Card

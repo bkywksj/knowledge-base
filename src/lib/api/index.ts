@@ -117,6 +117,7 @@ import type {
   EmbeddedWhiteboardSaved,
   NoteSnapshotMeta,
   NoteSnapshot,
+  SnapshotUsage,
 } from "@/types";
 
 /** 系统相关 API */
@@ -401,6 +402,25 @@ export const whiteboardApi = {
 };
 
 /** T-003 隐藏笔记专用 API（/hidden 页面） */
+/**
+ * 历史版本的**全局**管理（设置页用）。
+ *
+ * 与 noteApi.*Snapshot* 的区别：那些是"某条笔记的历史版本"，
+ * 这里是"整个库的历史版本占了多少、怎么清"。
+ */
+export const snapshotApi = {
+  /** 用量总览：总数 / 总体积 / 占用最大的前 N 条笔记 */
+  usage: () => invoke<SnapshotUsage>("get_snapshot_usage"),
+  /** 清掉某条笔记的全部历史版本，返回删除条数 */
+  clearNote: (noteId: number) =>
+    invoke<number>("clear_note_snapshots", { noteId }),
+  /** 清掉所有超过 days 天的历史版本，返回删除条数 */
+  clearOlderThan: (days: number) =>
+    invoke<number>("clear_snapshots_older_than", { days }),
+  /** 清空全部历史版本，返回删除条数 */
+  clearAll: () => invoke<number>("clear_all_snapshots"),
+};
+
 export const hiddenApi = {
   list: (opts?: {
     page?: number;

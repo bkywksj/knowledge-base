@@ -4,7 +4,7 @@
 //! 它的画布内容要额外做图片内联，回滚还要重建 search_text 与画布双链，
 //! 与这里的纯文本路径不是一回事，所以刻意不合并。
 
-use crate::models::{Note, NoteSnapshot, NoteSnapshotMeta};
+use crate::models::{Note, NoteSnapshot, NoteSnapshotMeta, SnapshotUsage};
 use crate::services::snapshot;
 use crate::state::AppState;
 use tauri::{Emitter, Manager};
@@ -58,4 +58,36 @@ pub fn restore_note_snapshot(
         .app_handle()
         .emit("note:updated", serde_json::json!({ "id": note_id }));
     Ok(note)
+}
+
+// ─── 用量与清理（设置页）──────────────────────────────────
+
+/// 全库历史版本用量（总数 / 总体积 / 占用最大的笔记）。
+#[tauri::command]
+pub fn get_snapshot_usage(state: tauri::State<'_, AppState>) -> Result<SnapshotUsage, String> {
+    snapshot::usage(&state.db).map_err(|e| e.to_string())
+}
+
+/// 清理某条笔记的全部历史版本，返回删除条数。
+#[tauri::command]
+pub fn clear_note_snapshots(
+    state: tauri::State<'_, AppState>,
+    note_id: i64,
+) -> Result<usize, String> {
+    snapshot::clear_note(&state.db, note_id).map_err(|e| e.to_string())
+}
+
+/// 清理所有超过指定天数的历史版本，返回删除条数。
+#[tauri::command]
+pub fn clear_snapshots_older_than(
+    state: tauri::State<'_, AppState>,
+    days: i64,
+) -> Result<usize, String> {
+    snapshot::clear_older_than(&state.db, days).map_err(|e| e.to_string())
+}
+
+/// 清空全部历史版本，返回删除条数。
+#[tauri::command]
+pub fn clear_all_snapshots(state: tauri::State<'_, AppState>) -> Result<usize, String> {
+    snapshot::clear_all(&state.db).map_err(|e| e.to_string())
 }

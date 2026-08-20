@@ -136,6 +136,24 @@ export interface NoteSnapshot extends NoteSnapshotMeta {
   content: string;
 }
 
+/** 单条笔记的历史版本占用（设置页"占用最大的笔记"列表）。与 Rust `models::SnapshotNoteUsage` 对齐 */
+export interface SnapshotNoteUsage {
+  note_id: number;
+  title: string;
+  /** 决定点进去跳编辑器还是白板页 */
+  note_type: NoteType;
+  count: number;
+  byte_size: number;
+}
+
+/** 全库历史版本用量总览。与 Rust `models::SnapshotUsage` 对齐 */
+export interface SnapshotUsage {
+  total_count: number;
+  total_bytes: number;
+  /** 占用最大的前 N 条（不是全量） */
+  top_notes: SnapshotNoteUsage[];
+}
+
 /**
  * AI 引用笔记里抽出的图片清单（回答下方"溯源"挂缩略图）。
  * 与 Rust models::NoteImageRef 对齐。

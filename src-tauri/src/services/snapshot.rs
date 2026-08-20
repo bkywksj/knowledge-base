@@ -13,7 +13,7 @@
 
 use crate::database::Database;
 use crate::error::AppError;
-use crate::models::Note;
+use crate::models::{Note, SnapshotUsage};
 
 /// 自动快照的最小间隔（秒）。10 分钟 ≈ 连续画一小时留 6 份。
 const AUTO_MIN_INTERVAL_SEC: f64 = 600.0;
@@ -181,6 +181,43 @@ pub fn restore(db: &Database, note_id: i64, snapshot_id: i64) -> Result<Note, Ap
             folder_id: note.folder_id,
         },
     )
+}
+
+// ─── 用量与清理（设置页）──────────────────────────────────
+//
+// 快照是"悄悄攒数据"的功能：每条笔记留 30 份，重度使用下库会稳步变大，
+// 而用户看不见也管不着。这一组给他一个交代。
+
+/// 设置页展示的"占用最大的笔记"条数。
+///
+/// 10 条足够定位"是哪几块大白板在吃空间"，再多就成了没人看的长列表。
+const USAGE_TOP_N: i64 = 10;
+
+/// 全库快照用量。
+pub fn usage(db: &Database) -> Result<SnapshotUsage, AppError> {
+    db.note_snapshot_usage(USAGE_TOP_N)
+}
+
+/// 清理某条笔记的全部历史版本。
+pub fn clear_note(db: &Database, note_id: i64) -> Result<usize, AppError> {
+    db.delete_note_snapshots(note_id)
+}
+
+/// 清理所有超过 `days` 天的历史版本。
+pub fn clear_older_than(db: &Database, days: i64) -> Result<usize, AppError> {
+    if days < 1 {
+        // 0 天等价于"全清"，但那该走 clear_all —— 让调用方明确表达意图，
+        // 免得前端某个默认值算成 0 就把用户的全部历史抹了
+        return Err(AppError::InvalidInput(
+            "天数至少为 1；要清空全部请用「清空所有历史版本」".into(),
+        ));
+    }
+    db.delete_note_snapshots_older_than(days)
+}
+
+/// 清空全部历史版本。
+pub fn clear_all(db: &Database) -> Result<usize, AppError> {
+    db.delete_all_note_snapshots()
 }
 
 /// 实际落库 + 裁剪超额份数。

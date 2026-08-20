@@ -2276,3 +2276,23 @@ pub struct NoteSnapshot {
     pub reason: String,
     pub created_at: String,
 }
+
+/// 单条笔记的快照占用（设置页"占用最大的笔记"列表用）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotNoteUsage {
+    pub note_id: i64,
+    pub title: String,
+    /// "markdown" / "whiteboard"，前端据此决定点进去跳编辑器还是白板页
+    pub note_type: String,
+    pub count: i64,
+    pub byte_size: i64,
+}
+
+/// 全库快照用量总览
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotUsage {
+    pub total_count: i64,
+    pub total_bytes: i64,
+    /// 占用最大的前 N 条笔记（不是全量 —— 几百条明细没人会逐条看）
+    pub top_notes: Vec<SnapshotNoteUsage>,
+}

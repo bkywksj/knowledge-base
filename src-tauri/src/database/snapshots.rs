@@ -10,7 +10,7 @@
 use rusqlite::{params, OptionalExtension};
 
 use crate::error::AppError;
-use crate::models::{NoteSnapshot, NoteSnapshotMeta};
+use crate::models::{NoteSnapshot, NoteSnapshotMeta, SnapshotNoteUsage, SnapshotUsage};
 
 use super::Database;
 
@@ -117,6 +117,90 @@ impl Database {
             )
             .optional()?;
         Ok(row)
+    }
+
+    /// 全库快照用量统计（设置页展示用）。
+    ///
+    /// `top` 控制回传多少条"占用最大的笔记"—— 用户要清理时最想看的就是这几条，
+    /// 全量回传没有意义（几百条笔记的明细列表没人会逐条看）。
+    pub fn note_snapshot_usage(&self, top: i64) -> Result<SnapshotUsage, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+
+        // COALESCE 兜底：一条快照都没有时 SUM 返回 NULL，不处理会取值失败
+        let (total_count, total_bytes) = conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(byte_size), 0) FROM note_snapshots",
+            [],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+        )?;
+
+        // JOIN notes 拿标题；已被 purge 的笔记其快照已随 CASCADE 删掉，不会出现在这里
+        let mut stmt = conn.prepare(
+            "SELECT s.note_id, n.title, n.note_type, COUNT(*), SUM(s.byte_size)
+             FROM note_snapshots s
+             JOIN notes n ON n.id = s.note_id
+             GROUP BY s.note_id
+             ORDER BY SUM(s.byte_size) DESC
+             LIMIT ?1",
+        )?;
+        let top_notes = stmt
+            .query_map(params![top], |r| {
+                Ok(SnapshotNoteUsage {
+                    note_id: r.get(0)?,
+                    title: r.get(1)?,
+                    note_type: r.get(2)?,
+                    count: r.get(3)?,
+                    byte_size: r.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(SnapshotUsage {
+            total_count,
+            total_bytes,
+            top_notes,
+        })
+    }
+
+    /// 删除某条笔记的全部快照，返回删除条数。
+    pub fn delete_note_snapshots(&self, note_id: i64) -> Result<usize, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        Ok(conn.execute(
+            "DELETE FROM note_snapshots WHERE note_id = ?1",
+            params![note_id],
+        )?)
+    }
+
+    /// 删除所有笔记里超过 `days` 天的快照，返回删除条数。
+    ///
+    /// 刻意**不保底留最后一份**：用户选"只留最近 30 天"就是这个意思，
+    /// 替他保留反而让清理结果对不上预期。要留底可以用手动存档。
+    pub fn delete_note_snapshots_older_than(&self, days: i64) -> Result<usize, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        // 日期比较交给 SQLite：created_at 是 localtime 字符串，
+        // 拿到 Rust 侧解析是跨平台踩坑重灾区（与 latest_snapshot_stamp 同理）
+        Ok(conn.execute(
+            "DELETE FROM note_snapshots
+             WHERE created_at < datetime('now', 'localtime', ?1)",
+            params![format!("-{} days", days)],
+        )?)
+    }
+
+    /// 清空全部快照，返回删除条数。
+    pub fn delete_all_note_snapshots(&self) -> Result<usize, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        Ok(conn.execute("DELETE FROM note_snapshots", [])?)
     }
 
     /// 只保留最近 `keep` 条，其余删除，返回删除条数。
@@ -235,5 +319,89 @@ mod tests {
         }
 
         assert!(db.list_note_snapshots(note_id).unwrap().is_empty());
+    }
+
+    // ─── 用量与清理 ──────────────────────────────────────
+
+    /// 统计要能正确汇总总量，并按占用从大到小给出 top 列表。
+    #[test]
+    fn usage_aggregates_and_ranks() {
+        let db = mem_db();
+        let small = new_note(&db, "v1");
+        let big = new_note(&db, "v1");
+
+        db.insert_note_snapshot(small, "abc", "auto").unwrap();
+        db.insert_note_snapshot(big, &"x".repeat(500), "auto").unwrap();
+        db.insert_note_snapshot(big, &"y".repeat(300), "manual").unwrap();
+
+        let u = db.note_snapshot_usage(10).unwrap();
+        assert_eq!(u.total_count, 3);
+        assert_eq!(u.total_bytes, 3 + 500 + 300);
+        assert_eq!(u.top_notes.len(), 2);
+        // 占用大的排前面
+        assert_eq!(u.top_notes[0].note_id, big);
+        assert_eq!(u.top_notes[0].count, 2);
+        assert_eq!(u.top_notes[0].byte_size, 800);
+        assert_eq!(u.top_notes[1].note_id, small);
+    }
+
+    /// 一条快照都没有时不能炸（SUM 返回 NULL 的那条路径）。
+    #[test]
+    fn usage_on_empty_db() {
+        let db = mem_db();
+        let u = db.note_snapshot_usage(10).unwrap();
+        assert_eq!(u.total_count, 0);
+        assert_eq!(u.total_bytes, 0);
+        assert!(u.top_notes.is_empty());
+    }
+
+    /// 清某条笔记只影响它自己。
+    #[test]
+    fn delete_for_one_note_only() {
+        let db = mem_db();
+        let a = new_note(&db, "v1");
+        let b = new_note(&db, "v1");
+        db.insert_note_snapshot(a, "A", "auto").unwrap();
+        db.insert_note_snapshot(b, "B", "auto").unwrap();
+
+        assert_eq!(db.delete_note_snapshots(a).unwrap(), 1);
+        assert!(db.list_note_snapshots(a).unwrap().is_empty());
+        assert_eq!(db.list_note_snapshots(b).unwrap().len(), 1, "不该动别的笔记");
+    }
+
+    /// 按天数清理：只删超期的，新的留下。
+    #[test]
+    fn delete_older_than_respects_cutoff() {
+        let db = mem_db();
+        let id = new_note(&db, "v1");
+        let old_id = db.insert_note_snapshot(id, "很久以前", "auto").unwrap();
+        let new_id = db.insert_note_snapshot(id, "刚刚", "auto").unwrap();
+
+        // 把第一条的时间改成 10 天前
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE note_snapshots SET created_at = datetime('now','localtime','-10 days') WHERE id = ?1",
+                [old_id],
+            )
+            .unwrap();
+        }
+
+        assert_eq!(db.delete_note_snapshots_older_than(7).unwrap(), 1);
+        let left = db.list_note_snapshots(id).unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].id, new_id, "只该删掉超期那条");
+    }
+
+    #[test]
+    fn delete_all_clears_everything() {
+        let db = mem_db();
+        let a = new_note(&db, "v1");
+        let b = new_note(&db, "v1");
+        db.insert_note_snapshot(a, "A", "auto").unwrap();
+        db.insert_note_snapshot(b, "B", "auto").unwrap();
+
+        assert_eq!(db.delete_all_note_snapshots().unwrap(), 2);
+        assert_eq!(db.note_snapshot_usage(10).unwrap().total_count, 0);
     }
 }
