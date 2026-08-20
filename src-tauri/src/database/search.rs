@@ -1,13 +1,111 @@
-use rusqlite::params;
-
 use crate::error::AppError;
-use crate::models::SearchResult;
+use crate::models::{SearchFilters, SearchResult};
 
 use super::Database;
 
+/// 把筛选条件编译成 SQL 片段 + 绑定参数。
+///
+/// 返回的片段形如 `" AND n.folder_id IN (1,2) AND ..."`，可直接拼到 WHERE 尾部；
+/// 无约束时返回空串。
+///
+/// 设计要点：
+/// - **只生成条件，不做事后裁剪**。筛选必须下推到 SQL —— 若先取 top-N 再在 Rust 里
+///   过滤，用户筛选后拿到的就不是 N 条而是 N 条里碰巧合规的那几条。
+/// - i64 直接内联（整数无注入风险），字符串一律走占位符。
+///   这样能避免与调用方已有的 n-gram 占位符编号打架。
+fn build_filter_clause(
+    filters: &SearchFilters,
+    next_param_index: usize,
+) -> (String, Vec<String>) {
+    let mut sql = String::new();
+    let mut binds: Vec<String> = Vec::new();
+    let mut idx = next_param_index;
+
+    if let Some(ids) = &filters.folder_ids {
+        if !ids.is_empty() {
+            let list = ids
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            sql.push_str(&format!(" AND n.folder_id IN ({})", list));
+        }
+    }
+
+    if let Some(ids) = &filters.tag_ids {
+        if !ids.is_empty() {
+            // AND 语义：选了「工作」+「重要」= 两个标签都得有。
+            // 用计数子查询而非多个 EXISTS —— 后者条件数随标签数线性膨胀。
+            let list = ids
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            sql.push_str(&format!(
+                " AND (SELECT COUNT(DISTINCT nt.tag_id) FROM note_tags nt
+                       WHERE nt.note_id = n.id AND nt.tag_id IN ({})) = {}",
+                list,
+                ids.len()
+            ));
+        }
+    }
+
+    if let Some(after) = &filters.updated_after {
+        sql.push_str(&format!(" AND n.updated_at >= ?{}", idx));
+        binds.push(after.clone());
+        idx += 1;
+    }
+    if let Some(before) = &filters.updated_before {
+        sql.push_str(&format!(" AND n.updated_at <= ?{}", idx));
+        binds.push(before.clone());
+        idx += 1;
+    }
+
+    if let Some(types) = &filters.note_types {
+        if !types.is_empty() {
+            let placeholders: Vec<String> = types
+                .iter()
+                .map(|t| {
+                    let p = format!("?{}", idx);
+                    binds.push(t.clone());
+                    idx += 1;
+                    p
+                })
+                .collect();
+            sql.push_str(&format!(" AND n.note_type IN ({})", placeholders.join(",")));
+        }
+    }
+
+    (sql, binds)
+}
+
 impl Database {
-    /// 全文搜索：先用 FTS5，无结果则用 LIKE 模糊搜索兜底（支持中文）
+    /// 全文搜索（无筛选）。
+    ///
+    /// 生产路径一律走 [`Self::search_notes_filtered`]；这里只是测试里的便捷包装，
+    /// 顺带充当"加了筛选不该改变无筛选时的行为"的对照组。
+    #[cfg(test)]
     pub fn search_notes(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>, AppError> {
+        self.search_notes_filtered(query, limit, &SearchFilters::default())
+    }
+
+    /// 带筛选条件的全文搜索（P1-2）。
+    ///
+    /// 筛选**下推到两条通道的 SQL 里**，而不是先搜完再在 Rust 侧裁剪 ——
+    /// 否则"筛选后只剩 3 条"其实是"前 50 条里碰巧有 3 条合规"，
+    /// 用户会以为知识库里就这么多。
+    pub fn search_notes_filtered(
+        &self,
+        query: &str,
+        limit: usize,
+        filters: &SearchFilters,
+    ) -> Result<Vec<SearchResult>, AppError> {
+        // fail-closed：用户勾了某个维度却一个都没选中 → 明确返回空，
+        // 绝不退化成"忽略该维度"（那会把整个知识库倒给用户）
+        if filters.has_empty_selection() {
+            return Ok(Vec::new());
+        }
+
         let conn = self
             .conn
             .lock()
@@ -16,7 +114,7 @@ impl Database {
         // 1. 尝试 FTS5 搜索（需要转换为 FTS5 语法）
         let fts_query = sanitize_fts_query(query);
         if !fts_query.is_empty() {
-            let fts_results = Self::search_fts(&conn, &fts_query, limit);
+            let fts_results = Self::search_fts(&conn, &fts_query, limit, filters);
             if let Ok(ref results) = fts_results {
                 if !results.is_empty() {
                     return fts_results;
@@ -25,14 +123,17 @@ impl Database {
         }
 
         // 2. FTS5 无结果，用 LIKE 模糊搜索兜底（用原始查询）
-        Self::search_like(&conn, query, limit)
+        Self::search_like(&conn, query, limit, filters)
     }
 
     fn search_fts(
         conn: &rusqlite::Connection,
         fts_query: &str,
         limit: usize,
+        filters: &SearchFilters,
     ) -> Result<Vec<SearchResult>, AppError> {
+        // ?1 = MATCH 表达式，?2 = limit，故筛选条件的占位符从 ?3 起编号
+        let (filter_sql, filter_binds) = build_filter_clause(filters, 3);
         // 与 LIKE fallback 路径保持一致：过滤回收站 + 隐藏笔记 + 临时编辑笔记。
         // 之前 FTS5 路径漏了 is_hidden = 0，会让 FTS5 命中的隐藏笔记泄露到主搜索结果里
         //
@@ -43,7 +144,7 @@ impl Database {
         // 例子：相关度差不多的两个笔记，相差 30 天 → 旧的得分 +0.15，足以让新的排前但不会
         // 让相关度更高的老笔记被一篇刚改的边缘相关笔记盖掉（bm25 量级通常在 1~30）。
         // 未来想加访问频率加权也是从这里改 ORDER BY。
-        let mut stmt = conn.prepare(
+        let sql = format!(
             "SELECT n.id, n.title,
                     snippet(notes_fts, 1, '<mark>', '</mark>', '...', 32) as snippet,
                     n.updated_at, n.folder_id, n.note_type
@@ -52,14 +153,29 @@ impl Database {
              WHERE notes_fts MATCH ?1
                AND n.is_deleted = 0
                AND n.is_hidden = 0
-               AND n.is_scratch = 0
+               AND n.is_scratch = 0{}
              ORDER BY bm25(notes_fts, 5.0, 1.0)
                     + (julianday('now') - julianday(n.updated_at)) * 0.005
              LIMIT ?2",
-        )?;
+            filter_sql
+        );
+        let mut stmt = conn.prepare(&sql)?;
+
+        // ?1 / ?2 固定，其后依次绑筛选参数
+        let mut binds: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
+            Box::new(fts_query.to_string()),
+            Box::new(limit as i64),
+        ];
+        binds.extend(
+            filter_binds
+                .into_iter()
+                .map(|b| Box::new(b) as Box<dyn rusqlite::types::ToSql>),
+        );
+        let binds_ref: Vec<&dyn rusqlite::types::ToSql> =
+            binds.iter().map(|b| b.as_ref()).collect();
 
         let results = stmt
-            .query_map(params![fts_query, limit as i64], |row| {
+            .query_map(&*binds_ref, |row| {
                 Ok(SearchResult {
                     id: row.get(0)?,
                     title: row.get(1)?,
@@ -80,6 +196,7 @@ impl Database {
         conn: &rusqlite::Connection,
         query: &str,
         limit: usize,
+        filters: &SearchFilters,
     ) -> Result<Vec<SearchResult>, AppError> {
         let raw_keywords: Vec<&str> = query.split_whitespace().filter(|s| !s.is_empty()).collect();
 
@@ -141,6 +258,9 @@ impl Database {
             .collect::<Vec<_>>()
             .join(" OR ");
 
+        // 筛选条件的占位符编号接在 n-gram 模式与 limit 之后
+        let (filter_sql, filter_binds) = build_filter_clause(filters, patterns.len() + 2);
+
         // T-003: 过滤隐藏笔记；隐藏笔记在主搜索里完全不可见
         // ORDER BY：先按"标题命中(0) vs 仅内容命中(1)"分组，再按 updated_at DESC
         let sql = format!(
@@ -148,11 +268,12 @@ impl Database {
                     n.note_type,
                     CASE WHEN ({}) THEN 0 ELSE 1 END AS _title_score
              FROM notes n
-             WHERE n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0 AND ({})
+             WHERE n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0 AND ({}){}
              ORDER BY _title_score ASC, n.updated_at DESC
              LIMIT ?{}",
             title_hit_expr,
             where_clauses.join(" AND "),
+            filter_sql,
             patterns.len() + 1
         );
 
@@ -164,6 +285,11 @@ impl Database {
             .map(|k| Box::new(k.clone()) as Box<dyn rusqlite::types::ToSql>)
             .collect();
         param_values.push(Box::new(limit as i64));
+        param_values.extend(
+            filter_binds
+                .into_iter()
+                .map(|b| Box::new(b) as Box<dyn rusqlite::types::ToSql>),
+        );
 
         let params_ref: Vec<&dyn rusqlite::types::ToSql> =
             param_values.iter().map(|p| p.as_ref()).collect();
@@ -340,7 +466,7 @@ fn sanitize_fts_query(query: &str) -> String {
 mod tests {
     use super::*;
     use crate::database::Database;
-    use crate::models::NoteInput;
+    use crate::models::{NoteInput, SearchFilters};
 
     fn temp_db() -> Database {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -421,6 +547,144 @@ mod tests {
             "snippet 必须有高亮，实际: {}",
             hits[0].snippet
         );
+    }
+
+    // ─── P1-2 筛选维度 ───────────────────────────────
+
+    fn add_in_folder(db: &Database, title: &str, content: &str, folder_id: Option<i64>) -> i64 {
+        db.create_note(&NoteInput {
+            title: title.into(),
+            content: content.into(),
+            folder_id,
+        })
+        .expect("create note")
+        .id
+    }
+
+    #[test]
+    fn filters_by_folder() {
+        let db = temp_db();
+        let f1 = db.create_folder("工作", None).unwrap().id;
+        let f2 = db.create_folder("生活", None).unwrap().id;
+        let in_f1 = add_in_folder(&db, "本地仓库说明", "工作笔记", Some(f1));
+        let in_f2 = add_in_folder(&db, "本地仓库说明", "生活笔记", Some(f2));
+
+        let filters = SearchFilters {
+            folder_ids: Some(vec![f1]),
+            ..Default::default()
+        };
+        let hits = db.search_notes_filtered("本地说明", 20, &filters).unwrap();
+        let ids: Vec<i64> = hits.iter().map(|r| r.id).collect();
+        assert!(ids.contains(&in_f1));
+        assert!(!ids.contains(&in_f2), "不该返回其它文件夹的笔记: {:?}", ids);
+    }
+
+    #[test]
+    fn filters_by_note_type() {
+        let db = temp_db();
+        let md = add(&db, "本地仓库说明", "普通笔记");
+        let wb = add(&db, "本地仓库说明白板", "白板");
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE notes SET note_type = 'whiteboard' WHERE id = ?1",
+                [wb],
+            )
+            .unwrap();
+        }
+        let filters = SearchFilters {
+            note_types: Some(vec!["markdown".into()]),
+            ..Default::default()
+        };
+        let hits = db.search_notes_filtered("本地说明", 20, &filters).unwrap();
+        let ids: Vec<i64> = hits.iter().map(|r| r.id).collect();
+        assert!(ids.contains(&md));
+        assert!(!ids.contains(&wb), "只要 markdown 时不该返回白板: {:?}", ids);
+    }
+
+    #[test]
+    fn filters_by_updated_range() {
+        let db = temp_db();
+        let old = add(&db, "本地仓库说明旧", "旧笔记");
+        let new = add(&db, "本地仓库说明新", "新笔记");
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE notes SET updated_at = '2020-01-01 00:00:00' WHERE id = ?1",
+                [old],
+            )
+            .unwrap();
+        }
+        let filters = SearchFilters {
+            updated_after: Some("2021-01-01 00:00:00".into()),
+            ..Default::default()
+        };
+        let hits = db.search_notes_filtered("本地说明", 20, &filters).unwrap();
+        let ids: Vec<i64> = hits.iter().map(|r| r.id).collect();
+        assert!(ids.contains(&new));
+        assert!(!ids.contains(&old), "时间下界应排除旧笔记: {:?}", ids);
+    }
+
+    /// 多标签是 AND：选了两个标签，笔记要**同时**含有才算命中
+    #[test]
+    fn multi_tag_filter_is_and() {
+        let db = temp_db();
+        let both = add(&db, "本地仓库说明A", "两个标签都有");
+        let only_one = add(&db, "本地仓库说明B", "只有一个标签");
+        let t1 = db.create_tag("工作", None, None).unwrap().id;
+        let t2 = db.create_tag("重要", None, None).unwrap().id;
+        {
+            let conn = db.conn.lock().unwrap();
+            for (n, t) in [(both, t1), (both, t2), (only_one, t1)] {
+                conn.execute(
+                    "INSERT INTO note_tags (note_id, tag_id) VALUES (?1, ?2)",
+                    [n, t],
+                )
+                .unwrap();
+            }
+        }
+        let filters = SearchFilters {
+            tag_ids: Some(vec![t1, t2]),
+            ..Default::default()
+        };
+        let hits = db.search_notes_filtered("本地说明", 20, &filters).unwrap();
+        let ids: Vec<i64> = hits.iter().map(|r| r.id).collect();
+        assert!(ids.contains(&both));
+        assert!(!ids.contains(&only_one), "只含一个标签不该命中: {:?}", ids);
+    }
+
+    /// 🔴 fail-closed：勾了维度却一个都没选中 → 返回空，
+    /// **绝不能**退化成"忽略该维度"把整个知识库倒出来
+    #[test]
+    fn empty_selection_fails_closed() {
+        let db = temp_db();
+        add(&db, "本地仓库说明", "内容");
+
+        for filters in [
+            SearchFilters { folder_ids: Some(vec![]), ..Default::default() },
+            SearchFilters { tag_ids: Some(vec![]), ..Default::default() },
+            SearchFilters { note_types: Some(vec![]), ..Default::default() },
+        ] {
+            let hits = db.search_notes_filtered("本地说明", 20, &filters).unwrap();
+            assert!(
+                hits.is_empty(),
+                "显式空选择必须返回零结果，实际拿到 {} 条",
+                hits.len()
+            );
+        }
+    }
+
+    /// 无筛选时与旧接口行为一致
+    #[test]
+    fn no_filter_matches_legacy_behavior() {
+        let db = temp_db();
+        add(&db, "本地仓库说明", "内容");
+        let legacy = db.search_notes("本地说明", 20).unwrap();
+        let filtered = db
+            .search_notes_filtered("本地说明", 20, &SearchFilters::default())
+            .unwrap();
+        assert_eq!(legacy.len(), filtered.len());
+        assert_eq!(legacy[0].id, filtered[0].id);
     }
 
     /// 隐藏 / 临时 / 回收站笔记在主搜索里不可见（T-003）

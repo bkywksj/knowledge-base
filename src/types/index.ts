@@ -280,6 +280,29 @@ export interface SearchResult {
   note_type: NoteType;
 }
 
+/**
+ * 搜索筛选条件（P1-2）。与 Rust 侧 `models::SearchFilters` 对齐（camelCase）。
+ *
+ * 只传用户真正勾选的维度，没勾的字段**省略**（不要传 `undefined` 之外的值）。
+ *
+ * 🔴 **传空数组 = 零结果**：后端 fail-closed，`folderIds: []` 表示
+ * "勾了文件夹维度但一个都没选" → 返回空。这是防御性设计：
+ * 一个前端状态 bug 不该把"筛选到零结果"变成"把整个知识库倒出来"。
+ * 所以清空筛选时请**删掉该字段**，而不是传 `[]`。
+ */
+export interface SearchFilters {
+  /** 限定文件夹（需前端展开成含子孙的完整 id 列表） */
+  folderIds?: number[];
+  /** 限定标签，笔记需**同时**含全部所选标签（AND 语义） */
+  tagIds?: number[];
+  /** 更新时间下界（含），格式与 notes.updated_at 一致 */
+  updatedAfter?: string;
+  /** 更新时间上界（含） */
+  updatedBefore?: string;
+  /** 限定笔记类型 */
+  noteTypes?: NoteType[];
+}
+
 // ─── 回收站 ───────────────────────────────────
 
 /** 回收站笔记查询参数 */

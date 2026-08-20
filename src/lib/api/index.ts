@@ -26,6 +26,7 @@ import type {
   EmptyFolderInfo,
   Tag,
   SearchResult,
+  SearchFilters,
   NoteLink,
   NoteLinkSummary,
   WikiLinkSuggestItem,
@@ -596,8 +597,15 @@ export const folderApi = {
 
 /** 搜索 API */
 export const searchApi = {
-  search: (query: string, limit?: number) =>
-    invoke<SearchResult[]>("search_notes", { query, limit }),
+  /**
+   * 全文搜索。
+   *
+   * `filters` 可选（P1-2）：只传用户真正勾选的维度。
+   * ⚠️ 传空数组（如 `{ folderIds: [] }`）表示"勾了但没选中"，后端会返回零结果；
+   * 清空筛选请**省略字段**而不是传 `[]`（见 SearchFilters 注释）。
+   */
+  search: (query: string, limit?: number, filters?: SearchFilters) =>
+    invoke<SearchResult[]>("search_notes", { query, limit, filters }),
 };
 
 /** 回收站 API */

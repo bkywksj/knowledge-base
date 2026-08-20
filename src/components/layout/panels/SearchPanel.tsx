@@ -17,9 +17,12 @@ import {
  *   · 最近搜索列表：点击重用（navigate 到 /search?q=xxx）；
  *     每条支持单条删除（hover 显示 X）；空态引导用户先搜一下
  *
+ * 按文件夹 / 标签 / 时间 / 类型筛选已实现（P1-2），入口在搜索结果页
+ * （`/search` 右上角「筛选」按钮）—— 筛选是"看着结果收窄"的动作，
+ * 放在结果旁边比放在这个历史面板里更顺手。
+ *
  * 进阶（未实现，占位给未来迭代）：
- *   · 按文件夹 / 标签 / 时间范围过滤：需要 Rust searchApi 支持 filter 参数
- *   · 保存的查询
+ *   · 保存的查询（存一组筛选条件复用）
  */
 export function SearchPanel() {
   const navigate = useNavigate();

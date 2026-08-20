@@ -1,19 +1,39 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Input, Button, Typography, Empty, Spin, Segmented, theme as antdTheme } from "antd";
+import {
+  Input,
+  Button,
+  Typography,
+  Empty,
+  Spin,
+  Segmented,
+  TreeSelect,
+  Select,
+  DatePicker,
+  theme as antdTheme,
+} from "antd";
 import {
   Search as SearchIcon,
   NotebookText,
   CheckSquare,
   AlertTriangle,
   Check,
+  SlidersHorizontal,
+  X as XIcon,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { searchApi, taskApi } from "@/lib/api";
+import { searchApi, taskApi, folderApi, tagApi } from "@/lib/api";
 import { MicButton } from "@/components/MicButton";
 import { useAppStore } from "@/store";
 import { highlightText, highlightSnippet } from "@/lib/highlight";
-import type { SearchResult, TaskSearchHit } from "@/types";
+import type {
+  SearchResult,
+  TaskSearchHit,
+  SearchFilters,
+  Folder,
+  Tag,
+  NoteType,
+} from "@/types";
 
 const { Text } = Typography;
 
@@ -23,6 +43,21 @@ const ESTIMATED_ROW_HEIGHT = 92;
 const ALL_MODE_NOTES_PREVIEW = 20;
 
 type Scope = "all" | "notes" | "tasks";
+
+/** 把文件夹树拍平成"该节点 + 全部子孙"的 id 列表 */
+function collectSubtreeIds(folders: Folder[], targetIds: number[]): number[] {
+  const out = new Set<number>();
+  const walk = (nodes: Folder[], inside: boolean) => {
+    for (const n of nodes) {
+      const hit = inside || targetIds.includes(n.id);
+      if (hit) out.add(n.id);
+      const children = (n as Folder & { children?: Folder[] }).children;
+      if (children?.length) walk(children, hit);
+    }
+  };
+  walk(folders, false);
+  return [...out];
+}
 
 function DesktopSearchPage() {
   const navigate = useNavigate();
@@ -35,6 +70,64 @@ function DesktopSearchPage() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // ─── 筛选（P1-2）────────────────────────────────
+  const [showFilters, setShowFilters] = useState(false);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [pickedFolders, setPickedFolders] = useState<number[]>([]);
+  const [pickedTags, setPickedTags] = useState<number[]>([]);
+  const [pickedTypes, setPickedTypes] = useState<NoteType[]>([]);
+  const [dateRange, setDateRange] = useState<[string, string] | null>(null);
+
+  // 展开筛选面板时才拉数据 —— 大多数搜索用不上筛选，没必要每次进页面都拉两张表
+  useEffect(() => {
+    if (!showFilters || folders.length > 0 || tags.length > 0) return;
+    folderApi.list().then(setFolders).catch(() => {});
+    tagApi.list().then(setTags).catch(() => {});
+  }, [showFilters, folders.length, tags.length]);
+
+  /**
+   * 组装成后端要的 filters。
+   *
+   * 🔴 没勾的维度必须**省略字段**而不是传 `[]` —— 后端 fail-closed，
+   * 空数组表示"勾了但没选中"会直接返回零结果（见 types/SearchFilters 注释）。
+   */
+  const filters = useMemo<SearchFilters | undefined>(() => {
+    const f: SearchFilters = {};
+    if (pickedFolders.length > 0) {
+      // 选了「工作」应当含其下所有子文件夹，否则用户会觉得"明明在这个目录里却搜不到"
+      f.folderIds = collectSubtreeIds(folders, pickedFolders);
+    }
+    if (pickedTags.length > 0) f.tagIds = pickedTags;
+    if (pickedTypes.length > 0) f.noteTypes = pickedTypes;
+    if (dateRange) {
+      f.updatedAfter = dateRange[0];
+      f.updatedBefore = dateRange[1];
+    }
+    return Object.keys(f).length > 0 ? f : undefined;
+  }, [pickedFolders, pickedTags, pickedTypes, dateRange, folders]);
+
+  const activeFilterCount =
+    (pickedFolders.length > 0 ? 1 : 0) +
+    (pickedTags.length > 0 ? 1 : 0) +
+    (pickedTypes.length > 0 ? 1 : 0) +
+    (dateRange ? 1 : 0);
+
+  function clearFilters() {
+    setPickedFolders([]);
+    setPickedTags([]);
+    setPickedTypes([]);
+    setDateRange(null);
+  }
+
+  // 筛选变化后立即用当前关键词重搜（用户改了条件却要再敲一次回车是很别扭的）
+  const filtersKey = JSON.stringify(filters ?? {});
+  useEffect(() => {
+    if (!searched || !query.trim()) return;
+    doSearch(query.trim());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtersKey]);
 
   // URL ?type= 决定 Scope：缺省 "all"
   const scope = ((searchParams.get("type") ?? "all") as Scope);
@@ -63,7 +156,7 @@ function DesktopSearchPage() {
     setLoading(true);
     setSearched(true);
     const [notes, tasks] = await Promise.all([
-      searchApi.search(keyword).catch((e) => {
+      searchApi.search(keyword, undefined, filters).catch((e) => {
         console.error("笔记搜索失败:", e);
         return [] as SearchResult[];
       }),
@@ -155,10 +248,99 @@ function DesktopSearchPage() {
               { value: "tasks", label: `待办 ${taskResults.length}` },
             ]}
           />
-          {!loading && totalHits > 0 && (
-            <Text type="secondary" className="text-xs">
-              共 {totalHits} 条结果
-            </Text>
+          <div className="flex items-center gap-3">
+            {!loading && totalHits > 0 && (
+              <Text type="secondary" className="text-xs">
+                共 {totalHits} 条结果
+              </Text>
+            )}
+            {/* 筛选只作用于笔记，待办 Tab 下没有意义，故隐藏 */}
+            {scope !== "tasks" && (
+              <Button
+                size="small"
+                type={activeFilterCount > 0 ? "primary" : "default"}
+                icon={<SlidersHorizontal size={14} />}
+                onClick={() => setShowFilters((v) => !v)}
+                title="按文件夹 / 标签 / 时间 / 类型筛选"
+              >
+                筛选{activeFilterCount > 0 ? ` ${activeFilterCount}` : ""}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 筛选栏（P1-2）：仅笔记结果生效 */}
+      {searched && showFilters && scope !== "tasks" && (
+        <div
+          className="mb-4 flex flex-wrap items-center gap-2 rounded-lg p-3"
+          style={{ background: token.colorFillQuaternary }}
+        >
+          <TreeSelect
+            style={{ minWidth: 180, flex: "1 1 180px" }}
+            size="small"
+            multiple
+            treeCheckable
+            showCheckedStrategy={TreeSelect.SHOW_PARENT}
+            maxTagCount={1}
+            value={pickedFolders}
+            onChange={(v) => setPickedFolders(v as number[])}
+            treeData={folders as unknown as Record<string, unknown>[]}
+            fieldNames={{ label: "name", value: "id", children: "children" }}
+            placeholder="文件夹"
+            allowClear
+            treeNodeFilterProp="name"
+          />
+          <Select
+            style={{ minWidth: 160, flex: "1 1 160px" }}
+            size="small"
+            mode="multiple"
+            maxTagCount={1}
+            value={pickedTags}
+            onChange={setPickedTags}
+            options={tags.map((t) => ({ label: t.name, value: t.id }))}
+            placeholder="标签（需同时含有）"
+            allowClear
+            optionFilterProp="label"
+          />
+          <Select
+            style={{ minWidth: 120 }}
+            size="small"
+            mode="multiple"
+            maxTagCount={1}
+            value={pickedTypes}
+            onChange={setPickedTypes}
+            options={[
+              { label: "笔记", value: "markdown" },
+              { label: "白板", value: "whiteboard" },
+            ]}
+            placeholder="类型"
+            allowClear
+          />
+          <DatePicker.RangePicker
+            size="small"
+            style={{ minWidth: 220 }}
+            onChange={(_, strs) => {
+              // 后端比的是 notes.updated_at（`YYYY-MM-DD HH:MM:SS`），
+              // 补上时分秒让"选到今天"能含当天全部改动，而不是卡在 00:00:00
+              setDateRange(
+                strs[0] && strs[1]
+                  ? [`${strs[0]} 00:00:00`, `${strs[1]} 23:59:59`]
+                  : null,
+              );
+            }}
+            placeholder={["修改时间从", "至"]}
+          />
+          {activeFilterCount > 0 && (
+            <Button
+              size="small"
+              type="text"
+              icon={<XIcon size={14} />}
+              onClick={clearFilters}
+              title="清空全部筛选条件"
+            >
+              清空
+            </Button>
           )}
         </div>
       )}

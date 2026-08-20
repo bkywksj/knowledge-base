@@ -221,6 +221,39 @@ pub struct TagInput {
 
 // ─── 搜索 ─────────────────────────────────────
 
+/// 搜索筛选条件（P1-2）。
+///
+/// 全部字段可选，`None` = 该维度不约束。前端只传用户真正勾选的维度，
+/// 没勾的字段不出现在 JSON 里（`Option` 反序列化成 `None`）。
+///
+/// 🔴 **fail-closed 语义**：显式传了空数组（`Some(vec![])`）表示
+/// "用户勾选了这个维度但一个都没选中" → 结果应为空，**绝不能退化成不筛选**。
+/// 这是对标项目写死的一条规则（"显式空选择绝不能扩成全空间查询"）：
+/// 前端一个状态 bug 就可能把"筛选到零结果"变成"把整个知识库倒出来"。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchFilters {
+    /// 限定文件夹（已含子孙文件夹 id，由前端展开）
+    pub folder_ids: Option<Vec<i64>>,
+    /// 限定标签（笔记需**同时**含全部所选标签，AND 语义）
+    pub tag_ids: Option<Vec<i64>>,
+    /// 更新时间下界（ISO8601 字符串，含）
+    pub updated_after: Option<String>,
+    /// 更新时间上界（ISO8601 字符串，含）
+    pub updated_before: Option<String>,
+    /// 限定笔记类型（markdown / whiteboard）
+    pub note_types: Option<Vec<String>>,
+}
+
+impl SearchFilters {
+    /// 是否存在"显式勾选但选空"的维度 —— 命中即应返回零结果（fail-closed）
+    pub fn has_empty_selection(&self) -> bool {
+        matches!(&self.folder_ids, Some(v) if v.is_empty())
+            || matches!(&self.tag_ids, Some(v) if v.is_empty())
+            || matches!(&self.note_types, Some(v) if v.is_empty())
+    }
+}
+
 /// 全文搜索结果
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchResult {
