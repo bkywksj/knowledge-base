@@ -7,6 +7,7 @@ import {
   ROUNDNESS,
   newElementWith,
   CaptureUpdateAction,
+  TTDDialog,
 } from "@excalidraw/excalidraw";
 import type { BinaryFiles } from "@excalidraw/excalidraw/types";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
@@ -187,6 +188,13 @@ interface Props {
    * 该不该传 onSave 仍要自己决定 —— 预览场景一律别传。
    */
   readOnly?: boolean;
+  /**
+   * 外层用来接收「打开 Mermaid 转图对话框」能力的 ref。
+   *
+   * 与 exportRef 同理：入口按钮画在页面顶栏（静态 import），但要打开的对话框
+   * 归 Excalidraw 管，只能由本组件（lazy 内）用 imperative API 触发。
+   */
+  mermaidRef?: React.MutableRefObject<(() => void) | null>;
 }
 
 /** Blob → base64（去掉 `data:*;base64,` 前缀），配合 systemApi.writeBinaryFile 落盘 */
@@ -234,6 +242,7 @@ export default function WhiteboardCanvas({
   onOpenNote,
   exportRef,
   readOnly = false,
+  mermaidRef,
 }: Props) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 上一次「已交给上层保存」的 JSON。用来挡掉 onChange 的空转（选中、hover、
@@ -569,6 +578,26 @@ export default function WhiteboardCanvas({
   }, []);
 
   /**
+   * 把「打开 Mermaid 转图」交给外层顶栏。
+   *
+   * 直接改 appState.openDialog 而不是挂 `<TTDDialogTrigger>`：后者会往
+   * Excalidraw 自己的工具栏里塞一个入口，且默认打开需要联网的 text-to-diagram 页签。
+   * 这里指定 tab: "mermaid" 直达离线可用的那一页。
+   */
+  useEffect(() => {
+    if (!mermaidRef) return;
+    mermaidRef.current = () => {
+      apiRef.current?.updateScene({
+        appState: { openDialog: { name: "ttd", tab: "mermaid" } },
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+    };
+    return () => {
+      mermaidRef.current = null;
+    };
+  }, [mermaidRef]);
+
+  /**
    * 素材库变更 → 防抖落盘。
    *
    * 首次把库注入画布时 Excalidraw 也会回调一次，靠内容比对挡掉（下面的 effect 会把
@@ -613,7 +642,17 @@ export default function WhiteboardCanvas({
         langCode="zh-CN"
         viewModeEnabled={readOnly}
         UIOptions={UI_OPTIONS}
-      />
+      >
+        {/*
+          Mermaid → 可编辑图形。转换在本地完成（mermaid-to-excalidraw 是 Excalidraw
+          自带的依赖），不联网。
+
+          `__fallback` 是官方的「没有 AI 后端」模式：只保留 Mermaid 这一页，
+          隐藏需要调远端的「文本转图」。单机知识库没有那个服务端，
+          留着入口只会让用户点了报错。
+        */}
+        <TTDDialog __fallback />
+      </Excalidraw>
       {/* 只读时不给圆角面板：view mode 下本来就选不中图形，留个操作不了的面板只会误导 */}
       {!readOnly && roundSel && (
         // key 绑选中指纹：换一批选中图形时让面板重建，把拖动中的临时值一并丢掉
