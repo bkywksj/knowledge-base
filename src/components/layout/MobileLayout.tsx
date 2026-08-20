@@ -99,7 +99,7 @@ function isTabActive(item: TabItem, pathname: string): boolean {
 }
 
 /** 自带 FAB 的页面（路由前缀） — 这些页面下不渲染全局蓝色 + FAB，避免重叠 */
-const PAGES_WITH_OWN_FAB = ["/ai"];
+const PAGES_WITH_OWN_FAB = ["/ai", "/tasks"];
 
 export function MobileLayout() {
   const navigate = useNavigate();

@@ -30,7 +30,7 @@ import { useAppStore } from "@/store";
  * - 空白笔记 / 今日笔记：直接 createNote / getOrCreate 后跳编辑器
  * - 闪念捕获：跳 /quick-capture（待实现，先占位）
  * - 网页剪藏 / 模板 / 语音 / 拍照 / 导入文件：暂提示「待开发」
- * - 新建任务：跳 /tasks（移动端待办列表，新增 Modal 走桌面入口）
+ * - 新建任务：跳 /tasks?new=1（待办页落地即弹出 TaskCreateSheet 新建面板）
  * - 新闪卡：仅在功能模块开启后可用（暂只跳 /cards）
  */
 
@@ -226,7 +226,7 @@ export default function QuickCreatePage() {
             iconBg="bg-orange-100"
             title="新建任务"
             sub="到「今日待办」中"
-            onClick={() => navigate("/tasks")}
+            onClick={() => navigate("/tasks?new=1")}
           />
           <Row
             icon={<Layers size={20} className="text-indigo-600" />}

@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Modal, message } from "antd";
 import {
   Search,
-  Filter,
+  X,
   Flame,
   Calendar,
   Plus,
@@ -16,6 +16,7 @@ import { taskApi } from "@/lib/api";
 import type { Task } from "@/types";
 import { useLongPress } from "@/hooks/useLongPress";
 import { ActionSheet, type ActionSheetItem } from "@/components/mobile/ActionSheet";
+import { TaskCreateSheet } from "@/components/mobile/TaskCreateSheet";
 
 /**
  * 移动端待办（设计稿：08-tasks.html）
@@ -28,17 +29,25 @@ import { ActionSheet, type ActionSheetItem } from "@/components/mobile/ActionShe
  *
  * 暂不实现：子任务展开、详情弹窗、批量编辑
  * 这些走 T-M010 任务详情页（独立路由 /tasks/:id 后续做）
+ *
+ * 新建：右下 FAB → TaskCreateSheet（本页自带 FAB，MobileLayout 的 PAGES_WITH_OWN_FAB
+ * 已把 /tasks 排除在全局 + FAB 之外，避免两个悬浮按钮重叠）。
+ * /quick-create 的「新建任务」跳 `/tasks?new=1`，落地即自动弹出新建面板。
  */
 
 type GroupKey = "today" | "week" | "done";
 
 export function MobileTasks() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<GroupKey | "all">("all");
   // 长按唤起的动作面板
   const [sheetTask, setSheetTask] = useState<Task | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [keyword, setKeyword] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -60,14 +69,34 @@ export function MobileTasks() {
     void load();
   }, [load]);
 
+  // 从 /quick-create 带 ?new=1 进来 → 直接弹新建面板，并把参数消费掉
+  // （否则返回本页 / 刷新时会重复弹）
+  useEffect(() => {
+    if (searchParams.get("new") !== "1") return;
+    setCreateOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete("new");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   // 分组
   const todayEnd = new Date();
   todayEnd.setHours(23, 59, 59, 999);
   const next7End = new Date(todayEnd);
   next7End.setDate(next7End.getDate() + 7);
 
-  const todoTasks = tasks.filter((t) => t.status === 0);
-  const doneTasks = tasks.filter((t) => t.status === 1);
+  // 本地关键词过滤（标题 + 备注）；移动端不走后端全文搜索，列表本身已是全量拉取
+  const kw = keyword.trim().toLowerCase();
+  const visibleTasks = kw
+    ? tasks.filter(
+        (t) =>
+          t.title.toLowerCase().includes(kw) ||
+          (t.description ?? "").toLowerCase().includes(kw),
+      )
+    : tasks;
+
+  const todoTasks = visibleTasks.filter((t) => t.status === 0);
+  const doneTasks = visibleTasks.filter((t) => t.status === 1);
   const todayTasks = todoTasks.filter((t) => {
     if (!t.due_date) return false;
     return new Date(t.due_date).getTime() <= todayEnd.getTime();
@@ -159,19 +188,32 @@ export function MobileTasks() {
           </div>
           <div className="flex gap-2">
             <button
-              aria-label="搜索"
+              aria-label={searchOpen ? "关闭搜索" : "搜索"}
+              onClick={() => {
+                setSearchOpen((v) => !v);
+                if (searchOpen) setKeyword("");
+              }}
               className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 active:bg-slate-200"
             >
-              <Search size={18} className="text-slate-700" />
-            </button>
-            <button
-              aria-label="筛选"
-              className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 active:bg-slate-200"
-            >
-              <Filter size={18} className="text-slate-700" />
+              {searchOpen ? (
+                <X size={18} className="text-slate-700" />
+              ) : (
+                <Search size={18} className="text-slate-700" />
+              )}
             </button>
           </div>
         </div>
+
+        {/* 搜索框（点顶栏放大镜展开）—— 本地过滤，不发请求 */}
+        {searchOpen && (
+          <input
+            autoFocus
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            placeholder="搜索待办标题 / 备注"
+            className="mt-3 w-full rounded-xl bg-slate-100 px-4 py-2.5 text-sm text-slate-800 outline-none placeholder:text-slate-400"
+          />
+        )}
 
         {/* 分类 chips */}
         <div className="mt-3 flex gap-2 overflow-x-auto -mx-4 px-4 pb-1 scrollbar-none">
@@ -209,8 +251,23 @@ export function MobileTasks() {
           </div>
         ) : todoTasks.length === 0 && doneTasks.length === 0 ? (
           <div className="flex flex-col items-center gap-2 px-4 py-16 text-slate-400">
-            <Plus size={40} className="text-slate-300" />
-            <span className="text-sm">暂无待办，享受当下 ✨</span>
+            {kw ? (
+              <>
+                <Search size={40} className="text-slate-300" />
+                <span className="text-sm">没有匹配「{keyword.trim()}」的待办</span>
+              </>
+            ) : (
+              <>
+                <Plus size={40} className="text-slate-300" />
+                <span className="text-sm">暂无待办，享受当下 ✨</span>
+                <button
+                  onClick={() => setCreateOpen(true)}
+                  className="mt-2 rounded-full bg-[#1677FF] px-5 py-2 text-sm font-medium text-white active:opacity-80"
+                >
+                  添加第一条
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <>
@@ -260,12 +317,31 @@ export function MobileTasks() {
         )}
       </div>
 
+      {/* 新建 FAB（本页自带，全局 FAB 在 /tasks 下已被 MobileLayout 隐藏） */}
+      <button
+        onClick={() => setCreateOpen(true)}
+        aria-label="新建待办"
+        className="fixed right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-[#1677FF] text-white shadow-[0_8px_24px_rgba(22,119,255,0.4)] active:scale-95 transition-transform"
+        style={{
+          bottom: `calc(64px + env(safe-area-inset-bottom, 0px) + 16px)`,
+        }}
+      >
+        <Plus size={28} strokeWidth={2.5} />
+      </button>
+
       {/* 长按任务唤起的底部操作面板 */}
       <ActionSheet
         open={sheetTask !== null}
         title={sheetTask?.title}
         items={sheetItems}
         onClose={() => setSheetTask(null)}
+      />
+
+      {/* 新建待办面板 */}
+      <TaskCreateSheet
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={() => void load()}
       />
     </div>
   );
