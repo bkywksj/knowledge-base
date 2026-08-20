@@ -158,26 +158,49 @@ score += 1.0 / (60 + rank)   # k=60，无权重，重复 id 只记首次名次
 
 ---
 
-### P0-5　剪藏 / 远程图片的 SSRF 防护
+### P0-5　剪藏 / 远程图片的 SSRF 防护　✅ 已完成（0472cd7）
 
-**为什么**：`services/web_clip.rs` 直接 `reqwest` 抓任意 URL，CSP 还允许 `https://*` 拉远程图片。
+**为什么**：`services/web_clip.rs` 直接 `reqwest` 抓任意 URL，只检查 `http/https` 前缀。
 藏知这块做得非常完整（`security/url_safety.py` + `url_fetch.py`）。
 
-- [ ] 新建 `services/url_safety.rs`：
-      ① 仅 http/https ② 含 `@`（userinfo）直接拒 ③ 拒 `localhost`/控制字符，强制 IDNA
-      ④ **`!ip.is_global()` 一句覆盖**私有/环回/链路本地/共享/保留/文档/组播
-         （IPv4-mapped IPv6 递归解包，`url_safety.py:50-55`）
-      ⑤ 解析出的**每个** A/AAAA 都要公网，任一不合格整体拒
-- [ ] `services/http_client.rs`：用 `reqwest` 的 `.resolve()` **预绑定已校验 IP**，
-      但 Host/SNI 保留原域名 → 堵死 DNS rebinding（抄 `_PinnedHTTPSConnection`，`url_fetch.py:116-144`）
-- [ ] `services/web_clip.rs`：重定向**每跳重校验** + `visited` 防循环 + `max_redirects=5`；
-      Content-Length 预检 + **分块累加复检**双保险；超时 20s；Content-Type 白名单
-- [ ] 单测：`127.0.0.1` / `10.0.0.1` / `169.254.x` / `::1` / `http://a@internal/` 全拒
+**已完成**
 
-> Rust 注意：`IpAddr::is_global()` 仍是 nightly API，稳定版需手写等价判定或引 `ip_network`/`ipnet`。
-> 新增依赖时**只追加自己那一行**到 `Cargo.toml`（该文件常有其他会话改动）。
+- [x] 新建 `services/url_safety.rs`：仅 http/https；含 userinfo 直接拒；
+      拒 `localhost` 及 `*.localhost`；**手写 `is_blocked_ip`**（`IpAddr::is_global()`
+      仍是 nightly，逐段列出反而能把"为什么拦"写进代码）覆盖 v4 私网/环回/链路本地/
+      组播/广播/文档段/运营商 NAT/IETF 分配/6to4/基准测试/240+ 保留，
+      v6 覆盖 ULA/链路本地/文档段/丢弃前缀，IPv4-mapped 与 IPv4-compatible 递归解包
+- [x] `validate_url_with_dns`：DNS 解析后**每个** A/AAAA 都要公网，任一不合格整体拒
+- [x] `http_client.rs` 新增 `shared_guarded()`（禁用自动重定向 + 连接超时）
+- [x] `web_clip.rs` / `image_download.rs` 手动逐跳跟随 + 每跳复校验 +
+      循环检测 + 上限 5 跳
+- [x] 15 个单测：环回/私网/云元数据 169.254.169.254/特殊段/IPv6 各形态/
+      非 http scheme/userinfo 混淆/localhost 各写法/IP 字面量 全拒
+- [x] **`image_download.rs` 一并纳入**（计划外）：图片 URL 来自笔记正文
+      （导入的第三方 `.md`、剪藏来的页面），用户往往根本没看过就被自动请求，
+      比剪藏更隐蔽
 
-**工作量**：1 天　**依赖**：无，可并行
+**🔴 单测抓到一个真实绕过**：`Url::host_str()` 对 IPv6 字面量返回**带方括号**的
+`"[::1]"`，而 `"[::1]".parse::<IpAddr>()` 会失败 → `http://[::1]:3000/`
+**静默跳过全部 IP 校验**。已抽 `host_as_ip()` 剥括号修复，
+并由 `rejects_literal_private_ip_urls` 钉住。
+
+**明确不动的**：`http_client::shared()` 被 AI(Ollama) / WebDAV / S3 / ASR 共用，
+那些是**用户自填地址**，`localhost:11434`、`192.168.x.x` 正是合法用法 ——
+加同样的拦截等于把用户的本地与内网服务全部打死。
+Jina 兜底目标固定 `r.jina.ai`，URL 只作路径参数，不构成 SSRF。
+
+**未做（评估后认为性价比低）**
+- **IP pinning 防 DNS rebinding**：藏知用 `_PinnedHTTPSConnection` 连已校验 IP、
+  SNI 保留域名。Rust 侧 `reqwest` 的 `.resolve()` 只能在 **ClientBuilder** 上设，
+  per-request pinning 要为每个域名新建 Client（TLS 配置初始化开销大），
+  而图片下载是高频路径。且该攻击需攻击者控制域名 + 精确控制 TTL +
+  用户恰好剪藏那个 URL，对单机桌面应用现实威胁远低于重定向攻击（已防）。
+- **响应体分块累加复检**：现有 `resp.bytes()` 是先全读再截断，
+  恶意服务器返回超大响应会先吃内存。web_clip 有 8 MiB、image_download 有 20 MB 上限，
+  但都是读完才截。改流式读取属独立改动，另开任务。
+
+**工作量**：实际约 1 天
 
 ---
 
