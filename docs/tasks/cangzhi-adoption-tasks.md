@@ -23,7 +23,7 @@
 | **v59** | P0-1a | `ai_models` + `asr.api_key` 就地加密（无新表） | ✅ 85407cf |
 | ~~v60~~ | ~~P1-2~~ | P1-2 实际未用迁移（`note_tags` 主键索引已够），版本号让给 P1-3 | — |
 | **v60** | P1-3b | Excel 数据层：`datasets` / `dataset_fields` / `dataset_rows` | ✅ a3443d2 |
-| **v61** | P1-5 | 收件箱：`inbox_items` | ⬜ |
+| **v61** | P1-5 | 收件箱：`inbox_items` | ✅ ee9925a（后端） |
 | **v62** | P2-1 | 切片层：`note_chunks` | ⬜ |
 | **v63** | P2-2 | 向量层：`embedding_profiles` / `chunk_embeddings` | ⬜ |
 | **v64** | P2-4 | 任务队列：`bg_jobs` | ⬜ |
@@ -544,7 +544,37 @@ dataset_rows(dataset_id, row_index, data_json)   -- SQLite JSON1
 
 ---
 
-### P1-5　失败可重试的收件箱（Schema v62）
+### P1-5　失败可重试的收件箱　✅ 后端已完成（ee9925a，Schema **v61**）
+
+> ⚠️ 版本号是 v61 而非原计划的 v62（P1-3b 用掉 v60 后整体前移，见顶部表）。
+
+**已完成（后端）**
+- [x] schema v61 `inbox_items` + `database/inbox.rs` DAO + `commands/inbox.rs`（5 个 Command）
+- [x] 前端类型 + `inboxApi` 封装
+- [x] **接入 PDF 导入失败点**（含 OCR 重试后仍失败）：落库 + 弹窗加一行
+      "已存入收件箱，关掉这个窗口也能稍后重试"
+- [x] 7 个 DAO 单测
+
+**三个设计决定**
+1. **不复用 P2-4 的通用任务队列**：任务队列装「待执行、会自动重试」的活儿，
+   收件箱装「已失败、等**人**决定」的记录。混一张表会让"该不该自动重试"变含糊。
+2. **不存 status 字段**：只存待处理项，重试成功 / 忽略 → 直接删行。
+   符合"收件箱清空即完成"的直觉，UI 也不用管状态流转。
+3. **`UNIQUE(kind, source)` + upsert**：同一文件反复失败只更新那一条
+   （刷新原因、`retryCount +1`），不刷屏；`retryCount` 顺带成了失败次数计数。
+   kind 不同则分开记（同一 PDF 可能既导入失败又 OCR 失败）。
+
+**重试为什么不是一个 Command**：重试动作各不相同（重导 PDF / 重新 OCR / 重新剪藏）。
+前端拿 list 返回里的 `detailJson` 还原上下文后调对应的原有 API，成功再 `remove`。
+收件箱因此**不需要认识每一种失败类型**，加新类型时只改前端。
+
+**⬜ 未做**
+- 收件箱 UI 页面（失败项已在落库，但用户还看不到列表）
+- Markdown 导入失败点：其 `errors` 是纯字符串数组（无结构化 `sourcePath`），
+  接入需先改后端返回结构
+- 剪藏 / OCR 独立入口的失败点
+
+<details><summary>原计划（保留备查）</summary>
 
 **为什么**：导入失败项只在一个 Modal 里活一次（`src/lib/noteCreator.tsx:256`），**关掉即丢**。
 藏知的做法是全部汇进收件箱按"需要关注"排队，AI 失败 → 落 inbox 分类、
@@ -563,6 +593,8 @@ inbox_items(id, kind, source_path, status, reason, detail_json,
       让用户**直接看懂"这篇能不能被搜到"**
 
 **工作量**：2 天
+
+</details>
 
 ---
 
