@@ -6,7 +6,7 @@ import { List, Modal, Typography, message } from "antd";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { NavigateFunction } from "react-router-dom";
 
-import { noteApi, importApi, pdfApi, ocrApi, sourceFileApi, tagApi, folderApi, whiteboardApi } from "./api";
+import { noteApi, importApi, pdfApi, ocrApi, inboxApi, sourceFileApi, tagApi, folderApi, whiteboardApi } from "./api";
 import { importWordFiles } from "./wordImport";
 import { useAppStore } from "@/store";
 
@@ -272,7 +272,7 @@ export async function importPdfsFlow(
             const ocrFail = r2.filter((r) => r.noteId === null);
             if (ocrOk.length > 0)
               message.success(`OCR 成功导入 ${ocrOk.length} 个扫描件`);
-            if (ocrFail.length > 0) showPdfFailModal(ocrFail, "OCR 后仍失败");
+            if (ocrFail.length > 0) showPdfFailModal(ocrFail, "OCR 后仍失败", folderId);
             useAppStore.getState().bumpNotesRefresh();
             const ocrIds = ocrOk
               .map((r) => r.noteId)
@@ -286,7 +286,7 @@ export async function importPdfsFlow(
       });
     } else if (fail.length > 0) {
       // 无扫描件可 OCR，或引擎不可用 → 直接列失败清单
-      showPdfFailModal(fail, `${fail.length} 个 PDF 导入失败`);
+      showPdfFailModal(fail, `${fail.length} 个 PDF 导入失败`, folderId);
     }
 
     useAppStore.getState().bumpNotesRefresh();
@@ -301,21 +301,43 @@ export async function importPdfsFlow(
 function showPdfFailModal(
   fail: { sourcePath: string; error?: string | null }[],
   title: string,
+  folderId?: number | null,
 ): void {
+  // P1-5：失败项落库排队。此前这个弹窗关掉就没了 —— 一次导入几十个 PDF、
+  // 失败七八个，用户得自己记住是哪几个、为什么失败，体验很糟。
+  // 落库失败不影响弹窗展示（收件箱是增强，不是前置条件）。
+  void Promise.all(
+    fail.map((r) =>
+      inboxApi.add({
+        kind: "import_pdf",
+        source: r.sourcePath,
+        title: r.sourcePath.split(/[\\/]/).pop() ?? r.sourcePath,
+        reason: r.error ?? "未知原因",
+        // 重试时要还原"导到哪个文件夹"
+        detailJson: JSON.stringify({ folderId: folderId ?? null }),
+      }),
+    ),
+  ).catch((e) => console.error("[inbox] 记录导入失败项时出错:", e));
+
   Modal.warning({
     title,
     content: (
-      <List
-        size="small"
-        dataSource={fail}
-        renderItem={(r) => (
-          <List.Item>
-            <Typography.Text type="danger" style={{ fontSize: 12 }}>
-              {r.sourcePath.split(/[\\/]/).pop()}: {r.error}
-            </Typography.Text>
-          </List.Item>
-        )}
-      />
+      <>
+        <List
+          size="small"
+          dataSource={fail}
+          renderItem={(r) => (
+            <List.Item>
+              <Typography.Text type="danger" style={{ fontSize: 12 }}>
+                {r.sourcePath.split(/[\\/]/).pop()}: {r.error}
+              </Typography.Text>
+            </List.Item>
+          )}
+        />
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          已存入收件箱，关掉这个窗口也能稍后重试。
+        </Typography.Text>
+      </>
     ),
   });
 }

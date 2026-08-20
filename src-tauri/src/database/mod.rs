@@ -7,6 +7,8 @@ pub mod cjk;
 pub mod dataset;
 pub mod dataview;
 pub mod folders;
+// 收件箱（schema v61）：导入 / OCR / 剪藏失败项落库，可重试可忽略
+pub mod inbox;
 // 多路召回融合（RRF）：LIKE 与 FTS5 的分数量纲不同，只能按名次融合
 pub mod fusion;
 pub mod links;

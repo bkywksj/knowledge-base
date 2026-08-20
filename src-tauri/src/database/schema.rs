@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 60;
+pub const SCHEMA_VERSION: i32 = 61;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -90,6 +90,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             57 => migrate_v57_to_v58(conn)?,
             58 => migrate_v58_to_v59(conn)?,
             59 => migrate_v59_to_v60(conn)?,
+            60 => migrate_v60_to_v61(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2382,6 +2383,61 @@ fn migrate_v54_to_v55(conn: &Connection) -> Result<(), AppError> {
 /// 加一列区分而不是另起一张表：份数上限、时间窗节流、内容去重、
 /// 以及笔记删除时的 CASCADE 清理，整套逻辑原样复用。
 /// `target_path` 为 NULL = 笔记正文本身（v57 的既有语义，存量行自动落到这一档）。
+/// v60 -> v61：收件箱（P1-5）。
+///
+/// # 解决什么
+///
+/// 导入失败的文件此前只在一个 `Modal.warning` 里活一次（`noteCreator.tsx:301`），
+/// **用户关掉弹窗就永久丢了** —— 想重试只能自己回忆刚才是哪几个文件失败、为什么失败。
+/// 一次导入几十个 PDF、失败七八个，这个体验是灾难性的。
+///
+/// 落库后：失败项排队等用户处理，可重试、可忽略，关了应用再打开还在。
+///
+/// # 为什么不复用后续的通用任务队列（P2-4 `bg_jobs`）
+///
+/// 语义不同：任务队列装的是「待执行、会自动重试」的活儿；收件箱装的是
+/// 「已经失败、等**人**决定怎么办」的记录。前者由调度器驱动，后者由用户驱动。
+/// 混在一张表里会让"这条到底该不该自动重试"变得含糊。
+///
+/// # 为什么不存 status 字段
+///
+/// 收件箱只存**待处理**项：重试成功 / 用户忽略 → 直接删行。
+/// 这样 `list_inbox` 不用过滤、UI 也不用管状态流转，且符合"收件箱清空即完成"的直觉。
+/// 代价是丢失历史统计（这周失败过多少次），对个人知识库不重要。
+///
+/// `UNIQUE(kind, source)` + upsert：同一个文件反复导入失败只更新那一条
+/// （刷新原因、retry_count +1），不会在列表里刷出一堆重复项。
+fn migrate_v60_to_v61(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v60 -> v61 (收件箱 inbox_items)");
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS inbox_items (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            -- 失败类型：import_pdf / import_word / import_md / ocr / clip / dataset
+            kind        TEXT    NOT NULL,
+            -- 源标识：本地文件绝对路径，或剪藏的 URL
+            source      TEXT    NOT NULL,
+            -- 展示名（文件名 / 网页标题）；为空时 UI 从 source 取末段
+            title       TEXT,
+            -- 失败原因，直接给用户看，必须是人话
+            reason      TEXT    NOT NULL,
+            -- 重试所需的结构化参数（folder_id / ocr 标志等），JSON
+            detail_json TEXT,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+            updated_at  TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+            -- 同一个源反复失败只留一条（刷新原因 + 计数），不刷屏
+            UNIQUE (kind, source)
+        );
+
+        -- 列表按时间倒序展示，且常按 kind 分组统计
+        CREATE INDEX IF NOT EXISTS idx_inbox_created ON inbox_items(created_at DESC);",
+    )?;
+
+    set_version(conn, 61)?;
+    Ok(())
+}
+
 /// v59 -> v60：Excel 二维数据集（P1-3b）。
 ///
 /// # 为什么要落库而不是每次现解析
