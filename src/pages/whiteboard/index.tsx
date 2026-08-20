@@ -12,8 +12,18 @@ import {
   theme as antdTheme,
   type MenuProps,
 } from "antd";
-import { ArrowLeft, Trash2, Check, Loader2, Download, Copy } from "lucide-react";
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import {
+  ArrowLeft,
+  Trash2,
+  Check,
+  Loader2,
+  Download,
+  Copy,
+  History,
+  FileJson,
+  Upload,
+} from "lucide-react";
+import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store";
 import { noteApi, whiteboardApi, systemApi } from "@/lib/api";
 import type { Note } from "@/types";
@@ -29,6 +39,11 @@ const { Text } = Typography;
  */
 const WhiteboardCanvas = lazy(
   () => import("@/components/whiteboard/WhiteboardCanvas"),
+);
+
+/** 历史版本抽屉同样懒加载：它内部还会再挂一个只读画布，不点开就不该付出这份成本 */
+const SnapshotDrawer = lazy(
+  () => import("@/components/whiteboard/SnapshotDrawer"),
 );
 
 /** 顶栏右侧的保存状态。让用户对「画的东西存没存住」有确定感，而不是猜 */
@@ -49,6 +64,14 @@ export default function WhiteboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [historyOpen, setHistoryOpen] = useState(false);
+  /**
+   * 画布实例的重建计数。
+   *
+   * Excalidraw 的 initialData 是非受控的，从外部换掉场景（回滚历史版本）
+   * 只能靠换 key 重建整个画布 —— 光 setScene 改不动已经挂起来的那块画布。
+   */
+  const [canvasEpoch, setCanvasEpoch] = useState(0);
 
   // 「已保存」的对勾显示 2 秒后自动淡回 idle，避免长期占着视觉焦点
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -165,6 +188,84 @@ export default function WhiteboardPage() {
     [note, message],
   );
 
+  /**
+   * 画布被外部改写后（回滚历史版本 / 导入文件）重新装载。
+   *
+   * `discardPendingSave` 必须在换 key 之前调：旧画布实例卸载时会兜底保存一次，
+   * 不打断的话新内容会被旧画布原样覆盖回去 —— 用户看到的就是"恢复没生效"。
+   */
+  const handleRestored = useCallback(async () => {
+    exportApiRef.current?.discardPendingSave();
+    try {
+      const sceneJson = await whiteboardApi.getScene(noteId);
+      setScene(sceneJson);
+      setCanvasEpoch((v) => v + 1);
+    } catch (e) {
+      message.error(`重新加载画布失败: ${e}`);
+    }
+  }, [noteId, message]);
+
+  /**
+   * 导出为 `.excalidraw` 场景文件。
+   *
+   * 和导出图片的区别：这份是**可再编辑**的，能丢进 excalidraw.com 或别人的白板工具接着画 ——
+   * 知识库最忌讳数据出不去，图片导出只解决"给人看"，解决不了"带走"。
+   *
+   * 内容直接用画布当前场景：打开时后端已把图片内联成 base64，所以导出的文件自带图，
+   * 换台机器打开不会裂。
+   */
+  const handleExportScene = useCallback(async () => {
+    const api = exportApiRef.current;
+    if (!api) {
+      message.warning("画布还没加载完，请稍候");
+      return;
+    }
+    try {
+      const path = await saveDialog({
+        defaultPath: `${(note?.title || "白板").replace(/[\\/:*?"<>|]/g, "_")}.excalidraw`,
+        filters: [{ name: "Excalidraw 场景", extensions: ["excalidraw"] }],
+      });
+      if (!path) return;
+      await systemApi.writeTextFile(path, api.getSceneJson());
+      message.success("已导出 .excalidraw 文件");
+    } catch (e) {
+      message.error(`导出失败: ${e}`);
+    }
+  }, [note, message]);
+
+  /**
+   * 导入 `.excalidraw` 文件，**覆盖**当前画布。
+   *
+   * 覆盖前强制存一份手动存档（不受自动快照的时间窗节流影响）——
+   * 导入是个一步就能把半天工作盖掉的操作，必须留退路。
+   */
+  const handleImportScene = useCallback(async () => {
+    try {
+      const picked = await openDialog({
+        multiple: false,
+        filters: [
+          { name: "Excalidraw 场景", extensions: ["excalidraw", "json"] },
+        ],
+      });
+      const path = typeof picked === "string" ? picked : null;
+      if (!path) return;
+
+      const text = await systemApi.readTextFile(path);
+      // 先给当前画布留底，再覆盖。存档失败不拦截导入（多半是内容为空），只提示
+      try {
+        await whiteboardApi.createSnapshot(noteId);
+      } catch (e) {
+        console.warn("[whiteboard] 导入前存档失败:", e);
+      }
+      // 合法性交给后端 parse_scene 把关：不是 Excalidraw 场景会直接报错，不会写进库
+      await whiteboardApi.saveScene(noteId, text);
+      await handleRestored();
+      message.success("已导入（原画布已存进历史版本，可回滚）");
+    } catch (e) {
+      message.error(`导入失败: ${e}`);
+    }
+  }, [noteId, message, handleRestored]);
+
   /** 复制画布为 PNG 到剪贴板，方便直接粘进笔记 */
   const handleCopyImage = useCallback(async () => {
     const api = exportApiRef.current;
@@ -199,6 +300,20 @@ export default function WhiteboardPage() {
       label: "复制为图片",
       icon: <Copy size={14} />,
       onClick: () => void handleCopyImage(),
+    },
+    { type: "divider" },
+    {
+      key: "scene",
+      // 与上面导出图片的区别值得在菜单里说清楚：这份能再编辑，图片也带着走
+      label: "导出 .excalidraw（可再编辑）…",
+      icon: <FileJson size={14} />,
+      onClick: () => void handleExportScene(),
+    },
+    {
+      key: "import",
+      label: "导入 .excalidraw…",
+      icon: <Upload size={14} />,
+      onClick: () => void handleImportScene(),
     },
   ];
 
@@ -259,6 +374,13 @@ export default function WhiteboardPage() {
 
         <SaveIndicator state={saveState} color={token.colorTextSecondary} />
 
+        <Button
+          type="text"
+          icon={<History size={16} />}
+          onClick={() => setHistoryOpen(true)}
+          title="历史版本（画布自动保存，误删可回滚）"
+        />
+
         <Dropdown menu={{ items: exportMenu }} trigger={["click"]} placement="bottomRight">
           <Button type="text" icon={<Download size={16} />} title="导出 / 复制为图片" />
         </Dropdown>
@@ -285,6 +407,7 @@ export default function WhiteboardPage() {
           }
         >
           <WhiteboardCanvas
+            key={canvasEpoch}
             initialScene={scene ?? ""}
             onSave={handleSaveScene}
             theme={themeCategory === "dark" ? "dark" : "light"}
@@ -298,6 +421,18 @@ export default function WhiteboardPage() {
           />
         </Suspense>
       </div>
+
+      {/* 抽屉整体懒加载，且只有开过一次才挂载 —— 从没点过「历史版本」的用户不用为它买单 */}
+      {historyOpen && (
+        <Suspense fallback={null}>
+          <SnapshotDrawer
+            open={historyOpen}
+            onClose={() => setHistoryOpen(false)}
+            noteId={noteId}
+            onRestored={handleRestored}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

@@ -115,6 +115,7 @@ import type {
   PushRunLog,
   PushPopupData,
   EmbeddedWhiteboardSaved,
+  NoteSnapshotMeta,
 } from "@/types";
 
 /** 系统相关 API */
@@ -149,6 +150,8 @@ export const systemApi = {
   /** 把 base64 编码的二进制数据写入指定路径。配合 dialog.save() 用于导出 PNG/PDF 等。 */
   writeBinaryFile: (path: string, base64Data: string) =>
     invoke<void>("write_binary_file", { path, base64Data }),
+  /** 读取用户选中的 UTF-8 文本文件（上限 32MB）。配合 dialog.open() 用于导入 .excalidraw 等。 */
+  readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
   /** 导出诊断包（应用日志 + 崩溃日志 + 系统信息打成 zip 放桌面），返回 zip 绝对路径。
    *  用于线上闪退 / 异常时让用户一键打包日志发回（够不到机器时远程取证）。 */
   exportDiagnostics: () => invoke<string>("export_diagnostics"),
@@ -347,6 +350,35 @@ export const whiteboardApi = {
   /** 读回内嵌白板画布（图片已内联成 base64，可直接喂 Excalidraw） */
   loadEmbedded: (relPath: string) =>
     invoke<string>("load_embedded_whiteboard", { relPath }),
+
+  // ─── 历史版本 ────────────────────────────────────────────
+  //
+  // 画布是自动保存的：误删一片图形什么都不用做就已经落库，撤销栈又活不过关窗。
+  // 后端在每次覆盖前留底（带时间窗节流 + 内容去重），这里是它的读取面。
+
+  /** 列出历史版本（不含正文，只有时间 / 体积 / 来源） */
+  listSnapshots: (noteId: number) =>
+    invoke<NoteSnapshotMeta[]>("list_whiteboard_snapshots", { noteId }),
+  /** 取某一份历史版本的画布（图片已内联，可直接渲染预览） */
+  getSnapshotScene: (snapshotId: number) =>
+    invoke<string>("get_whiteboard_snapshot_scene", { snapshotId }),
+  /** 手动存一个版本。返回 false = 与上一份存档内容相同，没存 */
+  createSnapshot: (noteId: number) =>
+    invoke<boolean>("create_whiteboard_snapshot", { noteId }),
+  /** 回滚到某一份历史版本（后端会先把当前版本另存一份，点错了还能滚回来） */
+  restoreSnapshot: (noteId: number, snapshotId: number) =>
+    invoke<void>("restore_whiteboard_snapshot", { noteId, snapshotId }),
+
+  // ─── 素材库 ──────────────────────────────────────────────
+  //
+  // Excalidraw 默认不持久化素材库（收藏的图形组件），关掉应用就没了。
+  // 后端把它存成 data_dir 下的标准 `.excalidrawlib` 文件，跟着数据目录走。
+
+  /** 读素材库原文（`.excalidrawlib` JSON）。没存过返回空串 */
+  getLibrary: () => invoke<string>("get_whiteboard_library"),
+  /** 覆盖写素材库 */
+  saveLibrary: (content: string) =>
+    invoke<void>("save_whiteboard_library", { content }),
 };
 
 /** T-003 隐藏笔记专用 API（/hidden 页面） */

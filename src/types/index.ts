@@ -109,6 +109,29 @@ export interface EmbeddedWhiteboardSaved {
 }
 
 /**
+ * 快照来源（对齐 Rust `services::snapshot::reason`）。
+ *
+ * - `auto`：自动保存覆盖前留的底
+ * - `manual`：用户主动存档
+ * - `before_restore`：回滚前对当前版本的兜底，让"恢复"本身也能撤销
+ */
+export type SnapshotReason = "auto" | "manual" | "before_restore";
+
+/**
+ * 历史版本元信息（列表用，不含画布正文）。与 Rust `models::NoteSnapshotMeta` 对齐。
+ *
+ * 正文按需单条取（`whiteboardApi.getSnapshotScene`）—— 一块白板的快照几十 KB 起步，
+ * 列表连正文一起拉就是几 MB 的 IPC 负担。
+ */
+export interface NoteSnapshotMeta {
+  id: number;
+  note_id: number;
+  byte_size: number;
+  reason: SnapshotReason;
+  created_at: string;
+}
+
+/**
  * AI 引用笔记里抽出的图片清单（回答下方"溯源"挂缩略图）。
  * 与 Rust models::NoteImageRef 对齐。
  * images 是相对 data_dir 的 POSIX 路径，前端 `toKbAsset` 拼 `kb-asset://` 后渲染。
