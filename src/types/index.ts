@@ -280,6 +280,59 @@ export interface SearchResult {
   note_type: NoteType;
 }
 
+// ─── Excel 二维数据集（P1-3b）────────────────────
+
+/** 字段推断出的数据类型 */
+export type DatasetFieldType = "number" | "date" | "boolean" | "text";
+
+/**
+ * 字段的语义角色。
+ * - `identifier` 是标识列（编号 / ID），**不该被求和**
+ * - `measure` 是度量列（金额 / 数量），适合聚合
+ * - `category` 适合分组
+ */
+export type DatasetSemanticRole =
+  | "time"
+  | "measure"
+  | "identifier"
+  | "status"
+  | "category";
+
+/**
+ * 一个数据集 = Excel 某个 sheet 里的一个「数据区域」。
+ *
+ * 同一个 sheet 可能有多个区域（主表 + 下方小计表），
+ * 靠 `(sourcePath, sheetName, regionIndex)` 区分。
+ */
+export interface Dataset {
+  id: number;
+  /** 相对 data_dir 的附件路径 */
+  sourcePath: string;
+  sheetName: string;
+  regionIndex: number;
+  /** 表头在原始行里的下标；null = 无表头（列名是 A列/B列） */
+  headerRow: number | null;
+  rowCount: number;
+  colCount: number;
+  createdAt: string;
+}
+
+/** 列画像 */
+export interface DatasetField {
+  colIndex: number;
+  name: string;
+  inferredType: DatasetFieldType;
+  semanticRole: DatasetSemanticRole | null;
+  /** 非空率 0.0~1.0 */
+  completeness: number;
+  distinctCount: number;
+}
+
+/** 数据集详情 = 元信息（扁平展开）+ 列画像 */
+export type DatasetSchema = Dataset & {
+  fields: DatasetField[];
+};
+
 /**
  * 搜索筛选条件（P1-2）。与 Rust 侧 `models::SearchFilters` 对齐（camelCase）。
  *

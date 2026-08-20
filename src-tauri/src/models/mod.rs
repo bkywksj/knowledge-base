@@ -228,6 +228,8 @@ pub struct TagInput {
 /// 同一个 sheet 可能有多个区域（主表 + 下方小计表），故三元组
 /// `(source_path, sheet_name, region_index)` 才是它的业务主键。
 #[derive(Debug, Clone, Serialize)]
+// 与同为「喂给 antd Table 的结构化数据」的 ExcelPreviewData 保持一致：前端拿 camelCase
+#[serde(rename_all = "camelCase")]
 pub struct Dataset {
     pub id: i64,
     /// 相对 data_dir 的附件路径
@@ -243,6 +245,8 @@ pub struct Dataset {
 
 /// 列画像
 #[derive(Debug, Clone, Serialize)]
+// 与同为「喂给 antd Table 的结构化数据」的 ExcelPreviewData 保持一致：前端拿 camelCase
+#[serde(rename_all = "camelCase")]
 pub struct DatasetField {
     pub col_index: i64,
     pub name: String,
@@ -257,6 +261,8 @@ pub struct DatasetField {
 
 /// 数据集详情 = 元信息 + 列画像
 #[derive(Debug, Clone, Serialize)]
+// 与同为「喂给 antd Table 的结构化数据」的 ExcelPreviewData 保持一致：前端拿 camelCase
+#[serde(rename_all = "camelCase")]
 pub struct DatasetSchema {
     #[serde(flatten)]
     pub dataset: Dataset,

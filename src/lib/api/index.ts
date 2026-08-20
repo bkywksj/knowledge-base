@@ -27,6 +27,8 @@ import type {
   Tag,
   SearchResult,
   SearchFilters,
+  Dataset,
+  DatasetSchema,
   NoteLink,
   NoteLinkSummary,
   WikiLinkSuggestItem,
@@ -995,6 +997,35 @@ export const attachmentApi = {
   /** 读取附件为文本（md/txt/json/csv/代码等），超长自动截断 */
   previewText: (rel: string) =>
     invoke<TextPreviewData>("preview_text_attachment", { rel }),
+};
+
+/**
+ * Excel 二维数据集 API（P1-3b，仅桌面端）。
+ *
+ * 与 `attachmentApi.previewExcel` 的区别：预览是"把文件原样显示出来"，
+ * 数据集是"把它变成可查询的结构化数据"（区域识别 + 字段画像后落库）。
+ */
+export const datasetApi = {
+  /**
+   * 解析附件并入库为数据集，返回数据集个数。
+   *
+   * `force = false`（默认）时源文件哈希未变会直接跳过，不重复解析。
+   */
+  import: (rel: string, force?: boolean) =>
+    invoke<number>("import_attachment_datasets", { rel, force }),
+  /** 列出该附件已入库的数据集 */
+  list: (rel: string) => invoke<Dataset[]>("list_attachment_datasets", { rel }),
+  /** 取数据集详情（元信息 + 列画像） */
+  getSchema: (datasetId: number) =>
+    invoke<DatasetSchema>("get_dataset_schema", { datasetId }),
+  /**
+   * 分页取数据行。
+   *
+   * 返回的是每行的 `{"列名": "值"}` **JSON 字符串**数组 —— 由调用方 parse。
+   * 后端不转二维数组是为了避免列顺序在前后端各维护一份。
+   */
+  previewRows: (datasetId: number, offset?: number, limit?: number) =>
+    invoke<string[]>("preview_dataset_rows", { datasetId, offset, limit }),
 };
 
 /** Excel 预览：单个 Sheet 的结构化数据（headers + rows） */

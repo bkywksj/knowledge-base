@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Spin, Alert, Tabs, Table, Tag } from "antd";
 import { attachmentApi, type ExcelPreviewData } from "@/lib/api";
+import { DatasetPanel } from "./DatasetPanel";
 
 interface Props {
   /** kb-asset:// 相对路径 */
@@ -8,15 +9,30 @@ interface Props {
 }
 
 /**
- * Excel/ODS 附件预览。
+ * Excel/ODS/CSV 附件预览。
  *
- * 复用后端 excel_parser（calamine），输出结构化 sheets/headers/rows，
- * 前端用 antd Table 渲染。多 sheet 用 Tabs 切换。
+ * 两个视图（P1-3b 起）：
+ * - **原样预览**：文件长什么样就显示什么样，多 sheet 用 Tabs 切换
+ * - **数据集**：识别出来的结构 —— 一个 sheet 里的说明文字 / 主表 / 小计表会被切成
+ *   各自独立的数据集，每列带类型与语义角色
  *
- * 截断说明：单 sheet 超过 ~30k 字符时，后端取头 40 行 + 尾 10 行（中间插占位行），
- * 在 Tab 标签上用 `已截断` Tag 提示。
+ * 两者都保留是有意的：原样预览用来"确认这是我要的文件"，
+ * 数据集用来"看清它的结构、准备拿它算东西"。
  */
 export function XlsxPreview({ rel }: Props) {
+  return (
+    <Tabs
+      size="small"
+      items={[
+        { key: "raw", label: "原样预览", children: <RawSheets rel={rel} /> },
+        { key: "dataset", label: "数据集", children: <DatasetPanel rel={rel} /> },
+      ]}
+    />
+  );
+}
+
+/** 原样预览：把文件按 sheet 显示出来 */
+function RawSheets({ rel }: Props) {
   const [data, setData] = useState<ExcelPreviewData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

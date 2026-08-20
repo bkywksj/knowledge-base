@@ -95,12 +95,16 @@ export function AttachmentPreviewModal() {
   }
 
   const isOfficeWord = ext === "docx" || ext === "doc";
+  // csv / tsv 自 P1-3a 起也走表格预览：后端能正确处理引号内逗号与 GBK 编码，
+  // 比按纯文本渲染成一堆逗号有用得多（也才能识别数据集）
   const isExcel =
     ext === "xlsx" ||
     ext === "xls" ||
     ext === "xlsm" ||
     ext === "xlsb" ||
-    ext === "ods";
+    ext === "ods" ||
+    ext === "csv" ||
+    ext === "tsv";
   const isPdf = ext === "pdf";
 
   return (
