@@ -387,7 +387,8 @@ mod tests {
         assert_eq!(cell_to_string(&Data::Empty), "");
         assert_eq!(cell_to_string(&Data::Bool(true)), "true");
         assert_eq!(cell_to_string(&Data::Int(42)), "42");
-        assert_eq!(cell_to_string(&Data::Float(3.14)), "3.14");
+        // 用 3.25 而非 3.14：后者被 clippy::approx_constant 当成写错的 PI
+        assert_eq!(cell_to_string(&Data::Float(3.25)), "3.25");
         // 整数小数自动转 int
         assert_eq!(cell_to_string(&Data::Float(7.0)), "7");
         // 含 | 时转义，避免破坏 markdown 表
