@@ -2,6 +2,8 @@ pub mod ai;
 pub mod cards;
 pub mod dataview;
 pub mod folders;
+// 多路召回融合（RRF）：LIKE 与 FTS5 的分数量纲不同，只能按名次融合
+pub mod fusion;
 pub mod links;
 pub mod mcp_servers;
 pub mod note_attachments;

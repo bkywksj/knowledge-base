@@ -113,6 +113,61 @@ mod tests {
         }
     }
 
+    /// 建一条笔记并按需打上 hidden / scratch 标记，用于 RAG 可见性测试
+    fn note_with_flags(db: &Database, title: &str, content: &str, hidden: bool, scratch: bool) -> i64 {
+        let id = db
+            .create_note(&crate::models::NoteInput {
+                title: title.into(),
+                content: content.into(),
+                folder_id: None,
+            })
+            .expect("create note")
+            .id;
+        if hidden || scratch {
+            let conn = db.conn.lock().expect("lock");
+            conn.execute(
+                "UPDATE notes SET is_hidden = ?1, is_scratch = ?2 WHERE id = ?3",
+                rusqlite::params![hidden as i32, scratch as i32, id],
+            )
+            .expect("set flags");
+        }
+        id
+    }
+
+    /// 🔴 回归测试：FTS 补充通道曾经漏掉 is_hidden / is_scratch 过滤
+    /// （只写了 is_deleted = 0），导致 query 里**只要带一个英文词**就会走 FTS 通道，
+    /// 把隐藏笔记捞进 RAG 上下文 —— 内容会被发给模型服务商并写进对话历史，
+    /// 正是 T-003 明令要防的泄露。这条用例钉住两条通道的可见性口径必须一致。
+    #[test]
+    fn rag_never_returns_hidden_or_scratch_notes() {
+        let db = temp_db();
+        let visible = note_with_flags(&db, "Kubernetes 部署笔记", "kubernetes 集群部署步骤", false, false);
+        let hidden = note_with_flags(&db, "Kubernetes 私密凭据", "kubernetes 生产环境密码", true, false);
+        let scratch = note_with_flags(&db, "Kubernetes 临时草稿", "kubernetes 临时记录", false, true);
+
+        // 带 ASCII 词 → 必定触发 FTS 补充通道（正是出问题的那条分支）
+        let hits = db.search_notes_for_rag("kubernetes 部署", 20, None).unwrap();
+        let ids: Vec<i64> = hits.iter().map(|(id, _, _)| *id).collect();
+
+        assert!(ids.contains(&visible), "正常笔记应能被检索到，实际: {:?}", ids);
+        assert!(!ids.contains(&hidden), "隐藏笔记绝不能进入 RAG 上下文，实际: {:?}", ids);
+        assert!(!ids.contains(&scratch), "临时笔记不属于知识库，实际: {:?}", ids);
+    }
+
+    /// 回收站里的笔记同样不该参与问答
+    #[test]
+    fn rag_never_returns_deleted_notes() {
+        let db = temp_db();
+        let kept = note_with_flags(&db, "Docker 构建", "docker build 说明", false, false);
+        let gone = note_with_flags(&db, "Docker 旧稿", "docker 废弃内容", false, false);
+        db.delete_note(gone).expect("soft delete");
+
+        let hits = db.search_notes_for_rag("docker", 20, None).unwrap();
+        let ids: Vec<i64> = hits.iter().map(|(id, _, _)| *id).collect();
+        assert!(ids.contains(&kept));
+        assert!(!ids.contains(&gone), "回收站笔记不该被召回，实际: {:?}", ids);
+    }
+
     /// 直接读库里 api_key 那一列的原始内容（绕过 row_to_ai_model 的解密）
     fn raw_api_key(db: &Database, id: i64) -> Option<String> {
         let conn = db.conn.lock().expect("lock");
@@ -1044,6 +1099,21 @@ impl Database {
     /// 那就该匹配不到，而不是退回去拿 JSON 碰运气。
     const RAG_TEXT: &'static str = "COALESCE(n.search_text, n.content)";
 
+    /// RAG 召回的**可见性过滤**，所有召回通道必须逐字复用同一份。
+    ///
+    /// 🔴 收敛成常量是有代价换来的教训：此前 LIKE 通道写了三个条件、
+    /// FTS 补充通道只写了 `is_deleted = 0` —— 于是**只要 query 里带一个英文词**
+    /// 就会走 FTS 通道，把隐藏笔记 / 临时笔记捞进 RAG 上下文，
+    /// 连同内容一起发给模型服务商并落进对话历史。这正是 T-003 明令要防的事。
+    ///
+    /// 同一功能有两条召回路径时，过滤条件必须只有一处来源；
+    /// 各写各的迟早会漂移，而漏掉的那条恰恰是最不容易被测到的分支。
+    ///
+    /// - `is_deleted`：回收站里的笔记不该参与问答
+    /// - `is_hidden`：T-003 隐藏笔记（AI 对话会把内容写进历史，等于泄露）
+    /// - `is_scratch`：临时编辑的外部 md，不属于知识库
+    const RAG_VISIBILITY: &'static str = "n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0";
+
     /// 转义 FTS5 特殊字符
     fn escape_fts5(term: &str) -> String {
         // 用双引号包裹以转义特殊字符
@@ -1099,10 +1169,15 @@ impl Database {
             keywords.iter().map(|k| format!("%{}%", k)).collect()
         };
 
-        let mut combined: Vec<(i64, String, String)> = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        // 两路召回各自产出一个**名次序列**，最后用 RRF 融合。
+        // 不能直接比两边的分数：LIKE 是加权命中计数（正整数），FTS5 的 rank 是 bm25
+        // 负值（越小越相关），量纲根本不可比。RRF 只用名次，天然回避这个问题。
+        let mut docs: std::collections::HashMap<i64, (String, String)> =
+            std::collections::HashMap::new();
+        let mut like_ranking: Vec<i64> = Vec::new();
+        let mut fts_ranking: Vec<i64> = Vec::new();
 
-        // ─── 主通道：LIKE + 标题加权命中数排序 ────────────────────
+        // ─── 通道一：LIKE + 标题加权命中数排序 ────────────────────
         if !like_keywords.is_empty() {
             // 加权打分：title 命中 ×5，content 命中 ×1
             //
@@ -1151,15 +1226,16 @@ impl Database {
                 })
                 .collect();
 
-            // T-003: RAG 检索结果不包含隐藏笔记（否则 AI 对话会泄露隐藏内容到历史）
+            // 可见性过滤走共享常量（见 RAG_VISIBILITY 注释：两条通道曾经写法不一致）
             let sql = format!(
                 "SELECT n.id, n.title, {text}, ({score}) AS score
                  FROM notes n
-                 WHERE n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0 AND ({where_}){folder_clause}
+                 WHERE {visibility} AND ({where_}){folder_clause}
                  ORDER BY score DESC, n.updated_at DESC
                  LIMIT ?{limit_param}",
                 text = Self::RAG_TEXT,
                 score = score_sum,
+                visibility = Self::RAG_VISIBILITY,
                 where_ = where_clauses.join(" OR "),
                 folder_clause = folder_clause,
                 limit_param = like_keywords.len() + 1,
@@ -1185,16 +1261,22 @@ impl Database {
                 )?
                 .filter_map(|r| r.ok());
 
-            for r in rows {
-                if seen.insert(r.0) {
-                    combined.push(r);
-                }
+            for (id, title, text) in rows {
+                docs.entry(id).or_insert((title, text));
+                like_ranking.push(id);
             }
         }
 
-        // ─── 补充通道：有 ASCII 词才跑 FTS5 ────────────────
+        // ─── 通道二：有 ASCII 词才跑 FTS5 ────────────────
+        //
+        // 仍然保留 `has_ascii_kw` 这个门槛：SQLite 的 unicode61 tokenizer 对中文
+        // 按连续 CJK 段切分（"合同内容" 是一个 token），纯中文 query 跑 FTS 基本白跑
+        // 一次全表 —— 这是有意为之的性能取舍，不是遗漏。
+        //
+        // 但**不再**要求"LIKE 没查够才跑"：那样 FTS 只是填空，两路同时命中的笔记
+        // 得不到任何加权。现在两路都跑满 limit，再交给 RRF 按名次融合。
         let has_ascii_kw = keywords.iter().any(|k| k.is_ascii());
-        if has_ascii_kw && combined.len() < limit {
+        if has_ascii_kw {
             let fts_query = keywords
                 .iter()
                 .map(|k| Self::escape_fts5(k))
@@ -1202,15 +1284,20 @@ impl Database {
                 .join(" OR ");
             let fts_sql = format!(
                 // MATCH 那一侧本来就查的是 search_text（v52 起 FTS 索引的就是
-                // COALESCE(search_text, content)），这里只需把回传的正文口径对齐
+                // COALESCE(search_text, content)），这里只需把回传的正文口径对齐。
+                //
+                // 🔴 可见性过滤必须与 LIKE 通道**逐字一致**：此处原先只有
+                // `is_deleted = 0`，漏了 is_hidden / is_scratch —— 导致 query 只要
+                // 含一个英文词就会把隐藏笔记喂给模型。改用共享常量杜绝再次漂移。
                 "SELECT n.id, n.title, {text}
                  FROM notes_fts fts
                  JOIN notes n ON n.id = fts.rowid
                  WHERE notes_fts MATCH ?1
-                   AND n.is_deleted = 0{folder_clause}
+                   AND {visibility}{folder_clause}
                  ORDER BY rank
                  LIMIT ?2",
                 text = Self::RAG_TEXT,
+                visibility = Self::RAG_VISIBILITY,
                 folder_clause = folder_clause,
             );
             if let Ok(mut stmt) = conn.prepare(&fts_sql) {
@@ -1225,18 +1312,28 @@ impl Database {
                     .ok()
                     .map(|rs| rs.filter_map(|r| r.ok()).collect::<Vec<_>>())
                     .unwrap_or_default();
-                for r in rows {
-                    if combined.len() >= limit {
-                        break;
-                    }
-                    if seen.insert(r.0) {
-                        combined.push(r);
-                    }
+                for (id, title, text) in rows {
+                    docs.entry(id).or_insert((title, text));
+                    fts_ranking.push(id);
                 }
             }
         }
 
-        combined.truncate(limit);
+        // ─── 融合：RRF 按名次合并两路 ────────────────
+        //
+        // 单路时 RRF 退化为原顺序（见 fusion::tests::single_ranking_preserves_order），
+        // 所以纯中文 query（没有 FTS 通道）的行为与改造前一致。
+        let rankings: Vec<Vec<i64>> = [like_ranking, fts_ranking]
+            .into_iter()
+            .filter(|r| !r.is_empty())
+            .collect();
+        let fused = crate::database::fusion::rrf_fuse(&rankings, crate::database::fusion::RRF_K);
+
+        let combined: Vec<(i64, String, String)> = fused
+            .into_iter()
+            .take(limit)
+            .filter_map(|id| docs.remove(&id).map(|(title, text)| (id, title, text)))
+            .collect();
         Ok(combined)
     }
 }
