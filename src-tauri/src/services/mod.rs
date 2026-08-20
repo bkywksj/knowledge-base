@@ -8,6 +8,11 @@ pub mod citations;
 pub mod attachment;
 pub mod config;
 pub mod converter;
+// Excel 二维数据集识别：区域切分 + 表头启发式 + 字段画像（全确定性规则，不用 LLM）
+// 纯算法、无 calamine 依赖，故双端可编
+pub mod dataset_detect;
+// 数据集入库编排：解析 → 识别 → 落库。依赖 excel_parser，仅桌面端
+pub mod dataset;
 pub mod daily;
 pub mod daily_import;
 pub mod data_dir;

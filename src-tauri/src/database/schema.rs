@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 59;
+pub const SCHEMA_VERSION: i32 = 60;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -89,6 +89,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             56 => migrate_v56_to_v57(conn)?,
             57 => migrate_v57_to_v58(conn)?,
             58 => migrate_v58_to_v59(conn)?,
+            59 => migrate_v59_to_v60(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2381,6 +2382,77 @@ fn migrate_v54_to_v55(conn: &Connection) -> Result<(), AppError> {
 /// 加一列区分而不是另起一张表：份数上限、时间窗节流、内容去重、
 /// 以及笔记删除时的 CASCADE 清理，整套逻辑原样复用。
 /// `target_path` 为 NULL = 笔记正文本身（v57 的既有语义，存量行自动落到这一档）。
+/// v59 -> v60：Excel 二维数据集（P1-3b）。
+///
+/// # 为什么要落库而不是每次现解析
+///
+/// Excel 附件此前只有两条用途：预览成表格、把整张 markdown 表塞给 AI 生成计划。
+/// 数据本身**不入库、不可查询**。落库后才能做"精确计算"这一轨 ——
+/// 向量检索永远算不准 count/sum，而把全表行灌进索引又会淹没检索
+/// （对标项目 0018→0021 迁移就是在修这个：一张 5 万行表造出几百个近乎同构的向量）。
+///
+/// # 三张表的分工
+///
+/// - `datasets`：一个「数据区域」= 一条记录。同一个 sheet 里可能有多个区域
+///   （上面一张主表、下面一张小计表），故 `(source_path, sheet_name, region_index)` 唯一
+/// - `dataset_fields`：列画像（类型 / 语义角色 / 非空率 / 去重数），供 UI 展示与
+///   将来的查询计划校验列名
+/// - `dataset_rows`：行数据存 JSON1（`{"列名": "值"}`）。
+///   **不用"语义行文本"**（对标项目把行转成 `行N｜列名=值` 存文本再正则反解，
+///   单元格里出现分隔符就串列）—— JSON 天然免疫这个问题
+///
+/// `source_hash` 用来判断源文件是否变过：变了就整体重建该文件的所有数据集，
+/// 避免"文件改了但库里还是旧数据"这种最难排查的不一致。
+fn migrate_v59_to_v60(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v59 -> v60 (Excel 二维数据集)");
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS datasets (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            -- 相对 data_dir 的附件路径（kb-asset:// 后那段），附件本身没有 DB 表
+            source_path   TEXT    NOT NULL,
+            sheet_name    TEXT    NOT NULL,
+            region_index  INTEGER NOT NULL,
+            -- 表头在原始行数组里的下标；无表头为 NULL（列名回退 A列/B列）
+            header_row    INTEGER,
+            row_count     INTEGER NOT NULL,
+            col_count     INTEGER NOT NULL,
+            -- 源文件内容哈希：变了就重建，防止库里留着旧数据
+            source_hash   TEXT    NOT NULL,
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+            UNIQUE (source_path, sheet_name, region_index)
+        );
+
+        CREATE TABLE IF NOT EXISTS dataset_fields (
+            dataset_id     INTEGER NOT NULL REFERENCES datasets(id) ON DELETE CASCADE,
+            col_index      INTEGER NOT NULL,
+            name           TEXT    NOT NULL,
+            -- number / date / boolean / text（90% 投票推断）
+            inferred_type  TEXT    NOT NULL,
+            -- time / measure / identifier / status / category，可为 NULL
+            semantic_role  TEXT,
+            -- 非空率 0.0~1.0
+            completeness   REAL    NOT NULL,
+            distinct_count INTEGER NOT NULL,
+            PRIMARY KEY (dataset_id, col_index)
+        );
+
+        CREATE TABLE IF NOT EXISTS dataset_rows (
+            dataset_id INTEGER NOT NULL REFERENCES datasets(id) ON DELETE CASCADE,
+            row_index  INTEGER NOT NULL,
+            -- JSON1 对象：{\"列名\": \"值\"}
+            data_json  TEXT    NOT NULL,
+            PRIMARY KEY (dataset_id, row_index)
+        );
+
+        -- 按源文件查/删是最高频操作（重新导入时先清后建）
+        CREATE INDEX IF NOT EXISTS idx_datasets_source ON datasets(source_path);",
+    )?;
+
+    set_version(conn, 60)?;
+    Ok(())
+}
+
 /// v58 -> v59：把存量的 API Key 就地加密。
 ///
 /// 在此之前 `ai_models.api_key` 与 `app_config['asr.api_key']` 都是**明文**落库的，

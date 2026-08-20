@@ -1462,6 +1462,16 @@ pub fn run() {
             #[cfg(desktop)]
             commands::attachment::preview_excel_attachment,
             commands::attachment::preview_text_attachment,
+            // Excel 二维数据集（P1-3b）：解析入库 + 结构/行查询。
+            // 仅桌面端 —— 依赖 calamine，Android target 编译失败
+            #[cfg(desktop)]
+            commands::dataset::import_attachment_datasets,
+            #[cfg(desktop)]
+            commands::dataset::list_attachment_datasets,
+            #[cfg(desktop)]
+            commands::dataset::get_dataset_schema,
+            #[cfg(desktop)]
+            commands::dataset::preview_dataset_rows,
             // 模板模块
             commands::template::list_templates,
             commands::template::get_template,

@@ -5,6 +5,8 @@ pub mod attachment;
 pub mod cards;
 pub mod config;
 pub mod daily;
+// Excel 二维数据集（仅桌面端，模块内已 #![cfg(desktop)]）
+pub mod dataset;
 pub mod dataview;
 pub mod data_dir;
 pub mod export;

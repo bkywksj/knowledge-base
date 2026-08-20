@@ -221,6 +221,48 @@ pub struct TagInput {
 
 // ─── 搜索 ─────────────────────────────────────
 
+// ─── Excel 二维数据集（P1-3b）────────────────────
+
+/// 一个数据集 = Excel 某个 sheet 里的一个「数据区域」。
+///
+/// 同一个 sheet 可能有多个区域（主表 + 下方小计表），故三元组
+/// `(source_path, sheet_name, region_index)` 才是它的业务主键。
+#[derive(Debug, Clone, Serialize)]
+pub struct Dataset {
+    pub id: i64,
+    /// 相对 data_dir 的附件路径
+    pub source_path: String,
+    pub sheet_name: String,
+    pub region_index: i64,
+    /// 表头在原始行里的下标；None = 无表头（列名是 A列/B列）
+    pub header_row: Option<i64>,
+    pub row_count: i64,
+    pub col_count: i64,
+    pub created_at: String,
+}
+
+/// 列画像
+#[derive(Debug, Clone, Serialize)]
+pub struct DatasetField {
+    pub col_index: i64,
+    pub name: String,
+    /// number / date / boolean / text
+    pub inferred_type: String,
+    /// time / measure / identifier / status / category
+    pub semantic_role: Option<String>,
+    /// 非空率 0.0~1.0
+    pub completeness: f64,
+    pub distinct_count: i64,
+}
+
+/// 数据集详情 = 元信息 + 列画像
+#[derive(Debug, Clone, Serialize)]
+pub struct DatasetSchema {
+    #[serde(flatten)]
+    pub dataset: Dataset,
+    pub fields: Vec<DatasetField>,
+}
+
 /// 搜索筛选条件（P1-2）。
 ///
 /// 全部字段可选，`None` = 该维度不约束。前端只传用户真正勾选的维度，
