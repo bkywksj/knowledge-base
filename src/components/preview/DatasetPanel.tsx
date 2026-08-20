@@ -180,19 +180,35 @@ function DatasetDetail({ dataset }: { dataset: Dataset }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // 列画像只跟数据集走，翻页时不会变 —— 与取行分成两个 effect，
+  // 免得每翻一页都白白重拉一次 schema
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    // 换数据集时先清空，否则新表会短暂沿用上一张表的列头
+    setSchema(null);
+    setPage(1);
+    datasetApi
+      .getSchema(dataset.id)
+      .then((s) => {
+        if (!cancelled) setSchema(s);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dataset.id]);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setError(null);
-    Promise.all([
-      datasetApi.getSchema(dataset.id),
-      datasetApi.previewRows(dataset.id, (page - 1) * PAGE_SIZE, PAGE_SIZE),
-    ])
-      .then(([s, rawRows]) => {
-        if (cancelled) return;
-        setSchema(s);
+    datasetApi
+      .previewRows(dataset.id, (page - 1) * PAGE_SIZE, PAGE_SIZE)
+      .then((rawRows) => {
         // 后端返回的是每行一个 JSON 字符串（见 parseDatasetRows 注释）
-        setRows(parseDatasetRows(rawRows));
+        if (!cancelled) setRows(parseDatasetRows(rawRows));
       })
       .catch((e) => {
         if (!cancelled) setError(String(e));
