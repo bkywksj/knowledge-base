@@ -521,15 +521,26 @@ dataset_rows(dataset_id, row_index, data_json)   -- SQLite JSON1
 
 ---
 
-### P1-4　搜索结果定位到命中位置
+### P1-4　搜索结果定位到命中位置　✅ 无需实施（核实后发现已存在）
 
-**为什么**：`src/pages/search/index.tsx:254` 只 `navigate('/notes/{id}?q={query}')`，进笔记后还得手动找。
+**🔴 这条是我最初分析时的误判**。基线盘点 agent 报告
+"只带 q 参数进笔记，**不定位到具体命中位置**" —— 它只看了搜索页
+（`navigate('/notes/{id}?q=')`），没往编辑器侧追。动手前核实，发现完整链路早就通了：
 
-- [ ] `database/search.rs:180 build_highlight_snippet` 已算了窗口，把 `match_offset` 一并返回
-- [ ] 前端 `?q=` 加 `&pos=`；打开后滚动到该位置并临时高亮
-- [ ] 复用已有 `src/components/editor/SearchAndReplace.ts` 的 ProseMirror Decoration
+```
+搜索页 navigate('/notes/{id}?q=')
+  → editor.tsx:765          读 ?q= → initialSearch
+  → TiptapEditor.tsx:2497   自动展开查找浮条
+  → SearchReplaceBar.tsx:77-92  预填 query + pendingJump，等命中算出
+  → SearchAndReplace.ts:379-386 scrollIntoView({block:"center"}) 滚到 .kb-search-active
+```
 
-**工作量**：1 天
+而且比原计划的方案（后端返回 `match_offset` + 前端滚到该位置）**更完整**：
+所有命中都高亮、当前命中更醒目、支持 ↑↓ 在多个命中间跳转、多关键词分色。
+桌面端（`search/index.tsx:436,455`）与移动端（`MobileSearch.tsx:143`）都已正确传 `?q=`。
+
+**教训**：子 agent 的"我方缺什么"结论同样要逐条核实 —— 它容易只看一层就下判断。
+好在这次动手前查了，省下一天白工。
 
 ---
 
