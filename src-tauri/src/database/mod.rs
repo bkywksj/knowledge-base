@@ -5,6 +5,10 @@ pub mod cards;
 pub mod cjk;
 // Excel 二维数据集（schema v60）：区域元信息 / 列画像 / 行数据 JSON
 pub mod dataset;
+// 数据集查询计划执行器（P2-3）：模型填结构化计划，我们拼参数化 SQL —— 它永远不写 SQL
+pub mod dataset_query;
+#[cfg(test)]
+mod dataset_query_tests;
 pub mod dataview;
 pub mod folders;
 // 多路召回融合（RRF）：LIKE 与 FTS5 的分数量纲不同，只能按名次融合

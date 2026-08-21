@@ -110,6 +110,56 @@ pub fn tool_schemas() -> Vec<Value> {
                 "parameters": { "type": "object", "properties": {} }
             }
         }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "list_datasets",
+                "description": "列出用户已导入的 Excel/CSV 二维表（表名、来源文件、行数、每列的名称与类型）。想对表格做统计（求和/计数/分组/最值）时**必须先调它**拿到 dataset_id 和真实列名，再调 query_dataset。不要凭猜测填列名。",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "query_dataset",
+                "description": "对某张二维表做精确统计。**涉及表格里的加总、计数、分组、最大最小值时一律用它，不要自己看着表格心算** —— 逐行心算容易算错，这里算的是准确值。列名必须来自 list_datasets 的返回。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "dataset_id": { "type": "integer", "description": "来自 list_datasets" },
+                        "metric": {
+                            "type": "string",
+                            "enum": ["rows", "count", "count_distinct", "sum", "avg", "min", "max"],
+                            "description": "rows=数行数(不需要 metric_column)；count=某列非空计数；其余按字面"
+                        },
+                        "metric_column": { "type": "string", "description": "除 rows 外必填；sum/avg 只能用数值列" },
+                        "group_by": { "type": "string", "description": "分组列，如按「区域」分组" },
+                        "filters": {
+                            "type": "array",
+                            "description": "过滤条件，最多 8 个，彼此是 AND 关系",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "column": { "type": "string" },
+                                    "op": {
+                                        "type": "string",
+                                        "enum": ["eq", "ne", "gt", "gte", "lt", "lte",
+                                                 "contains", "starts_with", "ends_with",
+                                                 "in", "is_empty", "is_not_empty"]
+                                    },
+                                    "value": { "description": "op=in 时传数组；is_empty/is_not_empty 不用传" }
+                                },
+                                "required": ["column", "op"]
+                            }
+                        },
+                        "sort_by": { "type": "string", "enum": ["metric", "group"] },
+                        "sort_order": { "type": "string", "enum": ["asc", "desc"] },
+                        "limit": { "type": "integer", "description": "返回几个分组，最多 50" }
+                    },
+                    "required": ["dataset_id", "metric"]
+                }
+            }
+        }),
     ]
 }
 
@@ -121,6 +171,8 @@ pub fn known_skill_names() -> &'static [&'static str] {
         "list_tags",
         "find_related",
         "get_today_tasks",
+        "list_datasets",
+        "query_dataset",
     ]
 }
 
@@ -146,6 +198,9 @@ pub fn dispatch(
         "list_tags" => run_list_tags(db)?,
         "find_related" => run_find_related(db, args_json, scope_ids)?,
         "get_today_tasks" => run_get_today_tasks(db)?,
+        // 数据集是文件级资产（不属于任何文件夹），folder scope 对它没有意义，故不传 scope_ids
+        "list_datasets" => run_list_datasets(db)?,
+        "query_dataset" => run_query_dataset(db, args_json)?,
         other => {
             return Err(AppError::Custom(format!(
                 "未知 skill: {}。可用：{}",
@@ -577,6 +632,60 @@ fn run_get_note(
     .unwrap_or_else(|_| "{}".to_string()))
 }
 
+/// 目录卡：告诉模型"有哪些表、每张表有哪些列"。
+///
+/// **只给卡片不给行**。一张几千行的表整个塞进上下文既撑爆窗口，
+/// 又把模型推回"逐行心算"的老路 —— 而那正是 `query_dataset` 要消灭的东西。
+fn run_list_datasets(db: &Database) -> Result<String, AppError> {
+    let schemas = db.list_all_dataset_schemas(50)?;
+    if schemas.is_empty() {
+        // 说清"怎么才会有"，否则模型只会回一句"没有数据集"，用户不知道下一步该干嘛
+        return Ok("当前没有已导入的二维表。用户需要先在笔记里打开一个 Excel/CSV 附件、切到「数据集」标签页，表格才会入库。"
+            .to_string());
+    }
+    let arr: Vec<Value> = schemas
+        .into_iter()
+        .map(|s| {
+            let file = s
+                .dataset
+                .source_path
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(&s.dataset.source_path)
+                .to_string();
+            json!({
+                "dataset_id": s.dataset.id,
+                "file": file,
+                "sheet": s.dataset.sheet_name,
+                "row_count": s.dataset.row_count,
+                "columns": s.fields.iter().map(|f| json!({
+                    "name": f.name,
+                    "type": f.inferred_type,
+                    "role": f.semantic_role,
+                    // 完整度不满时模型该在结论里提一句"有缺失值"，而不是当成全量算
+                    "completeness": f.completeness,
+                    "distinct_count": f.distinct_count,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    Ok(serde_json::to_string(&arr).unwrap_or_else(|_| "[]".to_string()))
+}
+
+/// 执行查询计划。
+///
+/// 反序列化失败（字段拼错 / 算子不在白名单 / 多了个幻想出来的字段）会带着
+/// serde 的具体报错回灌给模型 —— 它据此自纠的成功率，比只回一句"参数非法"高得多。
+fn run_query_dataset(db: &Database, args: &str) -> Result<String, AppError> {
+    let plan: crate::models::DatasetQueryPlan = serde_json::from_str(args).map_err(|e| {
+        AppError::InvalidInput(format!(
+            "query_dataset 参数非法: {e}。可用 metric: rows/count/count_distinct/sum/avg/min/max；可用 op: eq/ne/gt/gte/lt/lte/contains/starts_with/ends_with/in/is_empty/is_not_empty"
+        ))
+    })?;
+    let result = db.execute_dataset_query(&plan)?;
+    Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()))
+}
+
 fn run_list_tags(db: &Database) -> Result<String, AppError> {
     let tags = db.list_tags()?;
     let arr: Vec<Value> = tags
@@ -696,6 +805,47 @@ fn summarize_content(content: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// （取代了原先只查单向的 `tool_schemas_contain_all_known_skills`）
+    ///
+    /// 三处名字必须一致：`tool_schemas()` 广告的、`known_skill_names()` 放行的、
+    /// `dispatch()` 能路由的。任一处漏了，模型都会调一个"看得见却用不了"的工具，
+    /// 然后拿着报错反复重试 —— 这类漂移在加新工具时最容易发生。
+    #[test]
+    fn advertised_tools_match_whitelist() {
+        let advertised: Vec<String> = tool_schemas()
+            .iter()
+            .filter_map(|v| v["function"]["name"].as_str().map(|s| s.to_string()))
+            .collect();
+        let known: Vec<String> = known_skill_names().iter().map(|s| s.to_string()).collect();
+
+        for name in &advertised {
+            assert!(known.contains(name), "{name} 有 schema 但不在 known_skill_names");
+        }
+        for name in &known {
+            assert!(advertised.contains(name), "{name} 在白名单但没有 schema，模型看不见");
+        }
+    }
+
+    /// 白名单里的每个名字都要能被 dispatch 路由到（而不是掉进"未知 skill"分支）。
+    /// 用空参数调，只要错误不是"未知 skill"就说明路由通了。
+    #[test]
+    fn every_known_tool_is_routable() {
+        let dir = std::env::temp_dir().join(format!("kb_skills_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Database::init(dir.join("t.db").to_str().unwrap()).unwrap();
+
+        for name in known_skill_names() {
+            let err = dispatch(&db, name, "{}", None, 1000)
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default();
+            assert!(
+                !err.contains("未知 skill"),
+                "{name} 没接进 dispatch 的 match"
+            );
+        }
+    }
     use super::*;
 
     #[test]
@@ -778,15 +928,4 @@ mod tests {
         assert_eq!(filter_kb_result_by_scope("pong", &[10]), "pong");
     }
 
-    #[test]
-    fn tool_schemas_contain_all_known_skills() {
-        let schemas = tool_schemas();
-        let names: Vec<String> = schemas
-            .iter()
-            .filter_map(|v| v["function"]["name"].as_str().map(String::from))
-            .collect();
-        for &k in known_skill_names() {
-            assert!(names.contains(&k.to_string()), "missing schema for {}", k);
-        }
-    }
 }

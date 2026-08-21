@@ -269,6 +269,162 @@ pub struct DatasetSchema {
     pub fields: Vec<DatasetField>,
 }
 
+// ─── 数据集查询计划（P2-3）────────────────────────
+
+/// 聚合口径。**枚举即白名单** —— 模型只能从这 7 个里选，写别的直接反序列化失败。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DatasetMetric {
+    /// 满足条件的行数（不看具体列）
+    Rows,
+    /// 指定列的非空计数
+    Count,
+    /// 指定列的去重计数
+    CountDistinct,
+    Sum,
+    Avg,
+    Min,
+    Max,
+}
+
+impl DatasetMetric {
+    /// 除 `rows` 外都必须给 `metric_column`
+    pub fn needs_column(self) -> bool {
+        !matches!(self, DatasetMetric::Rows)
+    }
+
+    /// 只对数值列有意义的口径 —— 拿它去求和"订单编号"是典型误用
+    pub fn numeric_only(self) -> bool {
+        matches!(self, DatasetMetric::Sum | DatasetMetric::Avg)
+    }
+}
+
+/// 过滤算子白名单。
+///
+/// 藏知 `structured_table.py:51-63` 列了 11 个，这里去掉 `direct_child_of`
+/// （它服务于对方的组织架构层级数据，我们的二维表没有这个概念，
+/// 留着只会让模型以为存在这种能力）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DatasetFilterOp {
+    Eq,
+    Ne,
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+    Contains,
+    StartsWith,
+    EndsWith,
+    /// 值命中给定集合之一
+    In,
+    /// 空值 / 空串
+    IsEmpty,
+    IsNotEmpty,
+}
+
+impl DatasetFilterOp {
+    /// 是否需要 `value`（`is_empty` / `is_not_empty` 不需要）
+    pub fn needs_value(self) -> bool {
+        !matches!(self, DatasetFilterOp::IsEmpty | DatasetFilterOp::IsNotEmpty)
+    }
+
+    /// 是否按数值比较（而非字符串）
+    pub fn numeric_compare(self) -> bool {
+        matches!(
+            self,
+            DatasetFilterOp::Gt | DatasetFilterOp::Gte | DatasetFilterOp::Lt | DatasetFilterOp::Lte
+        )
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatasetFilter {
+    pub column: String,
+    pub op: DatasetFilterOp,
+    /// `in` 用数组，其它用单值；`is_empty` 系列可省略
+    #[serde(default)]
+    pub value: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DatasetSortBy {
+    /// 按聚合值排（默认）
+    Metric,
+    /// 按分组名排
+    Group,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DatasetSortOrder {
+    Asc,
+    Desc,
+}
+
+/// 模型填的「查询计划」——**它永远不写 SQL**。
+///
+/// 这是藏知「表格双轨制」的执行轨：向量/关键词只负责找到*哪张表*，
+/// 真正的计算交给这份结构化计划，由我们拼参数化 SQL 执行。
+/// 好处是模型算错数学的可能性被彻底排除，代价是能表达的查询有限 —— 这个取舍是对的，
+/// 用户宁可听到"这个我算不了"，也不想拿到一个看着像模像样的错数字。
+///
+/// `deny_unknown_fields`：模型幻想出一个 `having` 字段时**当场失败**并把错误回灌给它，
+/// 而不是静默忽略后返回一个"看起来对但少了条件"的结果。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatasetQueryPlan {
+    pub dataset_id: i64,
+    #[serde(default)]
+    pub filters: Vec<DatasetFilter>,
+    /// 分组列；不给就是全表一个聚合值
+    #[serde(default)]
+    pub group_by: Option<String>,
+    pub metric: DatasetMetric,
+    /// `metric = rows` 时可省略，其余必填
+    #[serde(default)]
+    pub metric_column: Option<String>,
+    #[serde(default)]
+    pub sort_by: Option<DatasetSortBy>,
+    #[serde(default)]
+    pub sort_order: Option<DatasetSortOrder>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// 查询计划的执行结果。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatasetQueryResult {
+    /// 分组名 → 聚合值。无 group_by 时只有一行、分组名为空串
+    pub rows: Vec<DatasetQueryRow>,
+    /// 参与聚合的原始行数（过滤后、分组前）
+    pub matched_rows: i64,
+    /// 是否因为 limit 截断了分组
+    pub truncated: bool,
+    /// 零结果时给的自纠线索：最接近的几个真实取值
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_values: Option<DatasetSuggestion>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatasetQueryRow {
+    pub group: String,
+    /// 聚合值；`min`/`max` 对文本列会是字符串，故用 JSON 值
+    pub value: serde_json::Value,
+}
+
+/// 零结果时的"你是不是想找这些"
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatasetSuggestion {
+    pub column: String,
+    pub values: Vec<String>,
+}
+
 /// 搜索筛选条件（P1-2）。
 ///
 /// 全部字段可选，`None` = 该维度不约束。前端只传用户真正勾选的维度，
