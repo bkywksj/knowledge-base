@@ -851,7 +851,36 @@ chunk_embeddings(profile_id, chunk_id, content_hash, vec BLOB,
 
 ---
 
-### P2-3　Excel 查询计划执行器
+### P2-3　Excel 查询计划执行器　✅ 已完成（ff5d1e1）
+
+**落点**：Excel 此前是「整张 markdown 表塞进 prompt」，模型逐行心算 ——
+算错还答得理直气壮。P1-3b 已把表拆好入库却一直没人消费，本次把「算东西」补上。
+
+- [x] `DatasetQueryPlan` + `deny_unknown_fields`（模型幻想出 `having` 字段当场失败并回灌报错）
+- [x] 算子白名单 **12 个**（藏知那 11 个去掉 `direct_child_of` ——
+      它服务对方的组织架构层级数据，我们的二维表没这概念，留着只会让模型以为有这能力；
+      另加 `is_empty` / `is_not_empty`）
+- [x] metric enum 7 个：rows/count/count_distinct/sum/avg/min/max
+- [x] 硬上限：结果 50 行、filters 8 个
+- [x] 列名必须命中 `dataset_fields`；且只作为 `json_extract(data_json, ?)` 的**绑定参数**出现，
+      不进 SQL 文本。有用例验证注入 `区域"); DROP TABLE notes;--` 只得到"没有列"错误
+- [x] 零结果返回该列**真实存在的取值**（只说"没查到"的话模型只会再猜一个错值）
+- [x] SQLite 原生聚合，未引 DuckDB
+- [x] 两个 AI 工具：`list_datasets`（目录卡，只给结构不给行）+ `query_dataset`
+
+**计划外但必需的三条**（都是实测/推演出来的坑）：
+1. **sum/avg 拒绝非数值列** —— 拿"订单编号"求和是典型误用，模型不会自己意识到，
+   靠 P1-3b 的列画像拦下
+2. **数值比较必须 CAST** —— JSON 里存的是字符串，字符串序下 `"9" > "250"`
+3. **LIKE 转义通配符** —— 用户数据里真实出现的 `%` 不该变成"匹配任意"
+
+**防漂移测试**：`tool_schemas` / `known_skill_names` / `dispatch` 三处名字双向一致，
+否则模型会调一个"看得见却用不了"的工具然后反复重试。
+
+⚠️ **尚未真机验证**：需先在笔记里打开 Excel 附件、切到「数据集」页入库，再在 AI 对话里问统计。
+
+<details><summary>原计划（保留备查）</summary>
+
 
 - [ ] `QueryPlan { filters, group_by, metric, metric_column, sort_by, sort_order, limit }`
       加 **`#[serde(deny_unknown_fields)]`** —— Rust 天然实现"多余字段即拒"，比 Python 手写更稳
@@ -866,6 +895,8 @@ chunk_embeddings(profile_id, chunk_id, content_hash, vec BLOB,
       DuckDB 是为百万行列存准备的，会显著增大包体
 
 **工作量**：3~4 天　**依赖**：P1-3b
+
+</details>
 
 ---
 
