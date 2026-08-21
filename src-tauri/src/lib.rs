@@ -856,7 +856,11 @@ pub fn run() {
                              若确实要用旧版，请先整体备份上面这个目录。"
                         ),
                     );
-                    return Err(Box::new(e) as Box<dyn std::error::Error>);
+                    // 🔴 直接退出，不 `return Err`：setup 返回 Err 会被 Tauri
+                    // `expect("Failed to setup app")` 变成 panic，于是用户在刚看完
+                    // 那个友好提示之后，紧接着又吃一个"程序遇到问题，很抱歉"的崩溃框
+                    // （crash_handler 里对此还有一层兜底，这里是第一道）。
+                    std::process::exit(1);
                 }
                 Err(e) => {
                     log::error!("数据库打开失败: {}（进入恢复流程）", e);

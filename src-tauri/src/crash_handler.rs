@@ -19,6 +19,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// 防止 hook 自身再 panic 造成无限递归（写盘 / 弹窗内部万一失败时）。
 static IN_HOOK: AtomicBool = AtomicBool::new(false);
 
+/// 是否已经用 [`show_startup_notice`] 向用户解释过这次启动为什么失败。
+///
+/// 置位后 [`report_fatal`] 直接不做事 —— 否则用户会连吃两个弹窗：
+/// 先一个"数据库版本过高，请升级应用"，紧接着一个"程序遇到问题需要关闭，很抱歉"，
+/// 后者还会往 crash 目录写一份没意义的崩溃日志。
+///
+/// 为什么会连着弹：`setup` 里返回 Err 会一路冒泡成 `run()` 的 Err，
+/// 而 `lib.rs` 末尾对 `run()` 失败是无差别 `report_fatal` 的。
+/// 把"已经解释过了"这件事记在本模块，比让每个调用方自己记得跳过更可靠。
+static NOTICE_SHOWN: AtomicBool = AtomicBool::new(false);
+
 thread_local! {
     /// 本线程当前是否处于"预期 panic 会被 catch_unwind 接住"的区域。
     /// 为 true 时，全局 panic hook 只降级为一条 warn 日志，**不弹崩溃对话框、不写 crash 日志**——
@@ -72,6 +83,17 @@ pub fn install(crash_dir: PathBuf) {
             return;
         }
 
+        // 已经用 show_startup_notice 把原因讲清楚了 → 这次 panic 只是"启动失败"的传导，
+        // 不该再弹一个"程序遇到问题，很抱歉"、也不该写 crash 日志。
+        //
+        // 为什么 panic hook 也要判：Tauri 在 `setup` 返回 Err 时是直接 `expect` 的
+        // （tauri/src/app.rs "Failed to setup app"），走的是 panic 而非我们自己的
+        // report_fatal —— 只堵后者会漏。
+        if NOTICE_SHOWN.load(Ordering::SeqCst) {
+            log::info!("启动失败原因已通过提示对话框告知用户，跳过崩溃弹窗");
+            return;
+        }
+
         // 重入保护：hook 内部若再 panic，直接返回，避免递归爆栈。
         if IN_HOOK.swap(true, Ordering::SeqCst) {
             return;
@@ -101,6 +123,11 @@ pub fn install(crash_dir: PathBuf) {
 /// 主动上报一条致命错误（非 panic 路径，如 Tauri `run()` 返回 `Err`）：写日志 + 弹对话框。
 /// 与 panic hook 共用同一套落盘 / 弹窗逻辑，保证两条退出路径表现一致。
 pub fn report_fatal(crash_dir: PathBuf, message: &str) {
+    // 已经用 show_startup_notice 讲清楚原因了，别再叠一个"程序遇到问题"吓用户
+    if NOTICE_SHOWN.load(Ordering::SeqCst) {
+        log::info!("[crash] 启动失败原因已通过提示对话框告知用户，跳过崩溃上报: {message}");
+        return;
+    }
     let when = chrono::Local::now()
         .format("%Y-%m-%d %H:%M:%S%.3f %z")
         .to_string();
@@ -124,6 +151,7 @@ pub fn report_fatal(crash_dir: PathBuf, message: &str) {
 /// "程序遇到问题需要关闭"，用在这里既误导用户（以为软件坏了），
 /// 也会往 crash 目录堆无意义的文件。
 pub fn show_startup_notice(title: &str, body: &str) {
+    NOTICE_SHOWN.store(true, Ordering::SeqCst);
     eprintln!("
 ===== 知识库 无法启动 =====
 {body}
@@ -195,6 +223,11 @@ fn write_report(crash_dir: &Path, report: &str) -> Option<PathBuf> {
 /// （panic 时 event loop / 插件可能已不可用）。
 #[cfg(windows)]
 fn show_native_dialog(report: &str, saved_path: Option<&Path>) {
+    // 测试进程里绝不弹模态框：MessageBoxW 会一直阻塞到有人点「确定」，
+    // 本机跑 cargo test 是莫名其妙卡住，CI 上就是挂到超时被杀。
+    if cfg!(test) {
+        return;
+    }
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         MessageBoxW, MB_ICONERROR, MB_OK, MB_SETFOREGROUND, MB_SYSTEMMODAL,
     };
@@ -238,6 +271,10 @@ fn show_native_dialog(report: &str, saved_path: Option<&Path>) {
 /// —— 这类情况不是崩溃，不该套那套"很抱歉/请把日志发给开发者"的文案。
 #[cfg(windows)]
 fn show_native_notice(title: &str, body: &str) {
+    // 同 show_native_dialog：测试进程里不弹模态框，否则 cargo test 会卡死
+    if cfg!(test) {
+        return;
+    }
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         MessageBoxW, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MB_SYSTEMMODAL,
     };
@@ -259,4 +296,37 @@ fn show_native_notice(title: &str, body: &str) {
 #[cfg(windows)]
 fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 已经用 `show_startup_notice` 解释过原因后，`report_fatal` 必须彻底闭嘴：
+    /// 不弹第二个"程序遇到问题"、也不往 crash 目录写日志。
+    ///
+    /// 断言落在「有没有写出 crash 文件」而不是「有没有弹窗」—— 弹窗在测试里没法断言，
+    /// 而写文件是同一条早退分支之后的第一个副作用，能真实反映有没有走进去。
+    ///
+    /// ⚠️ 本用例会把进程级的 `NOTICE_SHOWN` 置位。目前全项目只有 `report_fatal`
+    /// 读它，不会干扰其它用例；将来若有别的读取方，这里要改成可注入的形式。
+    #[test]
+    fn report_fatal_stays_silent_after_startup_notice() {
+        let dir = std::env::temp_dir().join(format!(
+            "kb-crash-silent-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        NOTICE_SHOWN.store(true, Ordering::SeqCst);
+        report_fatal(dir.clone(), "这条不该被写出去");
+
+        let written = std::fs::read_dir(&dir).unwrap().count();
+        assert_eq!(written, 0, "已提示过用户时不该再写崩溃日志");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
