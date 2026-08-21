@@ -69,7 +69,11 @@ impl DatasetService {
             }
         }
 
-        let summary = crate::services::excel_parser::read_workbook(abs_path)?;
+        // 🔴 必须走 read_workbook_full：普通 read_workbook 带着"喂给模型"的截断
+        // （超大 Sheet 砍成头 40 + 尾 10 行）。数据集是拿来做**精确统计**的，
+        // 少一行答案就是错的 —— 曾经 2208 行的表只入库 51 行，
+        // AI 算「有多少已激活」答 47（真实 2041），且界面上毫无提示。
+        let summary = crate::services::excel_parser::read_workbook_full(abs_path)?;
 
         let mut inputs: Vec<DatasetInput> = Vec::new();
         for sheet in &summary.sheets {

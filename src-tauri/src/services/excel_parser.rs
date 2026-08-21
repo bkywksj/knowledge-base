@@ -139,13 +139,56 @@ pub struct ExcelSummary {
 /// - **csv / tsv** —— calamine 不支持，走 [`read_csv`]（P1-3a 起支持，
 ///   在此之前用户会被要求"先转成 xlsx"）
 pub fn read_workbook(path: &str) -> Result<ExcelSummary, AppError> {
+    read_workbook_with(path, ReadMode::ForLlm)
+}
+
+/// 读取模式 —— 决定要不要截断行、要不要拼 markdown。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadMode {
+    /// **喂给模型**：超大 Sheet 砍成"头 40 行 + 尾 10 行"，并拼 markdown 全文。
+    /// 这是为上下文窗口服务的，丢行是有意为之。
+    ForLlm,
+    /// **入库供精确查询**：一行不丢，也不拼 markdown（调用方用不上，白烧内存）。
+    ///
+    /// 🔴 数据集入库必须走这个。曾经它复用 `ForLlm`，结果 2208 行的表只入库 51 行，
+    /// AI 拿它算「有多少已激活」会答 47（真实 2041），且界面上毫无提示 ——
+    /// 精确计算的前提是数据完整，这条路径上截断等于在骗人。
+    Full,
+}
+
+/// 单个 Sheet 入库的行数上限。
+///
+/// 纯安全阀（防畸形文件把内存 / 数据库撑爆），不是 `ForLlm` 那种为窗口服务的截断 ——
+/// 所以定得远高于任何现实表格，真触发了会记 warn 而不是静悄悄丢行。
+const MAX_ROWS_FOR_DATASET: usize = 200_000;
+
+/// 全量读取（不截断、不拼 markdown），供数据集入库用。
+pub fn read_workbook_full(path: &str) -> Result<ExcelSummary, AppError> {
+    read_workbook_with(path, ReadMode::Full)
+}
+
+/// 超过安全阀才截，并**明确记 warn**（区别于 ForLlm 的静默截断）
+fn cap_rows_for_dataset(sheet: &str, mut rows: Vec<Vec<String>>) -> (Vec<Vec<String>>, usize) {
+    if rows.len() <= MAX_ROWS_FOR_DATASET {
+        return (rows, 0);
+    }
+    let dropped = rows.len() - MAX_ROWS_FOR_DATASET;
+    log::warn!(
+        "[dataset] Sheet「{sheet}」有 {} 行，超过入库上限 {MAX_ROWS_FOR_DATASET}，已丢弃末尾 {dropped} 行",
+        rows.len()
+    );
+    rows.truncate(MAX_ROWS_FOR_DATASET);
+    (rows, dropped)
+}
+
+fn read_workbook_with(path: &str, mode: ReadMode) -> Result<ExcelSummary, AppError> {
     let ext = std::path::Path::new(path)
         .extension()
         .and_then(|s| s.to_str())
         .map(|s| s.to_ascii_lowercase())
         .unwrap_or_default();
     if ext == "csv" || ext == "tsv" {
-        return read_csv(path, if ext == "tsv" { b'\t' } else { b',' });
+        return read_csv(path, if ext == "tsv" { b'\t' } else { b',' }, mode);
     }
 
     let mut workbook = open_workbook_auto(path).map_err(|e| {
@@ -172,14 +215,34 @@ pub fn read_workbook(path: &str) -> Result<ExcelSummary, AppError> {
         let total = all_rows.len();
         total_rows += total;
 
-        // 默认全保留；若该 Sheet 本身就超大，先做一轮硬截断
-        let (kept_rows, truncated_rows) = trim_sheet_rows(&all_rows, &headers);
+        // ForLlm：该 Sheet 本身超大时先做一轮硬截断
+        // Full：一行不砍，只在超过安全阀时才截并明确记 warn
+        let (kept_rows, truncated_rows) = match mode {
+            ReadMode::ForLlm => trim_sheet_rows(&all_rows, &headers),
+            ReadMode::Full => cap_rows_for_dataset(&name, all_rows),
+        };
         sheets.push(SheetSnapshot {
             name,
             headers,
             rows: kept_rows,
             total_rows: total,
             truncated_rows,
+        });
+    }
+
+    // Full 到此为止：调用方只要结构化行，markdown 拼出来没人用 ——
+    // 2000 行的表拼一遍是几百 KB 的纯浪费
+    if mode == ReadMode::Full {
+        let truncated_sheet_names = sheets
+            .iter()
+            .filter(|s| s.truncated_rows > 0)
+            .map(|s| s.name.clone())
+            .collect();
+        return Ok(ExcelSummary {
+            sheets,
+            markdown: String::new(),
+            total_rows,
+            truncated_sheet_names,
         });
     }
 
@@ -234,7 +297,7 @@ pub fn read_workbook(path: &str) -> Result<ExcelSummary, AppError> {
 ///   复用 `import::read_text_auto_encoding`（已含 BOM 处理）。
 /// - **用 csv crate 而非 split(',')**：字段里的逗号、换行、`""` 转义引号
 ///   这几条 RFC 4180 规则手写必翻车（Excel 导出的 CSV 全都会用到）。
-fn read_csv(path: &str, delimiter: u8) -> Result<ExcelSummary, AppError> {
+fn read_csv(path: &str, delimiter: u8, mode: ReadMode) -> Result<ExcelSummary, AppError> {
     let text = crate::services::import::read_text_auto_encoding(std::path::Path::new(path))?;
 
     let mut reader = csv::ReaderBuilder::new()
@@ -264,7 +327,10 @@ fn read_csv(path: &str, delimiter: u8) -> Result<ExcelSummary, AppError> {
         .unwrap_or("CSV")
         .to_string();
 
-    let (kept_rows, truncated_rows) = trim_sheet_rows(&all, &headers);
+    let (kept_rows, truncated_rows) = match mode {
+        ReadMode::ForLlm => trim_sheet_rows(&all, &headers),
+        ReadMode::Full => cap_rows_for_dataset(&name, all),
+    };
     let sheets = vec![SheetSnapshot {
         name: name.clone(),
         headers,
@@ -272,7 +338,11 @@ fn read_csv(path: &str, delimiter: u8) -> Result<ExcelSummary, AppError> {
         total_rows: total,
         truncated_rows,
     }];
-    let markdown = render_markdown(&sheets);
+    // Full 模式不拼 markdown（与 read_workbook_with 同口径：调用方只要结构化行）
+    let markdown = match mode {
+        ReadMode::ForLlm => render_markdown(&sheets),
+        ReadMode::Full => String::new(),
+    };
     let truncated_sheet_names = if truncated_rows > 0 { vec![name] } else { Vec::new() };
 
     Ok(ExcelSummary {
@@ -380,6 +450,45 @@ fn render_markdown(sheets: &[SheetSnapshot]) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// 🔴 数据集入库路径**一行都不能丢**。
+    ///
+    /// `read_workbook`（ForLlm）为了塞进上下文窗口会把超大 Sheet 砍成头 40 + 尾 10 行，
+    /// 那是有意为之；但数据集是拿来做精确统计的，少一行答案就是错的。
+    /// 真机验证抓到过：2208 行的表只入库 51 行，AI 算「有多少已激活」答 47（真实 2041）。
+    ///
+    /// 用 CSV 造样本 —— 与 xlsx 走同一套 trim / cap 分支，且不需要额外依赖。
+    #[test]
+    fn full_mode_keeps_every_row_llm_mode_truncates() {
+        let dir = std::env::temp_dir().join(format!("kb_xls_full_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("big.csv");
+
+        // 行数远超 TRUNCATE_HEAD_ROWS + TRUNCATE_TAIL_ROWS，且总量足以触发硬截断
+        const N: usize = 800;
+        let mut csv = String::from("编号,状态,备注
+");
+        for i in 0..N {
+            let st = if i % 10 == 0 { "未激活" } else { "已激活" };
+            csv.push_str(&format!("{i},{st},这里放一些占位文字让单表体积超过硬截断阈值-{i}
+"));
+        }
+        std::fs::write(&path, &csv).unwrap();
+        let p = path.to_string_lossy().to_string();
+
+        let full = read_workbook_full(&p).unwrap();
+        assert_eq!(full.sheets[0].rows.len(), N, "Full 模式必须一行不丢");
+        assert_eq!(full.sheets[0].truncated_rows, 0);
+        assert!(full.markdown.is_empty(), "Full 模式不该白拼 markdown");
+
+        let llm = read_workbook(&p).unwrap();
+        assert!(
+            llm.sheets[0].rows.len() < N,
+            "ForLlm 模式应当截断（这是它的既有行为，别一起改掉）"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     use super::*;
 
     #[test]
