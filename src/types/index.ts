@@ -280,48 +280,6 @@ export interface SearchResult {
   note_type: NoteType;
 }
 
-// ─── 收件箱（P1-5）──────────────────────────────
-
-/** 失败项的来源类型 */
-export type InboxKind =
-  | "import_pdf"
-  | "import_word"
-  | "import_md"
-  | "ocr"
-  | "clip"
-  | "dataset";
-
-/**
- * 一条待处理的失败项。
- *
- * 收件箱只存**待处理**项：重试成功或用户忽略后直接删行 ——
- * 「收件箱清空 = 都处理完了」。
- */
-export interface InboxItem {
-  id: number;
-  kind: InboxKind;
-  /** 本地文件绝对路径，或剪藏的 URL */
-  source: string;
-  /** 展示名；为空时前端从 source 取末段 */
-  title: string | null;
-  /** 失败原因（人话） */
-  reason: string;
-  /** 重试所需的结构化参数（JSON 字符串） */
-  detailJson: string | null;
-  /** 这个源失败过几次 */
-  retryCount: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** 新增/更新一条收件箱记录 */
-export interface InboxItemInput {
-  kind: InboxKind;
-  source: string;
-  title?: string | null;
-  reason: string;
-  detailJson?: string | null;
-}
 
 // ─── Excel 二维数据集（P1-3b）────────────────────
 

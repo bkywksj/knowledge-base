@@ -2,14 +2,14 @@
  * 笔记创建 / 导入统一入口 —— 从旧 CreateNoteModal 拆出来的公共函数，
  * 让"+ 新建笔记"按钮能直接调用，不必再走 Tab 选择的 Modal 流程。
  */
-import { List, Modal, Typography, message } from "antd";
+import { Button, List, Modal, Typography, message } from "antd";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { Copy } from "lucide-react";
 import type { NavigateFunction } from "react-router-dom";
 
-import { noteApi, importApi, pdfApi, ocrApi, inboxApi, sourceFileApi, tagApi, folderApi, whiteboardApi } from "./api";
+import { noteApi, importApi, pdfApi, ocrApi, sourceFileApi, tagApi, folderApi, whiteboardApi } from "./api";
 import { importWordFiles } from "./wordImport";
 import { useAppStore } from "@/store";
-import type { InboxKind } from "@/types";
 
 /**
  * 导入完成后的统一跳转规则（业界 Bear / Apple Notes / VS Code 路线）：
@@ -273,7 +273,7 @@ export async function importPdfsFlow(
             const ocrFail = r2.filter((r) => r.noteId === null);
             if (ocrOk.length > 0)
               message.success(`OCR 成功导入 ${ocrOk.length} 个扫描件`);
-            if (ocrFail.length > 0) showImportFailModal(ocrFail, "OCR 后仍失败", "import_pdf", folderId);
+            if (ocrFail.length > 0) showImportFailModal(ocrFail, "OCR 后仍失败");
             useAppStore.getState().bumpNotesRefresh();
             const ocrIds = ocrOk
               .map((r) => r.noteId)
@@ -287,7 +287,7 @@ export async function importPdfsFlow(
       });
     } else if (fail.length > 0) {
       // 无扫描件可 OCR，或引擎不可用 → 直接列失败清单
-      showImportFailModal(fail, `${fail.length} 个 PDF 导入失败`, "import_pdf", folderId);
+      showImportFailModal(fail, `${fail.length} 个 PDF 导入失败`);
     }
 
     useAppStore.getState().bumpNotesRefresh();
@@ -302,36 +302,24 @@ export async function importPdfsFlow(
  * 批量导入的失败清单弹窗 —— PDF / Word 共用。
  *
  * 两者的失败结构本来就一样（`sourcePath` + `error`），弹窗内容也一样；
- * 各写一份意味着"落库 + 提示"这套逻辑要维护两遍，加第三种格式时还会再抄一遍。
+ * 各写一份意味着这套逻辑要维护两遍，加第三种格式时还会再抄一遍。
  *
- * P1-5：失败项同时**落库排队**。此前这个弹窗关掉就没了 —— 一次导入几十个文件、
- * 失败七八个，用户得自己记住是哪几个、为什么失败，体验很糟。
+ * 带「复制清单」是因为**这个弹窗就是唯一的记录**：一次导几十个挂七八个，
+ * 关掉就得靠脑子记是哪几个、为什么挂。PDF 的失败原因基本都要求你
+ * 去应用外先处理（知网件重新打印另存 / 解密 / 装转换器），复制出来
+ * 贴到笔记或待办里慢慢弄，比在应用里再养一个待办队列实在。
  */
 function showImportFailModal(
   fail: { sourcePath: string; error?: string | null }[],
   title: string,
-  kind: InboxKind,
-  folderId?: number | null,
 ): void {
-  // 落库失败不影响弹窗展示（收件箱是增强，不是前置条件）
-  void Promise.all(
-    fail.map((r) =>
-      inboxApi.add({
-        kind,
-        source: r.sourcePath,
-        title: r.sourcePath.split(/[\\/]/).pop() ?? r.sourcePath,
-        reason: r.error ?? "未知原因",
-        // 重试时要还原"导到哪个文件夹"
-        detailJson: JSON.stringify({ folderId: folderId ?? null }),
-      }),
-    ),
-  )
-    // 落库后立刻刷新侧栏徽章，否则用户要等下次启动才看到数字
-    .then(() => useAppStore.getState().refreshInboxCount())
-    .catch((e) => console.error("[inbox] 记录导入失败项时出错:", e));
+  const plain = fail
+    .map((r) => `${r.sourcePath}\n    ${r.error ?? "未知原因"}`)
+    .join("\n");
 
   Modal.warning({
     title,
+    width: 560,
     content: (
       <>
         <List
@@ -340,14 +328,24 @@ function showImportFailModal(
           renderItem={(r) => (
             <List.Item>
               <Typography.Text type="danger" style={{ fontSize: 12 }}>
-                {r.sourcePath.split(/[\\/]/).pop()}: {r.error}
+                {r.sourcePath.split(/[\/]/).pop()}: {r.error}
               </Typography.Text>
             </List.Item>
           )}
         />
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          已存入收件箱，关掉这个窗口也能稍后重试。
-        </Typography.Text>
+        <Button
+          size="small"
+          icon={<Copy size={13} />}
+          onClick={() => {
+            // 非安全上下文下 navigator.clipboard 可能整体缺失，判空避免 TypeError
+            void navigator.clipboard
+              ?.writeText(plain)
+              .then(() => message.success("失败清单已复制"))
+              .catch(() => message.error("复制失败，请手动选取"));
+          }}
+        >
+          复制清单（含完整路径与原因）
+        </Button>
       </>
     ),
   });

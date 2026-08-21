@@ -18,7 +18,6 @@ import {
   Trash2,
   Info,
   EyeOff,
-  Inbox,
   Lock,
 } from "lucide-react";
 import { useAppStore } from "@/store";
@@ -84,9 +83,6 @@ const MAIN_GROUPS: ActivityItem[][] = [
 
 /** 底部视图（放最下方，视觉上与主视图分组） */
 const BOTTOM_ITEMS: ActivityItem[] = [
-  // 收件箱：导入 / 识别 / 剪藏失败项排队处理。放这一组是因为它和隐藏笔记、
-  // 回收站一样属于"管理类"视图 —— 不是日常创作入口，但需要能随时找到
-  { view: "inbox", route: "/inbox", label: "收件箱", icon: <Inbox size={20} /> },
   { view: "hidden", route: "/hidden", label: "隐藏笔记", icon: <EyeOff size={20} /> },
   { view: "trash", route: "/trash", label: "回收站", icon: <Trash2 size={20} />, core: true },
   { view: "about", route: "/about", label: "关于", icon: <Info size={20} />, core: true },
@@ -95,7 +91,6 @@ const BOTTOM_ITEMS: ActivityItem[] = [
 /** 路由 → ActiveView 的反查映射（用于根据 URL 推导高亮态） */
 const ROUTE_TO_VIEW: Array<[string, ActiveView]> = [
   ["/notes", "notes"],
-  ["/inbox", "inbox"],
   ["/search", "search"],
   ["/daily", "daily"],
   ["/tags", "tags"],
@@ -131,8 +126,6 @@ export function ActivityBar() {
   const setSidePanelVisible = useAppStore((s) => s.setSidePanelVisible);
   const toggleSidePanel = useAppStore((s) => s.toggleSidePanel);
   const urgentTodoCount = useAppStore((s) => s.urgentTodoCount);
-  const inboxCount = useAppStore((s) => s.inboxCount);
-  const refreshInboxCount = useAppStore((s) => s.refreshInboxCount);
   const refreshTaskStats = useAppStore((s) => s.refreshTaskStats);
   const isHiddenUnlocked = useAppStore((s) => s.isHiddenUnlocked);
   const enabledViews = useAppStore((s) => s.enabledViews);
@@ -149,11 +142,6 @@ export function ActivityBar() {
   useEffect(() => {
     refreshTaskStats();
   }, [refreshTaskStats]);
-
-  // 收件箱徽章同理：上次没处理完的失败项，这次开应用就该看见
-  useEffect(() => {
-    refreshInboxCount();
-  }, [refreshInboxCount]);
 
   // 以 URL 为准反推当前高亮（避免 store.activeView 与 URL 漂移时 UI 不一致）
   const highlightView: ActiveView | null = useMemo(
@@ -222,14 +210,8 @@ export function ActivityBar() {
           { color: iconColor },
         )
       : item.icon;
-    // 待办和收件箱都挂角标：前者是"该做的事"，后者是"该处理的失败"，
-    // 都属于"不主动看就会忘"的东西
-    const badgeCount =
-      item.view === "tasks"
-        ? urgentTodoCount
-        : item.view === "inbox"
-          ? inboxCount
-          : 0;
+    // 待办挂角标："该做的事"属于不主动看就会忘的东西
+    const badgeCount = item.view === "tasks" ? urgentTodoCount : 0;
     const iconNode =
       badgeCount > 0 ? (
         <Badge count={badgeCount} size="small" offset={[2, -2]} overflowCount={99}>

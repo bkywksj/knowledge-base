@@ -17,8 +17,6 @@ pub mod folders;
 pub mod hidden_pin;
 pub mod image;
 pub mod import;
-// 收件箱（P1-5）：导入 / OCR / 剪藏失败项，可重试可忽略
-pub mod inbox;
 pub mod links;
 pub mod mcp;
 // 移动端"检查更新"（桌面端用 tauri-plugin-updater，不需要这个）

@@ -1423,12 +1423,6 @@ pub fn run() {
             // 导入模块
             commands::import::scan_markdown_folder,
             commands::import::import_selected_files,
-            // 收件箱（P1-5）：失败项落库，关掉弹窗也不丢
-            commands::inbox::add_inbox_item,
-            commands::inbox::list_inbox_items,
-            commands::inbox::inbox_counts,
-            commands::inbox::remove_inbox_item,
-            commands::inbox::clear_inbox,
             commands::import::open_markdown_file,
             commands::import::take_pending_open_md_path,
             // 导出模块

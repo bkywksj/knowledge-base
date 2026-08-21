@@ -29,9 +29,6 @@ import type {
   SearchFilters,
   Dataset,
   DatasetSchema,
-  InboxItem,
-  InboxItemInput,
-  InboxKind,
   NoteLink,
   NoteLinkSummary,
   WikiLinkSuggestItem,
@@ -1012,28 +1009,6 @@ export const attachmentApi = {
   /** 读取附件为文本（md/txt/json/csv/代码等），超长自动截断 */
   previewText: (rel: string) =>
     invoke<TextPreviewData>("preview_text_attachment", { rel }),
-};
-
-/**
- * 收件箱 API（P1-5）。
- *
- * 导入 / OCR / 剪藏失败的项落库排队，**关掉弹窗也不丢**。
- *
- * 「重试」不是这里的一个方法 —— 重试动作各不相同（重导 PDF / 重新 OCR /
- * 重新剪藏），调用方拿 `detailJson` 还原上下文后调对应的原有 API，
- * 成功了再 `remove` 掉这条。收件箱因此不需要认识每一种失败类型。
- */
-export const inboxApi = {
-  /** 记一条失败项；同源已存在则刷新原因 + 累加 retryCount（不刷重复项） */
-  add: (input: InboxItemInput) => invoke<InboxItem>("add_inbox_item", { input }),
-  /** 列出待处理项（最新在前）；不传 kind = 全部 */
-  list: (kind?: InboxKind) => invoke<InboxItem[]>("list_inbox_items", { kind }),
-  /** 按类型统计 `[[kind, count], ...]`，数量倒序 */
-  counts: () => invoke<[string, number][]>("inbox_counts"),
-  /** 移除一条（重试成功 / 用户忽略） */
-  remove: (id: number) => invoke<boolean>("remove_inbox_item", { id }),
-  /** 清空（可按类型），返回删除条数 */
-  clear: (kind?: InboxKind) => invoke<number>("clear_inbox", { kind }),
 };
 
 /**

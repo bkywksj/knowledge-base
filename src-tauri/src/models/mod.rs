@@ -221,42 +221,6 @@ pub struct TagInput {
 
 // ─── 搜索 ─────────────────────────────────────
 
-// ─── 收件箱（P1-5）──────────────────────────────
-
-/// 一条待处理的失败项。
-///
-/// 收件箱只存**待处理**项：重试成功或用户忽略后直接删行
-/// （设计理由见 `schema::migrate_v60_to_v61`）。
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InboxItem {
-    pub id: i64,
-    /// import_pdf / import_word / import_md / ocr / clip / dataset
-    pub kind: String,
-    /// 本地文件绝对路径，或剪藏的 URL
-    pub source: String,
-    /// 展示名；为空时前端从 source 取末段
-    pub title: Option<String>,
-    /// 失败原因（人话，直接展示给用户）
-    pub reason: String,
-    /// 重试所需的结构化参数，JSON 字符串
-    pub detail_json: Option<String>,
-    pub retry_count: i64,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-/// 新增/更新一条收件箱记录的入参
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InboxItemInput {
-    pub kind: String,
-    pub source: String,
-    pub title: Option<String>,
-    pub reason: String,
-    pub detail_json: Option<String>,
-}
-
 // ─── Excel 二维数据集（P1-3b）────────────────────
 
 /// 一个数据集 = Excel 某个 sheet 里的一个「数据区域」。
