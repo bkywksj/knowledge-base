@@ -15,8 +15,8 @@
 
 ### Schema 版本预分配
 
-多个任务都要动 schema，**必须提前排号**，否则并行开发会撞版本。当前 `SCHEMA_VERSION = 58`
-（`src-tauri/src/database/schema.rs:6`）。
+多个任务都要动 schema，**必须提前排号**，否则并行开发会撞版本。
+起点 `SCHEMA_VERSION = 58`，当前已到 **60**（`src-tauri/src/database/schema.rs:6`）。
 
 | 版本 | 任务 | 内容 | 状态 |
 |------|------|------|------|
@@ -703,7 +703,7 @@ inbox_items(id, kind, source_path, status, reason, detail_json,
 
 ## 阶段 P2 —— 大工程，需单独立项
 
-### P2-1　切片层（chunking）—— 向量的前置（Schema v63）
+### P2-1　切片层（chunking）—— 向量的前置（Schema **v61**）
 
 **现状**：我们**完全没有切片**（`chunk` 在 Rust 侧只命中 SQLite 变量分批、HTTP 流解码）。
 长笔记整篇参与召回，查询时才用 `extract_window_for_rag`（`services/ai.rs:428`）截窗 ——
@@ -749,7 +749,7 @@ note_chunks(id, note_id, role,                    -- 'parent' | 'child'
 
 ---
 
-### P2-2　向量检索（含 canary 兼容护栏）（Schema v64）
+### P2-2　向量检索（含 canary 兼容护栏）（Schema **v62**）
 
 > 🔴 **铁律：canary 指纹护栏必须和向量同批上线，不能后补。**
 > 否则用户换个 embedding 渠道，召回质量静默崩掉且毫无察觉。
@@ -805,7 +805,7 @@ chunk_embeddings(profile_id, chunk_id, content_hash, vec BLOB,
 
 ---
 
-### P2-4　通用后台任务队列（Schema v65）
+### P2-4　通用后台任务队列（Schema **v63**）
 
 **为什么**：重试逻辑散在 WebDAV（`backend_webdav.rs:184`）、manifest（`push.rs:503`）、
 AI（`ai.rs:1254`）各处手写。
