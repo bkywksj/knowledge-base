@@ -125,6 +125,32 @@ fn build_ollama_client() -> &'static Client {
 /// - `https://api.deepseek.com/v1`            → `.../v1/chat/completions`（已带版本段，只补端点）
 /// - `https://open.bigmodel.cn/api/paas/v4`   → `.../paas/v4/chat/completions`（智谱等非 /v1 版本）
 /// - `https://x.y/v1/chat/completions`        → 原样使用
+/// 往请求体里塞 `max_tokens`（Ollama 走 `options.num_predict`）。
+///
+/// **None = 整个参数不出现**，交给服务商默认值 —— 这是有意的：
+/// 各家上限差异极大且在变（实测 `deepseek-chat` 是 `[1, 393216]`，
+/// 而它旧版文档写 8192），写死任何值都会在某些模型上直接 400。
+///
+/// Ollama 例外：它文档说 `num_predict` 默认 128（≈190 个中文字，答两句就断），
+/// 且 issue #7691 指出文档与实际不符。这种不确定性靠"不传"消不掉，
+/// 所以迁移时给 Ollama 统一置 -1（无限）—— 本地推理不计费，没有成本风险。
+fn apply_max_tokens(body: &mut Value, model: &AiModel) {
+    let Some(mt) = model.max_tokens else { return };
+    if model.provider == "ollama" {
+        // Ollama 的生成参数统一挂在 options 下，且用 num_predict 这个名字
+        body.as_object_mut()
+            .expect("请求体必须是 JSON 对象")
+            .entry("options")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .expect("options 必须是对象")
+            .insert("num_predict".into(), json!(mt));
+    } else if mt > 0 {
+        // OpenAI 兼容侧没有"-1 = 无限"这个约定，负数传过去多半 400
+        body["max_tokens"] = json!(mt);
+    }
+}
+
 fn build_openai_chat_url(api_url: &str) -> String {
     let base = api_url.trim_end_matches('/');
     if base.ends_with("/chat/completions") {
@@ -376,6 +402,62 @@ pub fn strip_pseudo_tool_calls(s: &str) -> String {
 /// **预算计算**：由 `compute_context_budget` 统一给出（与 RAG 共享一个总盘子，挂载优先）。
 /// 每篇平均分配；标题不截断，正文按 `预算 / 笔记数` 截断。
 ///
+/// 给挂载笔记分配字符配额 —— **按需分配，不是平均分**。
+///
+/// # 为什么不能平均分
+///
+/// 曾经是 `总预算 / 篇数`。挂 3 篇（500 字 + 5000 字 + 50000 字）时每篇分 28800：
+/// 短的浪费 28300、长的仍被砍掉 21200。挂的篇数越多越糟 ——
+/// 挂 10 篇时每篇只剩 8640，而其中大部分可能只有几百字。
+///
+/// # 算法
+///
+/// 反复迭代：把当前均分额度分给所有笔记，**放得下的按实际长度拿**，
+/// 省下的额度回到池子里给放不下的重分。直到没有新的笔记能被"喂饱"为止。
+/// 这样短笔记拿够即止，长笔记吃掉全部剩余。
+///
+/// 每篇保底 500 字符：再挤也要让每篇留个能看出主题的开头，
+/// 否则挂了等于没挂（模型只看到标题）。
+fn allocate_note_quotas(notes: &[(String, String)], total_budget: usize) -> Vec<usize> {
+    const MIN_PER_NOTE: usize = 500;
+    let n = notes.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let lens: Vec<usize> = notes.iter().map(|(_, c)| c.chars().count()).collect();
+
+    let mut quotas = vec![0usize; n];
+    let mut settled = vec![false; n];
+    let mut pool = total_budget;
+    let mut unsettled = n;
+
+    // 每轮至少定下一篇；最坏情况 n 轮结束
+    while unsettled > 0 {
+        let share = (pool / unsettled).max(MIN_PER_NOTE);
+        // 本轮能被喂饱的（实际长度 <= 均分额度）
+        let feedable: Vec<usize> = (0..n)
+            .filter(|&i| !settled[i] && lens[i] <= share)
+            .collect();
+
+        if feedable.is_empty() {
+            // 剩下的都吃不饱 → 平分剩余池子，结束
+            for (i, q) in quotas.iter_mut().enumerate() {
+                if !settled[i] {
+                    *q = share;
+                }
+            }
+            break;
+        }
+        for i in feedable {
+            quotas[i] = lens[i];
+            pool = pool.saturating_sub(lens[i]);
+            settled[i] = true;
+            unsettled -= 1;
+        }
+    }
+    quotas
+}
+
 /// **失败容忍**：单篇笔记 `get_note` 失败时跳过该篇，不让单条坏数据搞挂整个对话。
 /// 笔记列表为空时返回空串，调用方按需跳过。
 fn build_attached_notes_context(db: &Database, note_ids: &[i64], model: &AiModel) -> String {
@@ -399,7 +481,7 @@ fn build_attached_notes_context(db: &Database, note_ids: &[i64], model: &AiModel
     // 字符预算由统一函数给出。此前这里写的是 `max_context * 0.6` 直接当字符数用，
     // 漏了 token→字符的 1.5 倍换算，白白少给三分之一预算。
     let total_budget_chars = compute_context_budget(model.max_context, true).attached;
-    let per_note_chars = (total_budget_chars / notes.len()).max(500);
+    let quotas = allocate_note_quotas(&notes, total_budget_chars);
 
     let mut out = String::with_capacity(total_budget_chars);
     out.push_str(&format!(
@@ -408,8 +490,9 @@ fn build_attached_notes_context(db: &Database, note_ids: &[i64], model: &AiModel
         notes.len()
     ));
     for (i, (title, plain)) in notes.iter().enumerate() {
-        let truncated: String = plain.chars().take(per_note_chars).collect();
-        let suffix = if plain.chars().count() > per_note_chars {
+        let quota = quotas[i];
+        let truncated: String = plain.chars().take(quota).collect();
+        let suffix = if plain.chars().count() > quota {
             "\n…（已截断）"
         } else {
             ""
@@ -1090,13 +1173,15 @@ impl AiService {
     ) -> Result<String, AppError> {
         let url = format!("{}/api/chat", model.api_url.trim().trim_end_matches('/'));
         let client = build_ollama_client();
+        let mut body = json!({
+            "model": model.model_id,
+            "messages": messages,
+            "stream": true
+        });
+        apply_max_tokens(&mut body, model);
         let response = client
             .post(&url)
-            .json(&json!({
-                "model": model.model_id,
-                "messages": messages,
-                "stream": true
-            }))
+            .json(&body)
             .send()
             .await
             .map_err(|e| AppError::Custom(format_ollama_send_error(&e, &url)))?;
@@ -1171,14 +1256,17 @@ impl AiService {
     ) -> Result<String, AppError> {
         let client = crate::services::http_client::shared();
         let url = build_openai_chat_url(&model.api_url);
+        let mut body = json!({
+            "model": model.model_id,
+            "messages": messages,
+            "stream": true
+        });
+        apply_max_tokens(&mut body, model);
+
         let mut request = client
             .post(&url)
             .header("Content-Type", "application/json")
-            .json(&json!({
-                "model": model.model_id,
-                "messages": messages,
-                "stream": true
-            }));
+            .json(&body);
         if let Some(key) = &model.api_key {
             if !key.is_empty() {
                 request = request.header("Authorization", format!("Bearer {}", key));
@@ -1282,7 +1370,6 @@ impl AiService {
         //
         // 单篇能塞下全文就塞全文，超出再用 smart window 截窗，预算用完即停。
         // 128K token 模型 → 14 万字符预算，几乎能塞完整个候选列表
-        const SINGLE_NOTE_HARD_CAP: usize = 16000; // 单篇硬上限，防一篇撑爆预算
         const RAG_TOP_N: usize = 15; // 候选数（旧版固定 5；提高让长上下文模型用满预算）
 
         let mut rag_context = String::new();
@@ -1300,6 +1387,13 @@ impl AiService {
                 // 挂载笔记已占掉的部分不再给 RAG（联合约束，防两者叠加撑爆窗口）
                 let total_budget =
                     compute_context_budget(model.max_context, !attached_context.is_empty()).rag;
+                // 单篇硬上限：防一篇长笔记吃掉整个预算，让后面的候选一条都进不来。
+                //
+                // 曾经写死 16000 —— 对 128K 模型只占预算的 11%，白白浪费长窗口；
+                // 对小模型又可能比预算还大，等于没上限。改成按预算比例：
+                // 1/4 意味着"最坏情况下仍装得下 4 篇不同的笔记"，兼顾深度与广度。
+                // 保底 16000 是不让小模型退化到连一篇短笔记都放不下。
+                let single_note_cap = (total_budget / 4).max(16_000);
                 let mut used = 0usize;
                 let mut included = 0usize;
 
@@ -1317,7 +1411,7 @@ impl AiService {
 
                     let plain = strip_html(content);
                     let plain_chars = plain.chars().count();
-                    let single_max = SINGLE_NOTE_HARD_CAP.min(remaining);
+                    let single_max = single_note_cap.min(remaining);
 
                     let snippet = if plain_chars <= single_max {
                         // 全文放得下：直接全文塞入（避免任何信息丢失）
@@ -1589,13 +1683,16 @@ impl AiService {
             messages.len()
         );
 
+        let mut body = json!({
+            "model": model.model_id,
+            "messages": messages,
+            "stream": true
+        });
+        apply_max_tokens(&mut body, model);
+
         let response = match client
             .post(&url)
-            .json(&json!({
-                "model": model.model_id,
-                "messages": messages,
-                "stream": true
-            }))
+            .json(&body)
             .send()
             .await
         {
@@ -2171,6 +2268,7 @@ impl AiService {
             "messages": messages,
             "stream": true,
         });
+        apply_max_tokens(&mut request_body, model);
         if !tools.is_empty() {
             request_body["tools"] = json!(tools);
             request_body["tool_choice"] = json!("auto");
@@ -2284,7 +2382,9 @@ impl AiService {
             match reason.as_str() {
                 "stop" | "tool_calls" => {}
                 "length" => {
-                    let tip = "\n\n> ⚠️ 输出达到模型上限被截断。可在模型设置里调大 max_tokens 或缩短上下文后重试。";
+                    // 这句在 v61 之前是**死指路** —— 设置里根本没有 max_tokens 这一项。
+                    // 现在有了（设置 → AI 模型 → 编辑 → 单次回答上限 token），所以指明位置。
+                    let tip = "\n\n> ⚠️ 回答达到长度上限被截断。到「设置 → AI 模型 → 编辑该模型 → 单次回答上限 token」调大即可（留空为服务商默认）。";
                     content.push_str(tip);
                     emit_ai_token(app, conversation_id, tip);
                     log::warn!(
@@ -2338,6 +2438,7 @@ impl AiService {
             "messages": messages,
             "stream": true,
         });
+        apply_max_tokens(&mut request_body, model);
         if !tools.is_empty() {
             request_body["tools"] = json!(tools);
         }
@@ -4228,5 +4329,119 @@ mod rag_window_tests {
         let doc = format!("{filler}这里讲 OpenAPI 的用法{filler}");
         let out = extract_window_for_rag(&doc, "openapi", 8000);
         assert!(out.contains("OpenAPI"), "小写查询应命中原文大写词");
+    }
+}
+
+
+#[cfg(test)]
+mod note_quota_and_max_tokens_tests {
+    use super::*;
+
+    fn notes(lens: &[usize]) -> Vec<(String, String)> {
+        lens.iter()
+            .enumerate()
+            .map(|(i, &n)| (format!("笔记{i}"), "字".repeat(n)))
+            .collect()
+    }
+
+    fn model_with(max_tokens: Option<i64>, provider: &str) -> AiModel {
+        AiModel {
+            id: 1,
+            name: "t".into(),
+            provider: provider.into(),
+            api_url: "http://x".into(),
+            api_key: None,
+            has_api_key: false,
+            model_id: "m".into(),
+            is_default: true,
+            max_context: 128_000,
+            max_tokens,
+            created_at: String::new(),
+        }
+    }
+
+    /// 核心诉求：短笔记拿够即止，省下的额度给长笔记 —— 而不是一刀切均分。
+    #[test]
+    fn short_notes_yield_budget_to_long_ones() {
+        // 500 + 5000 + 50000，总预算 86400（128K 模型的挂载份额）
+        let ns = notes(&[500, 5000, 50_000]);
+        let q = allocate_note_quotas(&ns, 86_400);
+
+        assert_eq!(q[0], 500, "短笔记按实际长度拿，不多占");
+        assert_eq!(q[1], 5_000, "中等笔记同样拿够即止");
+        assert!(q[2] >= 50_000, "长笔记应吃下剩余，实际 {}", q[2]);
+
+        // 与旧的均分方案对比：均分时长笔记只有 28800
+        let even = 86_400 / 3;
+        assert!(q[2] > even, "必须优于均分：均分 {even} → 现在 {}", q[2]);
+    }
+
+    #[test]
+    fn all_fit_means_no_waste() {
+        let q = allocate_note_quotas(&notes(&[100, 200, 300]), 100_000);
+        assert_eq!(q, vec![100, 200, 300]);
+    }
+
+    /// 全部都放不下时退化成均分（此时没有"省下的额度"可调剂）
+    #[test]
+    fn all_oversized_falls_back_to_even_split() {
+        let q = allocate_note_quotas(&notes(&[50_000, 60_000, 70_000]), 30_000);
+        assert_eq!(q, vec![10_000, 10_000, 10_000]);
+    }
+
+    /// 预算极小时也要给每篇保底，否则挂了等于没挂（模型只看到标题）
+    #[test]
+    fn tiny_budget_still_gives_minimum() {
+        let q = allocate_note_quotas(&notes(&[9_000, 9_000, 9_000]), 300);
+        assert!(q.iter().all(|&x| x >= 500), "每篇至少 500，实际 {q:?}");
+    }
+
+    #[test]
+    fn empty_input_is_safe() {
+        assert!(allocate_note_quotas(&[], 10_000).is_empty());
+    }
+
+    #[test]
+    fn single_note_takes_all() {
+        assert_eq!(allocate_note_quotas(&notes(&[999_999]), 86_400)[0], 86_400);
+    }
+
+    /// None = 整个参数不出现，交给服务商默认值
+    #[test]
+    fn none_max_tokens_adds_nothing() {
+        let mut body = json!({"model": "x"});
+        apply_max_tokens(&mut body, &model_with(None, "deepseek"));
+        assert!(body.get("max_tokens").is_none());
+        assert!(body.get("options").is_none());
+    }
+
+    /// Ollama 走 options.num_predict，且允许 -1（无限）
+    #[test]
+    fn ollama_uses_num_predict_and_allows_negative() {
+        let mut body = json!({"model": "x"});
+        apply_max_tokens(&mut body, &model_with(Some(-1), "ollama"));
+        assert_eq!(body["options"]["num_predict"], json!(-1));
+        assert!(body.get("max_tokens").is_none(), "别给 Ollama 传 max_tokens");
+    }
+
+    /// OpenAI 兼容侧没有"-1=无限"的约定，负数传过去会 400，所以直接不传
+    #[test]
+    fn openai_ignores_negative_but_takes_positive() {
+        let mut body = json!({"model": "x"});
+        apply_max_tokens(&mut body, &model_with(Some(-1), "deepseek"));
+        assert!(body.get("max_tokens").is_none(), "负数不该发给 OpenAI 兼容端");
+
+        let mut body = json!({"model": "x"});
+        apply_max_tokens(&mut body, &model_with(Some(131_072), "deepseek"));
+        assert_eq!(body["max_tokens"], json!(131_072));
+    }
+
+    /// 已有 options 的请求体不能被整个覆盖掉
+    #[test]
+    fn ollama_preserves_existing_options() {
+        let mut body = json!({"model": "x", "options": {"temperature": 0.7}});
+        apply_max_tokens(&mut body, &model_with(Some(4096), "ollama"));
+        assert_eq!(body["options"]["temperature"], json!(0.7));
+        assert_eq!(body["options"]["num_predict"], json!(4096));
     }
 }

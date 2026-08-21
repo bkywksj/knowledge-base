@@ -102,6 +102,8 @@ export interface AiModelData {
   api_key?: string | null;
   model_id: string;
   max_context?: number;
+  /** 单次回答 token 上限；null / 缺省 = 用服务商默认 */
+  max_tokens?: number | null;
 }
 
 export interface FeatureTogglesData {
@@ -190,6 +192,7 @@ export function exportAiModel(m: AiModel, apiKey: string | null): Envelope {
     api_key: apiKey,
     model_id: m.model_id,
     max_context: m.max_context,
+    max_tokens: m.max_tokens,
   });
 }
 
@@ -471,6 +474,8 @@ export async function applyEnvelope(env: Envelope): Promise<ImportSummary> {
           api_key: env.data.api_key ?? null,
           model_id: env.data.model_id,
           max_context: env.data.max_context,
+          // 老版本导出的包没有这个字段 → undefined = 用服务商默认，与新建同义
+          max_tokens: env.data.max_tokens,
         };
         await aiModelApi.create(input);
         summary.aiModels = 1;

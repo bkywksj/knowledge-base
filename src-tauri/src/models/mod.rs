@@ -604,6 +604,16 @@ pub struct AiModel {
     /// 模型支持的最大上下文 token 数（用户填，默认 32000）
     /// 用于在 send_message 拼附加笔记时动态算每篇截断阈值
     pub max_context: i64,
+    /// 单次回答的 token 上限。**None = 不传该参数**，用服务商默认值。
+    ///
+    /// 与 [`Self::max_context`] 是两回事，别混：前者管"输入能塞多少"，
+    /// 这个管"输出最多写多长"，且两者之和不能超过窗口。
+    ///
+    /// 各家上限差异极大且在变（实测 `deepseek-chat` 是 [1, 393216]，
+    /// 而它旧版文档写 8192），所以不设死默认值 —— 填超了服务商会 400，
+    /// UI 里已提示"报错就调小"。Ollama 用 -1 表示无限生成。
+    #[serde(default)]
+    pub max_tokens: Option<i64>,
     pub created_at: String,
 }
 
@@ -644,6 +654,25 @@ pub struct AiModelInput {
     pub model_id: String,
     /// 可选：缺省时按 32000 入库（覆盖大多数中端模型）
     pub max_context: Option<i64>,
+    /// 单次回答 token 上限。**三态**，与 `api_key` 同理：
+    /// 字段缺失 = 保持原值 / `Some(None)` = 清空（回到"不传"）/ `Some(Some(n))` = 设为 n。
+    ///
+    /// 用 `Option<Option<i64>>` 是因为 `None` 本身就是一个有意义的取值（不传该参数），
+    /// 单层 Option 区分不了"没提供这个字段"和"想把它清空"。
+    #[serde(default, deserialize_with = "crate::models::double_option")]
+    pub max_tokens: Option<Option<i64>>,
+}
+
+/// 让 `Option<Option<T>>` 能区分「字段缺失」与「显式 null」。
+///
+/// serde 默认把两者都反序列化成 `None`，于是"清空"这个意图就丢了。
+/// 加上 `#[serde(default)]` 后：字段缺失 → 外层 `None`；`"max_tokens": null` → `Some(None)`。
+pub fn double_option<'de, D, T>(de: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Deserialize::deserialize(de).map(Some)
 }
 
 /// AI 对话

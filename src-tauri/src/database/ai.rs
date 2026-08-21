@@ -13,8 +13,8 @@ const DEFAULT_MAX_CONTEXT: i64 = 128_000;
 
 /// 把一行 ai_models 查询结果转成 AiModel
 ///
-/// 列顺序约定（v25 起 9 列）：
-///   id, name, provider, api_url, api_key, model_id, is_default, max_context, created_at
+/// 列顺序约定（v61 起 10 列）：
+///   id, name, provider, api_url, api_key, model_id, is_default, max_context, max_tokens, created_at
 ///
 /// api_key 自 schema v59 起在库里是密文（`enc:v1:` 前缀），这里是**唯一**的读取入口，
 /// 解密放在这一层，上面 16 个 `db.get_ai_model()` / `get_default_ai_model()` 调用点
@@ -38,7 +38,8 @@ fn row_to_ai_model(row: &rusqlite::Row) -> rusqlite::Result<AiModel> {
         model_id: row.get(5)?,
         is_default: row.get::<_, i32>(6)? != 0,
         max_context: row.get(7)?,
-        created_at: row.get(8)?,
+        max_tokens: row.get(8)?,
+        created_at: row.get(9)?,
     })
 }
 
@@ -55,7 +56,7 @@ fn encrypt_api_key(raw: Option<&str>) -> Result<Option<String>, AppError> {
 
 /// 标准 ai_models 查询列表达式（与 row_to_ai_model 对齐）
 const AI_MODEL_COLS: &str =
-    "id, name, provider, api_url, api_key, model_id, is_default, max_context, created_at";
+    "id, name, provider, api_url, api_key, model_id, is_default, max_context, max_tokens, created_at";
 
 /// 把一行 ai_conversations 查询结果转成 AiConversation
 ///
@@ -114,6 +115,7 @@ mod tests {
             api_key: None,
             model_id: "test-model".into(),
             max_context: None,
+            max_tokens: None,
         }
     }
 
@@ -532,8 +534,9 @@ impl Database {
         // v59 起 API Key 加密入库，防 app.db 被复制走后明文泄漏
         let api_key_enc = encrypt_api_key(input.api_key.as_deref())?;
         conn.execute(
-            "INSERT INTO ai_models (name, provider, api_url, api_key, model_id, max_context)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO ai_models
+                (name, provider, api_url, api_key, model_id, max_context, max_tokens)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
                 input.name,
                 input.provider,
@@ -541,6 +544,8 @@ impl Database {
                 api_key_enc,
                 input.model_id,
                 max_ctx,
+                // 新建时外层 None（没提供）与 Some(None)（显式清空）等价，都落 NULL
+                input.max_tokens.flatten(),
             ],
         )?;
         let id = conn.last_insert_rowid();
@@ -575,50 +580,53 @@ impl Database {
         // 用户没传 max_context 时保持原值，避免覆盖成默认值
         let max_ctx = input.max_context.unwrap_or(DEFAULT_MAX_CONTEXT).max(1000);
 
-        // API Key 三态（见 AiModelInput::api_key 注释）：
-        //   None      → 整条 SQL 不碰 api_key 列，保持原值
-        //   Some("")  → 清成 NULL
-        //   Some(k)   → 加密后替换
+        // 两个字段都是三态（api_key 见其注释，max_tokens 同理），
+        // 各自独立决定"要不要出现在 SET 里"。
         //
-        // 🔴 为什么必须区分：Key 对前端不回显，用户只改模型名时表单里的 Key 是空的。
-        // 若把"空"当清除，**改个名字就会把 Key 弄丢** —— 而且是静默弄丢，
-        // 下次对话才报鉴权失败，很难联想到是改名导致的。
-        match &input.api_key {
-            None => {
-                conn.execute(
-                    "UPDATE ai_models SET name = ?1, provider = ?2, api_url = ?3,
-                         model_id = ?4, max_context = ?5
-                     WHERE id = ?6",
-                    rusqlite::params![
-                        input.name,
-                        input.provider,
-                        input.api_url,
-                        input.model_id,
-                        max_ctx,
-                        id
-                    ],
-                )?;
-            }
-            Some(_) => {
-                // v59 起 API Key 加密入库，防 app.db 被复制走后明文泄漏。
-                // encrypt_api_key 对空串 / 纯空白返回 None → 落 NULL，即"清除"
-                let api_key_enc = encrypt_api_key(input.api_key.as_deref())?;
-                conn.execute(
-                    "UPDATE ai_models SET name = ?1, provider = ?2, api_url = ?3, api_key = ?4,
-                         model_id = ?5, max_context = ?6
-                     WHERE id = ?7",
-                    rusqlite::params![
-                        input.name,
-                        input.provider,
-                        input.api_url,
-                        api_key_enc,
-                        input.model_id,
-                        max_ctx,
-                        id
-                    ],
-                )?;
-            }
+        // 🔴 为什么必须区分「没提供」和「设为空」：Key 对前端不回显，
+        // 用户只改模型名时表单里的 Key 是空的。若把"空"当清除，
+        // **改个名字就会把 Key 弄丢** —— 而且是静默弄丢，下次对话才报鉴权失败。
+        //
+        // 早先这里按 api_key 分了两条完整 SQL；再叠一个三态字段就是 4 条，
+        // 每加一个字段翻一倍。改成动态拼 SET 子句，字段数与分支数解耦。
+        let mut sets: Vec<&str> = vec![
+            "name = :name",
+            "provider = :provider",
+            "api_url = :api_url",
+            "model_id = :model_id",
+            "max_context = :max_context",
+        ];
+        let mut params: Vec<(&str, &dyn rusqlite::ToSql)> = vec![
+            (":name", &input.name),
+            (":provider", &input.provider),
+            (":api_url", &input.api_url),
+            (":model_id", &input.model_id),
+            (":max_context", &max_ctx),
+            (":id", &id),
+        ];
+
+        // v59 起 API Key 加密入库；encrypt_api_key 对空串返回 None → 落 NULL，即"清除"
+        let api_key_enc = match &input.api_key {
+            Some(_) => Some(encrypt_api_key(input.api_key.as_deref())?),
+            None => None,
+        };
+        if let Some(enc) = &api_key_enc {
+            sets.push("api_key = :api_key");
+            params.push((":api_key", enc));
         }
+
+        let max_tokens_val = input.max_tokens.flatten();
+        if input.max_tokens.is_some() {
+            sets.push("max_tokens = :max_tokens");
+            params.push((":max_tokens", &max_tokens_val));
+        }
+
+        let sql = format!(
+            "UPDATE ai_models SET {} WHERE id = :id",
+            sets.join(", ")
+        );
+        conn.execute(&sql, params.as_slice())?;
+
         drop(conn);
         self.get_ai_model(id)
     }

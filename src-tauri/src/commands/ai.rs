@@ -92,6 +92,8 @@ pub async fn test_saved_ai_model(
         api_key: m.api_key,
         model_id: m.model_id,
         max_context: Some(m.max_context),
+        // 连通性测试固定发 max_tokens=1，用不到这个值；给 None 表示"不改动"
+        max_tokens: None,
     };
     AiService::test_model_connection(&input)
         .await

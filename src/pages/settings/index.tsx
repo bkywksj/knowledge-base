@@ -1202,6 +1202,10 @@ function DesktopSettingsPage() {
       api_key: "",
       model_id: model.model_id,
       max_context: model.max_context,
+      // null（未设置）回填成 undefined —— AntD 据此显示 placeholder 而不是 "null"。
+      // 不用空串是因为表单类型是 AiModelInput（number|null），空串过不了 tsc；
+      // 提交时 `String(values.max_tokens ?? "")` 对 undefined 同样得到 ""，行为一致。
+      max_tokens: model.max_tokens ?? undefined,
     });
     setModelModalOpen(true);
   }
@@ -1213,11 +1217,18 @@ function DesktopSettingsPage() {
       const max_context_num = values.max_context
         ? parseInt(String(values.max_context), 10)
         : 32000;
+      // max_tokens 三态：空串 = 清空（回到"不传、用服务商默认"）；否则取整数
+      const rawMaxTokens = String(values.max_tokens ?? "").trim();
+      const parsedMaxTokens = rawMaxTokens === "" ? null : parseInt(rawMaxTokens, 10);
       const payload = {
         ...values,
         max_context: Number.isFinite(max_context_num)
           ? max_context_num
           : DEFAULT_MAX_CONTEXT,
+        max_tokens:
+          parsedMaxTokens !== null && Number.isFinite(parsedMaxTokens)
+            ? parsedMaxTokens
+            : null,
       };
       if (editingModel) {
         // P0-1b 三态：Key 不回显，所以"表单里是空的"= 用户没动它 = 保持原值。
@@ -3258,6 +3269,41 @@ function DesktopSettingsPage() {
                 { value: 200000, label: "200K （Claude）" },
                 { value: 1000000, label: "1M   （GLM-Long / MiniMax-M1）" },
                 { value: 2000000, label: "2M" },
+              ]}
+              filterOption={(input, option) => {
+                const q = input.trim().toLowerCase();
+                if (!q) return true;
+                return (
+                  String(option?.value ?? "").includes(q) ||
+                  String(option?.label ?? "").toLowerCase().includes(q)
+                );
+              }}
+              style={{ width: "100%" }}
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="max_tokens"
+            label="单次回答上限 token"
+            // 与 max_context 是两回事，必须说清楚，否则用户会以为重复设置了
+            extra={
+              <span>
+                管「输出最多写多长」，与上面的上下文（管「输入能塞多少」）是两回事。
+                <br />
+                <b>留空 = 用服务商默认值</b>；答案被截断时调大它。
+                填超过模型上限会报错，报错就往小调。
+              </span>
+            }
+          >
+            <AutoComplete
+              placeholder="留空 = 服务商默认"
+              options={[
+                { value: -1, label: "-1     （无限，仅 Ollama 本地模型可用）" },
+                { value: 4096, label: "4K     （保守，多数模型都支持）" },
+                { value: 8192, label: "8K     （DeepSeek 旧版上限）" },
+                { value: 32768, label: "32K    （长回答）" },
+                { value: 131072, label: "128K   （实测 deepseek-chat 支持）" },
+                { value: 393216, label: "384K   （实测 deepseek-chat 的上限）" },
               ]}
               filterOption={(input, option) => {
                 const q = input.trim().toLowerCase();

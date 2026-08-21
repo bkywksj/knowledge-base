@@ -457,6 +457,14 @@ export interface AiModel {
   is_default: boolean;
   /** 模型支持的最大上下文 token 数（默认 32000，AI 页拼附加笔记按这个算预算） */
   max_context: number;
+  /**
+   * 单次回答的 token 上限。**null = 不传该参数**，用服务商默认值。
+   *
+   * 与 {@link max_context} 是两回事：那个管"输入能塞多少"，
+   * 这个管"输出最多写多长"，两者之和不能超过模型窗口。
+   * Ollama 用 -1 表示无限生成。
+   */
+  max_tokens: number | null;
   created_at: string;
 }
 
@@ -478,6 +486,13 @@ export interface AiModelInput {
   model_id: string;
   /** 可选：缺省时后端按 32000 入库 */
   max_context?: number;
+  /**
+   * 单次回答 token 上限，**三态**（与 `api_key` 同理）：
+   * - 字段缺失 / `undefined` → 保持原值不变
+   * - `null` → 清空，回到"不传该参数、用服务商默认"
+   * - 数字 → 设为该值（Ollama 可用 -1 表示无限）
+   */
+  max_tokens?: number | null;
 }
 
 /** AI 模型连通性测试结果 */

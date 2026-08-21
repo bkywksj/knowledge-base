@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 60;
+pub const SCHEMA_VERSION: i32 = 61;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -92,6 +92,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             57 => migrate_v57_to_v58(conn)?,
             58 => migrate_v58_to_v59(conn)?,
             59 => migrate_v59_to_v60(conn)?,
+            60 => migrate_v60_to_v61(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2384,6 +2385,46 @@ fn migrate_v54_to_v55(conn: &Connection) -> Result<(), AppError> {
 /// 加一列区分而不是另起一张表：份数上限、时间窗节流、内容去重、
 /// 以及笔记删除时的 CASCADE 清理，整套逻辑原样复用。
 /// `target_path` 为 NULL = 笔记正文本身（v57 的既有语义，存量行自动落到这一档）。
+/// v60 -> v61：`ai_models.max_tokens`（单次回答长度上限）。
+///
+/// # 为什么需要
+///
+/// 此前主对话流**完全不传** `max_tokens`，用服务商默认值。两个问题：
+///
+/// 1. **Ollama 的默认值不可靠** —— 官方文档写 `num_predict` 默认 128
+///    （≈190 个中文字，答两句就断），但 issue #7691 指出文档与实际不符、
+///    不同调用方式行为还不一致。这种不确定性只能用显式赋值消除。
+/// 2. **各家上限差异极大且在变** —— 实测 `deepseek-chat` 报
+///    `valid range of max_tokens is [1, 393216]`，而它旧版文档写的是 8192。
+///    写死任何一个数都会在某些模型上出错。
+///
+/// # 为什么默认 NULL 而不是给个数
+///
+/// NULL = 不传该参数，保持现有行为（服务商默认）。给死默认值的风险是：
+/// 上限只有 8192 的模型收到 32768 会**直接 400**，用户开箱即错。
+/// 让用户按自己的模型填，UI 里给推荐值和"填超了会报错"的提示。
+///
+/// 例外是 Ollama：本地推理不计费，迁移时统一置 -1（无限），
+/// 既消除 128 那个坑，又不产生任何成本。
+fn migrate_v60_to_v61(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v60 -> v61 (ai_models.max_tokens)");
+
+    conn.execute_batch(
+        "ALTER TABLE ai_models ADD COLUMN max_tokens INTEGER;",
+    )?;
+
+    // Ollama 存量模型统一给 -1（无限生成）—— 本地推理零成本，
+    // 且这是消除"默认 128 截断"那个坑最直接的办法
+    let n = conn.execute(
+        "UPDATE ai_models SET max_tokens = -1 WHERE provider = 'ollama'",
+        [],
+    )?;
+    log::info!("数据库迁移: v60 -> v61 完成，{} 个 Ollama 模型设为无限输出", n);
+
+    set_version(conn, 61)?;
+    Ok(())
+}
+
 /// v59 -> v60：Excel 二维数据集（P1-3b）。
 ///
 /// # 为什么要落库而不是每次现解析
