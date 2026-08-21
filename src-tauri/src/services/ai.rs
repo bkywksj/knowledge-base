@@ -125,6 +125,41 @@ fn build_ollama_client() -> &'static Client {
 /// - `https://api.deepseek.com/v1`            → `.../v1/chat/completions`（已带版本段，只补端点）
 /// - `https://open.bigmodel.cn/api/paas/v4`   → `.../paas/v4/chat/completions`（智谱等非 /v1 版本）
 /// - `https://x.y/v1/chat/completions`        → 原样使用
+/// 该 provider 能不能吃 `response_format: {"type":"json_object"}`。
+///
+/// # 为什么是白名单而不是黑名单
+///
+/// 原本是黑名单（`provider == "claude" || provider == "ollama"` 就摘掉），
+/// 在只有 11 家预置时勉强够用；扩到 24 家后必然漏 —— 而漏的代价不对称：
+///
+/// - **该发没发**：模型仍会按 prompt 吐 JSON，`parse_*_response` 有三层兜底
+///   （直接解析 → 剥 ``` → 截取首个 `{` 到最后一个 `}`），基本无感
+/// - **不该发却发了**：部分服务商直接 **400**，整个功能当场废掉
+///
+/// 所以默认不发、确认支持的才发 —— 新增 provider 时"忘了加进白名单"是安全的失败方向。
+///
+/// 名单只放**文档明确写了 JSON 模式**的几家。Anthropic 的 OpenAI 兼容层查不到确切说法
+/// （官方还声明它 "not a long-term or production-ready solution"），故不放 ——
+/// 它正是老黑名单里那个 `claude`。
+fn supports_json_response_format(provider: &str) -> bool {
+    matches!(
+        provider,
+        "openai" | "deepseek" | "zhipu" | "qwen" | "kimi" | "siliconflow" | "minimax"
+    )
+}
+
+/// 按 provider 决定要不要保留请求体里的 `response_format`。
+///
+/// 调用方统一先把字段塞进 body、再调这里摘掉 —— 与原先五处重复的写法一致，
+/// 只是判断收敛到了 [`supports_json_response_format`] 一处。
+fn strip_unsupported_response_format(body: &mut Value, model: &AiModel) {
+    if supports_json_response_format(&model.provider) {
+        return;
+    }
+    body.as_object_mut()
+        .and_then(|m| m.remove("response_format"));
+}
+
 /// 往请求体里塞 `max_tokens`（Ollama 走 `options.num_predict`）。
 ///
 /// **None = 整个参数不出现**，交给服务商默认值 —— 这是有意的：
@@ -2861,13 +2896,9 @@ impl AiService {
             "response_format": { "type": "json_object" },
             "max_tokens": 2000,
         });
-        // Claude 兼容代理 / Ollama OpenAI 兼容层都对 response_format 支持不一致，
-        // 去掉该字段，完全靠 prompt 让模型输出 JSON（下方解析器已带剥 ``` 兜底）
-        if model.provider == "claude" || model.provider == "ollama" {
-            req_body
-                .as_object_mut()
-                .and_then(|m| m.remove("response_format"));
-        }
+        // 不确定支持 response_format 的服务商一律摘掉该字段，靠 prompt + 兜底解析器
+        // 拿 JSON（见 supports_json_response_format 里"漏发比误发安全"的取舍）
+        strip_unsupported_response_format(&mut req_body, &model);
 
         let mut builder = client
             .post(&url)
@@ -2975,13 +3006,9 @@ impl AiService {
             "response_format": { "type": "json_object" },
             "max_tokens": 600,
         });
-        // Claude 兼容代理 / Ollama OpenAI 兼容层都对 response_format 支持不一致，
-        // 去掉该字段，完全靠 prompt 让模型输出 JSON（下方解析器已带剥 ``` 兜底）
-        if model.provider == "claude" || model.provider == "ollama" {
-            req_body
-                .as_object_mut()
-                .and_then(|m| m.remove("response_format"));
-        }
+        // 不确定支持 response_format 的服务商一律摘掉该字段，靠 prompt + 兜底解析器
+        // 拿 JSON（见 supports_json_response_format 里"漏发比误发安全"的取舍）
+        strip_unsupported_response_format(&mut req_body, &model);
 
         let mut builder = client
             .post(&url)
@@ -3109,13 +3136,9 @@ impl AiService {
             "stream": false,
             "response_format": { "type": "json_object" },
         });
-        // Claude 兼容代理 / Ollama OpenAI 兼容层都对 response_format 支持不一致，
-        // 去掉该字段，完全靠 prompt 让模型输出 JSON（下方解析器已带剥 ``` 兜底）
-        if model.provider == "claude" || model.provider == "ollama" {
-            req_body
-                .as_object_mut()
-                .and_then(|m| m.remove("response_format"));
-        }
+        // 不确定支持 response_format 的服务商一律摘掉该字段，靠 prompt + 兜底解析器
+        // 拿 JSON（见 supports_json_response_format 里"漏发比误发安全"的取舍）
+        strip_unsupported_response_format(&mut req_body, &model);
 
         let mut builder = client
             .post(&url)
@@ -3265,13 +3288,9 @@ impl AiService {
             "response_format": { "type": "json_object" },
             "max_tokens": 4000,
         });
-        // Claude 兼容代理 / Ollama OpenAI 兼容层都对 response_format 支持不一致，
-        // 去掉该字段，完全靠 prompt 让模型输出 JSON（下方解析器已带剥 ``` 兜底）
-        if model.provider == "claude" || model.provider == "ollama" {
-            req_body
-                .as_object_mut()
-                .and_then(|m| m.remove("response_format"));
-        }
+        // 不确定支持 response_format 的服务商一律摘掉该字段，靠 prompt + 兜底解析器
+        // 拿 JSON（见 supports_json_response_format 里"漏发比误发安全"的取舍）
+        strip_unsupported_response_format(&mut req_body, &model);
 
         let mut builder = client
             .post(&url)
@@ -3449,13 +3468,9 @@ impl AiService {
             "response_format": { "type": "json_object" },
             "max_tokens": 6000,
         });
-        // Claude 兼容代理 / Ollama OpenAI 兼容层都对 response_format 支持不一致，
-        // 去掉该字段，完全靠 prompt 让模型输出 JSON（下方解析器已带剥 ``` 兜底）
-        if model.provider == "claude" || model.provider == "ollama" {
-            req_body
-                .as_object_mut()
-                .and_then(|m| m.remove("response_format"));
-        }
+        // 不确定支持 response_format 的服务商一律摘掉该字段，靠 prompt + 兜底解析器
+        // 拿 JSON（见 supports_json_response_format 里"漏发比误发安全"的取舍）
+        strip_unsupported_response_format(&mut req_body, &model);
 
         let mut builder = client
             .post(&url)
@@ -4434,6 +4449,63 @@ mod note_quota_and_max_tokens_tests {
         let mut body = json!({"model": "x"});
         apply_max_tokens(&mut body, &model_with(Some(131_072), "deepseek"));
         assert_eq!(body["max_tokens"], json!(131_072));
+    }
+
+    /// 🔴 白名单的核心价值：**没列进去的一律不发**。
+    ///
+    /// 这条锁的是失败方向 —— 加新 provider 时忘了加进白名单，最坏结果是
+    /// "少了个可有可无的参数"（有三层兜底解析器）；反过来若默认发，
+    /// 遇上不支持的服务商就是 400，整个功能当场废掉。
+    #[test]
+    fn unknown_provider_gets_no_response_format() {
+        for p in ["doubao", "qianfan", "hunyuan", "groq", "together", "custom", "vllm"] {
+            let mut body = json!({"model": "x", "response_format": {"type": "json_object"}});
+            strip_unsupported_response_format(&mut body, &model_with(None, p));
+            assert!(
+                body.get("response_format").is_none(),
+                "{p} 不在白名单里，不该发 response_format"
+            );
+        }
+    }
+
+    /// claude 从黑名单时代起就该摘 —— 现在它指 Anthropic 官方兼容层，
+    /// 而官方对 response_format 没有明确说法，仍然不发
+    #[test]
+    fn claude_and_ollama_still_stripped() {
+        for p in ["claude", "ollama"] {
+            let mut body = json!({"model": "x", "response_format": {"type": "json_object"}});
+            strip_unsupported_response_format(&mut body, &model_with(None, p));
+            assert!(body.get("response_format").is_none(), "{p} 应摘掉");
+        }
+    }
+
+    /// 文档明确支持的几家必须保留 —— 否则这次改动就是纯降级
+    #[test]
+    fn whitelisted_providers_keep_response_format() {
+        for p in ["openai", "deepseek", "zhipu", "qwen", "kimi", "siliconflow", "minimax"] {
+            let mut body = json!({"model": "x", "response_format": {"type": "json_object"}});
+            strip_unsupported_response_format(&mut body, &model_with(None, p));
+            assert_eq!(
+                body["response_format"]["type"],
+                json!("json_object"),
+                "{p} 在白名单里，应保留"
+            );
+        }
+    }
+
+    /// 摘字段不能误伤请求体里的其它参数
+    #[test]
+    fn stripping_keeps_other_fields() {
+        let mut body = json!({
+            "model": "x",
+            "messages": [],
+            "response_format": {"type": "json_object"},
+            "max_tokens": 600,
+        });
+        strip_unsupported_response_format(&mut body, &model_with(None, "doubao"));
+        assert_eq!(body["max_tokens"], json!(600));
+        assert_eq!(body["model"], json!("x"));
+        assert!(body.get("messages").is_some());
     }
 
     /// 已有 options 的请求体不能被整个覆盖掉
