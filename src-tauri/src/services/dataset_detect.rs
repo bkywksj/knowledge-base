@@ -180,7 +180,8 @@ fn looks_numeric(s: &str) -> bool {
 /// 判断某一行是否像表头。
 ///
 /// 移植自对标项目 `spreadsheet.py:104-122` 的启发式，逐条都有理由：
-/// 1. 非空单元格 >= 2 且**互不重复** —— 表头列名不会重名
+/// 1. 非空单元格 >= 2 且**去重后过半** —— 少量重名（两个「备注」）在真表里很常见，
+///    交给 `normalize_headers` 加后缀即可；重复过半的才更像数据行
 /// 2. 没有超长单元格、没有公式残留（`=` 开头）
 /// 3. **不含纯数字** —— 数字是数据不是列名
 /// 4. 满足以下之一：命中表头词表 / 下一行有数字且本行单元格都较短
@@ -193,9 +194,20 @@ fn looks_like_header(row: &[String], next_row: Option<&[String]>) -> bool {
     if non_empty.len() < 2 {
         return false;
     }
-    // 列名重复 → 不是表头（真表头允许极少数重复，但那种情况本就该回退到 A列/B列）
+    // 重复**过半**才判定不是表头。
+    //
+    // 曾经这里是"只要有一个重复就 return false"，后果是整张表的列名全丢：
+    // 真实 Excel 里两个「备注」「金额」太常见，而一列重名就让另外 5 个好列名
+    // 一起退化成 A列/B列。更糟的是会级联 —— 表头行混进数据后，
+    // 「销售额」列的类型投票被文字表头拉成 text，于是 sum/avg 也被拒了。
+    //
+    // 而 `normalize_headers` 本来就有重名改名（`备注` / `备注_2`），
+    // 只是被这个早退挡住、永远走不到（它的单测直接调 normalize_headers，所以一直是绿的）。
+    //
+    // 保留"过半重复"这条是因为纯文本的**数据行**也可能被误判成表头
+    // （如 `已回款/已回款/已回款`）—— 那种行的去重率很低，用比例正好区分。
     let uniq: std::collections::HashSet<&&str> = non_empty.iter().collect();
-    if uniq.len() != non_empty.len() {
+    if uniq.len() * 2 <= non_empty.len() {
         return false;
     }
     if non_empty
@@ -517,6 +529,47 @@ mod tests {
     fn dedups_duplicate_header_names() {
         let h = normalize_headers(&["金额".into(), "金额".into(), "".into()], 3);
         assert_eq!(h, vec!["金额", "金额_2", "C列"]);
+    }
+
+    /// 🔴 上面那条只测 `normalize_headers` **单个函数**，走不到真实路径 ——
+    /// `looks_like_header` 曾经"见到一个重名就否决整行"，于是重名改名分支
+    /// 在集成路径上是死代码，而单测一直是绿的。这条从 `detect_regions` 进去补上。
+    #[test]
+    fn duplicate_column_keeps_other_headers() {
+        let rows: Vec<Vec<String>> = vec![
+            vec!["区域", "城市", "销售额", "备注", "备注"],
+            vec!["华东", "上海", "100", "大客户", "已回款"],
+            vec!["华北", "北京", "80", "新客户", "已回款"],
+        ]
+        .into_iter()
+        .map(|r| r.into_iter().map(String::from).collect())
+        .collect();
+
+        let ds = detect_regions(&rows);
+        assert_eq!(ds.len(), 1);
+        // 一列重名不该让另外几个好列名一起退化成 A列/B列
+        assert_eq!(
+            ds[0].headers,
+            vec!["区域", "城市", "销售额", "备注", "备注_2"]
+        );
+        // 表头没混进数据 → 销售额才能被推断成数值列（否则 sum/avg 会被拒）
+        assert_eq!(ds[0].rows.len(), 2);
+        let amount = ds[0].fields.iter().find(|f| f.name == "销售额").unwrap();
+        assert_eq!(amount.inferred_type, FieldType::Number);
+    }
+
+    /// 重复**过半**仍要否决 —— 这种更像数据行而不是表头
+    #[test]
+    fn mostly_duplicated_row_is_not_header() {
+        assert!(!looks_like_header(
+            &[
+                "已回款".into(),
+                "已回款".into(),
+                "已回款".into(),
+                "未回款".into()
+            ],
+            Some(&["1".into(), "2".into(), "3".into(), "4".into()])
+        ));
     }
 
     // ─── 类型推断 ───────────────────────────────

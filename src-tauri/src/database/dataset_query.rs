@@ -124,9 +124,19 @@ impl Database {
                 match plan.metric {
                     DatasetMetric::Count => format!("COUNT(NULLIF({cell}, ''))"),
                     DatasetMetric::CountDistinct => format!("COUNT(DISTINCT NULLIF({cell}, ''))"),
-                    // CAST 不能省：值在 JSON 里是字符串，直接 SUM 会按 0 处理
-                    DatasetMetric::Sum => format!("SUM(CAST({cell} AS REAL))"),
-                    DatasetMetric::Avg => format!("AVG(CAST({cell} AS REAL))"),
+                    // 两层处理缺一不可：
+                    // 1. CAST —— 值在 JSON 里是字符串，直接 SUM 会全按 0 处理
+                    // 2. 非数值先置 NULL —— 否则空串和「暂无」「N/A」都 CAST 成 0.0
+                    //    被算进**分母**。实测：5 行里 1 行销售额为空时，
+                    //    avg 给出 87.8，而 Excel AVERAGE 口径是 109.75。
+                    //    这种"看着像模像样的错数字"正是本模块要消灭的东西。
+                    //    NULL 在 SQLite 里被 SUM/AVG 直接跳过，语义正好。
+                    //
+                    // 判据用 `GLOB '*[0-9]*'`（含至少一个数字）而非正则：SQLite 无内置正则，
+                    // 而类型投票容忍的脏值恰好都是「暂无」「-」「N/A」这类不含数字的（见
+                    // dataset_detect::TYPE_VOTE_RATIO）。真数字 "0" 含数字，不会被误伤。
+                    DatasetMetric::Sum => format!("SUM({})", numeric_cell(&cell)),
+                    DatasetMetric::Avg => format!("AVG({})", numeric_cell(&cell)),
                     DatasetMetric::Min => format!("MIN({cell})"),
                     DatasetMetric::Max => format!("MAX({cell})"),
                     DatasetMetric::Rows => unreachable!("上面分支已处理"),
@@ -304,6 +314,13 @@ impl Database {
             values,
         }))
     }
+}
+
+/// 把单元格表达式包成「只有真数值才参与聚合」的形式，非数值一律 NULL。
+///
+/// SQLite 的 SUM/AVG 会跳过 NULL，所以空串与「暂无」这类脏值既不进分子也不进分母。
+fn numeric_cell(cell: &str) -> String {
+    format!("CASE WHEN {cell} GLOB '*[0-9]*' THEN CAST({cell} AS REAL) END")
 }
 
 /// 列名 → JSON1 路径。

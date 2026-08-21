@@ -134,6 +134,104 @@ fn rows_counts_all_but_count_skips_empty() {
     assert_eq!(non_empty.rows[0].value.as_i64().unwrap(), 4);
 }
 
+/// 🔴 空单元格必须**排除在分母外**，不能当 0 算进平均数。
+///
+/// 真实 xlsx 端到端探针抓到的：5 行里 1 行销售额为空时，
+/// 旧实现给出 87.8 =(100+250+80+9+0)/5，而 Excel AVERAGE 口径是 109.75 =(…)/4。
+/// 这种"看着像模像样的错数字"比报错危险得多 —— 用户没法分辨。
+#[test]
+fn avg_excludes_blank_cells_from_denominator() {
+    let db = temp_db();
+    let id = seed(&db);
+
+    let mut p = plan(id, DatasetMetric::Avg);
+    p.metric_column = Some("销售额".into());
+
+    let r = db.execute_dataset_query(&p).unwrap();
+    let avg = r.rows[0].value.as_f64().unwrap();
+    assert!(
+        (avg - 109.75).abs() < 0.01,
+        "应为 (100+250+80+9)/4=109.75，实际 {avg}（把空当 0 会得到 87.8）"
+    );
+}
+
+/// 类型投票容忍数值列里混少量脏值（「暂无」「N/A」「-」），
+/// 这些 CAST 出来都是 0.0，必须一并排除，否则同样污染 sum/avg。
+#[test]
+fn dirty_values_in_number_column_are_excluded() {
+    let db = temp_db();
+    let input = DatasetInput {
+        source_path: "kb_assets/dirty.xlsx".into(),
+        sheet_name: "S".into(),
+        region_index: 0,
+        header_row: Some(0),
+        source_hash: "h".into(),
+        headers: vec!["金额".into()],
+        fields: vec![field(0, "金额", "number", Some("measure"))],
+        rows: vec![
+            vec!["100".into()],
+            vec!["暂无".into()],
+            vec!["N/A".into()],
+            vec!["-".into()],
+            vec!["200".into()],
+        ],
+    };
+    db.replace_datasets_for_source("kb_assets/dirty.xlsx", &[input])
+        .unwrap();
+    let id = db.list_datasets_by_source("kb_assets/dirty.xlsx").unwrap()[0].id;
+
+    let mut p = plan(id, DatasetMetric::Sum);
+    p.metric_column = Some("金额".into());
+    assert_eq!(
+        db.execute_dataset_query(&p).unwrap().rows[0].value.as_f64().unwrap(),
+        300.0
+    );
+
+    let mut p = plan(id, DatasetMetric::Avg);
+    p.metric_column = Some("金额".into());
+    let avg = db.execute_dataset_query(&p).unwrap().rows[0].value.as_f64().unwrap();
+    assert!((avg - 150.0).abs() < 0.01, "应为 (100+200)/2=150，实际 {avg}");
+}
+
+/// 真实的 0 不能被当成脏值滤掉
+#[test]
+fn genuine_zero_is_kept() {
+    let db = temp_db();
+    let input = DatasetInput {
+        source_path: "kb_assets/zero.xlsx".into(),
+        sheet_name: "S".into(),
+        region_index: 0,
+        header_row: Some(0),
+        source_hash: "h".into(),
+        headers: vec!["金额".into()],
+        fields: vec![field(0, "金额", "number", Some("measure"))],
+        rows: vec![vec!["0".into()], vec!["10".into()]],
+    };
+    db.replace_datasets_for_source("kb_assets/zero.xlsx", &[input])
+        .unwrap();
+    let id = db.list_datasets_by_source("kb_assets/zero.xlsx").unwrap()[0].id;
+
+    let mut p = plan(id, DatasetMetric::Avg);
+    p.metric_column = Some("金额".into());
+    let avg = db.execute_dataset_query(&p).unwrap().rows[0].value.as_f64().unwrap();
+    assert!((avg - 5.0).abs() < 0.01, "0 是真值，应为 (0+10)/2=5，实际 {avg}");
+}
+
+/// 一整组全是空值时返回 null 而不是 0 —— "没有数据"和"是零"不是一回事
+#[test]
+fn all_blank_group_reports_null_not_zero() {
+    let db = temp_db();
+    let id = seed(&db);
+
+    let mut p = plan(id, DatasetMetric::Sum);
+    p.metric_column = Some("销售额".into());
+    p.group_by = Some("区域".into());
+
+    let r = db.execute_dataset_query(&p).unwrap();
+    let south = r.rows.iter().find(|x| x.group == "华南").unwrap();
+    assert!(south.value.is_null(), "华南只有空值，应为 null，实际 {:?}", south.value);
+}
+
 #[test]
 fn count_distinct_and_min_max() {
     let db = temp_db();
