@@ -21,11 +21,13 @@ pub fn set_version(conn: &Connection, version: i32) -> Result<(), AppError> {
 pub fn migrate(conn: &Connection) -> Result<(), AppError> {
     let mut version = get_version(conn)?;
 
+    // 🔴 必须是独立的错误类型而不是 Custom：调用方要靠它区分「应用比库旧」和「库坏了」。
+    // 前者数据完好，走 db_recovery 的留档 + 空库启动会让用户以为数据全丢了。
     if version > SCHEMA_VERSION {
-        return Err(AppError::Custom(format!(
-            "数据库版本({})高于应用支持的版本({}), 请升级应用",
-            version, SCHEMA_VERSION
-        )));
+        return Err(AppError::SchemaTooNew {
+            db: version,
+            app: SCHEMA_VERSION,
+        });
     }
 
     while version < SCHEMA_VERSION {
@@ -2695,6 +2697,29 @@ fn looks_absolute_path(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 库版本高于应用时，必须返回**可区分**的 `SchemaTooNew`，而不是笼统的 `Custom`。
+    ///
+    /// 这条锁的是 `lib.rs` 里那个分支：调用方靠这个变体决定「不要走 db_recovery」。
+    /// 一旦有人图省事把它改回 `AppError::Custom`，`should_attempt_recovery` 就会
+    /// 重新对它返回 true —— 用户装回旧版应用打开，库被改名留档、界面上笔记全空。
+    #[test]
+    fn schema_newer_than_app_returns_dedicated_error() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        // 伪造一个"未来版本"的库
+        set_version(&conn, SCHEMA_VERSION + 1).unwrap();
+
+        match migrate(&conn) {
+            Err(AppError::SchemaTooNew { db, app }) => {
+                assert_eq!(db, SCHEMA_VERSION + 1);
+                assert_eq!(app, SCHEMA_VERSION);
+            }
+            other => panic!("期望 SchemaTooNew，实际: {:?}", other.err()),
+        }
+        // 失败也不能顺手把版本号改掉
+        assert_eq!(get_version(&conn).unwrap(), SCHEMA_VERSION + 1);
+    }
 
     /// v53 的核心契约：白板的搜索**摘要**必须是画布文字，不能是 Excalidraw JSON。
     ///

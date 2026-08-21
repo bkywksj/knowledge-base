@@ -835,8 +835,29 @@ pub fn run() {
             // 改为：先尝试自动从导入前的自动备份恢复（`app.db.bak-*`，由 sync 导入流程滚动保留），
             // 恢复成功就照常启动；实在没救才把损坏库改名留档 + 用空库启动，
             // 让用户至少能进到界面里做导入 / 反馈，原始损坏文件也还留在磁盘上可送修。
+            //
+            // 🔴 但恢复流程**不是对所有失败都适用**：`SchemaTooNew`（用户装回了旧版应用）
+            // 的库是完好的，走恢复只会把它改名留档 + 起个空库 —— 用户打开看到零笔记，
+            // 以为数据全丢了。这类情况必须原样退出并说清楚"数据没动，去升级应用"。
             let db = match database::Database::init(&db_path_str) {
                 Ok(db) => db,
+                Err(e) if !services::db_recovery::should_attempt_recovery(&e) => {
+                    log::error!("数据库版本高于当前应用，拒绝进入恢复流程（数据未被改动）: {}", e);
+                    // 文案不能带 Markdown：MessageBoxW 是纯文本，`**强调**` 会把星号原样显示出来
+                    crash_handler::show_startup_notice(
+                        "知识库 - 需要升级应用",
+                        &format!(
+                            "{e}
+
+                             你的数据没有被改动，仍完整保存在：
+                             {db_path_str}
+
+                             请安装最新版本的知识库后再打开。
+                             若确实要用旧版，请先整体备份上面这个目录。"
+                        ),
+                    );
+                    return Err(Box::new(e) as Box<dyn std::error::Error>);
+                }
                 Err(e) => {
                     log::error!("数据库打开失败: {}（进入恢复流程）", e);
                     services::db_recovery::recover_or_fresh(&db_path, &e)

@@ -31,9 +31,23 @@ const BACKUP_SUFFIX: &str = ".bak-";
 /// 损坏库留档时用的中缀
 const CORRUPT_SUFFIX: &str = ".corrupt-";
 
+/// 这个打开失败**该不该**走恢复流程。
+///
+/// 恢复流程会把库改名成 `.corrupt-*` 再用空库启动 —— 对真损坏是救命，
+/// 对「应用比库旧」（[`AppError::SchemaTooNew`]）却是灾难：数据明明完好，
+/// 用户却看到一个空知识库，只有一行日志说文件还在。
+///
+/// 触发「应用比库旧」不需要什么极端条件：本项目**每发一版 schema 都涨**
+/// （v1.50.0=54 / v1.51.0=55 / v1.52.0=56），用户从 release 仓下个旧版装回去、
+/// 或把数据目录同步到另一台还没升级的机器，就会撞上。
+pub(crate) fn should_attempt_recovery(err: &AppError) -> bool {
+    !matches!(err, AppError::SchemaTooNew { .. })
+}
+
 /// 数据库打不开时的恢复入口。成功返回一个可用的 [`Database`]。
 ///
-/// `open_err` 只用于日志 / 留档说明，不参与判断。
+/// ⚠️ 调用前必须先过 [`should_attempt_recovery`] —— 本函数只负责"救损坏的库"，
+/// 不判断该不该救。`open_err` 只用于日志 / 留档说明。
 pub fn recover_or_fresh(db_path: &Path, open_err: &AppError) -> Result<Database, AppError> {
     log::warn!(
         "[db-recovery] 开始恢复流程，目标库 {}（原始错误: {}）",
@@ -46,6 +60,16 @@ pub fn recover_or_fresh(db_path: &Path, open_err: &AppError) -> Result<Database,
     log::info!("[db-recovery] 找到 {} 个自动备份候选", backups.len());
     for backup in &backups {
         match probe_sqlite(backup) {
+            // 备份自身版本高于当前应用时**必须跳过**：拿它顶上去，init 里的迁移照样因
+            // 「版本过高」失败，而 restore_from_backup 已经先把原库 quarantine 了；
+            // 循环走到策略 2 再 quarantine 一次，秒级时间戳撞车会**盖掉那份原库留档**。
+            // 留档的全部意义是"绝不删除，用户可能还想找人抢救"，被盖掉这承诺就没了。
+            Ok(v) if v > crate::database::schema::SCHEMA_VERSION => log::warn!(
+                "[db-recovery] 备份 {} 的版本({})高于当前应用({})，跳过",
+                backup.display(),
+                v,
+                crate::database::schema::SCHEMA_VERSION
+            ),
             Ok(_) => {
                 log::info!("[db-recovery] 备份 {} 校验通过，尝试恢复", backup.display());
                 match restore_from_backup(db_path, backup) {
@@ -230,6 +254,81 @@ fn side_file(db_path: &Path, suffix: &str) -> PathBuf {
 mod tests {
     use super::*;
     use crate::models::NoteInput;
+
+    /// 恢复闸门：只有"真打不开/坏了"才该救；"应用比库旧"必须放行给调用方原样退出。
+    ///
+    /// 这是本模块最危险的一条分支 —— 判错方向的代价是把用户完好的库改名留档、
+    /// 起个空库，界面上笔记归零。
+    #[test]
+    fn schema_too_new_must_not_trigger_recovery() {
+        assert!(!should_attempt_recovery(&AppError::SchemaTooNew {
+            db: 61,
+            app: 60
+        }));
+        // 其余失败照旧走恢复
+        assert!(should_attempt_recovery(&AppError::Custom(
+            "file is not a database".into()
+        )));
+        assert!(should_attempt_recovery(&AppError::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "truncated"
+        ))));
+    }
+
+    /// 版本高于当前应用的**备份**要跳过，不能拿去顶替。
+    ///
+    /// 不跳的后果不是"白试一次"这么轻：`restore_from_backup` 会先把原库 quarantine 留档、
+    /// 再把备份复制到 `app.db`，然后 init 因版本过高失败；循环走到策略 2 时又 quarantine 一次，
+    /// 而留档文件名的时间戳精度只到秒 —— 同一秒内第二次留档会**盖掉第一次那份原库**。
+    /// 留档存在的全部意义就是"绝不删除，用户可能还想找人抢救"，被盖掉等于这个承诺作废。
+    ///
+    /// 断言因此落在「留档里躺的还是不是原库的字节」，而不是「最终库空不空」
+    /// 或「备份文件还在不在」—— 那些两种走法都成立，拿来当断言等于没测
+    /// （这条测试第一版就是这么写的，反向验证时照样通过，白写）。
+    #[test]
+    fn recovery_skips_backup_newer_than_app() {
+        let dir = temp_dir("skip-newer-bak");
+        let db_path = dir.join("app.db");
+
+        // 原库：损坏但带可辨认标记（真实场景里它可能只是部分损坏，仍有抢救价值）
+        const ORIGINAL_MARK: &[u8] = b"ORIGINAL-DAMAGED-DB-KEEP-ME";
+        std::fs::write(&db_path, ORIGINAL_MARK).unwrap();
+
+        // 备份：文件本身完好，但来自更高版本的应用
+        let bak = dir.join("app.db.bak-20990101-000000");
+        make_db_with_note(&bak, "未来版本的备份");
+        {
+            let c = rusqlite::Connection::open(&bak).unwrap();
+            crate::database::schema::set_version(&c, crate::database::schema::SCHEMA_VERSION + 1)
+                .unwrap();
+        }
+        assert!(probe_sqlite(&bak).unwrap() > crate::database::schema::SCHEMA_VERSION);
+
+        let db = recover_or_fresh(&db_path, &AppError::Custom("坏了".into())).unwrap();
+        assert!(note_titles(&db).is_empty(), "没有可用备份，应是全新空库");
+        drop(db);
+
+        let archived: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|s| s.to_str())
+                    .map(|n| n.contains(CORRUPT_SUFFIX))
+                    .unwrap_or(false)
+            })
+            .collect();
+        assert!(!archived.is_empty(), "损坏的原库必须留档");
+        assert!(
+            archived
+                .iter()
+                .any(|p| std::fs::read(p).map(|b| b == ORIGINAL_MARK).unwrap_or(false)),
+            "留档里必须还是原库的字节，不能被那个未来版本的备份盖掉"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn temp_dir(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!(

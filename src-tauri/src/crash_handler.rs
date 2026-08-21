@@ -118,6 +118,22 @@ pub fn report_fatal(crash_dir: PathBuf, message: &str) {
     let _ = saved_path;
 }
 
+/// 启动期的**非崩溃**告知弹窗：数据完好、只是这次起不来（如数据库版本高于应用）。
+///
+/// 单独开一个而不是复用 [`report_fatal`]：那个会写一份 crash 报告、文案是
+/// "程序遇到问题需要关闭"，用在这里既误导用户（以为软件坏了），
+/// 也会往 crash 目录堆无意义的文件。
+pub fn show_startup_notice(title: &str, body: &str) {
+    eprintln!("
+===== 知识库 无法启动 =====
+{body}
+===========================");
+    #[cfg(windows)]
+    show_native_notice(title, body);
+    #[cfg(not(windows))]
+    let _ = title;
+}
+
 /// 组装崩溃报告文本。
 fn build_report(info: &std::panic::PanicHookInfo<'_>) -> String {
     // panic payload 文本（&str / String 两种常见形态）
@@ -214,6 +230,27 @@ fn show_native_dialog(report: &str, saved_path: Option<&Path>) {
             w_body.as_ptr(),
             w_title.as_ptr(),
             MB_OK | MB_ICONERROR | MB_SYSTEMMODAL | MB_SETFOREGROUND,
+        );
+    }
+}
+
+/// 与 [`show_native_dialog`] 同机制，但用「警告」图标 + 原样展示正文
+/// —— 这类情况不是崩溃，不该套那套"很抱歉/请把日志发给开发者"的文案。
+#[cfg(windows)]
+fn show_native_notice(title: &str, body: &str) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MB_SYSTEMMODAL,
+    };
+
+    let w_title = to_wide(title);
+    let w_body = to_wide(body);
+    // SAFETY: 两个宽字符串均以 NUL 结尾且存活到调用结束；hwnd 传 null 表示无父窗口。
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            w_body.as_ptr(),
+            w_title.as_ptr(),
+            MB_OK | MB_ICONWARNING | MB_SYSTEMMODAL | MB_SETFOREGROUND,
         );
     }
 }
