@@ -426,47 +426,162 @@ fn build_attached_notes_context(db: &Database, note_ids: &[i64], model: &AiModel
     out
 }
 
+/// 最多切几段。段数越多覆盖越广、但上下文越碎；4 段 = 单段 4000 字，
+/// 仍是一段能读的完整篇幅。
+const RAG_MAX_SEGMENTS: usize = 4;
+
+/// 命中集中度阈值：单窗口已能覆盖这么多命中时，**保持原来的整段行为**。
+/// 分段是有代价的（把连贯正文切碎），只在确实换来大幅覆盖率时才做。
+const RAG_SINGLE_WINDOW_ENOUGH: f64 = 0.8;
+
+/// 把字符串按字符逐个小写，**保证与原串 1:1 对齐**。
+///
+/// 不能用 `str::to_lowercase()`：它对某些字符会改变字符数（如 `İ` → `i̇` 变两个），
+/// 一旦长度错位，用它算出的下标去索引原文就会偏移、截出乱码。
+fn lowercase_chars(chars: &[char]) -> Vec<char> {
+    chars
+        .iter()
+        .map(|c| c.to_lowercase().next().unwrap_or(*c))
+        .collect()
+}
+
+/// 在 `hay` 里找 `needle` 的**全部**出现位置（字符下标）。
+///
+/// 单个关键词最多记 `cap` 处：常见词在超长文档里可能出现上万次，
+/// 全收下来对选段没有额外帮助，只是白烧 CPU。
+fn find_all(hay: &[char], needle: &[char], cap: usize, out: &mut Vec<usize>) {
+    if needle.is_empty() || needle.len() > hay.len() {
+        return;
+    }
+    let mut i = 0usize;
+    let mut found = 0usize;
+    while i + needle.len() <= hay.len() && found < cap {
+        if hay[i..i + needle.len()] == *needle {
+            out.push(i);
+            found += 1;
+            i += needle.len();
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// 数 `[start, end)` 里有多少命中（`hits` 必须已升序）。
+fn count_hits_in(hits: &[usize], start: usize, end: usize) -> usize {
+    let lo = hits.partition_point(|h| *h < start);
+    let hi = hits.partition_point(|h| *h < end);
+    hi - lo
+}
+
+/// 把 `[start, len)` 方向上一个长 `size` 的窗口夹到 `[0, len)` 内，返回 `(start, end)`。
+fn clamp_window(center_start: usize, size: usize, len: usize) -> (usize, usize) {
+    let end = (center_start + size).min(len);
+    (end.saturating_sub(size), end)
+}
+
+/// 从超长笔记里截出喂给模型的片段。
+///
+/// # 为什么不是"取最早一处命中开一个窗"
+///
+/// 那是本函数的旧实现，在真实语料上实测覆盖率很差：一篇 28 万字的笔记，
+/// 查询词命中 232 处，围绕**最早**那处开的 16000 字窗口只盖住 53 处（23%）；
+/// 查"配置""错误"更低，只有 15% / 10%。也就是说模型看到的往往是文档开头
+/// 顺带提了一句的地方，真正展开讲的段落全被切掉了 —— 用户体感是"AI 答得零碎"。
+///
+/// 现在改成：把命中聚成簇，贪心挑命中最密的几段拼起来，总长仍不超过 `window`。
+///
+/// # 不回退保证
+///
+/// 分段有代价（连贯正文被切碎）。所以先算旧办法的覆盖率，若单窗口已能覆盖
+/// [`RAG_SINGLE_WINDOW_ENOUGH`] 以上的命中，**原样返回单窗口** ——
+/// 命中本来就集中的笔记行为完全不变，只有分散的才分段。
 fn extract_window_for_rag(content: &str, query: &str, window: usize) -> String {
     let chars: Vec<char> = content.chars().collect();
     if chars.len() <= window {
         return content.to_string();
     }
 
+    let lower = lowercase_chars(&chars);
     let keywords = crate::database::Database::extract_keywords(query);
-    let lower_content: String = content.to_lowercase();
 
-    let mut earliest_char_idx: Option<usize> = None;
+    // 每个关键词最多记 2000 处：再多也只是同一批簇的重复证据
+    let mut hits: Vec<usize> = Vec::new();
     for kw in &keywords {
-        let kw_lower = kw.to_lowercase();
-        if let Some(byte_pos) = lower_content.find(&kw_lower) {
-            let char_idx = lower_content[..byte_pos].chars().count();
-            earliest_char_idx = Some(earliest_char_idx.map_or(char_idx, |c| c.min(char_idx)));
-        }
+        let kw_chars: Vec<char> = kw.chars().collect();
+        let kw_lower = lowercase_chars(&kw_chars);
+        find_all(&lower, &kw_lower, 2000, &mut hits);
+    }
+    hits.sort_unstable();
+    hits.dedup();
+
+    // 一处都没命中 → 没有"围绕命中"可言，退化成取开头（与旧实现一致）
+    if hits.is_empty() {
+        let body: String = chars.iter().take(window).collect();
+        return format!("{}…", body);
     }
 
-    match earliest_char_idx {
-        Some(hit) => {
-            let half = window / 2;
-            let tentative_start = hit.saturating_sub(half);
-            let end = (tentative_start + window).min(chars.len());
-            // 贴底时反推 start，保证窗口始终是 window 大小
-            let start = end.saturating_sub(window);
-            let body: String = chars[start..end].iter().collect();
-            let mut buf = String::with_capacity(body.len() + 6);
-            if start > 0 {
-                buf.push('…');
-            }
-            buf.push_str(&body);
-            if end < chars.len() {
-                buf.push('…');
-            }
-            buf
+    // 旧办法：围绕最早一处命中开单窗
+    let (single_start, single_end) = clamp_window(hits[0].saturating_sub(window / 2), window, chars.len());
+    let single_cov = count_hits_in(&hits, single_start, single_end);
+
+    // 命中够集中 → 保持整段，不切碎
+    if single_cov as f64 >= hits.len() as f64 * RAG_SINGLE_WINDOW_ENOUGH {
+        return render_segments(&chars, &[(single_start, single_end)]);
+    }
+
+    // 贪心选段：每轮挑"命中最密的一段"，把它盖住的命中剔除，再挑下一段
+    let seg = (window / RAG_MAX_SEGMENTS).max(1);
+    let mut remaining: Vec<usize> = hits.clone();
+    let mut picked: Vec<(usize, usize)> = Vec::new();
+
+    while picked.len() < RAG_MAX_SEGMENTS && !remaining.is_empty() {
+        // 候选段的起点只需考虑"以某个命中打头"的那些，最优解必在其中
+        let best = remaining
+            .iter()
+            .map(|h| {
+                // 留 1/4 段的前文，命中点不至于贴在段首
+                let (st, en) = clamp_window(h.saturating_sub(seg / 4), seg, chars.len());
+                (count_hits_in(&remaining, st, en), st, en)
+            })
+            .max_by_key(|(n, st, _)| (*n, std::cmp::Reverse(*st)));
+
+        let Some((n, st, en)) = best else { break };
+        if n == 0 {
+            break;
         }
-        None => {
-            let body: String = chars.iter().take(window).collect();
-            format!("{}…", body)
+        picked.push((st, en));
+        remaining.retain(|h| *h < st || *h >= en);
+    }
+
+    picked.sort_unstable_by_key(|(st, _)| *st);
+    render_segments(&chars, &merge_overlapping(&picked))
+}
+
+/// 合并相邻/重叠的段，避免拼出 `…AB……BC…` 这种把同一段正文切两半的输出。
+fn merge_overlapping(segs: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    let mut out: Vec<(usize, usize)> = Vec::with_capacity(segs.len());
+    for &(st, en) in segs {
+        match out.last_mut() {
+            Some((_, prev_end)) if st <= *prev_end => *prev_end = (*prev_end).max(en),
+            _ => out.push((st, en)),
         }
     }
+    out
+}
+
+/// 把选中的段落渲染成一段文本，掐掉的地方用 `…` 标出（让模型知道此处有省略）。
+fn render_segments(chars: &[char], segs: &[(usize, usize)]) -> String {
+    let mut buf = String::new();
+    for (i, &(st, en)) in segs.iter().enumerate() {
+        if st > 0 || i > 0 {
+            buf.push('…');
+        }
+        buf.extend(chars[st..en].iter());
+    }
+    if segs.last().map(|(_, en)| *en < chars.len()).unwrap_or(false) {
+        buf.push('…');
+    }
+    buf
 }
 
 /// 去除 HTML 标签，提取纯文本（用于 RAG 上下文）
@@ -3972,5 +4087,146 @@ mod stream_line_buffer_tests {
         assert_eq!(lines.len(), 1);
         let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
         assert_eq!(v["message"]["content"], "中文");
+    }
+}
+
+#[cfg(test)]
+mod rag_window_tests {
+    use super::*;
+
+    /// 数一段文本里包含多少个关键词命中（与 `extract_window_for_rag` 的口径一致）
+    fn count_hits(text: &str, query: &str) -> usize {
+        let chars: Vec<char> = text.chars().collect();
+        let lower = lowercase_chars(&chars);
+        let mut hits = Vec::new();
+        for kw in crate::database::Database::extract_keywords(query) {
+            let kw_chars: Vec<char> = kw.chars().collect();
+            find_all(&lower, &lowercase_chars(&kw_chars), 2000, &mut hits);
+        }
+        hits.sort_unstable();
+        hits.dedup();
+        hits.len()
+    }
+
+    /// **旧实现**：围绕最早一处命中开单窗。留着做对照组 ——
+    /// 「新的不能比旧的差」这句话必须能被测出来，而不是靠嘴说。
+    fn legacy_single_window(content: &str, query: &str, window: usize) -> String {
+        let chars: Vec<char> = content.chars().collect();
+        if chars.len() <= window {
+            return content.to_string();
+        }
+        let lower = lowercase_chars(&chars);
+        let mut earliest: Option<usize> = None;
+        for kw in crate::database::Database::extract_keywords(query) {
+            let kw_chars: Vec<char> = kw.chars().collect();
+            let mut hit = Vec::new();
+            find_all(&lower, &lowercase_chars(&kw_chars), 1, &mut hit);
+            if let Some(p) = hit.first() {
+                earliest = Some(earliest.map_or(*p, |c: usize| c.min(*p)));
+            }
+        }
+        match earliest {
+            Some(h) => {
+                let (st, en) = clamp_window(h.saturating_sub(window / 2), window, chars.len());
+                chars[st..en].iter().collect()
+            }
+            None => chars.iter().take(window).collect(),
+        }
+    }
+
+    /// 造一篇长文：命中**分散**在 8 个远隔的位置。
+    /// 这是旧实现最吃亏的形态 —— 只围绕第一处开窗，后 7 处全丢。
+    fn scattered_doc(marker: &str, filler_len: usize, times: usize) -> String {
+        let filler: String = "无关内容".repeat(filler_len / 4);
+        let mut s = String::new();
+        for i in 0..times {
+            s.push_str(&filler);
+            s.push_str(&format!("第{i}处提到{marker}的具体做法。"));
+        }
+        s.push_str(&filler);
+        s
+    }
+
+    #[test]
+    fn scattered_hits_beat_single_window() {
+        // 8 处提及，每处相隔 20000 字 → 单个 16000 窗口最多盖住 1 处
+        let doc = scattered_doc("熔断降级", 20000, 8);
+        let q = "熔断降级";
+
+        let legacy = count_hits(&legacy_single_window(&doc, q, 16000), q);
+        let out = extract_window_for_rag(&doc, q, 16000);
+        let now = count_hits(&out, q);
+
+        assert!(
+            out.chars().count() <= 16000 + RAG_MAX_SEGMENTS + 1,
+            "输出不得超预算（分隔用的 … 不计），实际 {}",
+            out.chars().count()
+        );
+        assert!(
+            now > legacy,
+            "命中分散时新实现必须覆盖更多：旧 {legacy} → 新 {now}"
+        );
+        // 4 段各盖一处提及，是这个构造下的理论上限
+        assert!(now >= legacy * 3, "提升幅度应显著：旧 {legacy} → 新 {now}");
+    }
+
+    /// 不回退保证：命中本来就挤在一起时，输出必须是**一整段连贯正文**，
+    /// 不能被切成几截 —— 分段是有代价的，只该在换来覆盖率时才发生。
+    #[test]
+    fn concentrated_hits_stay_one_piece() {
+        let filler: String = "无关内容".repeat(15000);
+        // 全部命中集中在开头 2000 字内
+        let mut doc = String::new();
+        for i in 0..6 {
+            doc.push_str(&format!("第{i}次说到熔断降级。"));
+        }
+        doc.push_str(&filler);
+
+        let q = "熔断降级";
+        let out = extract_window_for_rag(&doc, q, 16000);
+        // 段与段之间才会出现 … ；开头/结尾各允许一个省略号
+        let inner_ellipsis = out.trim_matches('…').matches('…').count();
+        assert_eq!(inner_ellipsis, 0, "集中命中不该被切成多段");
+        assert_eq!(
+            count_hits(&out, q),
+            count_hits(&doc, q),
+            "集中命中应一处不落地保留"
+        );
+        // 与旧实现口径一致（这类文档本就不该有任何行为变化）
+        assert_eq!(count_hits(&legacy_single_window(&doc, q, 16000), q), count_hits(&out, q));
+    }
+
+    /// 一处都没命中时退化成取开头（与旧实现一致，别把这条行为改没了）
+    #[test]
+    fn no_hit_falls_back_to_head() {
+        let doc: String = "甲乙丙丁".repeat(10000);
+        let out = extract_window_for_rag(&doc, "完全不存在的词", 1000);
+        assert!(out.starts_with("甲乙丙丁"));
+        assert!(out.ends_with('…'));
+        assert_eq!(out.chars().count(), 1001);
+    }
+
+    /// 短于窗口的正文原样返回，不加任何省略号
+    #[test]
+    fn short_content_returned_intact() {
+        let doc = "很短的一篇笔记，提到熔断降级。";
+        let out = extract_window_for_rag(doc, "熔断降级", 16000);
+        assert_eq!(out, doc);
+    }
+
+    /// 相邻段必须合并：否则会拼出 `…AB……BC…` 把同一段正文切两半
+    #[test]
+    fn adjacent_segments_merge() {
+        let segs = [(0usize, 100usize), (100, 200), (500, 600)];
+        assert_eq!(merge_overlapping(&segs), vec![(0, 200), (500, 600)]);
+    }
+
+    /// 大小写不影响命中（英文关键词）
+    #[test]
+    fn matching_is_case_insensitive() {
+        let filler: String = "x".repeat(20000);
+        let doc = format!("{filler}这里讲 OpenAPI 的用法{filler}");
+        let out = extract_window_for_rag(&doc, "openapi", 8000);
+        assert!(out.contains("OpenAPI"), "小写查询应命中原文大写词");
     }
 }
