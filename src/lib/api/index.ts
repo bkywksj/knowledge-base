@@ -726,6 +726,24 @@ export const aiModelApi = {
    * 别拿它去做展示或判断（判断用 `has_api_key`）。
    */
   getApiKey: (id: number) => invoke<string | null>("get_ai_model_api_key", { id }),
+  /**
+   * 拉服务商可用模型列表（设置页模型标识旁的「获取」按钮）。
+   *
+   * `savedId` 传编辑中模型的 id：Key 保存后前端只剩 `has_api_key`，
+   * 用户不重输 Key 时靠它让后端去库里取明文，否则一点获取就 401。
+   */
+  listRemoteModels: (args: {
+    provider: string;
+    apiUrl: string;
+    apiKey?: string | null;
+    savedId?: number | null;
+  }) =>
+    invoke<string[]>("list_remote_ai_models", {
+      provider: args.provider,
+      apiUrl: args.apiUrl,
+      apiKey: args.apiKey ?? null,
+      savedId: args.savedId ?? null,
+    }),
 };
 
 /** AI 对话 API */

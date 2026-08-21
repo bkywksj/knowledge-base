@@ -1,4 +1,5 @@
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { ImportStatusDock } from "@/components/ui/ImportStatusDock";
 import { AppLayout } from "./AppLayout";
 import { MobileLayout } from "./MobileLayout";
 
@@ -13,5 +14,11 @@ import { MobileLayout } from "./MobileLayout";
  */
 export function LayoutSwitch() {
   const isMobile = useIsMobile();
-  return isMobile ? <MobileLayout /> : <AppLayout />;
+  return (
+    <>
+      {isMobile ? <MobileLayout /> : <AppLayout />}
+      {/* 批量导入悬浮条挂在这一层（而不是各页面内），进度才不会因为切页面而丢 */}
+      <ImportStatusDock />
+    </>
+  );
 }

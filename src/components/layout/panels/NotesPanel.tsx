@@ -76,6 +76,7 @@ import {
   importTextFlow,
   importWordFlow,
 } from "@/lib/noteCreator";
+import { beginTrackedImportJob } from "@/lib/importJob";
 import { ImportPreviewModal } from "@/components/ImportPreviewModal";
 import { TagColorPicker } from "@/components/TagColorPicker";
 import { Palette } from "lucide-react";
@@ -1826,10 +1827,14 @@ export function NotesPanel() {
     // 选中的是「未分类」或某篇笔记时会算出 NaN 当文件夹 id 传下去。
     const targetFolderId = newNoteTarget.folderId;
     if (paths && paths.length > 0) {
-      const hide = message.loading(`正在导入 ${paths.length} 个 Markdown 文件…`, 0);
+      const job = await beginTrackedImportJob(
+        "Markdown / 文本",
+        paths.length,
+        "import:progress",
+      );
       try {
         const result = await importApi.importSelected(paths, targetFolderId);
-        hide();
+        job.finish(result.imported, result.errors.length);
         const parts: string[] = [];
         if (result.imported > 0) parts.push(`新建 ${result.imported}`);
         if (result.duplicated > 0) parts.push(`副本 ${result.duplicated}`);
@@ -1842,7 +1847,7 @@ export function NotesPanel() {
         useAppStore.getState().bumpNotesRefresh();
         useAppStore.getState().bumpFoldersRefresh();
       } catch (e) {
-        hide();
+        job.cancel();
         message.error(`导入失败: ${e}`);
       }
       return;
@@ -2811,7 +2816,11 @@ export function NotesPanel() {
             const { files, rootPath, folderId } = importPreview;
             setImportPreview(null);
             const paths = files.map((f) => f.path);
-            const hide = message.loading(`正在导入 ${paths.length} 个文件…`, 0);
+            const job = await beginTrackedImportJob(
+              "Markdown / 文本",
+              paths.length,
+              "import:progress",
+            );
             try {
               const result = await importApi.importSelected(
                 paths,
@@ -2821,7 +2830,7 @@ export function NotesPanel() {
                 policy,
                 dailyMode,
               );
-              hide();
+              job.finish(result.imported, result.errors.length);
               const parts: string[] = [];
               if (result.imported > 0) parts.push(`导入 ${result.imported} 篇`);
               if (result.duplicated > 0) parts.push(`副本 ${result.duplicated} 篇`);
@@ -2863,7 +2872,7 @@ export function NotesPanel() {
               useAppStore.getState().bumpNotesRefresh();
               useAppStore.getState().bumpFoldersRefresh();
             } catch (e) {
-              hide();
+              job.cancel();
               message.error(`导入失败: ${e}`);
             }
           }}

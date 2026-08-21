@@ -22,7 +22,7 @@ import {
   ColorPicker,
 } from "antd";
 import { SyncOutlined, PlusOutlined, CheckCircleFilled, CheckCircleOutlined } from "@ant-design/icons";
-import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate, Power, ExternalLink, Type, Zap, Share2, Download, PanelLeft, Palette, Image as ImageIcon, CalendarCheck, Maximize2 } from "lucide-react";
+import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate, Power, ExternalLink, Type, Zap, Share2, Download, PanelLeft, Palette, Image as ImageIcon, CalendarCheck, Maximize2, ListRestart } from "lucide-react";
 import { DailyImportModal } from "@/components/DailyImportModal";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs, { type Dayjs } from "dayjs";
@@ -31,7 +31,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useLocation } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
-import type { AiModel, AiModelInput, AiModelTestResult, ImportResult, ImportProgress, ImportConflictPolicy, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput } from "@/types";
+import type { AiModel, AiModelInput, AiModelTestResult, ImportResult, ImportConflictPolicy, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput } from "@/types";
 import { systemApi, aiModelApi, importApi, exportApi, folderApi, templateApi, pdfApi, sourceFileApi, autostartApi, configApi, windowApi } from "@/lib/api";
 import {
   useAppStore,
@@ -55,6 +55,7 @@ import {
   type LayoutPresetId,
 } from "@/store";
 import { importWordFiles } from "@/lib/wordImport";
+import { beginImportJob, beginTrackedImportJob } from "@/lib/importJob";
 import { Checkbox } from "antd";
 import { useUpdater } from "@/components/updater/UpdaterProvider";
 import { RecommendCards } from "@/components/ui/RecommendCards";
@@ -222,6 +223,10 @@ function DesktopSettingsPage() {
    * 没有这个开关，用户就再也删不掉已存的 Key 了。
    */
   const [clearApiKey, setClearApiKey] = useState(false);
+  // 「获取」拉回来的实时模型列表。null = 没拉过，用内置预置表。
+  // 只在本次 Modal 会话内有效，换服务商 / 重开 Modal 都清掉。
+  const [fetchedModels, setFetchedModels] = useState<string[] | null>(null);
+  const [fetchingModels, setFetchingModels] = useState(false);
   const [form] = Form.useForm<AiModelInput>();
   // 表单内 provider 变化 → 动态占位
   const watchedProvider = Form.useWatch("provider", form) || "ollama";
@@ -233,7 +238,6 @@ function DesktopSettingsPage() {
 
   // 导入状态
   const [importing, setImporting] = useState(false);
-  const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [importFolderId, setImportFolderId] = useState<number | undefined>(undefined);
@@ -826,12 +830,12 @@ function DesktopSettingsPage() {
     if (!picked) return;
     const paths = Array.isArray(picked) ? picked : [picked];
     if (paths.length === 0) return;
-    const hide = message.loading(`正在导入 ${paths.length} 个 PDF...`, 0);
+    const job = await beginTrackedImportJob("PDF", paths.length, "pdf:import-progress");
     try {
       const results = await pdfApi.importPdfs(paths, importFolderId ?? null);
       const ok = results.filter((r) => r.noteId !== null);
       const fail = results.filter((r) => r.noteId === null);
-      hide();
+      job.finish(ok.length, fail.length);
       if (ok.length > 0) message.success(`成功导入 ${ok.length} 个 PDF`);
       if (fail.length > 0) {
         Modal.warning({
@@ -852,7 +856,7 @@ function DesktopSettingsPage() {
         });
       }
     } catch (e) {
-      hide();
+      job.cancel();
       message.error(`导入失败: ${e}`);
     }
   }
@@ -867,12 +871,12 @@ function DesktopSettingsPage() {
     if (!picked) return;
     const paths = Array.isArray(picked) ? picked : [picked];
     if (paths.length === 0) return;
-    const hide = message.loading(`正在导入 ${paths.length} 个 Word...`, 0);
+    const job = beginImportJob("Word", paths.length);
     try {
-      const results = await importWordFiles(paths, importFolderId ?? null);
+      const results = await importWordFiles(paths, importFolderId ?? null, job.report);
       const ok = results.filter((r) => r.noteId !== null);
       const fail = results.filter((r) => r.noteId === null);
-      hide();
+      job.finish(ok.length, fail.length);
       if (ok.length > 0) message.success(`成功导入 ${ok.length} 个 Word`);
       if (fail.length > 0) {
         Modal.warning({
@@ -893,7 +897,7 @@ function DesktopSettingsPage() {
         });
       }
     } catch (e) {
-      hide();
+      job.cancel();
       message.error(`导入失败: ${e}`);
     }
   }
@@ -930,12 +934,15 @@ function DesktopSettingsPage() {
 
     setScanModalOpen(false);
     setImporting(true);
-    setImportProgress(null);
     setImportResult(null);
 
-    const unlistenProgress = await listen<ImportProgress>("import:progress", (e) => {
-      setImportProgress(e.payload);
-    });
+    // 进度走右下角悬浮条而不是页内进度条：这条通路一次可能导几百篇 Obsidian 笔记，
+    // 用户多半会切去别的页面等，页内进度条一离开设置页就看不见了。
+    const job = await beginTrackedImportJob(
+      "Markdown / 文本",
+      selectedPaths.size,
+      "import:progress",
+    );
     const unlistenDone = await listen<ImportResult>("import:done", (e) => {
       setImportResult(e.payload);
     });
@@ -950,6 +957,7 @@ function DesktopSettingsPage() {
         conflictPolicy,
       );
       setImportResult(result);
+      job.finish(result.imported, result.errors.length);
       if (result.imported > 0 || result.duplicated > 0) {
         const parts: string[] = [];
         if (result.imported > 0) parts.push(`导入 ${result.imported} 篇`);
@@ -961,11 +969,11 @@ function DesktopSettingsPage() {
         useAppStore.getState().bumpFoldersRefresh();
       }
     } catch (e) {
+      job.cancel();
       message.error(`导入失败: ${e}`);
     } finally {
       setImporting(false);
-      unlistenProgress();
-      unlistenDone();
+      unlistenDone(); // 进度监听由 job.finish / job.cancel 自己注销
     }
   }
 
@@ -1055,6 +1063,8 @@ function DesktopSettingsPage() {
 
   function openAddModel() {
     setEditingModel(null);
+    setClearApiKey(false);
+    setFetchedModels(null);
     form.resetFields();
     form.setFieldsValue({ provider: "ollama", api_url: DEFAULT_URLS.ollama });
     setModelModalOpen(true);
@@ -1063,6 +1073,7 @@ function DesktopSettingsPage() {
   function openEditModel(model: AiModel) {
     setEditingModel(model);
     setClearApiKey(false);
+    setFetchedModels(null);
     form.setFieldsValue({
       name: model.name,
       provider: model.provider,
@@ -1228,7 +1239,49 @@ function DesktopSettingsPage() {
     }
   }
 
+  /**
+   * 向服务商实时拉取可用模型列表，填进「模型标识」的候选。
+   *
+   * 内置预置表只是开箱能用，各家上新（尤其 OpenRouter 那几百个）它永远追不上；
+   * 而模型标识填错的表现是保存时看着正常、真发消息才 404，很难自查。
+   */
+  async function handleFetchModels() {
+    const provider = form.getFieldValue("provider") as string;
+    const apiUrl = (form.getFieldValue("api_url") as string) ?? "";
+    if (!apiUrl.trim()) {
+      message.warning("请先填写 API 地址");
+      return;
+    }
+    setFetchingModels(true);
+    try {
+      const list = await aiModelApi.listRemoteModels({
+        provider,
+        apiUrl,
+        apiKey: form.getFieldValue("api_key") as string | undefined,
+        // 编辑已有模型且没重输 Key 时，让后端拿库里的明文去请求
+        savedId: editingModel?.id ?? null,
+      });
+      if (list.length === 0) {
+        // 端点通了但一个都没有：Ollama 是真没 pull，中转站多半是没实现这个接口
+        message.warning(
+          provider === "ollama"
+            ? "本机 Ollama 还没有已下载的模型，请先 ollama pull"
+            : "服务商返回了空列表，请手动填写模型标识",
+        );
+        return;
+      }
+      setFetchedModels(list);
+      message.success(`拉到 ${list.length} 个模型`);
+    } catch (e) {
+      message.error(String(e));
+    } finally {
+      setFetchingModels(false);
+    }
+  }
+
   function handleProviderChange(provider: string) {
+    // 换服务商后旧列表就不作数了，留着会让人以为 A 家的模型能填给 B 家
+    setFetchedModels(null);
     const preset = DEFAULT_URLS[provider];
     // 「自定义端点」没有预设地址（DEFAULT_URLS.custom = ""）。此时若照常写入，
     // 会把用户**已经填好的**地址抹掉 —— 而选自定义的人往往正是刚粘完中转站地址。
@@ -2547,19 +2600,8 @@ function DesktopSettingsPage() {
         {/* 网页剪藏的可选兜底 Key（默认直连原网页，不需要配） */}
         <WebClipJinaKeySetting />
 
-        {importing && importProgress && (
-          <div className="mb-3">
-            <Progress
-              percent={Math.round((importProgress.current / importProgress.total) * 100)}
-              size="small"
-              format={() => `${importProgress.current}/${importProgress.total}`}
-            />
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              正在导入: {importProgress.file_name}
-            </Text>
-          </div>
-        )}
-
+        {/* 进度条已挪到右下角悬浮条（ImportStatusDock）—— 页内再放一个就成了两处同时跳，
+            而且切走设置页就看不见了。这里只留导入完成后的结果 / 错误清单。 */}
         {importResult && (
           <Alert
             type={importResult.errors.length > 0 ? "warning" : "success"}
@@ -3152,24 +3194,48 @@ function DesktopSettingsPage() {
           </Form.Item>
 
           <Form.Item
-            name="model_id"
             label="模型标识"
-            extra="✏️ 可直接输入任意模型名（如 anthropic/claude-sonnet-4.6、moonshotai/kimi-k2 等），不必限于下拉候选"
-            rules={[{ required: true, message: "请输入或选择模型标识" }]}
+            required
+            extra={
+              fetchedModels
+                ? `已从服务商拉到 ${fetchedModels.length} 个模型；仍可直接手输任意模型名`
+                : "✏️ 可直接输入任意模型名（如 anthropic/claude-sonnet-4.6、moonshotai/kimi-k2 等），不必限于下拉候选。点「获取」可向服务商实时拉取"
+            }
           >
-            <AutoComplete
-              options={MODEL_PRESETS[watchedProvider] || []}
-              placeholder={
-                MODEL_ID_PLACEHOLDERS[watchedProvider] ||
-                "如: gpt-4o-mini / qwen2.5:7b"
-              }
-              filterOption={(input, option) =>
-                (option?.value as string)
-                  ?.toLowerCase()
-                  .includes(input.toLowerCase())
-              }
-              allowClear
-            />
+            <Space.Compact style={{ width: "100%" }}>
+              <Form.Item
+                name="model_id"
+                noStyle
+                rules={[{ required: true, message: "请输入或选择模型标识" }]}
+              >
+                <AutoComplete
+                  // 拉到实时列表就用实时的：内置预置表必然滞后于服务商上新
+                  options={
+                    fetchedModels
+                      ? fetchedModels.map((m) => ({ value: m }))
+                      : MODEL_PRESETS[watchedProvider] || []
+                  }
+                  placeholder={
+                    MODEL_ID_PLACEHOLDERS[watchedProvider] ||
+                    "如: gpt-4o-mini / qwen2.5:7b"
+                  }
+                  filterOption={(input, option) =>
+                    (option?.value as string)
+                      ?.toLowerCase()
+                      .includes(input.toLowerCase())
+                  }
+                  allowClear
+                />
+              </Form.Item>
+              <Button
+                onClick={handleFetchModels}
+                loading={fetchingModels}
+                icon={<ListRestart size={14} />}
+                title="向服务商请求当前可用模型列表（Ollama 列本机已 pull 的）"
+              >
+                获取
+              </Button>
+            </Space.Compact>
           </Form.Item>
 
           <Form.Item

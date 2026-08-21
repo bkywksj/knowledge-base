@@ -186,22 +186,52 @@ fn apply_max_tokens(body: &mut Value, model: &AiModel) {
     }
 }
 
-fn build_openai_chat_url(api_url: &str) -> String {
+/// 在用户填的 base 上接一段 API 路径，按末段是否已是 `vN` / `vN.M` 决定要不要补 `/v1`。
+///
+/// 用户填的地址千奇百怪：`https://api.deepseek.com`、`.../v1`、`.../v1beta` 都有，
+/// 无脑拼 `/v1/xxx` 会出 `/v1/v1/xxx`。抽出来是为了 `/chat/completions` 和
+/// `/models` 两条路走**同一套**判断 —— 各写一份必然有一天分叉。
+fn build_openai_api_url(api_url: &str, path: &str) -> String {
     let base = api_url.trim_end_matches('/');
-    if base.ends_with("/chat/completions") {
-        return base.to_string();
-    }
-    // 检测最后一段是否为 vN / vN.M 形式的版本号
     let has_version_segment = base.rsplit('/').next().is_some_and(|seg| {
         seg.starts_with('v')
             && seg.len() > 1
             && seg[1..].chars().all(|c| c.is_ascii_digit() || c == '.')
     });
     if has_version_segment {
-        format!("{}/chat/completions", base)
+        format!("{}/{}", base, path)
     } else {
-        format!("{}/v1/chat/completions", base)
+        format!("{}/v1/{}", base, path)
     }
+}
+
+/// 从 `/models` 或 `/api/tags` 的响应数组里抽出模型标识，去重 + 排序。
+///
+/// 排序是因为各家返回顺序毫无规律（OpenRouter 几百条按上架时间乱序），
+/// 用户是来"找我要的那个"的，字母序最好扫。
+fn collect_model_ids(arr: Option<&Vec<Value>>, field: &str) -> Vec<String> {
+    let mut ids: Vec<String> = arr
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|m| m[field].as_str())
+                .map(str::to_string)
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+fn build_openai_chat_url(api_url: &str) -> String {
+    let base = api_url.trim_end_matches('/');
+    // 用户直接把完整 chat 端点粘进来的情况，原样用
+    if base.ends_with("/chat/completions") {
+        return base.to_string();
+    }
+    build_openai_api_url(base, "chat/completions")
 }
 
 /// 把一个 error 链展开成 `msg ← cause ← cause …`，并对每一层尝试 downcast 成 `std::io::Error`，
@@ -1197,6 +1227,85 @@ impl AiService {
             latency_ms: started.elapsed().as_millis() as u64,
             sample,
         })
+    }
+
+    /// 拉服务商当前可用的模型列表，供设置页「获取」按钮填充候选。
+    ///
+    /// 三种协议各一条路：
+    ///   · Ollama          `GET {base}/api/tags`  → `models[].name`（本机已 pull 的）
+    ///   · Anthropic 官方  `GET {base}/models`    → `data[].id`（`x-api-key` + `anthropic-version`）
+    ///   · OpenAI 兼容     `GET {base}/v1/models` → `data[].id`（`Authorization: Bearer`）
+    ///
+    /// 拿不到就如实报错，不做静默兜底 —— 自建 / 中转端点不实现 `/models` 很常见，
+    /// 返回空列表会被误读成"这家一个模型都没有"，还不如直说让用户手填。
+    pub async fn list_remote_models(
+        provider: &str,
+        api_url: &str,
+        api_key: Option<&str>,
+    ) -> Result<Vec<String>, AppError> {
+        if api_url.trim().is_empty() {
+            return Err(AppError::InvalidInput("API 地址不能为空".into()));
+        }
+        let timeout = std::time::Duration::from_secs(15);
+        let base = api_url.trim().trim_end_matches('/');
+        let key = api_key.map(str::trim).filter(|k| !k.is_empty());
+
+        // ── Ollama：本机服务，列的是已 pull 到本地的模型 ──
+        if provider == "ollama" {
+            let url = format!("{}/api/tags", base);
+            let response = build_ollama_client()
+                .get(&url)
+                .timeout(timeout)
+                .send()
+                .await
+                .map_err(|e| AppError::Custom(format_ollama_send_error(&e, &url)))?;
+            if !response.status().is_success() {
+                return Err(AppError::Custom(format!(
+                    "Ollama 返回错误 {}（{}）",
+                    response.status(),
+                    url
+                )));
+            }
+            let body: Value = response
+                .json()
+                .await
+                .map_err(|e| AppError::Custom(format!("Ollama 响应解析失败: {}", e)))?;
+            return Ok(collect_model_ids(body["models"].as_array(), "name"));
+        }
+
+        // ── Anthropic 官方：换一套鉴权头，Bearer 在这儿是 401 ──
+        let is_anthropic = provider == "claude";
+        let url = build_openai_api_url(base, "models");
+        let client = crate::services::http_client::shared();
+        let mut request = client.get(&url).timeout(timeout);
+        if let Some(k) = key {
+            request = if is_anthropic {
+                request
+                    .header("x-api-key", k)
+                    .header("anthropic-version", "2023-06-01")
+            } else {
+                request.header("Authorization", format!("Bearer {}", k))
+            };
+        }
+
+        let response = request
+            .send()
+            .await
+            .map_err(|e| AppError::Custom(format!("请求模型列表失败: {}", e)))?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(AppError::Custom(format!(
+                "{}\n\n（请求的是 {}；部分中转 / 自建端点不提供该接口，可手动填模型标识）",
+                format_openai_api_error(status, &body),
+                url
+            )));
+        }
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|e| AppError::Custom(format!("模型列表解析失败: {}", e)))?;
+        Ok(collect_model_ids(body["data"].as_array(), "id"))
     }
 
     /// 通用 Ollama 流式请求（使用 EventEmitter trait）
@@ -4515,5 +4624,93 @@ mod note_quota_and_max_tokens_tests {
         apply_max_tokens(&mut body, &model_with(Some(4096), "ollama"));
         assert_eq!(body["options"]["temperature"], json!(0.7));
         assert_eq!(body["options"]["num_predict"], json!(4096));
+    }
+}
+
+#[cfg(test)]
+mod remote_model_list_tests {
+    use super::*;
+
+    /// base 地址的形态由用户手填，五花八门。这组用例钉住"要不要补 /v1"的判断，
+    /// 因为拼错的表现是 404 —— 用户只会看到"获取失败"，猜不到是多了一层 v1。
+    #[test]
+    fn models_url_respects_existing_version_segment() {
+        // 官方给的 base 多数已经带 /v1
+        assert_eq!(
+            build_openai_api_url("https://api.anthropic.com/v1", "models"),
+            "https://api.anthropic.com/v1/models"
+        );
+        assert_eq!(
+            build_openai_api_url("https://api.openai.com/v1/", "models"),
+            "https://api.openai.com/v1/models"
+        );
+        // 不带版本段的要补
+        assert_eq!(
+            build_openai_api_url("https://api.deepseek.com", "models"),
+            "https://api.deepseek.com/v1/models"
+        );
+        // vNbeta 这类不是纯数字版本段，按"没有版本"处理
+        assert_eq!(
+            build_openai_api_url("https://x.test/v1beta", "models"),
+            "https://x.test/v1beta/v1/models"
+        );
+        // v1.5 这种带点的仍算版本段
+        assert_eq!(
+            build_openai_api_url("https://x.test/v1.5", "models"),
+            "https://x.test/v1.5/models"
+        );
+    }
+
+    #[test]
+    fn chat_url_keeps_using_the_same_rule() {
+        // 两条路共用 build_openai_api_url，别哪天只改了一边
+        assert_eq!(
+            build_openai_chat_url("https://api.deepseek.com"),
+            "https://api.deepseek.com/v1/chat/completions"
+        );
+        assert_eq!(
+            build_openai_chat_url("https://api.openai.com/v1"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+        // 用户把完整端点粘进来时原样用，不再往后接
+        assert_eq!(
+            build_openai_chat_url("https://proxy.test/v1/chat/completions"),
+            "https://proxy.test/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn collects_openai_shaped_ids_sorted_and_deduped() {
+        let body = json!({
+            "data": [
+                { "id": "gpt-4o" },
+                { "id": "gpt-3.5-turbo" },
+                { "id": "gpt-4o" },
+                { "object": "model" },
+                { "id": "" }
+            ]
+        });
+        assert_eq!(
+            collect_model_ids(body["data"].as_array(), "id"),
+            vec!["gpt-3.5-turbo", "gpt-4o"]
+        );
+    }
+
+    #[test]
+    fn collects_ollama_shaped_names() {
+        // Ollama 用的是 models[].name，不是 data[].id
+        let body = json!({ "models": [ { "name": "qwen2.5:7b" }, { "name": "llama3:8b" } ] });
+        assert_eq!(
+            collect_model_ids(body["models"].as_array(), "name"),
+            vec!["llama3:8b", "qwen2.5:7b"]
+        );
+    }
+
+    #[test]
+    fn missing_or_wrong_shape_yields_empty_not_panic() {
+        // 中转端点返回 {"data":{}} / 直接一个报错对象都见过，不能 panic
+        let body = json!({ "error": "not supported" });
+        assert!(collect_model_ids(body["data"].as_array(), "id").is_empty());
+        assert!(collect_model_ids(None, "id").is_empty());
     }
 }

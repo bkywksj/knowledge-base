@@ -183,28 +183,53 @@ impl PdfService {
 
     /// 批量导入，收集每条结果（不中断整体流程）。
     /// `enable_ocr` 透传给 import_one：扫描件是否用本地 OCR 兜底。
-    pub fn import_many(
+    /// 批量导入，逐个独立处理失败。
+    ///
+    /// 每开始处理一个文件前发一条 `pdf:import-progress`（载荷复用 `ImportProgress`）。
+    /// 用**独立事件名**而不是复用 markdown 导入的 `import:progress`：设置页那条 Obsidian
+    /// 导入通路在自己的 `handleConfirmImport` 里全程监听 `import:progress`，两边共用一个
+    /// 事件名会让它的进度条被 PDF 导入的数字带跑。
+    ///
+    /// 事件是尽力而为的（`let _ =`）：发不出去只是没进度，不该让导入本身失败。
+    pub fn import_many<R: tauri::Runtime, E: tauri::Emitter<R>>(
         app_data_dir: &Path,
         db: &Database,
         source_paths: &[String],
         folder_id: Option<i64>,
         enable_ocr: bool,
+        emitter: &E,
     ) -> Vec<PdfImportResult> {
+        let total = source_paths.len();
         source_paths
             .iter()
-            .map(|p| match Self::import_one(app_data_dir, db, p, folder_id, enable_ocr) {
-                Ok(note) => PdfImportResult {
-                    source_path: p.clone(),
-                    note_id: Some(note.id),
-                    title: Some(note.title),
-                    error: None,
-                },
-                Err(e) => PdfImportResult {
-                    source_path: p.clone(),
-                    note_id: None,
-                    title: None,
-                    error: Some(e.to_string()),
-                },
+            .enumerate()
+            .map(|(i, p)| {
+                let _ = emitter.emit(
+                    "pdf:import-progress",
+                    crate::models::ImportProgress {
+                        current: i + 1,
+                        total,
+                        file_name: Path::new(p)
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or(p)
+                            .to_string(),
+                    },
+                );
+                match Self::import_one(app_data_dir, db, p, folder_id, enable_ocr) {
+                    Ok(note) => PdfImportResult {
+                        source_path: p.clone(),
+                        note_id: Some(note.id),
+                        title: Some(note.title),
+                        error: None,
+                    },
+                    Err(e) => PdfImportResult {
+                        source_path: p.clone(),
+                        note_id: None,
+                        title: None,
+                        error: Some(e.to_string()),
+                    },
+                }
             })
             .collect()
     }

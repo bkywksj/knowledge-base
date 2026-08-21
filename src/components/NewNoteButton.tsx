@@ -15,6 +15,7 @@ import { FileTypeIcon } from "./FileTypeIcon";
 import { TemplatePickerModal } from "./TemplatePickerModal";
 import { ImportPreviewModal } from "./ImportPreviewModal";
 import { importApi } from "@/lib/api";
+import { beginTrackedImportJob } from "@/lib/importJob";
 import { useAppStore } from "@/store";
 import type { ScannedFile } from "@/types";
 import {
@@ -213,7 +214,11 @@ export function NewNoteButton({
             const { files, rootPath, folderId: targetFolderId } = importPreview;
             setImportPreview(null);
             const paths = files.map((f) => f.path);
-            const hide = message.loading(`正在导入 ${paths.length} 个文件…`, 0);
+            const job = await beginTrackedImportJob(
+              "Markdown / 文本",
+              paths.length,
+              "import:progress",
+            );
             try {
               const result = await importApi.importSelected(
                 paths,
@@ -223,7 +228,7 @@ export function NewNoteButton({
                 policy,
                 dailyMode,
               );
-              hide();
+              job.finish(result.imported, result.errors.length);
               const parts: string[] = [];
               if (result.imported > 0) parts.push(`导入 ${result.imported} 篇`);
               if (result.duplicated > 0) parts.push(`副本 ${result.duplicated} 篇`);
@@ -265,7 +270,7 @@ export function NewNoteButton({
               useAppStore.getState().bumpNotesRefresh();
               useAppStore.getState().bumpFoldersRefresh();
             } catch (e) {
-              hide();
+              job.cancel();
               message.error(`导入失败: ${e}`);
             }
           }}

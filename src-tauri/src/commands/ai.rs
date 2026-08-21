@@ -123,6 +123,30 @@ pub async fn test_ai_model(input: AiModelInput) -> Result<AiModelTestResult, Str
         .map_err(|e| e.to_string())
 }
 
+/// 拉取服务商可用模型列表，供设置页模型标识旁的「获取」按钮用。
+///
+/// `saved_id` 是给**编辑已有模型**用的：Key 保存后前端就拿不到明文了（只回 `has_api_key`），
+/// 用户不重新输入时，这里按 id 去库里取明文补上 —— 否则一改别的字段再点获取就 401。
+/// 表单里现填了 Key 就优先用现填的（用户可能正是在换 Key）。
+#[tauri::command]
+pub async fn list_remote_ai_models(
+    state: State<'_, AppState>,
+    provider: String,
+    api_url: String,
+    api_key: Option<String>,
+    saved_id: Option<i64>,
+) -> Result<Vec<String>, String> {
+    let typed = api_key.filter(|k| !k.trim().is_empty());
+    let effective = match (typed, saved_id) {
+        (Some(k), _) => Some(k),
+        (None, Some(id)) => state.db.get_ai_model(id).map_err(|e| e.to_string())?.api_key,
+        (None, None) => None,
+    };
+    AiService::list_remote_models(&provider, &api_url, effective.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ─── AI 对话 Commands ────────────────────────
 
 /// 获取所有对话

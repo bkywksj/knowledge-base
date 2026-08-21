@@ -9,6 +9,7 @@ import type { NavigateFunction } from "react-router-dom";
 
 import { noteApi, importApi, pdfApi, ocrApi, sourceFileApi, tagApi, folderApi, whiteboardApi } from "./api";
 import { importWordFiles } from "./wordImport";
+import { beginImportJob, beginTrackedImportJob } from "./importJob";
 import { useAppStore } from "@/store";
 
 /**
@@ -179,10 +180,14 @@ export async function importTextFlow(
   if (!picked) return;
   const paths = Array.isArray(picked) ? picked : [picked];
   if (paths.length === 0) return;
-  const hide = message.loading(`正在导入 ${paths.length} 个文件...`, 0);
+  const job = await beginTrackedImportJob(
+    "Markdown / 文本",
+    paths.length,
+    "import:progress",
+  );
   try {
     const result = await importApi.importSelected(paths, folderId);
-    hide();
+    job.finish(result.imported, result.errors.length);
     if (result.imported > 0) {
       let msg = `成功导入 ${result.imported} 篇`;
       if (result.skipped > 0) msg += `，跳过 ${result.skipped} 篇`;
@@ -222,7 +227,7 @@ export async function importTextFlow(
     useAppStore.getState().bumpFoldersRefresh();
     navigateAfterImport(navigate, result.noteIds ?? [], result.existingNoteIds ?? []);
   } catch (e) {
-    hide();
+    job.cancel();
     message.error(`导入失败: ${e}`);
   }
 }
@@ -239,14 +244,14 @@ export async function importPdfsFlow(
   if (!picked) return;
   const paths = Array.isArray(picked) ? picked : [picked];
   if (paths.length === 0) return;
-  const hide = message.loading(`正在导入 ${paths.length} 个 PDF...`, 0);
+  const job = await beginTrackedImportJob("PDF", paths.length, "pdf:import-progress");
   try {
     // 第一遍：不 OCR（快，多数 PDF 有文字层）
     const results = await pdfApi.importPdfs(paths, folderId, false);
-    hide();
     const okIds: number[] = [];
     for (const r of results) if (r.noteId != null) okIds.push(r.noteId);
     const fail = results.filter((r) => r.noteId === null);
+    job.finish(okIds.length, fail.length);
     // 扫描件失败项：错误里带「扫描件」标记，可用本地 OCR 重试
     const scanned = fail.filter((r) => (r.error ?? "").includes("扫描件"));
 
@@ -261,16 +266,22 @@ export async function importPdfsFlow(
         okText: "用 OCR 识别导入",
         cancelText: "跳过这些",
         onOk: async () => {
-          const h2 = message.loading(`正在 OCR 识别 ${scanned.length} 个扫描件…`, 0);
+          // OCR 重试是**独立第二条**任务：第一轮那条已经收尾消失了，
+          // 而 OCR 逐页推理更慢（每页 0.1–1 秒），恰恰更需要看得见进度。
+          const ocrJob = await beginTrackedImportJob(
+            "OCR 识别",
+            scanned.length,
+            "pdf:import-progress",
+          );
           try {
             const r2 = await pdfApi.importPdfs(
               scanned.map((r) => r.sourcePath),
               folderId,
               true,
             );
-            h2();
             const ocrOk = r2.filter((r) => r.noteId != null);
             const ocrFail = r2.filter((r) => r.noteId === null);
+            ocrJob.finish(ocrOk.length, ocrFail.length);
             if (ocrOk.length > 0)
               message.success(`OCR 成功导入 ${ocrOk.length} 个扫描件`);
             if (ocrFail.length > 0) showImportFailModal(ocrFail, "OCR 后仍失败");
@@ -280,7 +291,7 @@ export async function importPdfsFlow(
               .filter((v): v is number => v != null);
             navigateAfterImport(navigate, [...okIds, ...ocrIds], []);
           } catch (e) {
-            h2();
+            ocrJob.cancel();
             message.error(`OCR 导入失败: ${e}`);
           }
         },
@@ -293,7 +304,7 @@ export async function importPdfsFlow(
     useAppStore.getState().bumpNotesRefresh();
     navigateAfterImport(navigate, okIds, []);
   } catch (e) {
-    hide();
+    job.cancel();
     message.error(`导入失败: ${e}`);
   }
 }
@@ -377,12 +388,13 @@ export async function importWordFlow(
     });
     return;
   }
-  const hide = message.loading(`正在导入 ${paths.length} 个 Word 文件...`, 0);
+  const job = beginImportJob("Word", paths.length);
   try {
-    const results = await importWordFiles(paths, folderId);
+    // Word 的循环在前端（mammoth 是 JS 库），进度直接回调，不用走 IPC 事件
+    const results = await importWordFiles(paths, folderId, job.report);
     const ok = results.filter((r) => r.noteId !== null);
     const fail = results.filter((r) => r.noteId === null);
-    hide();
+    job.finish(ok.length, fail.length);
     if (ok.length > 0) message.success(`成功导入 ${ok.length} 个 Word 文件`);
     if (fail.length > 0) {
       Modal.warning({
@@ -406,7 +418,7 @@ export async function importWordFlow(
     const ids = ok.map((r) => r.noteId).filter((v): v is number => v != null);
     navigateAfterImport(navigate, ids, []);
   } catch (e) {
-    hide();
+    job.cancel();
     message.error(`导入失败: ${e}`);
   }
 }

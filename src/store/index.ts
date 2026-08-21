@@ -11,6 +11,17 @@ import {
   setExportFontsProvider,
 } from "@/lib/api";
 import type { HeadingNumberFormat } from "@/lib/headingNumber";
+import {
+  IMPORT_JOB_LINGER_MS,
+  finishImportJobIn,
+  newImportJob,
+  patchImportJob,
+  removeImportJob,
+  type ImportJob,
+} from "./importJobs";
+
+// 导入悬浮条的类型/常量对外仍从 "@/store" 取，调用方不必知道内部拆了文件
+export { IMPORT_JOB_LINGER_MS, type ImportJob };
 
 /**
  * 读取配置项；不存在时返回 null（避开 configApi.get 的 NotFound Err 抛出）。
@@ -590,6 +601,22 @@ interface AppStore {
   toggleSidebar: () => void;
   /** 设置专注模式 */
   setFocusMode: (on: boolean) => void;
+  /**
+   * 进行中 / 刚结束的批量导入任务。**内存态，不落盘**（`collectPersistPayload`
+   * 是白名单，新增字段默认不写盘）。右下角悬浮条 ImportStatusDock 读它。
+   */
+  importJobs: ImportJob[];
+  /** 登记一个导入任务，返回 job id。别直接调，用 `lib/importJob.ts` 的 beginImportJob */
+  startImportJob: (kind: string, total: number) => string;
+  /** 推进进度。id 已不存在（用户手动关掉了悬浮条）时静默忽略 */
+  updateImportJob: (
+    id: string,
+    patch: Partial<Pick<ImportJob, "current" | "total" | "fileName">>,
+  ) => void;
+  /** 正常收尾：显示结果摘要 IMPORT_JOB_LINGER_MS 后自动消失 */
+  finishImportJob: (id: string, result: { ok: number; failed: number }) => void;
+  /** 立刻撤掉某条（异常收尾 / 用户手动关闭）。不会中断后台导入本身 */
+  dismissImportJob: (id: string) => void;
   /** 触发所有监听笔记列表的页面刷新（导入/创建后调用） */
   bumpNotesRefresh: () => void;
   /** 触发所有文件夹下拉/列表刷新（Sidebar 增删改/拖拽后调用） */
@@ -972,6 +999,22 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setThemeCategory: (category) => set({ themeCategory: category }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   setFocusMode: (on) => set({ focusMode: on }),
+  importJobs: [],
+  startImportJob: (kind, total) => {
+    const id = `imp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    set((s) => ({ importJobs: [...s.importJobs, newImportJob(id, kind, total)] }));
+    return id;
+  },
+  updateImportJob: (id, patch) =>
+    set((s) => ({ importJobs: patchImportJob(s.importJobs, id, patch) })),
+  finishImportJob: (id, result) => {
+    set((s) => ({ importJobs: finishImportJobIn(s.importJobs, id, result) }));
+    // 结果只留一小会儿就撤：成败明细由 message / 失败清单弹窗负责，悬浮条
+    // 不做归档 —— 否则连导几批后，用户得手动清一排"已完成"才能看见正在跑的那条。
+    setTimeout(() => get().dismissImportJob(id), IMPORT_JOB_LINGER_MS);
+  },
+  dismissImportJob: (id) =>
+    set((s) => ({ importJobs: removeImportJob(s.importJobs, id) })),
   bumpNotesRefresh: () => set((s) => ({ notesRefreshTick: s.notesRefreshTick + 1 })),
   bumpFoldersRefresh: () => set((s) => ({ foldersRefreshTick: s.foldersRefreshTick + 1 })),
   bumpTagsRefresh: () => set((s) => ({ tagsRefreshTick: s.tagsRefreshTick + 1 })),

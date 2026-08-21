@@ -10,8 +10,10 @@ use crate::state::AppState;
 /// - 单个失败不影响其他，错误信息回填到 `error` 字段
 /// - `enable_ocr`（缺省 false）：扫描件（无文字层）时用本地 OCR 逐页识别兜底。
 ///   OCR 较慢（逐页渲染 + 子进程推理）；async command 在 worker 线程执行，不冻结主线程 UI。
+/// - 每开始处理一个文件会发一条 `pdf:import-progress`，前端右下角悬浮条据此显示 x/N
 #[tauri::command]
 pub async fn import_pdfs(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     paths: Vec<String>,
     folder_id: Option<i64>,
@@ -23,6 +25,7 @@ pub async fn import_pdfs(
         &paths,
         folder_id,
         enable_ocr.unwrap_or(false),
+        &app,
     ))
 }
 

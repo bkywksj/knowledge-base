@@ -160,13 +160,20 @@ export async function importWordFile(
   return { note: fresh, warnings };
 }
 
-/** 批量导入，每个文件独立处理失败 */
+/**
+ * 批量导入，每个文件独立处理失败。
+ *
+ * `onProgress(current, fileName)` 在**开始处理**每个文件前回调（current 从 1 起）——
+ * Word 这条通路的循环本来就在前端（mammoth 是 JS 库），所以进度不用走 IPC 事件。
+ */
 export async function importWordFiles(
   paths: string[],
   folderId: number | null = null,
+  onProgress?: (current: number, fileName: string) => void,
 ): Promise<WordImportResult[]> {
   const results: WordImportResult[] = [];
-  for (const p of paths) {
+  for (const [i, p] of paths.entries()) {
+    onProgress?.(i + 1, p.split(/[\\/]/).pop() || p);
     try {
       const { note, warnings } = await importWordFile(p, folderId);
       results.push({
