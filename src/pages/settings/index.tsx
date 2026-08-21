@@ -81,7 +81,13 @@ import {
   clearOpenMdPreference,
   type OpenMdMode,
 } from "@/lib/openMdChoice";
-import { DEFAULT_MAX_CONTEXT } from "@/lib/aiProviderPresets";
+import {
+  DEFAULT_MAX_CONTEXT,
+  DEFAULT_URLS,
+  MODEL_ID_PLACEHOLDERS,
+  MODEL_PRESETS,
+  PROVIDERS,
+} from "@/lib/aiProviderPresets";
 import type { Folder } from "@/types";
 
 const { Title, Text } = Typography;
@@ -120,143 +126,6 @@ const BILIBILI_TUTORIAL_URL = "https://www.bilibili.com/video/BV1xvosBREbr";
 const ZSXQ_NAME = "后端转AI实战派";
 const ZSXQ_ID = "91839984";
 
-/** 模型提供商选项
- *
- * T-012：除 Ollama 外其他都按 OpenAI 兼容协议处理。这里把"标签"按用途分组，
- * 用户选哪个值都不影响后端协议；选中时只是自动预填 baseUrl + 模型 ID。
- *
- * `lmstudio` / `minimax` / `siliconflow` / `custom` 是新增预设，与已有
- * `openai` / `claude` / `deepseek` / `zhipu` 同走 OpenAI 兼容协议。
- */
-const PROVIDERS = [
-  // 本地模型
-  { value: "ollama", label: "Ollama (本地)" },
-  { value: "lmstudio", label: "LM Studio (本地 OpenAI 兼容)" },
-  // 云端预设
-  { value: "openai", label: "OpenAI" },
-  { value: "deepseek", label: "DeepSeek" },
-  { value: "zhipu", label: "智谱 AI (GLM)" },
-  { value: "claude", label: "Claude (经 OpenRouter 等代理)" },
-  { value: "minimax", label: "Minimax" },
-  { value: "siliconflow", label: "SiliconFlow (硅基流动)" },
-  { value: "mimo", label: "小米 MiMo" },
-  { value: "kimi", label: "KIMI (月之暗面 Moonshot)" },
-  // 完全自定义
-  { value: "custom", label: "自定义 (OpenAI 兼容)" },
-];
-
-/** 提供商默认 API 地址
- * 后端会智能拼接 `/chat/completions`，所以 URL 末尾可带也可不带 `/v1` / `/paas/v4` 之类版本段。
- */
-const DEFAULT_URLS: Record<string, string> = {
-  ollama: "http://localhost:11434",
-  lmstudio: "http://localhost:1234/v1",
-  openai: "https://api.openai.com/v1",
-  deepseek: "https://api.deepseek.com/v1",
-  zhipu: "https://open.bigmodel.cn/api/paas/v4",
-  claude: "https://openrouter.ai/api/v1",
-  minimax: "https://api.minimax.chat/v1",
-  siliconflow: "https://api.siliconflow.cn/v1",
-  mimo: "https://api.xiaomimimo.com/v1",
-  // 国内站；国际站为 https://api.moonshot.ai/v1（可在表单里手动改）
-  kimi: "https://api.moonshot.cn/v1",
-  custom: "",
-};
-
-/** 各 provider 的模型标识占位提示 */
-const MODEL_ID_PLACEHOLDERS: Record<string, string> = {
-  ollama: "如: qwen2.5:7b / llama3.2:3b",
-  lmstudio: "看 LM Studio 模型页右上角 Model 标识",
-  openai: "如: gpt-4o-mini / gpt-4o",
-  deepseek: "如: deepseek-chat / deepseek-reasoner",
-  zhipu: "如: glm-4-plus / glm-4-flash / glm-4-air",
-  claude: "如: anthropic/claude-sonnet-4.6 (经 OpenRouter 等兼容代理)",
-  minimax: "如: abab6.5s-chat / MiniMax-M1",
-  siliconflow: "如: Qwen/Qwen2.5-72B-Instruct / deepseek-ai/DeepSeek-V3",
-  mimo: "如: mimo-v2-pro / mimo-v2-flash",
-  kimi: "如: kimi-k2.6 / moonshot-v1-32k",
-  custom: "填你目标服务的模型标识",
-};
-
-/** 各 provider 的常用模型预置（下拉联想；也可手动输入任意值） */
-const MODEL_PRESETS: Record<string, { value: string; label: string }[]> = {
-  ollama: [
-    // ── Qwen3 系列（2025 通义千问最新） ──
-    { value: "qwen3:4b", label: "qwen3:4b (千问3 / 入门)" },
-    { value: "qwen3:8b", label: "qwen3:8b (千问3 / 推荐)" },
-    { value: "qwen3:14b", label: "qwen3:14b (千问3 / 进阶)" },
-    { value: "qwen3:32b", label: "qwen3:32b (千问3 / 旗舰)" },
-    { value: "qwen3:30b-a3b", label: "qwen3:30b-a3b (千问3 / MoE)" },
-    // ── QwQ 推理 ──
-    { value: "qwq:32b", label: "qwq:32b (千问推理 / o1 同级)" },
-    // ── Qwen2.5 主力尺寸 ──
-    { value: "qwen2.5:7b", label: "qwen2.5:7b" },
-    { value: "qwen2.5:14b", label: "qwen2.5:14b" },
-    { value: "qwen2.5:32b", label: "qwen2.5:32b" },
-    { value: "qwen2.5:72b", label: "qwen2.5:72b" },
-    // ── Qwen2.5-Coder（编程场景） ──
-    { value: "qwen2.5-coder:7b", label: "qwen2.5-coder:7b (编程)" },
-    { value: "qwen2.5-coder:14b", label: "qwen2.5-coder:14b (编程)" },
-    { value: "qwen2.5-coder:32b", label: "qwen2.5-coder:32b (编程)" },
-    // ── 其他主流本地模型 ──
-    { value: "llama3.1:8b", label: "llama3.1:8b" },
-    { value: "gemma2:9b", label: "gemma2:9b" },
-  ],
-  openai: [
-    { value: "gpt-4o", label: "gpt-4o" },
-    { value: "gpt-4o-mini", label: "gpt-4o-mini" },
-    { value: "gpt-4-turbo", label: "gpt-4-turbo" },
-    { value: "gpt-3.5-turbo", label: "gpt-3.5-turbo" },
-    { value: "o1-mini", label: "o1-mini" },
-    { value: "o1-preview", label: "o1-preview" },
-  ],
-  deepseek: [
-    { value: "deepseek-chat", label: "deepseek-chat (V3 通用)" },
-    { value: "deepseek-reasoner", label: "deepseek-reasoner (推理)" },
-  ],
-  zhipu: [
-    { value: "glm-4-plus", label: "glm-4-plus (旗舰)" },
-    { value: "glm-4-0520", label: "glm-4-0520" },
-    { value: "glm-4-air", label: "glm-4-air (轻量)" },
-    { value: "glm-4-airx", label: "glm-4-airx" },
-    { value: "glm-4-flash", label: "glm-4-flash (免费)" },
-    { value: "glm-4-long", label: "glm-4-long (长上下文)" },
-  ],
-  claude: [
-    { value: "anthropic/claude-sonnet-4.6", label: "anthropic/claude-sonnet-4.6 (OpenRouter)" },
-    { value: "anthropic/claude-opus-4.7", label: "anthropic/claude-opus-4.7 (OpenRouter)" },
-    { value: "claude-sonnet-4-5-20250929", label: "claude-sonnet-4-5-20250929" },
-    { value: "claude-haiku-4-5-20251001", label: "claude-haiku-4-5-20251001" },
-  ],
-  // T-012 新增 provider 的模型预设
-  lmstudio: [],
-  minimax: [
-    { value: "abab6.5s-chat", label: "abab6.5s-chat (高速)" },
-    { value: "abab6.5-chat", label: "abab6.5-chat" },
-    { value: "MiniMax-M1", label: "MiniMax-M1" },
-  ],
-  siliconflow: [
-    { value: "Qwen/Qwen2.5-72B-Instruct", label: "Qwen/Qwen2.5-72B-Instruct" },
-    { value: "Qwen/Qwen2.5-Coder-32B-Instruct", label: "Qwen/Qwen2.5-Coder-32B-Instruct" },
-    { value: "deepseek-ai/DeepSeek-V3", label: "deepseek-ai/DeepSeek-V3" },
-    { value: "deepseek-ai/DeepSeek-R1", label: "deepseek-ai/DeepSeek-R1 (推理)" },
-    { value: "Pro/THUDM/glm-4-9b-chat", label: "GLM-4-9B-Chat (Pro)" },
-  ],
-  mimo: [
-    { value: "mimo-v2-pro", label: "mimo-v2-pro (旗舰)" },
-    { value: "mimo-v2-flash", label: "mimo-v2-flash (高速)" },
-  ],
-  kimi: [
-    { value: "kimi-k2.6", label: "kimi-k2.6 (旗舰 / 256K)" },
-    { value: "kimi-k2.7-code", label: "kimi-k2.7-code (编程)" },
-    { value: "kimi-k2.5", label: "kimi-k2.5" },
-    { value: "kimi-latest", label: "kimi-latest (跟随最新)" },
-    { value: "moonshot-v1-128k", label: "moonshot-v1-128k (长上下文)" },
-    { value: "moonshot-v1-32k", label: "moonshot-v1-32k" },
-    { value: "moonshot-v1-8k", label: "moonshot-v1-8k" },
-  ],
-  custom: [],
-};
 
 /**
  * 设置页左侧锚点导航。
@@ -1360,7 +1229,13 @@ function DesktopSettingsPage() {
   }
 
   function handleProviderChange(provider: string) {
-    form.setFieldValue("api_url", DEFAULT_URLS[provider] || "");
+    const preset = DEFAULT_URLS[provider];
+    // 「自定义端点」没有预设地址（DEFAULT_URLS.custom = ""）。此时若照常写入，
+    // 会把用户**已经填好的**地址抹掉 —— 而选自定义的人往往正是刚粘完中转站地址。
+    // 所以只在有预设时才覆盖；没预设就保留现值。
+    if (preset) {
+      form.setFieldValue("api_url", preset);
+    }
   }
 
   const modelColumns = [
@@ -3183,11 +3058,37 @@ function DesktopSettingsPage() {
           <Form.Item
             name="provider"
             label="提供商"
-            extra="除 Ollama 外都按 OpenAI 兼容协议处理。选「自定义」可填任意 baseUrl（OpenRouter / Moonshot / 字节豆包 / 自建网关 / lm studio 等任何 OpenAI 兼容服务）"
+            extra="除 Ollama 外一律按 OpenAI 兼容协议处理。列表里没有的服务选「自定义端点」，填它的 baseUrl 即可。"
             rules={[{ required: true }]}
           >
             <Select
-              options={PROVIDERS}
+              showSearch
+              // 说明放副文本而不是挤进 label 括号里 —— 早先「Claude (经 OpenRouter 等代理)」
+              // 把模型商和网关混成一条，既选不了官方 API，也看不出 OpenRouter 能跑几百个模型
+              optionRender={(opt) => {
+                const p = PROVIDERS.find((x) => x.value === opt.value);
+                return (
+                  <div className="flex flex-col leading-tight py-0.5">
+                    <span>{p?.label ?? opt.label}</span>
+                    {p?.desc && (
+                      <span className="text-xs text-[var(--color-text-tertiary,#999)]">
+                        {p.desc}
+                      </span>
+                    )}
+                  </div>
+                );
+              }}
+              filterOption={(input, option) => {
+                const q = input.trim().toLowerCase();
+                if (!q) return true;
+                const p = PROVIDERS.find((x) => x.value === option?.value);
+                return (
+                  String(option?.value ?? "").toLowerCase().includes(q) ||
+                  (p?.label ?? "").toLowerCase().includes(q) ||
+                  (p?.desc ?? "").toLowerCase().includes(q)
+                );
+              }}
+              options={PROVIDERS.map((p) => ({ value: p.value, label: p.label }))}
               onChange={handleProviderChange}
             />
           </Form.Item>
@@ -3195,10 +3096,30 @@ function DesktopSettingsPage() {
           <Form.Item
             name="api_url"
             label="API 地址"
-            extra="支持任意 OpenAI 兼容服务的 base_url（不含 /chat/completions 后缀）"
+            // 「不含 /chat/completions 后缀」是最高频的填错点，必须一直显眼；
+            // 选了自定义端点再补一句怎么找这个地址，否则用户不知道去哪抄
+            extra={
+              watchedProvider === "custom" ? (
+                <span>
+                  填服务商文档里的 <b>base_url</b>（通常以 <code>/v1</code> 结尾，
+                  <b>不含</b> <code>/chat/completions</code>）。
+                  <br />
+                  中转站 / 自建网关 / 未列出的厂商都填这里，只要它兼容 OpenAI 协议。
+                </span>
+              ) : (
+                "支持任意 OpenAI 兼容服务的 base_url（不含 /chat/completions 后缀）"
+              )
+            }
             rules={[{ required: true, message: "请输入 API 地址" }]}
           >
-            <Input placeholder={DEFAULT_URLS[watchedProvider] || "https://api.openai.com/v1"} />
+            <Input
+              placeholder={
+                // 自定义时不给具体厂商地址当占位 —— 那会误导用户以为该填 OpenAI
+                watchedProvider === "custom"
+                  ? "https://你的服务地址/v1"
+                  : DEFAULT_URLS[watchedProvider] || "https://api.openai.com/v1"
+              }
+            />
           </Form.Item>
 
           <Form.Item

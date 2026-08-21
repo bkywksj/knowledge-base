@@ -100,7 +100,33 @@ export function MobileAiModelModal({
           label="提供商"
           rules={[{ required: true }]}
         >
-          <Select onChange={onProviderChange} options={PROVIDERS} />
+          {/* 移动端列表长、屏幕窄：开搜索并显示副文本，否则 20+ 条要滑很久 */}
+          <Select
+            showSearch
+            onChange={onProviderChange}
+            optionRender={(opt) => {
+              const p = PROVIDERS.find((x) => x.value === opt.value);
+              return (
+                <div className="flex flex-col leading-tight py-0.5">
+                  <span>{p?.label ?? opt.label}</span>
+                  {p?.desc && (
+                    <span className="text-xs text-slate-400">{p.desc}</span>
+                  )}
+                </div>
+              );
+            }}
+            filterOption={(input, option) => {
+              const q = input.trim().toLowerCase();
+              if (!q) return true;
+              const p = PROVIDERS.find((x) => x.value === option?.value);
+              return (
+                String(option?.value ?? "").toLowerCase().includes(q) ||
+                (p?.label ?? "").toLowerCase().includes(q) ||
+                (p?.desc ?? "").toLowerCase().includes(q)
+              );
+            }}
+            options={PROVIDERS.map((p) => ({ value: p.value, label: p.label }))}
+          />
         </Form.Item>
         <Form.Item
           name="api_url"
