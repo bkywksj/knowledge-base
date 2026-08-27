@@ -27,7 +27,8 @@ import {
 } from "antd";
 import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, ChevronDown, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, MessageSquare, ListTree, Network, ExternalLink, BookOpen, FilePen, Presentation, Printer, Code2, History } from "lucide-react";
 import { CloseCircleFilled } from "@ant-design/icons";
-import { useAppStore } from "@/store";
+import { useAppStore, EDITOR_FONT_DEFAULTS } from "@/store";
+import { useCtrlWheelZoom } from "@/hooks/useCtrlWheelZoom";
 import { useTabsStore } from "@/store/tabs";
 import { noteApi, tagApi, folderApi, linkApi, exportApi, sourceFileApi, vaultApi, sourceWritebackApi } from "@/lib/api";
 import { printHtmlAsPdf } from "@/lib/exportPdf";
@@ -847,6 +848,46 @@ function DesktopNoteEditorPage() {
     editorBodyRef.current = el;
     setEditorBodyEl(el);
   }, []);
+
+  // ─── Ctrl/⌘ + 滚轮 缩放编辑区字号（Ctrl/⌘+0 复位）────────────────
+  // 缩放的是 editorFontSize（编辑区正文），**不是** uiScale —— 用户要的是
+  // "编辑区"放大，把整个应用 UI 跟着放大属于误伤。字号本身早就有（设置页有滑块
+  // 并已持久化），这里只是补一个快捷入口，clamp 也复用 setEditorFontSize 的 [12,22]。
+  const editorFontSize = useAppStore((s) => s.editorFontSize);
+  const setEditorFontSize = useAppStore((s) => s.setEditorFontSize);
+  const editorFontSizeRef = useRef(editorFontSize);
+  editorFontSizeRef.current = editorFontSize;
+
+  const showZoomHint = useCallback(
+    (size: number) => {
+      // 固定 key：连续滚动时复用同一条提示，不会堆一串 toast
+      message.open({
+        key: "editor-zoom",
+        type: "info",
+        content: `编辑区字号 ${size}px`,
+        duration: 1.2,
+      });
+    },
+    [message],
+  );
+
+  useCtrlWheelZoom({
+    target: editorBodyEl,
+    onStep: useCallback(
+      (delta: number) => {
+        const next = editorFontSizeRef.current + delta;
+        setEditorFontSize(next);
+        // setEditorFontSize 内部 clamp 过，回读真实值再提示，避免到边界还一直报数
+        const applied = useAppStore.getState().editorFontSize;
+        showZoomHint(applied);
+      },
+      [setEditorFontSize, showZoomHint],
+    ),
+    onReset: useCallback(() => {
+      setEditorFontSize(EDITOR_FONT_DEFAULTS.size);
+      showZoomHint(EDITOR_FONT_DEFAULTS.size);
+    }, [setEditorFontSize, showZoomHint]),
+  });
   // 当前活跃笔记 id：loadData 开头写入，后台元数据加载回来时比对，防止快速切笔记
   // 时旧请求结果覆盖新笔记（竞态守卫）。
   const loadSeqRef = useRef<number>(-1);
