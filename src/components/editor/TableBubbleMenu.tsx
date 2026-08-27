@@ -24,6 +24,7 @@ import {
   Split,
   Trash2,
 } from "lucide-react";
+import { computeBubbleMenuLayout } from "@/lib/bubbleMenuPosition";
 
 interface Props {
   editor: Editor | null;
@@ -38,6 +39,8 @@ interface Props {
  * - mousedown preventDefault 防止点击按钮丢失编辑器选区
  * - createPortal 到 body，避开父级 overflow:hidden / transform 截断
  * - 滚动 / resize 时重算位置（监听 capture 阶段抓所有滚动容器）
+ * - 长表格：菜单会被钉在 sticky 工具栏下沿，不随表格顶部滚出视口
+ *   （定位规则见 lib/bubbleMenuPosition.ts，有单测锁着）
  */
 export function TableBubbleMenu({ editor }: Props) {
   const { token } = antdTheme.useToken();
@@ -68,11 +71,27 @@ export function TableBubbleMenu({ editor }: Props) {
       setVisible(false);
       return;
     }
-    const rect = tableEl.getBoundingClientRect();
-    setPos({
-      top: window.scrollY + rect.top - 38,
-      left: window.scrollX + rect.left,
+    // 滚动容器是 .editor-body（overflow-y:auto），不是 window —— 菜单要相对它
+    // 做钳制，否则长表格滚过一屏后菜单会跑到视口外（原 BUG）。
+    // 找不到就退回 documentElement，等价于"整页滚动"，行为不会更差。
+    const scrollRootEl =
+      (tableEl.closest(".editor-body") as HTMLElement | null) ??
+      document.documentElement;
+    // sticky 工具栏高度实测：flex-wrap 会换行，不是常量；阅读/源码模式下没有工具栏 → 0
+    const toolbarEl = scrollRootEl.querySelector(
+      ".tiptap-toolbar",
+    ) as HTMLElement | null;
+
+    const layout = computeBubbleMenuLayout({
+      table: tableEl.getBoundingClientRect(),
+      scrollRoot: scrollRootEl.getBoundingClientRect(),
+      toolbarHeight: toolbarEl?.offsetHeight ?? 0,
     });
+    if (!layout.visible) {
+      setVisible(false);
+      return;
+    }
+    setPos({ top: layout.top, left: layout.left });
     setVisible(true);
   }, [editor]);
 
@@ -293,9 +312,14 @@ export function TableBubbleMenu({ editor }: Props) {
     <div
       onMouseDown={handleMouseDown}
       style={{
-        position: "absolute",
+        // fixed 而非 absolute：pos 现在是**视口坐标**（getBoundingClientRect 口径）。
+        // 之前是 absolute + `window.scrollY + rect.top`，而 window 从不滚动
+        // （滚的是 .editor-body），那个加法恒等于 +0，纯属误导。
+        position: "fixed",
         top: pos.top,
         left: pos.left,
+        // 必须高于 sticky 工具栏（.tiptap-toolbar 是 z-index:10），
+        // 否则菜单钉到工具栏下沿时会被它盖住
         zIndex: 100,
         background: token.colorBgElevated,
         border: `1px solid ${token.colorBorderSecondary}`,
