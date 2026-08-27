@@ -10,6 +10,7 @@ import {
 import { projectApi } from "@/lib/api";
 import type { Project, Task } from "@/types";
 import { isAbandoned } from "@/types";
+import { buildGanttTicks, pxPerDayFor, todayOffsetPx } from "@/lib/ganttTicks";
 
 interface Props {
   /** 当前查询出的全部任务（已按筛选条件过滤） */
@@ -90,9 +91,13 @@ export function GanttView({ tasks, onEdit }: Props) {
     };
   }, [scheduled]);
 
-  // 每格像素宽度（day=22px，week=70px）
-  const cellWidth = unit === "day" ? 22 : 70;
-  const totalWidth = days * cellWidth;
+  // 🔴 这里要区分两个概念，别再合成一个 cellWidth：
+  //   pxPerDay —— 一天占多少像素。任务条 / 今天竖线全按「天偏移 × pxPerDay」定位。
+  //   刻度格宽 —— day 模式 = pxPerDay，week 模式 = 7 × pxPerDay。
+  // 旧代码用单个 cellWidth 兼任两者，week 模式下变成「每天一格但格子 70px 宽」，
+  // 画布反而比按天宽 3 倍，且标签大面积空白（详见 lib/ganttTicks.ts）。
+  const pxPerDay = pxPerDayFor(unit);
+  const totalWidth = days * pxPerDay;
   const rowHeight = 32;
   const labelWidth = 240;
 
@@ -120,34 +125,17 @@ export function GanttView({ tasks, onEdit }: Props) {
       }));
   }, [scheduled, projects, filterProjectId]);
 
-  // 生成时间轴 ticks（每天一格）
-  const ticks = useMemo(() => {
-    const out: { date: Date; label: string; isMonthStart: boolean; isWeekend: boolean }[] = [];
-    for (let i = 0; i < days; i++) {
-      const d = addDays(rangeStart, i);
-      const isMonthStart = d.getDate() === 1;
-      const wd = d.getDay(); // 0=Sun, 6=Sat
-      out.push({
-        date: d,
-        label: unit === "day"
-          ? `${d.getMonth() + 1}/${d.getDate()}`
-          : isMonthStart || i === 0
-            ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
-            : "",
-        isMonthStart,
-        isWeekend: wd === 0 || wd === 6,
-      });
-    }
-    return out;
-  }, [rangeStart, days, unit]);
+  // 时间轴刻度：day = 每天一格，week = 每周一格（生成规则与单测见 lib/ganttTicks.ts）
+  const ticks = useMemo(
+    () => buildGanttTicks(rangeStart, days, unit),
+    [rangeStart, days, unit],
+  );
 
   // 今天位置（如果在范围内）
-  const todayOffset = useMemo(() => {
-    const today = startOfDay(new Date()).getTime();
-    const start = rangeStart.getTime();
-    if (today < start || today > rangeEnd.getTime()) return null;
-    return ((today - start) / DAY_MS) * cellWidth;
-  }, [rangeStart, rangeEnd, cellWidth]);
+  const todayOffset = useMemo(
+    () => todayOffsetPx(rangeStart, rangeEnd, pxPerDay),
+    [rangeStart, rangeEnd, pxPerDay],
+  );
 
   return (
     <div className="flex flex-col gap-2 h-full">
@@ -228,7 +216,8 @@ export function GanttView({ tasks, onEdit }: Props) {
                   <div
                     key={i}
                     style={{
-                      width: cellWidth,
+                      // 格宽 = 该格代表的天数 × 每天像素（末尾不足一整周的格子会更窄）
+                      width: t.spanDays * pxPerDay,
                       flexShrink: 0,
                       padding: "4px 0",
                       textAlign: "center",
@@ -302,7 +291,7 @@ export function GanttView({ tasks, onEdit }: Props) {
                     key={t.id}
                     task={t}
                     rangeStart={rangeStart}
-                    cellWidth={cellWidth}
+                    pxPerDay={pxPerDay}
                     rowHeight={rowHeight}
                     labelWidth={labelWidth}
                     totalWidth={totalWidth}
@@ -369,7 +358,8 @@ export function GanttView({ tasks, onEdit }: Props) {
 interface RowProps {
   task: Task;
   rangeStart: Date;
-  cellWidth: number;
+  /** 一天占多少像素（不是刻度格宽 —— 按周时一格是 7 天） */
+  pxPerDay: number;
   rowHeight: number;
   labelWidth: number;
   totalWidth: number;
@@ -377,10 +367,13 @@ interface RowProps {
   onClick: () => void;
 }
 
+/** 任务条最小可见宽度：按周模式下一天只有 10px，单日任务会细到看不见 */
+const MIN_BAR_PX = 8;
+
 function GanttRow({
   task,
   rangeStart,
-  cellWidth,
+  pxPerDay,
   rowHeight,
   labelWidth,
   totalWidth,
@@ -391,17 +384,24 @@ function GanttRow({
   const start = parseDateMs(task.start_date);
   const due = parseDateMs(task.due_date);
 
-  // 计算条/点位置
+  // 计算条/点位置。全部是「天偏移 × 每天像素」——
+  // 正因如此，week 模式只需把 pxPerDay 调小，这里一行都不用改。
   let bar: { left: number; width: number } | null = null;
   let dot: number | null = null;
   if (start != null && due != null) {
     const sOff = (start - rangeStart.getTime()) / DAY_MS;
     const eOff = (due - rangeStart.getTime()) / DAY_MS + 1; // +1 让条覆盖到 due 当天
-    bar = { left: sOff * cellWidth, width: Math.max(cellWidth * 0.5, (eOff - sOff) * cellWidth) };
+    bar = {
+      left: sOff * pxPerDay,
+      width: Math.max(MIN_BAR_PX, (eOff - sOff) * pxPerDay),
+    };
   } else if (start != null) {
-    bar = { left: ((start - rangeStart.getTime()) / DAY_MS) * cellWidth, width: cellWidth };
+    bar = {
+      left: ((start - rangeStart.getTime()) / DAY_MS) * pxPerDay,
+      width: Math.max(MIN_BAR_PX, pxPerDay),
+    };
   } else if (due != null) {
-    dot = ((due - rangeStart.getTime()) / DAY_MS) * cellWidth + cellWidth / 2;
+    dot = ((due - rangeStart.getTime()) / DAY_MS) * pxPerDay + pxPerDay / 2;
   }
 
   // 已完成 / 已放弃都灰显（甘特图保留时间线完整性，但不再抢视觉）
