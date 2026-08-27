@@ -3,6 +3,7 @@ import { Modal, Button, Tag, Typography, theme as antdTheme } from "antd";
 import { Star, Edit3 } from "lucide-react";
 import type { Project, Task } from "@/types";
 import { projectApi } from "@/lib/api";
+import { taskTimeLines } from "@/lib/taskTimestamps";
 import { SubtaskList } from "./SubtaskList";
 
 const { Text, Paragraph } = Typography;
@@ -249,6 +250,31 @@ export function TaskDetailModal({
                   onSubtaskChanged?.(task.id, done, total);
                 }}
               />
+            </div>
+          )}
+
+          {/* 创建 / 完成时间 —— 数据一直在记（tasks.created_at / completed_at），
+              只是此前没有任何界面展示。带年份，详情页看的是准确时间。 */}
+          {taskTimeLines(task, true).length > 0 && (
+            <div
+              style={{
+                marginTop: 4,
+                paddingTop: 10,
+                borderTop: `1px solid ${token.colorBorderSecondary}`,
+                display: "flex",
+                gap: 16,
+                flexWrap: "wrap",
+              }}
+            >
+              {taskTimeLines(task, true).map((line) => (
+                <Text
+                  key={line.label}
+                  type="secondary"
+                  style={{ fontSize: 12 }}
+                >
+                  {line.label}于 {line.value}
+                </Text>
+              ))}
             </div>
           )}
         </div>

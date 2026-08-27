@@ -45,6 +45,9 @@ export function SubtaskList({ parentTaskId, onChanged, compact = false }: Props)
   const [items, setItems] = useState<Task[]>([]);
   const [loading, setLoading] = useState(false);
   const [draft, setDraft] = useState("");
+  /** 正在编辑标题的子任务 id（null = 无）。用户反馈"输入后只能删除不能修改"。 */
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingText, setEditingText] = useState("");
   /** 回车追加后保持焦点，用户可连续录入下一条（输入框全程不 disable，焦点不丢） */
   const inputRef = useRef<InputRef>(null);
 
@@ -135,6 +138,46 @@ export function SubtaskList({ parentTaskId, onChanged, compact = false }: Props)
     }
   }
 
+  /** 进入标题编辑态（双击触发，见下方 span 的 onDoubleClick） */
+  function startEdit(t: Task) {
+    setEditingId(t.id);
+    setEditingText(t.title);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditingText("");
+  }
+
+  /**
+   * 保存标题修改。
+   *
+   * 空标题视为「取消」而不是把子任务改成空白 —— 用户想删有专门的删除按钮，
+   * 清空输入框多半是误操作。标题没变也直接退出，不发无谓的请求。
+   */
+  async function commitEdit() {
+    if (editingId == null) return;
+    const id = editingId;
+    const next = editingText.trim();
+    const original = items.find((t) => t.id === id);
+    if (!next || !original || next === original.title) {
+      cancelEdit();
+      return;
+    }
+    // 乐观更新：先本地改掉，请求失败再回滚，避免输入框闪回旧值
+    setItems((prev) => prev.map((t) => (t.id === id ? { ...t, title: next } : t)));
+    cancelEdit();
+    try {
+      await taskApi.update(id, { title: next });
+      await refresh();
+    } catch (e) {
+      setItems((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, title: original.title } : t)),
+      );
+      message.error(`修改失败：${e}`);
+    }
+  }
+
   const done = items.filter((t) => t.status === 1).length;
   const total = items.length;
 
@@ -187,29 +230,52 @@ export function SubtaskList({ parentTaskId, onChanged, compact = false }: Props)
                 checked={t.status === 1}
                 onChange={() => handleToggle(t.id)}
               />
-              <span
-                className="flex-1"
-                style={{
-                  fontSize: 13,
-                  color:
-                    t.status === 1
-                      ? token.colorTextTertiary
-                      : token.colorText,
-                  textDecoration: t.status === 1 ? "line-through" : "none",
-                  // 不再单行截断：自动换行完整显示，超长内容可见且可鼠标划选复制。
-                  // minWidth:0 让 flex 子项能正常收缩换行而不是溢出；
-                  // overflowWrap/wordBreak 处理无空格长串（URL 等）。
-                  minWidth: 0,
-                  whiteSpace: "normal",
-                  overflowWrap: "anywhere",
-                  wordBreak: "break-word",
-                  userSelect: "text",
-                  cursor: "text",
-                }}
-                title={t.title}
-              >
-                {t.title}
-              </span>
+              {editingId === t.id ? (
+                <Input
+                  className="flex-1"
+                  size="small"
+                  autoFocus
+                  value={editingText}
+                  onChange={(e) => setEditingText(e.target.value)}
+                  onPressEnter={() => void commitEdit()}
+                  // 失焦即保存：用户点到别处通常是"我改完了"，弹确认反而烦
+                  onBlur={() => void commitEdit()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      e.stopPropagation();
+                      cancelEdit();
+                    }
+                  }}
+                  style={{ fontSize: 13, minWidth: 0 }}
+                />
+              ) : (
+                <span
+                  className="flex-1"
+                  // 🔴 用双击而不是单击：这个 span 特意保留了 userSelect:text，
+                  // 单击进编辑会毁掉"鼠标划选复制超长内容"的能力（见下方样式注释）。
+                  onDoubleClick={() => startEdit(t)}
+                  style={{
+                    fontSize: 13,
+                    color:
+                      t.status === 1
+                        ? token.colorTextTertiary
+                        : token.colorText,
+                    textDecoration: t.status === 1 ? "line-through" : "none",
+                    // 不再单行截断：自动换行完整显示，超长内容可见且可鼠标划选复制。
+                    // minWidth:0 让 flex 子项能正常收缩换行而不是溢出；
+                    // overflowWrap/wordBreak 处理无空格长串（URL 等）。
+                    minWidth: 0,
+                    whiteSpace: "normal",
+                    overflowWrap: "anywhere",
+                    wordBreak: "break-word",
+                    userSelect: "text",
+                    cursor: "text",
+                  }}
+                  title={`${t.title}\n（双击可修改）`}
+                >
+                  {t.title}
+                </span>
+              )}
               {/* 时间：没设时只露一个小闹钟、hover 该行才显形，平时不打扰阅读；
                   设了就常驻显示 月-日 时:分，点开可改可清 */}
               <DatePicker
