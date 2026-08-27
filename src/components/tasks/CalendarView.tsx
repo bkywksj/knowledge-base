@@ -291,7 +291,19 @@ export function CalendarView({
         <div
           className="grid grid-cols-7 text-xs font-semibold flex-shrink-0 sticky top-0 z-10"
           style={{
-            background: token.colorFillSecondary,
+            // 🔴 sticky 表头的背景**必须不透明**。
+            // 原来直接用 token.colorFillSecondary，而它是半透明色（antd 默认
+            // rgba(0,0,0,0.06)）—— 表头还没 sticky 时底下永远是网格顶部空白，
+            // 透了也看不出来；改成 sticky 后滚动时任务条会滑到表头**下面**，
+            // 半透明背景就把任务条直接透出来，表现为"往下滑周几和待办重叠"。
+            //
+            // 这里用 linear-gradient 把那层半透明灰「实心化」叠在不透明的
+            // colorBgContainer 上：既保留表头与格子的灰度区分（视觉与改前一致），
+            // 合成后又完全不透明。
+            //
+            // ⚠️ 取舍：开了自定义背景图时表头会比周围玻璃面板「实」一点。
+            // 这是必要的 —— sticky 表头只要半透明，滚动内容就必然透出来。
+            background: `linear-gradient(${token.colorFillSecondary}, ${token.colorFillSecondary}), ${token.colorBgContainer}`,
             color: token.colorTextSecondary,
             borderBottom: `1px solid ${token.colorBorderSecondary}`,
           }}
