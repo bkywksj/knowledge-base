@@ -17,7 +17,11 @@ import {
 } from "@/store";
 import { getThemesByCategory } from "@/theme/tokens";
 import type { ThemeMode } from "@/theme/tokens";
-import { ActivityBar, deriveActiveViewFromPath } from "./ActivityBar";
+import {
+  ActivityBar,
+  deriveActiveViewFromPath,
+  activityBarWidth,
+} from "./ActivityBar";
 import { SidePanel, viewHasPanel } from "./SidePanel";
 import { TabBar } from "./TabBar";
 import { isNoteWorkspacePath } from "@/lib/noteWorkspaceRoute";
@@ -83,8 +87,6 @@ function DragRegion() {
   );
 }
 
-/** ActivityBar 固定宽度（与 ActivityBar.tsx 内硬编码保持一致） */
-const ACTIVITY_BAR_WIDTH = 64;
 
 /**
  * SidePanel 自动收起的窗口宽度阈值（带迟滞，避免在边界拖动时来回闪）：
@@ -130,7 +132,11 @@ export function AppLayout() {
     sidePanelWidth, setSidePanelWidth,
     sidePanelVisible, toggleSidePanel,
     autoHideActivityBar,
+    focusModeKeepTabs,
+    activityBarShowLabels,
   } = useAppStore();
+  /** 活动栏当前实际宽度：纯图标模式 48，带文字 64。布局各处统一取这个值。 */
+  const ACTIVITY_BAR_WIDTH = activityBarWidth(activityBarShowLabels);
   const activeTheme = themeCategory === "light" ? lightTheme : darkTheme;
   const { token } = antdTheme.useToken();
 
@@ -753,8 +759,16 @@ export function AppLayout() {
         {/* 标签栏只在笔记工作区渲染。刻意做成"不挂载"而非 TabBar 内部 early return：
             TabBar 注册了全局 Ctrl+W 关闭当前 tab，若在日记 / 待办页仍挂着，按 Ctrl+W
             会关掉一个屏幕上根本看不见的笔记 tab。不挂载则快捷键随之失效，语义才对。
-            tabs store 不受影响（只是不渲染），切回笔记时标签原样还在。 */}
-        {!focusMode && isNoteWorkspacePath(location.pathname) && <TabBar />}
+            tabs store 不受影响（只是不渲染），切回笔记时标签原样还在。
+
+            🔴 这里必须用 focusModeRaw 而不是上面那个 focusMode ——
+            `focusMode = focusModeRaw || isPopoutWindow` 把两件事合并了：
+            pop-out 是"单篇笔记的独立窗口"，给它挂一条全局标签栏是错的，
+            所以 popout 一律不显示；而真正的专注模式则听用户的
+            focusModeKeepTabs（默认开，否则专注模式下没有任何切换笔记的入口）。 */}
+        {!isPopoutWindow &&
+          (!focusModeRaw || focusModeKeepTabs) &&
+          isNoteWorkspacePath(location.pathname) && <TabBar />}
         <Content
           style={{
             // 🔴 四边一律写 longhand，不要再混用 `padding` shorthand。

@@ -566,6 +566,10 @@ function DesktopSettingsPage() {
 
   const autoHideActivityBar = useAppStore((s) => s.autoHideActivityBar);
   const setAutoHideActivityBar = useAppStore((s) => s.setAutoHideActivityBar);
+  const activityBarShowLabels = useAppStore((s) => s.activityBarShowLabels);
+  const setActivityBarShowLabels = useAppStore((s) => s.setActivityBarShowLabels);
+  const focusModeKeepTabs = useAppStore((s) => s.focusModeKeepTabs);
+  const setFocusModeKeepTabs = useAppStore((s) => s.setFocusModeKeepTabs);
 
   // 笔记侧边栏：每次启动默认收起所有文件夹
   const collapseFoldersOnStartup = useAppStore((s) => s.notesCollapseFoldersOnStartup);
@@ -1518,6 +1522,32 @@ function DesktopSettingsPage() {
         </div>
         <div className="flex items-center justify-between py-1">
           <div>
+            <div>侧边菜单栏显示文字</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              关闭后左侧图标栏只剩图标，栏宽 64→48px，一屏能多放几个入口；
+              鼠标悬停仍会显示名称。默认开启。
+            </Text>
+          </div>
+          <Switch
+            checked={activityBarShowLabels}
+            onChange={(on) => setActivityBarShowLabels(on)}
+          />
+        </div>
+        <div className="flex items-center justify-between py-1">
+          <div>
+            <div>专注模式保留笔记标签栏</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              专注模式会隐藏侧栏与顶栏，若标签栏也一并隐藏就没有切换笔记的入口了。
+              默认保留；想要"什么都不剩"可以关掉。
+            </Text>
+          </div>
+          <Switch
+            checked={focusModeKeepTabs}
+            onChange={(on) => setFocusModeKeepTabs(on)}
+          />
+        </div>
+        <div className="flex items-center justify-between py-1">
+          <div>
             <div>笔记文件夹启动时默认收起</div>
             <Text type="secondary" style={{ fontSize: 12 }}>
               开启后，每次启动应用时笔记侧边栏的文件夹一律全部收起；
@@ -1998,7 +2028,8 @@ function DesktopSettingsPage() {
           <div>
             <div>正文字号</div>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              标题按比例缩放；代码块默认跟随，可在下方单独设置
+              标题按比例缩放；代码块默认跟随，可在下方单独设置。
+              编辑笔记时也可以按住 Ctrl 滚动滚轮快速调整（Ctrl+0 复位）
             </Text>
           </div>
           <Select

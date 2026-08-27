@@ -375,6 +375,19 @@ interface AppStore {
    * 才以浮层形式弹出；离开后 150ms 自动收起。默认关闭=始终显示。
    */
   autoHideActivityBar: boolean;
+  /**
+   * ActivityBar 是否显示图标下方的文字标签（持久化，默认 true）。
+   * 关闭后每项只剩图标，栏宽 64→48、项高 52→40，一屏能多放几个入口。
+   * 可发现性不受影响：每项本来就挂着 Tooltip，悬停仍能看到名称。
+   */
+  activityBarShowLabels: boolean;
+  /**
+   * 专注模式下是否保留顶部笔记标签栏（持久化，默认 true）。
+   * 专注模式会同时隐藏活动栏 / 侧栏 / 顶栏，若标签栏也一并隐藏，就**没有任何
+   * 切换笔记的入口**了，只能退出再进 —— 这不是"专注"是"锁死"。故默认保留；
+   * 想要什么都不剩的用户可以在设置里关掉。
+   */
+  focusModeKeepTabs: boolean;
   /** 搜索视图：最近搜索关键词（最新在前，最多 RECENT_SEARCHES_MAX 条，持久化） */
   recentSearches: string[];
   /** 编辑器字体族（持久化） */
@@ -659,6 +672,8 @@ interface AppStore {
   toggleSidePanel: () => void;
   /** 设置 ActivityBar 自动隐藏开关（持久化） */
   setAutoHideActivityBar: (on: boolean) => void;
+  setActivityBarShowLabels: (on: boolean) => void;
+  setFocusModeKeepTabs: (on: boolean) => void;
   /** 推入一条最近搜索（去重、置顶、最多 RECENT_SEARCHES_MAX 条） */
   pushRecentSearch: (q: string) => void;
   /** 删除一条最近搜索 */
@@ -884,6 +899,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   sidePanelWidth: SIDE_PANEL_DEFAULT_WIDTH,
   sidePanelVisible: true,
   autoHideActivityBar: false,
+  activityBarShowLabels: true,
+  focusModeKeepTabs: true,
   recentSearches: [],
   editorFontFamily: EDITOR_FONT_DEFAULTS.family,
   editorHeadingFontFamily: EDITOR_FONT_DEFAULTS.headingFamily,
@@ -1165,6 +1182,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setSidePanelVisible: (visible) => set({ sidePanelVisible: visible }),
   toggleSidePanel: () => set((s) => ({ sidePanelVisible: !s.sidePanelVisible })),
   setAutoHideActivityBar: (on) => set({ autoHideActivityBar: on }),
+  setActivityBarShowLabels: (on) => set({ activityBarShowLabels: !!on }),
+  setFocusModeKeepTabs: (on) => set({ focusModeKeepTabs: !!on }),
   pushRecentSearch: (q) => {
     const trimmed = q.trim();
     if (!trimmed) return;
@@ -1713,6 +1732,14 @@ export async function loadThemeFromStore() {
     if (typeof ahab === "boolean") {
       useAppStore.getState().setAutoHideActivityBar(ahab);
     }
+    const absl = await store.get<boolean>("activityBarShowLabels");
+    if (typeof absl === "boolean") {
+      useAppStore.getState().setActivityBarShowLabels(absl);
+    }
+    const fmkt = await store.get<boolean>("focusModeKeepTabs");
+    if (typeof fmkt === "boolean") {
+      useAppStore.getState().setFocusModeKeepTabs(fmkt);
+    }
 
     // 恢复最近搜索
     const rs = await store.get<string[]>("recentSearches");
@@ -1963,6 +1990,8 @@ function collectPersistPayload(state: AppStore): Record<string, unknown> {
     sidePanelWidth: state.sidePanelWidth,
     sidePanelVisible: state.sidePanelVisible,
     autoHideActivityBar: state.autoHideActivityBar,
+    activityBarShowLabels: state.activityBarShowLabels,
+    focusModeKeepTabs: state.focusModeKeepTabs,
     recentSearches: state.recentSearches,
     editorFontFamily: state.editorFontFamily,
     editorHeadingFontFamily: state.editorHeadingFontFamily,

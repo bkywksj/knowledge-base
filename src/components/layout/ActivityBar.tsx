@@ -36,6 +36,22 @@ import type { ActiveView } from "@/store";
  *   · 不感知文件夹 / 标签 / 待办的业务数据
  */
 
+/**
+ * 活动栏宽度：显示文字标签时 64，纯图标时 48。
+ *
+ * 🔴 AppLayout 布局计算（Sider 宽度 / 主区左偏移 / 自动隐藏时的位移）必须用
+ * 同一份数值，否则纯图标模式下会留出 16px 空白或者盖住内容。用
+ * {@link activityBarWidth} 统一取值，不要在任何一侧再写死数字。
+ */
+export const ACTIVITY_BAR_WIDTH_WITH_LABELS = 64;
+export const ACTIVITY_BAR_WIDTH_ICON_ONLY = 48;
+
+export function activityBarWidth(showLabels: boolean): number {
+  return showLabels
+    ? ACTIVITY_BAR_WIDTH_WITH_LABELS
+    : ACTIVITY_BAR_WIDTH_ICON_ONLY;
+}
+
 interface ActivityItem {
   view: ActiveView;
   route: string;
@@ -131,6 +147,7 @@ export function ActivityBar() {
   const enabledViews = useAppStore((s) => s.enabledViews);
   const appLockEnabled = useAppStore((s) => s.appLockEnabled);
   const lockAppNow = useAppStore((s) => s.lockAppNow);
+  const showLabels = useAppStore((s) => s.activityBarShowLabels);
   const [unlockOpen, setUnlockOpen] = useState(false);
 
   /** 是否显示某项：核心永远显示；可选项看用户是否在设置里启用 */
@@ -231,8 +248,9 @@ export function ActivityBar() {
           className="activity-item"
           data-active={isActive || undefined}
           style={{
-            width: 56,
-            height: 52,
+            // 纯图标模式：40×40 的方块，栏宽从 64 收到 48
+            width: showLabels ? 56 : 40,
+            height: showLabels ? 52 : 40,
             borderRadius: 8,
             border: "none",
             cursor: "pointer",
@@ -240,8 +258,8 @@ export function ActivityBar() {
             flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
-            gap: 5,
-            padding: "4px 2px",
+            gap: showLabels ? 5 : 0,
+            padding: showLabels ? "4px 2px" : 0,
             background: isActive ? `${token.colorPrimary}14` : "transparent",
             color: isActive ? token.colorPrimary : token.colorTextSecondary,
             position: "relative",
@@ -249,19 +267,23 @@ export function ActivityBar() {
           }}
         >
           {iconNode}
-          <span
-            style={{
-              fontSize: 12,
-              lineHeight: 1.1,
-              fontWeight: isActive ? 600 : 400,
-              maxWidth: "100%",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {item.label}
-          </span>
+          {/* 纯图标模式下不渲染文字：可发现性由外层的 Tooltip 兜底（悬停仍显示名称），
+              aria-label 也已在 button 上，无障碍不受影响。 */}
+          {showLabels && (
+            <span
+              style={{
+                fontSize: 12,
+                lineHeight: 1.1,
+                fontWeight: isActive ? 600 : 400,
+                maxWidth: "100%",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {item.label}
+            </span>
+          )}
           {isActive && (
             <span
               aria-hidden
@@ -286,7 +308,7 @@ export function ActivityBar() {
       aria-label="视图切换"
       className="activity-bar"
       style={{
-        width: 64,
+        width: activityBarWidth(showLabels),
         // 必须撑满 Sider 高度，否则下方 flex:1 spacer 没有空间，
         // 底部三项（隐藏笔记 / 回收站 / 关于）会贴在主组按钮后面而不是钉在左下角
         height: "100%",
@@ -312,8 +334,9 @@ export function ActivityBar() {
             aria-label="立即锁定"
             className="activity-item"
             style={{
-              width: 56,
-              height: 52,
+              // 与上面 renderItem 的尺寸保持同一套口径，纯图标模式下不要比别人大
+              width: showLabels ? 56 : 40,
+              height: showLabels ? 52 : 40,
               borderRadius: 8,
               border: "none",
               cursor: "pointer",
@@ -321,13 +344,14 @@ export function ActivityBar() {
               flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
-              gap: 5,
-              padding: "4px 2px",
+              gap: showLabels ? 5 : 0,
+              padding: showLabels ? "4px 2px" : 0,
               background: "transparent",
               color: token.colorTextSecondary,
             }}
           >
             <Lock size={20} color={token.colorTextSecondary} />
+            {showLabels && (
             <span
               style={{
                 fontSize: 12,
@@ -340,6 +364,7 @@ export function ActivityBar() {
             >
               锁定
             </span>
+            )}
           </button>
         </Tooltip>
       )}
