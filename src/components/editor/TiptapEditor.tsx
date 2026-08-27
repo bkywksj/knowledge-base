@@ -236,6 +236,7 @@ import {
 } from "@/lib/assetUrl";
 import { useAppStore } from "@/store";
 import { keyboardEventToAccel } from "@/lib/shortcuts/registry";
+import { fragmentToPlainText } from "@/lib/plainTextClipboard";
 import {
   useAttachmentPreviewStore,
   isPreviewableAttachment,
@@ -1838,10 +1839,16 @@ export function TiptapEditor({
       // 复制纯文本(text/plain)：输出**真正的纯文字**，不带任何 Markdown 标记。
       // 用户诉求——从编辑器复制加粗文字，粘到记事本应是「内容」而非「**内容**」。
       // 之前误用 markdown serializer，导致粗体→`**x**`、斜体→`*x*`、标题→`# x` 露出源码。
-      // 现改用 ProseMirror 的 textBetween 直接抽文字（块间 \n\n 分隔），标记全部剥离。
+      // 改用 ProseMirror 的 textBetween 直接抽文字，标记全部剥离。
       // 富文本格式（加粗等）由 text/html 通道承载——粘到 Word/飞书仍识别加粗，两不误。
       // 仍先经 stripVisualStylesForPlainText 归位缩进/对齐（textBetween 只取文本内容，
       // 不受节点属性影响，但保留清洗以防未来叶子节点文本表示依赖属性）。
+      //
+      // 🔴 块间分隔**不能**一律用 "\n\n"：那样 3 项列表会变成
+      //    "alpha\n\nbravo\n\ncharlie"（每项夹一个空行），两个空段落更是撑出
+      //    5 个空行 —— 用户反馈的「复制粘贴后空行比较多」。分隔规则连同标题编号
+      //    注入一起收敛到 lib/plainTextClipboard.ts，有 21 个单测锁着。
+      //
       // 显式标注 `: string` 返回类型 —— 否则箭头体里读 editor.storage 会让 editor 的
       // 类型推断陷入自引用环（TS7022/7023）。
       clipboardTextSerializer: (slice, view): string => {
@@ -1854,22 +1861,7 @@ export function TiptapEditor({
         // ⚠️ 只补 text/plain，text/html 通道保持干净 —— 否则在本编辑器内复制粘贴时
         //    编号会变成正文文字，再被自动编号叠一层（"1 1 标题"）。
         const labels = collectSelectedHeadingLabels(view);
-        if (labels.length === 0) {
-          return cleaned.textBetween(0, cleaned.size, "\n\n", leafText);
-        }
-        const parts: string[] = [];
-        let li = 0;
-        cleaned.forEach((node) => {
-          const text = node.textBetween(0, node.content.size, "\n\n", leafText);
-          if (node.type.name === "heading") {
-            const label = labels[li];
-            li += 1;
-            parts.push(label ? `${label} ${text}` : text);
-            return;
-          }
-          parts.push(text);
-        });
-        return parts.join("\n\n");
+        return fragmentToPlainText(cleaned, leafText, labels);
       },
       handlePaste: (_view, event) => {
         // 三种主要场景：
