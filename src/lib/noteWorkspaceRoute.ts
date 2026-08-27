@@ -31,3 +31,26 @@ export function isNoteWorkspacePath(pathname: string): boolean {
     pathname.startsWith("/whiteboard/")
   );
 }
+
+/**
+ * 当前路由是否是「撑满型」页面 —— 页面根节点用 `.editor-page`
+ * （`position:absolute; inset:0`）铺满整个 Content。
+ *
+ * 目前只有两处：`/daily`（日记）与 `/notes/:id`（笔记编辑器）。
+ *
+ * 为什么需要单独判定：Content 上挂了 `scrollbar-gutter: stable both-edges`，
+ * 它会在**左右各预留一个滚动条宽度（实测 8px）**，并把 padding box 一并缩小。
+ * 而 `.editor-page` 是绝对定位撑满 padding box 的，于是跟着缩进 8px ——
+ * 表现为「侧栏与正文之间、以及正文右侧各露出一条紫色竖缝」（用户反馈），
+ * 且这一条正文比上方 Header 窄了 16px，左右都对不齐。
+ *
+ * 这类页面**自己**在 `.editor-body` 里 `overflow-y:auto` 处理滚动，
+ * Content 这一层永远不会滚动，所以 gutter 纯属浪费 —— 关掉即可两侧归零。
+ *
+ * ⚠️ 其余页面（首页 / 待办 / 设置…）内容直接在 Content 里流动、确实会滚，
+ * 必须保留 gutter，否则「内容变长冒出滚动条时整页横向抖一下」会回来。
+ * 所以这里只放行这两条路径，不要图省事扩大范围。
+ */
+export function isFullBleedPath(pathname: string): boolean {
+  return pathname === "/daily" || pathname.startsWith("/notes/");
+}

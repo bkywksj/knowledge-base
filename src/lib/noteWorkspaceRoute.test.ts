@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isNoteWorkspacePath } from "./noteWorkspaceRoute";
+import { isNoteWorkspacePath, isFullBleedPath } from "./noteWorkspaceRoute";
 
 describe("笔记工作区路由判定：标签栏该不该出现", () => {
   it("笔记列表与编辑器 → 显示", () => {
@@ -45,5 +45,41 @@ describe("笔记工作区路由判定：标签栏该不该出现", () => {
 
   it("白板列表页（无 :id）不算 —— 目前无此路由，防的是将来新增时静默命中", () => {
     expect(isNoteWorkspacePath("/whiteboard")).toBe(false);
+  });
+});
+
+describe("撑满型页面判定：Content 要不要留 scrollbar-gutter", () => {
+  it("日记与笔记编辑器 → 撑满型，关掉 gutter", () => {
+    // 这两处的根节点是 .editor-page（absolute inset:0），自己在 .editor-body 里滚动
+    expect(isFullBleedPath("/daily")).toBe(true);
+    expect(isFullBleedPath("/notes/1")).toBe(true);
+    expect(isFullBleedPath("/notes/12345")).toBe(true);
+  });
+
+  it("🔴 /notes 列表页不算 —— 它内容在 Content 里流动，去掉 gutter 会让整页横向抖", () => {
+    expect(isFullBleedPath("/notes")).toBe(false);
+  });
+
+  it("其余页面一律保留 gutter", () => {
+    for (const p of [
+      "/",
+      "/tasks",
+      "/settings",
+      "/about",
+      "/graph",
+      "/ai",
+      "/tags",
+      "/trash",
+      "/search",
+      "/cards",
+      "/whiteboard/7",
+    ]) {
+      expect(isFullBleedPath(p), `${p} 应保留 gutter`).toBe(false);
+    }
+  });
+
+  it("前缀相近的路径不能误命中", () => {
+    expect(isFullBleedPath("/dailyxxx")).toBe(false);
+    expect(isFullBleedPath("/notesomething")).toBe(false);
   });
 });

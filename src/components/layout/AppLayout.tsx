@@ -24,7 +24,7 @@ import {
 } from "./ActivityBar";
 import { SidePanel, viewHasPanel } from "./SidePanel";
 import { TabBar } from "./TabBar";
-import { isNoteWorkspacePath } from "@/lib/noteWorkspaceRoute";
+import { isNoteWorkspacePath, isFullBleedPath } from "@/lib/noteWorkspaceRoute";
 import { WindowControls } from "./WindowControls";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 import { QuickCaptureAsrModal } from "@/components/QuickCaptureAsrModal";
@@ -786,8 +786,16 @@ export function AppLayout() {
             paddingRight: isPopoutWindow ? 16 : focusMode ? 0 : 12,
             overflow: "auto",
             // 滚动条只占右侧，会让左右视觉留白差一个滚动条宽度；stable 让两侧都预留，
-            // 顺带消掉「内容变长冒出滚动条时整页横向抖一下」
-            scrollbarGutter: "stable both-edges",
+            // 顺带消掉「内容变长冒出滚动条时整页横向抖一下」。
+            //
+            // 🔴 但撑满型页面（日记 / 笔记编辑器，根节点是 absolute inset:0 的
+            // .editor-page）要关掉：gutter 会把 padding box 左右各缩 8px，
+            // 绝对定位的页面跟着缩，于是侧栏与正文之间、正文右侧各露出一条背景色竖缝，
+            // 正文也比上方 Header 窄 16px 对不齐（用户反馈「中间有一条紫色的缝」）。
+            // 这类页面自己在 .editor-body 里滚动，Content 这层从不滚动 → gutter 无用。
+            scrollbarGutter: isFullBleedPath(location.pathname)
+              ? "auto"
+              : "stable both-edges",
           }}
         >
           <Outlet />
