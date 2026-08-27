@@ -20,6 +20,7 @@ import type { ThemeMode } from "@/theme/tokens";
 import { ActivityBar, deriveActiveViewFromPath } from "./ActivityBar";
 import { SidePanel, viewHasPanel } from "./SidePanel";
 import { TabBar } from "./TabBar";
+import { isNoteWorkspacePath } from "@/lib/noteWorkspaceRoute";
 import { WindowControls } from "./WindowControls";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 import { QuickCaptureAsrModal } from "@/components/QuickCaptureAsrModal";
@@ -749,7 +750,11 @@ export function AppLayout() {
           </div>
         </Header>
         )}
-        {!focusMode && <TabBar />}
+        {/* 标签栏只在笔记工作区渲染。刻意做成"不挂载"而非 TabBar 内部 early return：
+            TabBar 注册了全局 Ctrl+W 关闭当前 tab，若在日记 / 待办页仍挂着，按 Ctrl+W
+            会关掉一个屏幕上根本看不见的笔记 tab。不挂载则快捷键随之失效，语义才对。
+            tabs store 不受影响（只是不渲染），切回笔记时标签原样还在。 */}
+        {!focusMode && isNoteWorkspacePath(location.pathname) && <TabBar />}
         <Content
           style={{
             // 🔴 四边一律写 longhand，不要再混用 `padding` shorthand。
