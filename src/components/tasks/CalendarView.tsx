@@ -410,6 +410,13 @@ export function CalendarView({
                     return (
                       <Tooltip
                         key={t.id}
+                        // 浮层禁掉指针事件：antd Tooltip 默认让浮层可交互（鼠标移上去
+                        // 不消失），而它就弹在任务条正上方，实测会盖住任务条本身
+                        // （截图可见浮层矩形与条重叠），挡到点击/拖拽的起手位置。
+                        // 这个浮层纯展示，不需要交互，禁掉无副作用。
+                        // ⚠️ 注意：这**不是**「拖不回未安排栏」的根因 —— 加了之后真机
+                        // 复测仍然拖不回，那个问题另有原因，尚未定位。
+                        styles={{ root: { pointerEvents: "none" } }}
                         title={
                           <div>
                             <div>
