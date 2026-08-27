@@ -4,7 +4,6 @@ import {
   App as AntdApp,
   Button,
   Segmented,
-  Tooltip,
 } from "antd";
 import { ChevronDown, ChevronLeft, ChevronRight, Inbox } from "lucide-react";
 import dayjs, { type Dayjs } from "dayjs";
@@ -407,38 +406,29 @@ export function CalendarView({
                         ? r.from.format("M月D日")
                         : `${r.from.format("M月D日")} – ${r.to.format("M月D日")}`
                       : "";
+                    // 提示用原生 title 属性而不是 <Tooltip> 包裹。
+                    //
+                    // 理由（项目既有规范 + 已知先例，不是本次实测结论）：
+                    //  · ui-frontend 规范写明「新写交互提示直接给元素加 title 即可」，
+                    //    全局 GlobalNativeTooltip 会把它升级成同款深色气泡，且只在元素
+                    //    矩形上渲染受控浮层、**不包裹元素本身**。
+                    //  · antd Tooltip 基于 rc-trigger，会克隆子元素并注入 ref/事件。
+                    //    本项目已有先例：antd Tree 被 Dropdown（同为 rc-trigger）包裹后
+                    //    拖不动，见 bug-detective 技能的「常见问题」表。给 draggable 元素
+                    //    套 rc-trigger 属于已知风险写法，能避则避。
+                    //
+                    // ⚠️ 但这**没有**验证能解决用户反馈的「拖不回未安排栏」：
+                    // 自动化（AgileShot / PowerShell 合成鼠标）都无法可靠模拟
+                    // HTML5 DnD —— 对照实验里连本来成功过的方向也复现不出来，
+                    // 所以那条 BUG 目前仍是未定位状态，需要人工实测。
+                    const tipLines = [
+                      `${t.title}${rangeText ? ` · ${rangeText}` : ""}${isDone ? "（已完成）" : ""}`,
+                      ...taskTimeLines(t).map((l) => `${l.label} ${l.value}`),
+                    ];
                     return (
-                      <Tooltip
-                        key={t.id}
-                        // 浮层禁掉指针事件：antd Tooltip 默认让浮层可交互（鼠标移上去
-                        // 不消失），而它就弹在任务条正上方，实测会盖住任务条本身
-                        // （截图可见浮层矩形与条重叠），挡到点击/拖拽的起手位置。
-                        // 这个浮层纯展示，不需要交互，禁掉无副作用。
-                        // ⚠️ 注意：这**不是**「拖不回未安排栏」的根因 —— 加了之后真机
-                        // 复测仍然拖不回，那个问题另有原因，尚未定位。
-                        styles={{ root: { pointerEvents: "none" } }}
-                        title={
-                          <div>
-                            <div>
-                              {t.title}
-                              {rangeText ? ` · ${rangeText}` : ""}
-                              {isDone ? "（已完成）" : ""}
-                            </div>
-                            {/* 创建 / 完成时间：数据一直都有，只是从没展示过。
-                                放 Tooltip 里是零成本增量 —— 不占日历格子的宝贵空间，
-                                想看时悬停即得。 */}
-                            {taskTimeLines(t).map((line) => (
-                              <div
-                                key={line.label}
-                                style={{ fontSize: 11, opacity: 0.75 }}
-                              >
-                                {line.label} {line.value}
-                              </div>
-                            ))}
-                          </div>
-                        }
-                      >
                         <div
+                          key={t.id}
+                          title={tipLines.join("\n")}
                           draggable={!isDone}
                           onDragStart={
                             isDone
@@ -485,7 +475,6 @@ export function CalendarView({
                           {t.title}
                           {b.continuesRight ? " ▶" : ""}
                         </div>
-                      </Tooltip>
                     );
                   })}
                 </div>
