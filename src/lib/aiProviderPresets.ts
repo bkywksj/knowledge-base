@@ -97,7 +97,10 @@ export const DEFAULT_URLS: Record<string, string> = {
   // 国际
   openai: "https://api.openai.com/v1",
   claude: "https://api.anthropic.com/v1",
-  gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
+  // 🔴 末尾的 # 是刻意的：Gemini 的版本段 v1beta **不在末尾**（末段是 openai），
+  // 后端 build_openai_api_url 的「末段是不是版本段」启发式会判成"没有版本段"而补出
+  // /v1beta/openai/v1/chat/completions → 404。# 显式关掉版本段推断，只拼端点。
+  gemini: "https://generativelanguage.googleapis.com/v1beta/openai#",
   xai: "https://api.x.ai/v1",
   groq: "https://api.groq.com/openai/v1",
   together: "https://api.together.xyz/v1",
