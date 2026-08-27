@@ -6,13 +6,14 @@ import {
   Segmented,
   Tooltip,
 } from "antd";
-import { ChevronLeft, ChevronRight, Inbox } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Inbox } from "lucide-react";
 import dayjs, { type Dayjs } from "dayjs";
 import type { Task, TaskCategory } from "@/types";
 import { isAbandoned } from "@/types";
 import { taskApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import { MAX_LANES, layoutWeek, shiftRangeTo, taskRange } from "@/lib/calendarLayout";
+import { taskTimeLines } from "@/lib/taskTimestamps";
 
 interface Props {
   tasks: Task[];
@@ -28,6 +29,13 @@ interface Props {
 }
 
 const WEEKDAY_LABELS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+
+/**
+ * 「未安排日期」抽屉内容区的最大高度（px）。
+ * 约合两行标签（每行 ~26px + gap 8px），超出后抽屉内部自己滚动，
+ * 不再往上挤占日历网格的高度。
+ */
+const INBOX_MAX_HEIGHT = 76;
 
 /** 构造 42 格（6 周）的月视图 */
 function buildGrid(anchor: Dayjs): Dayjs[] {
@@ -109,6 +117,9 @@ export function CalendarView({
    */
   const [dragging, setDragging] = useState(false);
 
+  /** 「未安排日期」抽屉是否收起。收起后日历能多拿一行高度。 */
+  const [inboxCollapsed, setInboxCollapsed] = useState(false);
+
   // "未安排日期"抽屉只放进行中（已完成且无日期的没意义；放进来还会让抽屉很长）
   const undated = tasks.filter((t) => !t.due_date && t.status === 0);
 
@@ -181,9 +192,14 @@ export function CalendarView({
 
   async function handleDropOnInbox(e: React.DragEvent) {
     e.preventDefault();
+    // 与 handleDropOnDate 对称：drop 落定即解除条带层的 pointer-events:none。
+    // 少了这一句，若 dragend 因故没触发（拖到窗口外松手等），条带层会一直
+    // 处于不可点状态，表现为"日历上的任务突然点不动了"。
+    setDragging(false);
     const id = Number(e.dataTransfer.getData("text/plain"));
     if (!id) return;
     const task = tasks.find((t) => t.id === id);
+    // 已经是无日期的任务再拖回来 = 空操作，直接返回（不是错误）
     if (!task || !task.due_date) return;
     try {
       // 连区间左端一起清掉，否则任务会从日历上消失却仍在甘特图里挂着一条起始日
@@ -259,16 +275,22 @@ export function CalendarView({
         </div>
       </div>
 
-      {/* 日历网格 */}
+      {/* 日历网格
+          🔴 必须 overflow-y:auto 而不是 hidden。每周行有 min-h-[104px]，6 周 = 624px；
+          窗口不够高（或下方"未安排日期"抽屉变高）时 hidden 会**静默裁掉**底部整周 ——
+          用户反馈的"日历无法显示当月全部日期"（8 月只显示到 23 号）就是这么来的。
+          宁可出现滚动条，也不能让日期凭空消失。 */}
       <div
-        className="rounded-b-lg border border-t-0 overflow-hidden flex-1 flex flex-col min-h-0 kb-surface"
+        className="rounded-b-lg border border-t-0 overflow-x-hidden overflow-y-auto flex-1 flex flex-col min-h-0 kb-surface"
         style={{
           background: token.colorBgContainer,
           borderColor: token.colorBorderSecondary,
         }}
       >
+        {/* 星期表头：sticky + flex-shrink-0 —— 网格改成可滚动后，表头必须钉住，
+            否则往下滚就看不到"周一…周日"了；不加 shrink-0 还会在 flex column 里被压扁 */}
         <div
-          className="grid grid-cols-7 text-xs font-semibold"
+          className="grid grid-cols-7 text-xs font-semibold flex-shrink-0 sticky top-0 z-10"
           style={{
             background: token.colorFillSecondary,
             color: token.colorTextSecondary,
@@ -388,9 +410,26 @@ export function CalendarView({
                     return (
                       <Tooltip
                         key={t.id}
-                        title={`${t.title}${rangeText ? ` · ${rangeText}` : ""}${
-                          isDone ? "（已完成）" : ""
-                        }`}
+                        title={
+                          <div>
+                            <div>
+                              {t.title}
+                              {rangeText ? ` · ${rangeText}` : ""}
+                              {isDone ? "（已完成）" : ""}
+                            </div>
+                            {/* 创建 / 完成时间：数据一直都有，只是从没展示过。
+                                放 Tooltip 里是零成本增量 —— 不占日历格子的宝贵空间，
+                                想看时悬停即得。 */}
+                            {taskTimeLines(t).map((line) => (
+                              <div
+                                key={line.label}
+                                style={{ fontSize: 11, opacity: 0.75 }}
+                              >
+                                {line.label} {line.value}
+                              </div>
+                            ))}
+                          </div>
+                        }
                       >
                         <div
                           draggable={!isDone}
@@ -449,37 +488,52 @@ export function CalendarView({
         </div>
       </div>
 
-      {/* 未安排日期 抽屉 */}
+      {/* 未安排日期 抽屉
+          🔴 flex-shrink-0 + 内部限高：抽屉原来既不禁止收缩也没有高度上限，任务一多
+          flex-wrap 就换行把自己撑高，反过来挤掉上方日历的可用高度（用户反馈的
+          "未安排日期栏超过两栏后日历显示不全"）。现在固定不参与压缩，内容超过约两行
+          就自己滚动，日历高度不再受它影响。 */}
       <div
         onDragOver={(e) => {
           e.preventDefault();
           e.dataTransfer.dropEffect = "move";
         }}
         onDrop={handleDropOnInbox}
-        className="rounded-lg border p-3 kb-surface"
+        className="rounded-lg border p-3 kb-surface flex-shrink-0"
         style={{
           background: token.colorBgContainer,
           borderColor: token.colorBorderSecondary,
         }}
       >
         <div className="flex items-center justify-between mb-2">
-          <div
-            className="text-xs font-semibold flex items-center gap-1"
+          <button
+            type="button"
+            onClick={() => setInboxCollapsed((v) => !v)}
+            className="text-xs font-semibold flex items-center gap-1 border-0 bg-transparent cursor-pointer p-0"
             style={{ color: token.colorTextSecondary }}
+            title={inboxCollapsed ? "展开未安排任务" : "收起未安排任务（腾出日历高度）"}
           >
+            {inboxCollapsed ? (
+              <ChevronRight size={13} />
+            ) : (
+              <ChevronDown size={13} />
+            )}
             <Inbox size={13} />
             未安排日期 · {undated.length}
-          </div>
+          </button>
           <span className="text-[10px]" style={{ color: token.colorTextTertiary }}>
             拖日历里的任务到这里清空日期；或把这里的任务拖到某一天
           </span>
         </div>
-        {undated.length === 0 ? (
+        {inboxCollapsed ? null : undated.length === 0 ? (
           <div className="text-[11px]" style={{ color: token.colorTextTertiary }}>
             暂无
           </div>
         ) : (
-          <div className="flex flex-wrap gap-2">
+          <div
+            className="flex flex-wrap gap-2 overflow-y-auto"
+            style={{ maxHeight: INBOX_MAX_HEIGHT }}
+          >
             {undated.map((t) => (
               <div
                 key={t.id}
@@ -487,7 +541,13 @@ export function CalendarView({
                 onDragStart={(e) => {
                   e.dataTransfer.effectAllowed = "move";
                   e.dataTransfer.setData("text/plain", String(t.id));
+                  // 🔴 必须与日历里任务条的 onDragStart 保持一致地置 dragging。
+                  // 漏掉它 → 条带层仍是 pointer-events:auto → 挡住下面日期格的
+                  // dragover/drop → 从这里拖出的任务**只能落到空白日期**，落到
+                  // 已有任务条的那天就没反应（用户反馈的"拖不动/时灵时不灵"）。
+                  setDragging(true);
                 }}
+                onDragEnd={() => setDragging(false)}
                 onClick={() => onEdit(t)}
                 className="px-2 py-1 rounded border text-[11px] cursor-pointer transition hover:opacity-80"
                 style={{
