@@ -207,8 +207,9 @@ tauri/
 | `brainstorm` | 头脑风暴、方案、怎么设计、有什么办法、创意、讨论、探索、建议、怎么做、如何实现 |
 | `bug-detective` | Bug、报错、不工作、调试、排查、为什么、出问题、失败、不生效、无效、找不到原因、定位问题 |
 | `code-patterns` | 设计模式、编码规范、最佳实践、代码风格、重构 |
-| `collaborating-with-codex` | Codex、协作、多模型、原型、Diff、算法分析、代码审查、codex协同 |
-| `collaborating-with-gemini` | Gemini、协作、多模型、前端原型、UI设计、CSS、样式、gemini协同 |
+| `collaborating-with-antigravity` | Antigravity、反重力、agy、agy协同、agy CLI、委托给 Antigravity（**仅限用户点名 Antigravity**；未点名的 多模型 / 交叉验证 / 结构化输出**不要**激活本技能） |
+| `collaborating-with-codex` | Codex、codex协同、codex CLI、委托给 Codex、codex_bridge（**仅限用户点名 Codex**；未点名的 原型 / 算法分析 / 代码审查 / Diff 生成**不要**激活本技能） |
+| `collaborating-with-gemini` | Gemini、gemini协同、gemini CLI、委托给 Gemini、gemini_bridge（**仅限用户点名 Gemini**；未点名的 UI设计 / 前端原型 / CSS / 代码审查**不要**激活本技能） |
 | `database-ops` | 数据库、SQLite、SQL、持久化、存储、表、查询、CRUD、数据 |
 | `docs-management` | 文档站点、VitePress、docs 站点、用户手册、更新文档、文档同步、.docs-meta.json、website 目录、文档仓库 |
 | `error-handler` | 异常、错误处理、Error、Result、try-catch、panic、崩溃、错误边界 |

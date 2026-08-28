@@ -1,22 +1,25 @@
 ---
 name: collaborating-with-gemini
 description: |
-  与 Google Gemini CLI 协同开发。将编码任务委托给 Gemini 进行前端原型、UI设计和代码审查。
+  当用户明确点名要用 Google Gemini CLI 协同时使用此 Skill，把指定任务委托给 Gemini 执行并整合结果。
 
   触发场景：
-  - 需要前端/UI/样式原型设计
-  - 需要 CSS/React/Vue 组件设计
-  - 需要代码审查和 Bug 分析
-  - 用户明确要求使用 Gemini 协作
-  - 复杂前端逻辑的原型设计
+  - 用户明确说"用 Gemini / 让 gemini 看看 / gemini 协同"
+  - 用户要求把某个具体任务委托给 Gemini CLI 执行
+  - 用户要求多模型交叉验证，并点名 Gemini 作为其中一方
+  - 用户要求接续之前的 Gemini 会话（SESSION_ID / latest）
 
-  触发词：Gemini、协作、多模型、前端原型、UI设计、CSS、样式、gemini协同
+  触发词：Gemini、gemini协同、gemini CLI、委托给 Gemini、gemini_bridge
 
   前置要求：
   - 已安装 Gemini CLI (npm install -g @google/gemini-cli)
   - 已配置 Google API Key (GEMINI_API_KEY 环境变量或 gemini auth login)
 
-  注意：Gemini 对后端逻辑理解有缺陷，后端任务优先使用 Codex。
+  🔴 不适用场景（未点名 Gemini 一律不激活本技能）：
+  - UI / UX / 前端原型 / CSS / 样式设计 → 走 ui-frontend、theme-system，
+    或用户指定的工具（如 AI 工作站）；不要因为出现"UI 设计""原型"就调 Gemini
+  - 代码审查 / Bug 分析 → 走 bug-detective、code-patterns
+  - 后端逻辑任务 → Gemini 理解有缺陷，优先使用 Codex
 ---
 
 # 与 Gemini CLI 协同开发

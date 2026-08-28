@@ -65,8 +65,9 @@ const instructions = `## 强制技能激活流程（必须执行）
 - code-patterns: 规范/禁止/命名/编码规范/Rust规范/TypeScript规范
 - tech-decision: 技术选型/选择方案/框架对比/库对比/Rust crate/npm包
 - bug-detective: Bug排查/报错/异常/错误/panic/调试/排错
-- collaborating-with-codex: Codex/CLI协作/代码审查/多AI
-- collaborating-with-gemini: Gemini/CLI协作/多AI协作
+- collaborating-with-antigravity: 仅当用户点名"Antigravity/反重力/agy"时 —— agy协同/委托给Antigravity/agy CLI（未点名的 多模型、交叉验证、结构化输出不算）
+- collaborating-with-codex: 仅当用户点名"Codex"时 ——codex协同/委托给Codex/codex CLI（未点名的 原型、算法分析、代码审查不算）
+- collaborating-with-gemini: 仅当用户点名"Gemini"时 —— gemini协同/委托给Gemini/gemini CLI（未点名的 UI设计、前端原型、CSS、代码审查不算）
 
 **L3 深度定制：**
 - project-navigator: 项目结构/文件在哪/定位/代码位置/目录结构

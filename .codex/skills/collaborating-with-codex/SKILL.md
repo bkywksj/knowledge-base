@@ -1,20 +1,24 @@
 ---
 name: collaborating-with-codex
 description: |
-  与 OpenAI Codex CLI 协同开发。将编码任务委托给 Codex 进行原型开发、调试分析和代码审查。
+  当用户明确点名要用 OpenAI Codex CLI 协同时使用此 Skill，把指定任务委托给 Codex 执行并整合结果。
 
   触发场景：
-  - 需要算法实现或复杂逻辑分析
-  - 需要代码审查和 Bug 分析
-  - 需要生成 Unified Diff 补丁
-  - 用户明确要求使用 Codex 协作
-  - 复杂后端逻辑的原型设计
+  - 用户明确说"用 Codex / 让 codex 看看 / codex 协同"
+  - 用户要求把某个具体任务委托给 Codex CLI 执行
+  - 用户要求多模型交叉验证，并点名 Codex 作为其中一方
+  - 用户要求接续之前的 Codex 会话（SESSION_ID / latest）
 
-  触发词：Codex、协作、多模型、原型、Diff、算法分析、代码审查、codex协同
+  触发词：Codex、codex协同、codex CLI、委托给 Codex、codex_bridge
 
   前置要求：
   - 已安装 Codex CLI (npm install -g @openai/codex)
   - 已配置 OpenAI API Key
+
+  🔴 不适用场景（未点名 Codex 一律不激活本技能）：
+  - 算法实现 / 复杂逻辑 / 后端原型 → 直接自己写，走 rust-fundamentals、api-development
+  - 代码审查 / Bug 分析 → 走 bug-detective、code-patterns
+  - 生成 Diff 补丁 → 直接用 Edit/Write 改文件；不要因为出现"原型""审查"就调 Codex
 ---
 
 # 与 Codex CLI 协同开发
