@@ -22,6 +22,8 @@ import { history } from "@tiptap/pm/history";
 import { getHTMLFromFragment, mergeAttributes } from "@tiptap/core";
 import type { JSONContent } from "@tiptap/core";
 import { isWindowsPathText } from "@/lib/windowsPath";
+import { looksLikeCode } from "@/lib/pasteCodeHeuristic";
+import { findInlineMathRanges } from "@/lib/inlineMathRanges";
 import { TextAlign } from "@tiptap/extension-text-align";
 import { Color } from "@tiptap/extension-color";
 import Superscript from "@tiptap/extension-superscript";
@@ -267,53 +269,6 @@ import "tippy.js/dist/tippy.css";
 const lowlight = createLowlight(common);
 
 /**
- * 启发式判断一段"纯文本"像不像代码，用于粘贴时决定是否包成代码块。
- *
- * 目标是**高精确率**：宁可漏判（当普通文本走默认粘贴），也不要把用户想要的 Markdown 正文
- * 误判成代码块。判定顺序：
- *  1. 必须多行——单行一律不处理。
- *  2. 强代码信号（缩进结构 / 代码 token 行占比高）命中 → 直接判是。
- *     这一步要**先于** markdown 排除：C 注释横幅 ` * xxx` 会被 CommonMark 误当无序列表项，
- *     不能因这种误判把明显是代码的内容放走。
- *  3. borderline：若整体更像 markdown 文档（大量 #/>/表格/有序列表/围栏行）→ 判否，尊重
- *     markdown 粘贴；否则按较弱的缩进/token 信号收尾判定。
- */
-function looksLikeCode(text: string): boolean {
-  const lines = text.split(/\r?\n/);
-  const nonEmpty = lines.filter((l) => l.trim().length > 0);
-  if (lines.length < 2 || nonEmpty.length < 2) return false;
-
-  // 缩进行：制表符 或 ≥2 空格 起头且有实际内容
-  const indented = nonEmpty.filter((l) => /^(\t| {2,})\S/.test(l)).length;
-  // 代码符号：行尾分号 / 花括号、C 注释 /* */ //
-  const codeSymbol = /[;{}]\s*$|[{}]|\/\*|\*\/|\/\//;
-  // 代码关键字 / 运算符
-  const codeKeyword =
-    /=>|->|::|==|!=|>=|<=|&&|\|\||#include|#define|\bfunction\b|\breturn\b|\bdef\s|\bclass\s|\bconst\s|\blet\s|\bvar\s|\bimport\s|\bpublic\b|\bprivate\b|\bvoid\b|\bif\s*\(|\bfor\s*\(|\bwhile\s*\(|\bswitch\s*\(/;
-  const tokenLines = nonEmpty.filter(
-    (l) => codeSymbol.test(l) || codeKeyword.test(l),
-  ).length;
-  const indentRatio = indented / nonEmpty.length;
-  const tokenRatio = tokenLines / nonEmpty.length;
-
-  // 强代码：缩进结构明显 或 代码符号/关键字密集
-  if (indentRatio >= 0.4 || tokenRatio >= 0.5) return true;
-
-  // markdown 文档特征（标题/引用/表格/有序列表/围栏）。故意不含无序列表 `* ` —— 会与
-  // C 注释横幅 ` * ` 混淆；真无序列表本就缺代码信号，会在下面自然判否。
-  const mdDoc = nonEmpty.filter(
-    (l) => /^\s{0,3}(#{1,6}\s|>\s|\d+\.\s|\|)/.test(l) || /^\s*```/.test(l),
-  ).length;
-  if (mdDoc / nonEmpty.length >= 0.3) return false;
-
-  return (
-    indentRatio >= 0.25 ||
-    tokenRatio >= 0.35 ||
-    (indented >= 2 && tokenLines >= 2)
-  );
-}
-
-/**
  * 用 lowlight.highlightAuto 猜代码语言；relevance 太低时返回 null（交给代码块 NodeView
  * 的防抖自动识别去"建议"，避免写死一个错误语言导致高亮更乱）。
  */
@@ -354,6 +309,14 @@ function migrateOpenMathStrings(editor: import("@tiptap/react").Editor): void {
   const inlineMath = schema.nodes.inlineMath;
   if (!blockMath && !inlineMath) return;
 
+  /**
+   * 读一个 textblock 的文本。**不能**用 `node.textContent`：那里 hardBreak 贡献空串，
+   * 多行内容会被拼成一行（`$..$` 跨行乱配对），且字符下标与 doc 偏移错位 1/每个 leaf。
+   * 详见 lib/inlineMathRanges.ts 的说明。
+   */
+  const blockText = (node: import("@tiptap/pm/model").Node): string =>
+    node.textBetween(0, node.content.size, undefined, () => "\n");
+
   const tr = editor.state.tr;
   type Replace = { from: number; to: number; latex: string; kind: "block" | "inline" };
   const replaces: Replace[] = [];
@@ -375,7 +338,7 @@ function migrateOpenMathStrings(editor: import("@tiptap/react").Editor): void {
       if (!c.node.isTextblock) continue;
       // 代码块整段都是字面量：`$$` 在 shell 里是当前进程 PID，不是块级公式定界符
       if (c.node.type.spec.code) continue;
-      const t = c.node.textContent.trim();
+      const t = blockText(c.node).trim();
       if (!t.startsWith("$$")) continue;
 
       // 单段就闭合（如 `$$expr$$`）
@@ -404,7 +367,7 @@ function migrateOpenMathStrings(editor: import("@tiptap/react").Editor): void {
         // 同上：代码块不能充当块级公式的闭合段，否则 `echo $$` 这种收尾的代码块
         // 会连同上文一起被吞进 blockMath
         if (next.node.type.spec.code) continue;
-        const nt = next.node.textContent.trim();
+        const nt = blockText(next.node).trim();
         if (nt.endsWith("$$")) {
           // 闭合段
           const beforeClose = nt.replace(/\$\$$/, "");
@@ -470,30 +433,23 @@ function migrateOpenMathStrings(editor: import("@tiptap/react").Editor): void {
     if (node.type.spec.code) return false;
     if (!node.isTextblock) return;
     if (isInBlockedRange(pos)) return;
-    const text = node.textContent;
-    if (!text || !text.includes("$")) return;
-
     if (!inlineMath) return;
 
-    // 规则 2：行内公式 — `$..$`，避开 `$N` 数字（货币）和 `$$` 双号
-    // 改写说明：原写法用了 negative lookbehind `(?<!\$)`，老 macOS / Linux
-    // webkit2gtk < 2.40 / 老 Edge WebView2 不支持 ES2018 lookbehind，会让
-    // `new RegExp` 直接抛 "invalid group specifier name" 致编辑器全屏崩。
-    // 改用 `(^|[^$])` 显式捕获前导字符达到等价语义：m[1] 是前导（行首
-    // 空串或一个非 $ 字符），m[2] 才是 LaTeX 内容；真正 $...$ 在文本里的
-    // 起点要把前导长度加进去。
-    const inlineRe = /(^|[^$])\$(?!\$)([^$\n]+?)\$(?!\$|\d)/g;
+    // 规则 2：行内公式 — `$..$`，避开 `$N` 数字（货币）和 `$$` 双号。
+    // 🔴 blockText 而非 textContent：hardBreak 必须贡献一个 "\n"，否则多行段落被拼成
+    // 一行 → `$..$` 跨行配对吞掉整行正文，且字符下标与 doc 偏移错位。详见
+    // lib/inlineMathRanges.ts（那里有终端日志被吞的实例）。
+    const text = blockText(node);
+    if (!text || !text.includes("$")) return;
+
+    // 每个 inline leaf 在 text 里占 1 字符、在 doc 里也占 1 位，故字符下标 + textStartInDoc
+    // 就是 doc 位置，无需再做映射
     const textStartInDoc = pos + 1;
-    let m: RegExpExecArray | null;
-    while ((m = inlineRe.exec(text)) !== null) {
-      const leading = m[1];
-      const latex = m[2];
-      const dollarStart = m.index + leading.length;
-      const dollarLen = latex.length + 2;
-      const from = textStartInDoc + dollarStart;
-      const to = from + dollarLen;
+    for (const r of findInlineMathRanges(text)) {
+      const from = textStartInDoc + r.start;
+      const to = textStartInDoc + r.end;
       if (hitsCodeMark(from, to)) continue;
-      replaces.push({ from, to, latex, kind: "inline" });
+      replaces.push({ from, to, latex: r.latex, kind: "inline" });
     }
   });
 
@@ -1949,6 +1905,8 @@ export function TiptapEditor({
         // 场景 F：纯文本代码 → 包成代码块，绕开 markdown 往返。
         // 背景：笔记以 Markdown 存储，纯文本代码当普通文本粘贴时，4 空格缩进会被 CommonMark
         // 当成缩进代码块、行首 `*` 当成列表 —— 保存往返后一段被拆成"代码+文本+代码"。
+        // 终端日志同理：`*x*` 变斜体、`\---/` 的反斜杠被当转义吃掉、ASCII 对齐的连续
+        // 空格渲染时折叠，粘完当场就坏（判定细节见 lib/pasteCodeHeuristic.ts）。
         // 触发条件（保守，防误伤）：设置开启 + 剪贴板无富文本 HTML（有 HTML 说明是富文本粘贴，
         // 尊重原格式）+ 不是 markdown 图片文本 + 启发式判定像代码 +
         // 用户没有显式要求纯文本粘贴（显式意图永远压过启发式猜测，见 explicitPlainPaste 注释）。
