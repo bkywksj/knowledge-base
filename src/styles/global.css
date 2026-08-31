@@ -1162,7 +1162,10 @@ body,
   /* 代码块字号：用户在设置里调过则读 --editor-code-font-size（绝对 px，全文统一生效）；
      未设置时回退 0.9em（相对正文，老行为）。仿语雀「一处设置全文代码块字号」。 */
   font-size: var(--editor-code-font-size, 0.9em);
-  line-height: 1.6;
+  /* 代码行高的**唯一真源**：行号槽（.code-block-line-gutter）要按它算每行盒高，
+     两边写死同一个数字迟早对不上。改这里即可，gutter 会跟着走。 */
+  --code-line-height: 1.6;
+  line-height: var(--code-line-height);
 }
 .tiptap pre code {
   background: transparent;
@@ -1902,17 +1905,24 @@ body,
   text-align: right;
   color: var(--ant-color-text-tertiary, #999);
   font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
-  font-size: 0.9em;
-  line-height: 1.6;
+  /* 🔴 行号字号相对**代码字号**的缩放。gutter 是 <pre> 的子元素（见
+     CodeBlockEnhanced.tsx 的 CodeLineGutter 挂载位置），而 pre 自己已经是
+     0.9em 了，所以这里的 em 是叠在它上面**再乘一次**，不是相对正文。
+     行盒高度必须把这个系数除回去，否则每行差 10%、几十行后行号与代码整整
+     错开好几行（实拍：28 行代码对上了 31 个行号）。 */
+  --code-gutter-scale: 0.9;
+  font-size: calc(1em * var(--code-gutter-scale));
+  line-height: calc(var(--code-line-height, 1.6) / var(--code-gutter-scale));
   user-select: none;
   pointer-events: none;
   border-right: 1px solid color-mix(in srgb, var(--ant-color-text, #000) 6%, transparent);
   white-space: pre;
 }
 .code-block-line-gutter > div {
-  /* 跟 code 行高对齐：code 是 font-size:0.9em + line-height:1.6 → 实际 1.44em
-     gutter 自身也是 0.9em 字号 + 1.6 行高，所以 1.6em 跟 code 行高一致 */
-  height: 1.6em;
+  /* 每行盒高必须等于代码行盒高 = 代码字号 × --code-line-height。
+     此处 1em = gutter 自身字号 = 代码字号 × --code-gutter-scale，
+     所以要除以 scale 才抵消掉上面那次缩放。 */
+  height: calc(1em * var(--code-line-height, 1.6) / var(--code-gutter-scale));
 }
 
 /* 自动换行模式 */
