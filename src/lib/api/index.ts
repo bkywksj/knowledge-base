@@ -319,6 +319,9 @@ export const noteApi = {
   /** T-014: 网页剪藏 — 把 URL 抓成 markdown 笔记；返回新建笔记 */
   clipUrl: (url: string, folderId?: number | null) =>
     invoke<Note>("clip_url_to_note", { url, folderId: folderId ?? null }),
+  /** 剪藏网页并返回可插入编辑器的 HTML（不建笔记）——编辑器工具栏「插入到当前笔记」用 */
+  clipUrlToHtml: (url: string, noteId: number) =>
+    invoke<string>("clip_url_to_html", { url, noteId }),
   /** 把指定笔记弹到独立 OS 窗口（双显示器对照 / 主副屏分屏用） */
   openInNewWindow: (id: number) =>
     invoke<void>("open_note_in_new_window", { noteId: id }),

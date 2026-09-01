@@ -1301,6 +1301,7 @@ pub fn run() {
             commands::app_lock::app_lock_set_auto_minutes,
             // T-014 网页剪藏
             commands::notes::clip_url_to_note,
+            commands::notes::clip_url_to_html,
             // 多窗口 pop-out（笔记对照 / 双显示器分屏）
             #[cfg(desktop)]
             commands::notes::open_note_in_new_window,

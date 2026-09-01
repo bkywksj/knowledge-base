@@ -26,6 +26,7 @@ import {
   Sigma,
   Calculator,
   Minus,
+  Scissors,
   Undo2,
   Redo2,
   Link as LinkIcon,
@@ -55,7 +56,8 @@ import {
 } from "@/lib/editorCleanup";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toKbAsset, toKbAssetHref } from "@/lib/assetUrl";
-import { attachmentApi, imageApi, systemApi, videoApi } from "@/lib/api";
+import { attachmentApi, imageApi, noteApi, systemApi, videoApi } from "@/lib/api";
+import { extractFirstUrl } from "@/lib/extractUrl";
 import {
   EDITOR_FONT_LABELS,
   EDITOR_FONT_STACKS,
@@ -230,6 +232,9 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
   /** 嵌入网络视频弹窗：粘贴 B站/YouTube/腾讯/优酷链接 → iframe 节点 */
   const [embedModalOpen, setEmbedModalOpen] = useState(false);
   const [embedUrlInput, setEmbedUrlInput] = useState("");
+  const [clipModalOpen, setClipModalOpen] = useState(false);
+  const [clipUrlInput, setClipUrlInput] = useState("");
+  const [clipping, setClipping] = useState(false);
   /** 「字体」下拉的系统字体列表（模块级单飞缓存，多个编辑器实例只枚举一次） */
   const [systemFonts, setSystemFonts] = useState<string[]>([]);
   useEffect(() => {
@@ -354,6 +359,49 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
       } catch (e) {
         message.error(`图片插入失败: ${e}`);
       }
+    }
+  }
+
+  /**
+   * 剪藏网页正文并插入到光标处（不新建笔记——那是 NewNoteButton 的职责）。
+   *
+   * 与 insertImage 同款 noteId 兜底：正文图片按 note_id 分目录落盘，必须先有 id，
+   * 日记等未落库的笔记走 ensureNoteId 按需建档。
+   */
+  async function submitClip() {
+    // 允许粘贴「标题 - 站点 - 作者 https://...」整段分享文本，自动捞出链接
+    const target = extractFirstUrl(clipUrlInput.trim());
+    if (!target) {
+      message.warning("没找到链接，请粘贴以 http:// 或 https:// 开头的网址");
+      return;
+    }
+
+    let effectiveNoteId = noteId;
+    if (!effectiveNoteId && ensureNoteId) {
+      try {
+        effectiveNoteId = await ensureNoteId();
+      } catch (e) {
+        message.error(`剪藏失败: ${e}`);
+        return;
+      }
+    }
+    if (!effectiveNoteId) {
+      message.warning("请先保存笔记后再剪藏网页");
+      return;
+    }
+
+    setClipping(true);
+    try {
+      const html = await noteApi.clipUrlToHtml(target, effectiveNoteId);
+      editor.chain().focus().insertContent(html).run();
+      message.success("已插入网页正文");
+      setClipModalOpen(false);
+      setClipUrlInput("");
+    } catch (e) {
+      // 不关弹窗：URL 还在输入框里，用户可直接重试（失败多是限流/需登录/网络抖动）
+      message.error(`剪藏失败: ${e}`);
+    } finally {
+      setClipping(false);
     }
   }
 
@@ -1142,6 +1190,14 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
         },
       },
       {
+        icon: <Scissors size={15} />,
+        title: "剪藏网页正文到这里（可直接粘贴带标题的整段分享文本）",
+        action: () => {
+          setClipUrlInput("");
+          setClipModalOpen(true);
+        },
+      },
+      {
         icon: <MapPin size={15} />,
         title: "插入视频时间戳",
         action: openTimestampModal,
@@ -1457,6 +1513,65 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
             <br />
             提示：嵌入视频依赖联网播放，离线时无法观看；导出 HTML
             会保留嵌入，导出 Markdown 也可保留 iframe 标签。
+          </div>
+        </div>
+      </Modal>
+
+      {/* 剪藏网页弹窗：抓正文 → 插入光标处（与 NewNoteButton 的「新建一篇」区分） */}
+      <Modal
+        title="剪藏网页到当前笔记"
+        open={clipModalOpen}
+        onOk={submitClip}
+        onCancel={() => {
+          if (clipping) return;
+          setClipModalOpen(false);
+        }}
+        okText={clipping ? "抓取中…" : "插入"}
+        cancelText="取消"
+        confirmLoading={clipping}
+        okButtonProps={{ disabled: !extractFirstUrl(clipUrlInput.trim()) }}
+        width={520}
+        destroyOnHidden
+      >
+        <div className="space-y-2">
+          <Input.TextArea
+            value={clipUrlInput}
+            onChange={(e) => setClipUrlInput(e.target.value)}
+            placeholder="粘贴 URL，或直接粘贴带标题的整段分享文本"
+            autoSize={{ minRows: 2, maxRows: 4 }}
+            disabled={clipping}
+            autoFocus
+            onPressEnter={(e) => {
+              // Ctrl/⌘+Enter 提交；普通回车留给换行（长 URL / 多行分享文本）
+              if (e.metaKey || e.ctrlKey) {
+                e.preventDefault();
+                void submitClip();
+              }
+            }}
+          />
+          {/* 粘了整段文本时回显识别结果，让用户提交前确认抓的是不是那条链接 */}
+          {(() => {
+            const detected = extractFirstUrl(clipUrlInput.trim());
+            return detected && detected !== clipUrlInput.trim() ? (
+              <div
+                className="text-xs"
+                style={{ color: "var(--ant-color-text-secondary)" }}
+              >
+                将剪藏：<code>{detected}</code>
+              </div>
+            ) : null;
+          })()}
+          <div
+            className="text-xs"
+            style={{
+              color: "var(--ant-color-text-quaternary)",
+              lineHeight: 1.6,
+            }}
+          >
+            正文会插入到光标处，图片一并下载到本地（离线可看）。
+            <br />
+            想把网页存成独立一篇笔记，请用「新建笔记 ▾ → 剪藏网页」。
+            快捷键：Ctrl/⌘ + Enter 提交。
           </div>
         </div>
       </Modal>

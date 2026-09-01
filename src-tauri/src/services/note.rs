@@ -384,4 +384,59 @@ impl NoteService {
 
         Ok(note)
     }
+
+    /// 剪藏网页并返回**可直接插入编辑器的 HTML**，不新建笔记——供编辑器工具栏用。
+    ///
+    /// 与 [`Self::clip_url`] 的区别只在落点：那个建新笔记，这个把正文插进已有笔记。
+    /// 因此图片本地化要传**当前笔记的 id**（`rewrite_external_images` 按 note_id 分目录），
+    /// 图片才会跟着宿主笔记走、随其一起被同步和清理。
+    ///
+    /// 返回 HTML 而非 markdown：Tiptap 的 `insertContent` 吃 HTML，
+    /// 在这里用现成的 `markdown_to_html` 转好，前端就不必再引一个 markdown 解析器。
+    /// 内容带 `> 🌐 来源：...` 头，与新建笔记的正文格式保持一致。
+    pub async fn clip_url_to_html(
+        db: &Database,
+        url: &str,
+        note_id: i64,
+        app_data_dir: &std::path::Path,
+    ) -> Result<String, AppError> {
+        let jina_key = db
+            .get_config(crate::services::web_clip::JINA_KEY_CONFIG)
+            .unwrap_or(None);
+
+        let clipped = crate::services::web_clip::fetch_page(url, jina_key.as_deref()).await?;
+
+        let body = format!(
+            "> 🌐 来源：[{src}]({src})\n\n{content}",
+            src = clipped.source_url,
+            content = clipped.markdown,
+        );
+
+        // 图片本地化失败不阻断插入：正文保留原始外链，用户仍拿得到内容（与 clip_url 同策略）
+        match crate::services::import_attachments::rewrite_external_images(
+            &body,
+            note_id,
+            app_data_dir,
+        )
+        .await
+        {
+            Ok(rewrite) => {
+                if !rewrite.missing.is_empty() {
+                    log::warn!(
+                        "[web-clip] 插入笔记 {} 时有 {} 张图片下载失败，保留原始外链",
+                        note_id,
+                        rewrite.missing.len()
+                    );
+                }
+                if rewrite.copied > 0 {
+                    return Ok(crate::services::markdown::markdown_to_html(&rewrite.new_body));
+                }
+            }
+            Err(e) => {
+                log::warn!("[web-clip] 插入笔记 {} 时图片本地化失败：{}", note_id, e);
+            }
+        }
+
+        Ok(crate::services::markdown::markdown_to_html(&body))
+    }
 }

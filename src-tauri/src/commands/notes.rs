@@ -218,6 +218,21 @@ pub async fn clip_url_to_note(
         .map_err(|e| e.to_string())
 }
 
+/// 剪藏网页并返回可插入编辑器的 HTML（不建笔记）——编辑器工具栏「插入到当前笔记」用
+///
+/// `note_id` 是插入目标笔记，用于把正文图片落到该笔记的附件目录下。
+#[tauri::command]
+pub async fn clip_url_to_html(
+    state: tauri::State<'_, AppState>,
+    url: String,
+    note_id: i64,
+) -> Result<String, String> {
+    let app_data_dir = state.data_dir.clone();
+    NoteService::clip_url_to_html(&state.db, &url, note_id, &app_data_dir)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// 把指定笔记弹到独立 OS 窗口（双显示器对照 / 主副屏分屏用）
 ///
 /// 同 note_id 已存在 pop-out 窗口则直接前置，避免重复弹。
