@@ -3294,6 +3294,7 @@ dependencies = [
  "chrono",
  "csv",
  "docx-rs",
+ "dom_query 0.28.0",
  "dom_smoothie",
  "encoding_rs",
  "font-enumeration",

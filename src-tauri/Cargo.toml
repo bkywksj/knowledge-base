@@ -103,6 +103,11 @@ rmcp = { version = "1.5", features = ["client"] }
 # 且基于 html5ever/dom_query 纯 Rust 实现、无 C 依赖，能编进 Android NDK target。
 # 提取出的正文 HTML 再交给已有的 html2md 转 markdown，不引入第二套转换器。
 dom_smoothie = "0.18"
+# 剪藏预裁剪：readability 之前先整块删掉导航/推荐/播放器等噪音容器。
+# 版本与 dom_smoothie 0.18 内部所用的一致，共用同一份编译产物，不新增依赖体积。
+# 用它而非再写一套正则：噪音是**嵌套容器**，正则删不干净（删了开标签留一堆孤儿子节点），
+# 而 dom_query 走真实 DOM，remove() 会把整棵子树摘掉。
+dom_query = "0.28"
 # Excel / ODS 解析、Word 导出、txt 编码识别 — 双端通用纯 Rust 工具
 # 这些在原文件上面已声明 calamine / docx-rs / chardetng / encoding_rs 等，保持位置不变
 

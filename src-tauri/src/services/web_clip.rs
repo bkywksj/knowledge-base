@@ -11,9 +11,13 @@
 //! 反而成了唯一的失败点。故 v2 改为：
 //!
 //! ```text
-//! reqwest（rustls，已有）直连原页 → 编码嗅探 → 懒加载图片修正
+//! reqwest（rustls，已有）直连原页 → 编码嗅探 → 懒加载图片修正 → 噪音容器预裁剪
 //!   → dom_smoothie(readability) 提正文 → html2md 转 markdown
 //! ```
+//!
+//! 其中「噪音容器预裁剪」是后加的一步：readability 按文字密度打分，对图多字少的页面
+//! （设计站作品页、图集）会把「相关推荐」区当成正文圈进来，连带上百张缩略图被下载落盘。
+//! 详见 [`NOISE_SELECTORS`] 与 [`MIN_TRUSTED_PRUNED_CHARS`]。
 //!
 //! 好处：不经第三方、无 API Key、无额度限制、离线内网页面也能抓，且没有引入新的
 //! 网络栈（reqwest+rustls 移动端已验证可用）。
@@ -61,6 +65,21 @@ const MAX_HTML_BYTES: usize = 8 * 1024 * 1024;
 ///
 /// 取 32 是保守值：短公告 / 短说明页仍能通过，而导航页残渣（`[首页](/)` 这类）会被挡下。
 const MIN_CONTENT_CHARS: usize = 32;
+
+/// 判定「预裁剪结果可信、无需再跑未裁剪版对照」的最小字符数。
+///
+/// 预裁剪偶尔会把正文本身删掉（正文被包在 `<header>` 里，或容器 class 带 nav/header 字样）。
+/// 这时 readability 不会直接失败，而是退而抠出一堆导航链接充当正文——长度不至于低到
+/// 触发 [`MIN_CONTENT_CHARS`]，内容却已经是残渣。实测 MDN 文档页裁剪后只剩 40 字符的
+/// 「跳转到主要内容」，GitHub 仓库页只剩 325 字符的 star/fork 链接，都属此类。
+///
+/// 故在 32 之上再设一道信任线：低于它就必须跑一次未裁剪版做对照，按长度差决定用哪个。
+/// 取 600 是因为实测正常正文都在千字符量级（站酷作品页 1271、36氪 1039），
+/// 而误删后的导航残渣都在数百以内，两者之间有明显间隔。
+///
+/// 这条线的误判方向是**安全**的：真正的短文被卷进对照流程，最坏结果也只是多留了噪音，
+/// 不会丢失正文。
+const MIN_TRUSTED_PRUNED_CHARS: usize = 600;
 
 /// 剪藏结果：标题 + 正文 markdown + 原 URL（供笔记 metadata 用）
 #[derive(Debug, Clone)]
@@ -265,9 +284,13 @@ fn charset_from_content_type(content_type: &str) -> Option<String> {
     })
 }
 
-/// readability 提正文 → markdown
+/// 噪音预裁剪 → readability 提正文 → markdown
 ///
 /// 拆成独立的纯函数（不碰网络），便于单测喂固定 HTML 验证。
+///
+/// 走两段式：先裁掉通用噪音容器（见 [`NOISE_SELECTORS`]）再提取，结果够长就采用；
+/// 偏短则说明预裁剪可能把正文也切了，再跑一次未裁剪版做长度对照，取可信的那个。
+/// 判定阈值与取舍理由见 [`MIN_TRUSTED_PRUNED_CHARS`]。
 pub fn extract_article(html: &str, source_url: &str) -> Result<ClippedPage, AppError> {
     if html.trim().is_empty() {
         return Err(AppError::Custom("网页内容为空".into()));
@@ -275,7 +298,37 @@ pub fn extract_article(html: &str, source_url: &str) -> Result<ClippedPage, AppE
 
     let prepared = lift_lazy_images(html);
 
-    let mut readability = Readability::new(prepared.as_str(), Some(source_url), None)
+    // 主路径：先裁掉通用噪音容器，再交给 readability
+    let pruned = extract_once(&prune_noise(&prepared), source_url);
+
+    // 裁剪结果够长 → 直接采用。绝大多数页面走到这里就返回，只跑一次 readability。
+    if let Ok(page) = &pruned {
+        if page.markdown.chars().count() >= MIN_TRUSTED_PRUNED_CHARS {
+            return pruned;
+        }
+    }
+
+    // 裁剪结果失败或偏短 → 再跑一次未裁剪版做对照，两者取可信的那个
+    log::debug!("[web-clip] 预裁剪结果偏短，回退比对未裁剪 HTML");
+    match extract_once(&prepared, source_url) {
+        Ok(raw) => match pruned {
+            // 两版长度接近 → 裁剪没切掉多少东西，用更干净的裁剪版
+            Ok(p) if p.markdown.chars().count() * 2 > raw.markdown.chars().count() => Ok(p),
+            // 未裁剪版明显更长 → 预裁剪多半连正文一起切了，改用未裁剪版。
+            // 宁可多留噪音，也不能把正文剪没。
+            _ => Ok(raw),
+        },
+        // 未裁剪版也提不出来 → 有裁剪版就用，否则把未裁剪版的错误报给用户
+        Err(raw_err) => pruned.map_err(|_| raw_err),
+    }
+}
+
+/// 单次提取：readability 提正文 → markdown → 阈值判定。
+///
+/// 抽成独立函数是为了让 `extract_article` 能对「预裁剪版」和「原始版」两份 HTML
+/// 跑同一套逻辑，避免两条路径的判定标准出现分叉。
+fn extract_once(html: &str, source_url: &str) -> Result<ClippedPage, AppError> {
+    let mut readability = Readability::new(html, Some(source_url), None)
         .map_err(|e| AppError::Custom(format!("解析网页结构失败：{}", e)))?;
 
     let article = readability
@@ -304,6 +357,68 @@ pub fn extract_article(html: &str, source_url: &str) -> Result<ClippedPage, AppE
         markdown,
         source_url: article.url.unwrap_or_else(|| source_url.to_string()),
     })
+}
+
+/// 正文提取前整块删除的噪音容器选择器（站点无关的通用特征，不针对具体域名）。
+///
+/// # 为什么需要这一步
+///
+/// readability 按**文字密度**给容器打分，对「图多字少」的页面（设计站作品页、
+/// 图集、相册）会误判：正文只有一两句简介，反而是「相关推荐」区块的文字量更大，
+/// 于是整个推荐区被当成正文圈了进来。
+///
+/// 实测站酷作品页（`zcool.com.cn/work/*`，纯文本仅 1588 字符、文字密度 0.0032）：
+/// 不裁剪时产出 32060 字符 / 121 张图，其中真正的作品图只有 4 张，其余 117 张是
+/// 用户头像与推荐位缩略图——而这些图会被 `rewrite_external_images` **全部下载落盘**。
+/// 加上预裁剪后是 1271 字符 / 4 张图，噪音图归零。
+///
+/// # 关于 `i` 标志
+///
+/// `[class*=xxx i]` 的 `i` 是 CSS 大小写不敏感匹配（dom_query 0.28 实测支持），
+/// 所以 `workRecommend`、`recommendContentBox` 这类驼峰命名都能命中，
+/// 不必为每种大小写写一条。
+const NOISE_SELECTORS: &[&str] = &[
+    // 语义标签：站点框架结构，正文不会长在这里
+    "nav",
+    "aside",
+    "footer",
+    "header",
+    // 非内容节点：留着只会干扰 readability 打分
+    "script",
+    "style",
+    "noscript",
+    "iframe",
+    "svg",
+    // 通用命名特征：推荐位 / 侧栏 / 评论 / 分享 / 广告
+    "[class*=recommend i]",
+    "[class*=related i]",
+    "[class*=sidebar i]",
+    "[class*=comment i]",
+    "[class*=share i]",
+    "[class*=advert i]",
+    "[class*=banner i]",
+    "[class*=header i]",
+    "[class*=footer i]",
+    "[class*=nav i]",
+    // 视频播放器控件：不删会把 `Current Time 0:00` / `Playback Rate` 混进正文
+    "[class*=video-react i]",
+    "[id*=recommend i]",
+    "[id*=related i]",
+];
+
+/// 按 [`NOISE_SELECTORS`] 整块摘除噪音节点，返回裁剪后的 HTML。
+///
+/// 失败不向上传播：这一步是**优化**而非必需，任何异常都应让流程继续走
+/// 未裁剪的原始 HTML，而不是让整次剪藏失败。
+fn prune_noise(html: &str) -> String {
+    let doc = dom_query::Document::from(html);
+    for sel in NOISE_SELECTORS {
+        // try_select 返回 None 只代表本页没有匹配节点（常见情况），不是错误
+        if let Some(nodes) = doc.try_select(sel) {
+            nodes.remove();
+        }
+    }
+    doc.html().to_string()
 }
 
 /// 把懒加载图片的真实地址提升到 `src`。
@@ -556,6 +671,133 @@ mod tests {
         let body = "<h1>短公告</h1><p>今天下午三点全体开会，地点在二楼会议室，请准时参加。</p>";
         let page = extract_article(&article_html(body), "https://example.com/n").unwrap();
         assert!(page.markdown.contains("二楼会议室"));
+    }
+
+    // ─── 噪音预裁剪 ───────────────────────────────────
+
+    #[test]
+    fn prune_removes_recommendation_blocks_case_insensitively() {
+        // 驼峰命名（workRecommend）必须被小写选择器命中——靠的是 `[class*=... i]` 的 i 标志。
+        // 这条断言若挂掉，说明 dom_query 的大小写不敏感匹配失效，
+        // 选择器表就得为每种大小写各写一条。
+        let html = r#"<html><body>
+            <div class="workRecommend">推荐位噪音</div>
+            <div class="recommendContentBox">另一块推荐</div>
+            <p>真正的正文</p>
+        </body></html>"#;
+        let out = prune_noise(html);
+
+        assert!(!out.contains("推荐位噪音"), "驼峰 class 的推荐区应被删除");
+        assert!(!out.contains("另一块推荐"));
+        assert!(out.contains("真正的正文"), "正文不能被误删");
+    }
+
+    #[test]
+    fn prune_removes_whole_subtree_not_just_wrapper() {
+        // 噪音容器是嵌套的：必须整棵子树摘掉，不能只删外层留下孤儿子节点
+        // （这正是不用正则、改用真实 DOM 的原因）。
+        let html = r#"<html><body>
+            <aside class="sidebar"><div><ul><li><img src="x.jpg">侧栏深层内容</li></ul></div></aside>
+            <p>正文</p></body></html>"#;
+        let out = prune_noise(html);
+
+        assert!(!out.contains("侧栏深层内容"), "嵌套子节点应一并删除");
+        assert!(!out.contains("x.jpg"), "噪音区里的图片不应残留（否则会被下载落盘）");
+        assert!(out.contains("正文"));
+    }
+
+    #[test]
+    fn prune_removes_video_player_chrome() {
+        // 播放器控件文案若不删，会混进正文变成 `Current Time 0:00` / `Playback Rate` 之类的垃圾行
+        let html = r#"<div class="video-react-control-bar">Playback Rate 1.00x</div><p>正文</p>"#;
+        let out = prune_noise(html);
+
+        assert!(!out.contains("Playback Rate"));
+        assert!(out.contains("正文"));
+    }
+
+    #[test]
+    fn image_heavy_page_keeps_only_content_images() {
+        // 复现站酷类「图多字少」页面的结构：正文 4 张图，推荐区一堆缩略图。
+        // 不做预裁剪时 readability 会把推荐区当正文圈进来，导致噪音图被全部下载。
+        let mut recommend = String::from(r#"<div class="workRecommend">相关推荐"#);
+        for i in 0..30 {
+            recommend.push_str(&format!(
+                r#"<a href="/w/{i}"><img src="https://img.x/thumb{i}.jpg">推荐作品标题{i}</a>"#
+            ));
+        }
+        recommend.push_str("</div>");
+
+        let mut content = String::from(
+            "<h1>作品标题</h1><p>这是一段作品简介，说明创作思路与展出信息，长度足够通过阈值判定。</p>",
+        );
+        for i in 0..4 {
+            content.push_str(&format!(r#"<img src="https://img.x/work{i}.jpg"><p>作品图说明{i}</p>"#));
+        }
+
+        let html = format!(
+            "<html><head><title>作品页</title></head><body><article>{content}</article>{recommend}</body></html>"
+        );
+        let page = extract_article(&html, "https://example.com/work/1").unwrap();
+
+        assert_eq!(page.markdown.matches("work").count(), 4, "4 张正文图应全部保留");
+        assert!(!page.markdown.contains("thumb"), "推荐位缩略图不应进入正文");
+        assert!(!page.markdown.contains("推荐作品标题"), "推荐区文案不应进入正文");
+        assert!(page.markdown.contains("创作思路"), "正文简介应保留");
+    }
+
+    #[test]
+    fn content_wrapped_in_header_falls_back_to_unpruned() {
+        // 回退兜底：正文被包在 <header> 里时，预裁剪会把它连根删掉。
+        // 此时必须回退到未裁剪的 HTML 重跑，而不是报「未能提取到正文」。
+        let body = "<p>这是被包在 header 元素里的正文段落，内容足够长以便通过阈值判定。</p>".repeat(6);
+        let html = format!(
+            r#"<html><head><title>陷阱页</title></head><body>
+            <header class="article-header"><h1>真标题</h1>{body}</header>
+            </body></html>"#
+        );
+
+        // 先确认预裁剪确实把正文删没了（否则这条测试没有在测回退）
+        let pruned = prune_noise(&lift_lazy_images(&html));
+        assert!(!pruned.contains("正文段落"), "前提：预裁剪应已删掉正文");
+
+        // 而 extract_article 靠回退仍然能剪出内容
+        let page = extract_article(&html, "https://example.com/trap").unwrap();
+        assert!(page.markdown.contains("正文段落"), "回退未生效，正文丢失");
+    }
+
+    #[test]
+    fn navigation_residue_does_not_replace_real_content() {
+        // 回归护栏（真实案例：MDN 文档页、GitHub 仓库页）。
+        // 正文容器 class 含 header 被裁掉后，readability 不会失败，而是抠出页面里
+        // 残留的跳转链接充当正文——长度超过 MIN_CONTENT_CHARS，内容却全是残渣。
+        // 光靠「失败或过短就回退」识别不出来，必须与未裁剪版做长度对照。
+        let long_body =
+            "<p>这是文档的真实正文段落，讲解具体用法与注意事项，长度足够构成一篇文章。</p>".repeat(20);
+        // 用 r##"…"## 定界：正文里的 `"#content"` 会提前终结 r#"…"#
+        let html = format!(
+            r##"<html><head><title>文档页</title></head><body>
+            <a href="#content">跳转到主要内容</a>
+            <a href="#search">跳转到搜索</a>
+            <a href="#nav">跳转到导航栏区域</a>
+            <div class="content-header">{long_body}</div>
+            </body></html>"##
+        );
+
+        // 前提校验：确认裁剪版确实落在「不失败、但短于信任线」的区间，
+        // 否则这条测试就没有覆盖到长度对照那段逻辑。
+        let residue = extract_once(&prune_noise(&lift_lazy_images(&html)), "https://x.com/d")
+            .expect("前提：裁剪版应产出残渣而非直接失败");
+        let residue_len = residue.markdown.chars().count();
+        assert!(
+            (MIN_CONTENT_CHARS..MIN_TRUSTED_PRUNED_CHARS).contains(&residue_len),
+            "前提不成立：裁剪版长度 {residue_len} 不在 [{MIN_CONTENT_CHARS}, {MIN_TRUSTED_PRUNED_CHARS}) 区间"
+        );
+        assert!(!residue.markdown.contains("真实正文段落"), "前提：裁剪版应已丢失正文");
+
+        // 实际行为：长度对照应识破残渣，改用未裁剪版
+        let page = extract_article(&html, "https://x.com/d").unwrap();
+        assert!(page.markdown.contains("真实正文段落"), "正文被导航残渣顶替了");
     }
 
     // ─── 懒加载图片修正 ───────────────────────────────
