@@ -9,11 +9,13 @@ import {
   LayoutTemplate,
   FolderOpen,
   PenTool,
+  Globe,
 } from "lucide-react";
 
 import { FileTypeIcon } from "./FileTypeIcon";
 import { TemplatePickerModal } from "./TemplatePickerModal";
 import { ImportPreviewModal } from "./ImportPreviewModal";
+import { ClipUrlModal } from "./ClipUrlModal";
 import { importApi } from "@/lib/api";
 import { beginTrackedImportJob } from "@/lib/importJob";
 import { useAppStore } from "@/store";
@@ -67,6 +69,7 @@ export function NewNoteButton({
 }: Props) {
   const navigate = useNavigate();
   const [templateOpen, setTemplateOpen] = useState(false);
+  const [clipOpen, setClipOpen] = useState(false);
   const [importPreview, setImportPreview] = useState<{
     files: ScannedFile[];
     rootPath: string;
@@ -125,6 +128,13 @@ export function NewNoteButton({
       onClick: () => createWhiteboardAndOpen(folderId, navigate),
     },
     { type: "divider" },
+    {
+      // 与下面的本地文件导入同属「从外部来源建笔记」，但来源是网页，故排在导入组首位
+      key: "clip-url",
+      label: "剪藏网页…",
+      icon: <Globe size={14} />,
+      onClick: () => setClipOpen(true),
+    },
     {
       key: "import-text",
       label: "导入 Markdown / TXT…",
@@ -203,6 +213,11 @@ export function NewNoteButton({
         open={templateOpen}
         folderId={folderId}
         onClose={() => setTemplateOpen(false)}
+      />
+      <ClipUrlModal
+        open={clipOpen}
+        folderId={folderId}
+        onClose={() => setClipOpen(false)}
       />
       {importPreview && (
         <ImportPreviewModal
