@@ -1,4 +1,7 @@
 mod commands;
+// 关闭请求看门狗：WebView 死掉时保证进程仍退得掉（否则唯一出路是任务管理器）
+#[cfg(desktop)]
+mod close_watchdog;
 #[cfg(desktop)]
 mod crash_handler;
 // 纯函数加密工具（无状态、不碰 DB / 业务），放顶层供 database 与 services 共同依赖；
@@ -733,6 +736,14 @@ pub fn run() {
                 //   按工作区居中，竖排 / 加高任务栏下也不会被压住。
                 // 必须在 show() 之前做完，否则用户会看到窗口先歪一下再跳正。
                 commands::window::fit_into_work_area(&window, !has_saved_window_state);
+
+                // 🔴 Alt 键防护：必须在 show() 之前挂上。
+                // 本窗口是无边框（decorations:false），而 tao 0.34 不拦 SC_KEYMENU ——
+                // 按一下 Alt 就会让 Windows 进入系统菜单模态循环，把键鼠输入全截走、
+                // WebView2 停止调度，表现为「白屏 + 任何按键没反应 + 关不掉，只能杀进程」。
+                // 微信输入法的语音输入是长按 Alt，一晚上能撞四五次。详见 win_msg_guard。
+                #[cfg(target_os = "windows")]
+                services::win_msg_guard::install(&window);
 
                 let _ = window.show();
             }
@@ -1620,6 +1631,17 @@ pub fn run() {
                 }
                 api.prevent_close();
                 let _ = window.emit("app:close-requested", ());
+                // 🔴 前端探活：prevent_close 把窗口的生死完全交给了 WebView 里的
+                // CloseRequestedListener —— 只要 WebView 白屏 / 渲染进程崩了，这个窗口
+                // 就再也关不掉（关闭按钮本身也在 WebView 里），用户只剩任务管理器一条路。
+                // 这里起一个看门狗：前端收到事件会立刻回一个 app:close-ack，
+                // 超时没等到就判定前端已死，直接退出进程。
+                //
+                // 不怕误杀：ack 是前端监听器的第一行、无任何 await 前置，活着必然秒回；
+                // 也不怕丢数据：WebView 都没响应了，草稿本来就已经救不回来
+                // （已落库的部分不受影响，autosave 走的是 Rust 侧 DB）。
+                #[cfg(desktop)]
+                close_watchdog::arm(window.app_handle().clone());
             }
         })
         .run(tauri::generate_context!());

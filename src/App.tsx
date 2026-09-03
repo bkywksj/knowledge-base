@@ -10,6 +10,8 @@ import { AppRouter } from "@/Router";
 import { getAntdTokens } from "@/theme/tokens";
 import { TaskReminderListener } from "@/components/tasks/TaskReminderListener";
 import { MigrationCrashNotice } from "@/components/datadir/MigrationCrashNotice";
+import { ExitConfirmListener } from "@/components/ui/ExitConfirmListener";
+import { CloseRequestedListener } from "@/components/ui/CloseRequestedListener";
 import { UpdaterProvider } from "@/components/updater/UpdaterProvider";
 import { AppLockGate } from "@/components/applock/AppLockGate";
 
@@ -167,6 +169,14 @@ function App() {
             )}
           </UpdaterProvider>
           {IS_MAIN_WINDOW && <TaskReminderListener />}
+          {/* 🔴 两个退出监听器必须挂在 AppLockGate **外面**：锁屏时 AppLockGate 会整页替换
+              children，挂在 AppLayout 里的话它们会随之卸载 —— 那样锁屏状态下点窗口关闭按钮
+              没有任何组件接管（Rust 侧已 prevent_close），窗口就彻底关不掉了。
+              且两者必须同进同出：CloseRequestedListener 选「退出程序」是靠 emit
+              `tray:request-exit` 转交给 ExitConfirmListener 的，少挂一个就是一条死路。
+              它们只监听事件、平时不渲染任何东西，放在这里零成本。 */}
+          {IS_MAIN_WINDOW && <ExitConfirmListener />}
+          {IS_MAIN_WINDOW && <CloseRequestedListener />}
           {/* 上次数据目录迁移失败时给用户重试 / 放弃的出口（marker.status=crashed 才渲染） */}
           {IS_MAIN_WINDOW && <MigrationCrashNotice />}
         </ErrorBoundary>

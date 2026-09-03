@@ -93,3 +93,6 @@ pub mod web_clip;
 pub mod webdav;
 pub mod whiteboard;
 pub mod window_size;
+// Windows 消息过滤：拦掉 Alt 触发的系统菜单模态循环（无边框窗口白屏卡死根因）
+#[cfg(target_os = "windows")]
+pub mod win_msg_guard;

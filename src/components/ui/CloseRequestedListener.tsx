@@ -16,6 +16,10 @@ type CloseAction = "ask" | "minimize" | "exit";
  *   - ask（默认）：弹三选一对话框，可勾选"记住选择"
  *
  * 用 emit 触发已有的 ExitConfirmListener 而不是自己 exit(0)，避免脏数据丢失。
+ *
+ * ⚠️ 与 Rust 侧 `close_watchdog` 的契约：收到事件必须**立刻**回 `app:close-ack`
+ * （回调第一行，不能排在任何 await 之后）。Rust 靠这个信号判断 WebView 是否还活着，
+ * 超时未收到就强制退出进程 —— 这是 WebView 崩掉后唯一的退出兜底。
  */
 export function CloseRequestedListener() {
   const { message } = AntdApp.useApp();
@@ -25,6 +29,13 @@ export function CloseRequestedListener() {
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
     listen("app:close-requested", async () => {
+      // 🔴 第一行、任何 await 之前先回 ack —— 这是 Rust 侧 close_watchdog 的探活信号。
+      // Rust 已经 prevent_close()，窗口的生死从此刻起完全握在本组件手里；若 WebView 白屏
+      // 或渲染进程崩了，这个回调压根不会执行，看门狗超时后会替用户强制退出，
+      // 避免出现「关不掉、只能开任务管理器杀进程」的僵尸窗口。
+      // 必须放在最前面：晚于任何 IO 都会让"活着但慢"被误判成"已死"。
+      void emit("app:close-ack").catch(() => {});
+
       const action = ((await configApi.get(CFG_KEY).catch(() => "")) ||
         "ask") as CloseAction;
       if (action === "minimize") {

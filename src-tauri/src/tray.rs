@@ -46,6 +46,13 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // 窗口 & 退出
     let show = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    // 🔴 逃生门：不经前端的强制退出。
+    // 其余所有退出路径（窗口关闭按钮 / Alt+F4 / 上面这个「退出」）最终都要靠 WebView 里的
+    // React 组件走完流程才会调 exit(0) —— 一旦 WebView 白屏 / 渲染进程崩掉，就一条都走不通，
+    // 用户只能开任务管理器杀进程（v1.1.0 起一直如此）。这一项直接在 Rust 侧 exit，
+    // 是 WebView 死掉后唯一还能用的退出入口（托盘菜单是 Win32 原生的，不依赖 WebView）。
+    // 代价：跳过未保存草稿检查与退出前同步 —— 但 WebView 已死时那些本来也执行不了。
+    let force_quit = MenuItem::with_id(app, "force-quit", "强制退出（不保存）", true, None::<&str>)?;
 
     let menu = Menu::with_items(
         app,
@@ -63,6 +70,7 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             &sep3,
             &show,
             &quit,
+            &force_quit,
         ],
     )?;
 
@@ -171,6 +179,11 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 // 前端确认后通过 tauri-plugin-process 的 exit() 真正退出
                 bring_main_to_front(app);
                 let _ = app.emit("tray:request-exit", ());
+            }
+            "force-quit" => {
+                // 不 emit、不等前端、不做任何 IPC —— WebView 已经死了才会用到这一项。
+                log::warn!("[tray] 用户选择强制退出（跳过草稿检查与退出同步）");
+                app.exit(0);
             }
             _ => {}
         })

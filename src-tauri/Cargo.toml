@@ -161,6 +161,9 @@ font-enumeration = "0.9"
 windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_Foundation",
+    # SetWindowSubclass / DefSubclassProc：给主窗口挂消息过滤器拦掉 SC_KEYMENU
+    # （Alt 触发系统菜单模态循环 → 无边框窗口白屏卡死，见 services/win_msg_guard.rs）
+    "Win32_UI_Shell",
 ] }
 
 # ─── 编译优化 ────────────────────────────────────

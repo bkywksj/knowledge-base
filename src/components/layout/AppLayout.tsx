@@ -36,8 +36,6 @@ import { createBlankAndOpen } from "@/lib/noteCreator";
 import { targetFromFolderParam } from "@/lib/newNoteTarget";
 import { UpdateBadge } from "@/components/ui/UpdateBadge";
 import { UpdateModal } from "@/components/ui/UpdateModal";
-import { ExitConfirmListener } from "@/components/ui/ExitConfirmListener";
-import { CloseRequestedListener } from "@/components/ui/CloseRequestedListener";
 import { AttachmentPreviewModal } from "@/components/preview/AttachmentPreviewModal";
 import { useUpdater } from "@/components/updater/UpdaterProvider";
 import { SyncStatusButton } from "./SyncStatusButton";
@@ -828,8 +826,6 @@ export function AppLayout() {
         onInstall={updateInstallAndRelaunch}
       />
       <AttachmentPreviewModal />
-      <ExitConfirmListener />
-      <CloseRequestedListener />
       <AsrToggleController />
     </Layout>
   );
