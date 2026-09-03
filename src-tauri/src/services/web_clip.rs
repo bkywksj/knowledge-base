@@ -720,17 +720,25 @@ mod tests {
     fn image_heavy_page_keeps_only_content_images() {
         // 复现站酷类「图多字少」页面的结构：正文 4 张图，推荐区一堆缩略图。
         // 不做预裁剪时 readability 会把推荐区当正文圈进来，导致噪音图被全部下载。
+        //
+        // 🔴 正文必须**超过** MIN_TRUSTED_PRUNED_CHARS，否则这条测试是 flaky 的。
+        // 真实站酷作品页裁剪后有 1271 字符，走的是「裁剪版够长 → 直接采用」那条路径，
+        // 根本不碰回退逻辑。而正文若短于信任线，extract_article 会再跑一次未裁剪版做长度
+        // 对照 —— 在这种「正文与推荐区评分接近」的构造下，readability 对未裁剪 HTML 的
+        // 打分本身就不确定：同一份输入跨进程会在「只取正文」(201 字符) 和「把推荐区一起
+        // 圈进来」(2157 字符) 之间摆动，于是最终取 pruned 还是 raw 全看运气。
+        // 早期版本的正文只有 201 字符，实测 6 次跑出 4 过 2 挂。
+        // 「图多字少」是**相对推荐区**而言，不是绝对字数少，用真实量级才测得准。
+        let intro = "这是一段作品简介，说明创作思路、材料选择与展出信息。".repeat(30);
         let mut recommend = String::from(r#"<div class="workRecommend">相关推荐"#);
         for i in 0..30 {
             recommend.push_str(&format!(
-                r#"<a href="/w/{i}"><img src="https://img.x/thumb{i}.jpg">推荐作品标题{i}</a>"#
+                r#"<a href="/w/{i}"><img src="https://img.x/thumb{i}.jpg">推荐作品标题{i}，同系列的其它作品与展览预告</a>"#
             ));
         }
         recommend.push_str("</div>");
 
-        let mut content = String::from(
-            "<h1>作品标题</h1><p>这是一段作品简介，说明创作思路与展出信息，长度足够通过阈值判定。</p>",
-        );
+        let mut content = format!("<h1>作品标题</h1><p>{intro}</p>");
         for i in 0..4 {
             content.push_str(&format!(r#"<img src="https://img.x/work{i}.jpg"><p>作品图说明{i}</p>"#));
         }
@@ -738,6 +746,18 @@ mod tests {
         let html = format!(
             "<html><head><title>作品页</title></head><body><article>{content}</article>{recommend}</body></html>"
         );
+
+        // 前提校验：确认裁剪版确实过了信任线，即走「直接采用裁剪版」这条确定性路径。
+        // 不加这条，将来正文一旦被改短就会悄悄退化成上面说的那种 flaky 测试。
+        let pruned = extract_once(&prune_noise(&lift_lazy_images(&html)), "https://example.com/work/1")
+            .expect("前提：裁剪版应能提取出正文");
+        assert!(
+            pruned.markdown.chars().count() >= MIN_TRUSTED_PRUNED_CHARS,
+            "前提不成立：裁剪版仅 {} 字符，未过信任线 {}，测试会退化成 flaky",
+            pruned.markdown.chars().count(),
+            MIN_TRUSTED_PRUNED_CHARS
+        );
+
         let page = extract_article(&html, "https://example.com/work/1").unwrap();
 
         assert_eq!(page.markdown.matches("work").count(), 4, "4 张正文图应全部保留");
