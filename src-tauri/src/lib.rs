@@ -855,6 +855,13 @@ pub fn run() {
                 Err(e) if !services::db_recovery::should_attempt_recovery(&e) => {
                     log::error!("数据库版本高于当前应用，拒绝进入恢复流程（数据未被改动）: {}", e);
                     // 文案不能带 Markdown：MessageBoxW 是纯文本，`**强调**` 会把星号原样显示出来
+                    //
+                    // `crash_handler` 整个模块是 `#[cfg(desktop)]`（见文件头 mod 声明），
+                    // 这里漏了 gate 会让 Android target 直接 E0433 编不过。
+                    // 移动端暂时只有上面那行日志 + 下面的退出：核心语义（拒绝恢复流程、
+                    // 绝不动用户数据）两端一致，缺的只是那个原生提示框——移动端要弹什么、
+                    // 用什么弹（notification？启动页？）是待定的产品决策。
+                    #[cfg(desktop)]
                     crash_handler::show_startup_notice(
                         "知识库 - 需要升级应用",
                         &format!(
@@ -1487,6 +1494,7 @@ pub fn run() {
             commands::image::delete_note_images,
             commands::image::get_images_dir,
             commands::image::get_image_blob,
+            commands::image::copy_image_to_clipboard,
             // 孤儿素材统一清理（替代旧的 scan_orphan_images / clean_orphan_images）
             commands::orphan::scan_orphan_assets,
             commands::orphan::clean_orphan_assets,

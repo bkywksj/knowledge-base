@@ -114,7 +114,11 @@ dom_query = "0.28"
 # ─── 桌面专属依赖（cfg(desktop) 编译时启用；移动端不引入）────
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 # 系统托盘 feature
-tauri = { version = "2", features = ["tray-icon"] }
+# image-png：前端 `writeImage(pngBytes)` 走 clipboard-manager 插件时，插件内部用
+# `tauri::image::Image::from_bytes` 解码，没这个 feature 会报 "expected RGBA image data"。
+# 只是复制外链图时的降级路径；笔记内素材走 commands::image::copy_image_to_clipboard，
+# 那条路自己用 image crate 解码，不依赖这个 feature。
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 # 桌面专属插件
 tauri-plugin-updater = "2"
 tauri-plugin-autostart = "2"
@@ -130,6 +134,18 @@ tauri-plugin-window-state = "2"
 # PDFium fallback（pdf-extract 对中文 CMap 不支持，运行时动态加载 pdfium.dll 兜底）
 # 移动端 NDK 加载动态库受沙盒限制，暂不支持，待 T-M012 决策
 pdfium-render = "0.8"
+# 右键"复制图片"：系统剪贴板只收 RGBA 位图，得先把磁盘上的 png/jpg/webp/gif/bmp 解码。
+# image 本就在依赖树里（tray-icon 等间接引入），这里只是显式声明并选齐本项目白名单里的
+# 解码器（见 commands::system 的扩展名列表），不新增 crate。default-features = false
+# 是为了不把 tiff / exr / avif 等用不到的重解码器也编进来。
+# 移动端不需要：clipboard-manager 的 write_image 在移动端直接返回 Unsupported。
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "webp",
+    "gif",
+    "bmp",
+] }
 # rmcp 桌面端额外能力：
 # - transport-child-process: spawn 外部 MCP server 子进程（移动端 fork/spawn 受限）
 # - transport-streamable-http-server: 把自家 KbServer 以 HTTP 暴露给外部 agent。

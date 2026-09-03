@@ -1105,11 +1105,23 @@ export const imageApi = {
   getImagesDir: () => invoke<string>("get_images_dir"),
   /** 读取图片字节流：路径以 `.enc` 结尾时由后端自动解密。
    * 接收**相对路径**（kb-asset:// 后那段），加密笔记 observer 用此还原明文 bytes
-   * 转 blob URL 喂给 <img>。vault 锁定时此调用会失败。 */
+   * 转 blob URL 喂给 <img>。vault 锁定时此调用会失败。
+   *
+   * 后端返回 `tauri::ipc::Response`（raw body）→ 这里拿到的是 ArrayBuffer，零编解码。
+   * 旧版返回 `Vec<u8>` 会被序列化成 JSON 数字数组，一张 300KB 的图要传 30 万个数字，
+   * 大图能耗掉数秒；调用方若在其后写剪贴板，用户手势早已过期。 */
   getBlob: async (path: string): Promise<Uint8Array> => {
-    const v = await invoke<number[]>("get_image_blob", { path });
-    return new Uint8Array(v);
+    const buf = await invoke<ArrayBuffer | number[]>("get_image_blob", { path });
+    // 正常走 fetch IPC 通道拿到 ArrayBuffer；万一某平台回落到 JSON 通道则是数字数组，
+    // 两种都还原成 Uint8Array，调用方无感。
+    return buf instanceof ArrayBuffer ? new Uint8Array(buf) : Uint8Array.from(buf);
   },
+  /** 把图片直接写进系统剪贴板（相对路径，加密图后端自动解密）。
+   *
+   * 走 Rust 侧系统剪贴板，不经 WebView 的 Async Clipboard API，因此不受"用户手势必须
+   * 未过期"的限制。移动端不支持（会返回错误），调用方需自行回退。 */
+  copyToClipboard: (path: string) =>
+    invoke<void>("copy_image_to_clipboard", { path }),
 };
 
 /** 视频 API

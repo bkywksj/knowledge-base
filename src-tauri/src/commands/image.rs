@@ -106,6 +106,24 @@ pub fn get_images_dir(state: State<'_, AppState>) -> Result<String, String> {
     Ok(images_dir.to_string_lossy().into_owned())
 }
 
+/// 把前端传来的图片路径解析成绝对路径，并校验它确实落在 images 目录下。
+///
+/// 兼容传入绝对路径的旧调用：先尝试按相对路径解析，失败则当作绝对路径继续走同样的校验。
+/// 校验用字符串前缀比较（统一分隔符为 `/`），能挡住 `..` 逃逸出 images 根的情况。
+fn resolve_image_path(state: &AppState, path: &str) -> Result<std::path::PathBuf, String> {
+    let abs = match asset_path::rel_to_abs(path, &state.data_dir) {
+        Ok(p) => p,
+        Err(_) => std::path::PathBuf::from(path),
+    };
+    let images_root = ImageService::images_dir(&state.data_dir);
+    let images_root_str = images_root.to_string_lossy().to_string().replace('\\', "/");
+    let abs_str = abs.to_string_lossy().to_string().replace('\\', "/");
+    if !abs_str.starts_with(&images_root_str) {
+        return Err(format!("非法路径（不在 images 目录下）: {}", path));
+    }
+    Ok(abs)
+}
+
 /// 读取图片字节流（接收**相对路径**）。路径以 `.enc` 结尾时用 vault key 解密。
 /// 前端用 `new Blob([bytes])` + `URL.createObjectURL` 喂给 `<img>`。
 ///
@@ -115,25 +133,76 @@ pub fn get_images_dir(state: State<'_, AppState>) -> Result<String, String> {
 /// 而这里要读整个图片文件、加密图还要走一次 AES 解密。一篇笔记里有几十张图时，
 /// 这些调用会串行霸占主线程 → 整个窗口冻结、笔记"一直加载中"。
 /// 同款教训见 `commands::sync_v1::sync_v1_push` 的注释。
+///
+/// **返回 `tauri::ipc::Response`（二进制 IPC）而非 `Vec<u8>`**：`Vec<u8>` 会被 serde 序列化成
+/// JSON 数字数组 —— 一张 300KB 的图 = 30 万个元素的 JSON 文本，光序列化 + 前端 JSON.parse
+/// 就要几百毫秒到数秒。`Response` 走 raw body，前端直接拿到 `ArrayBuffer`，零编解码。
+/// 这条路径慢会连带拖垮调用方：例如"复制图片"在 await 它之后再写剪贴板，
+/// 用户手势（transient user activation）早已过期 → `navigator.clipboard.write()` 报 NotAllowedError。
 #[tauri::command]
-pub async fn get_image_blob(app: tauri::AppHandle, path: String) -> Result<Vec<u8>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn get_image_blob(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<tauri::ipc::Response, String> {
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
         use tauri::Manager;
         let state = app.state::<AppState>();
-        // 兼容传入绝对路径的旧调用：尝试转相对，失败则当作绝对路径继续走老校验
-        let abs = match asset_path::rel_to_abs(&path, &state.data_dir) {
-            Ok(p) => p,
-            Err(_) => std::path::PathBuf::from(&path),
-        };
-        let images_root = ImageService::images_dir(&state.data_dir);
-        let images_root_str = images_root.to_string_lossy().to_string().replace('\\', "/");
-        let abs_str = abs.to_string_lossy().to_string().replace('\\', "/");
-        if !abs_str.starts_with(&images_root_str) {
-            return Err(format!("非法路径（不在 images 目录下）: {}", path));
-        }
+        let abs = resolve_image_path(&state, &path)?;
         ImageService::read_for_render(&state.vault, &abs.to_string_lossy())
             .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| format!("读取图片任务异常终止: {}", e))?
+    .map_err(|e| format!("读取图片任务异常终止: {}", e))??;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// 把笔记里的图片直接写进系统剪贴板（接收**相对路径**，加密图自动解密）。
+///
+/// 为什么要有这个 Command，而不是前端 `navigator.clipboard.write()` 了事：
+/// WebView 的 Async Clipboard API 要求调用时**用户手势仍在有效期内**（Chromium 约 5 秒）。
+/// 前端那条路要先 IPC 取字节 → `createImageBitmap` 解码 → `canvas.toBlob` 编 PNG，
+/// 大图走完手势早过期，权限检查退回 permission 询问，而 WebView2 里没人应答 → 直接
+/// `NotAllowedError: The request is not allowed by the user agent...`（用户看到的是"没权限"，
+/// 但跟 Capabilities 无关）。走 Rust 侧则完全不受手势/时限约束。
+///
+/// **实际只在桌面生效**：clipboard-manager 插件的 `write_image` 在移动端直接返回
+/// Unsupported，且解码用的 image crate 也只在桌面 target 声明。Command 本身仍跨端注册
+/// （`generate_handler!` 列表里放 `#[cfg]` 项不可靠），移动端调用会拿到明确的错误，
+/// 前端据此回退到 Web Clipboard。
+///
+/// **必须 `spawn_blocking`**：插件文档明确警告 `write_image` 不可在主线程调用，
+/// 否则 Linux 上底层库可能死锁、冻住整个应用。
+#[tauri::command]
+pub async fn copy_image_to_clipboard(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, path);
+        Err("当前平台不支持把图片写入系统剪贴板".to_string())
+    }
+    #[cfg(desktop)]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            use tauri::Manager;
+            use tauri_plugin_clipboard_manager::ClipboardExt;
+
+            let state = app.state::<AppState>();
+            let abs = resolve_image_path(&state, &path)?;
+            let bytes = ImageService::read_for_render(&state.vault, &abs.to_string_lossy())
+                .map_err(|e| e.to_string())?;
+            // 系统剪贴板要的是 RGBA 位图，PNG/JPEG 原字节喂进去没有平台认，必须先解码。
+            // 用 image crate 直解而不是 `tauri::image::Image::from_bytes`：后者受 tauri 的
+            // image-png feature 限制、只认 png/ico，而本项目允许 png/jpg/jpeg/webp/gif/bmp
+            // （见 commands::system 的扩展名白名单）。
+            let decoded = image::load_from_memory(&bytes)
+                .map_err(|e| format!("图片解码失败（格式不支持？）: {}", e))?;
+            let rgba = decoded.to_rgba8();
+            let (width, height) = (rgba.width(), rgba.height());
+            let image = tauri::image::Image::new_owned(rgba.into_raw(), width, height);
+            app.clipboard()
+                .write_image(&image)
+                .map_err(|e| format!("写入剪贴板失败: {}", e))
+        })
+        .await
+        .map_err(|e| format!("复制图片任务异常终止: {}", e))?
+    }
 }

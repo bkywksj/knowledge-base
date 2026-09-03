@@ -16,6 +16,7 @@ import {
   PenLine,
 } from "lucide-react";
 import { revealItemInDir, openPath } from "@tauri-apps/plugin-opener";
+import { writeImage } from "@tauri-apps/plugin-clipboard-manager";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useFeatureEnabled } from "@/hooks/useFeatureEnabled";
 import {
@@ -376,44 +377,72 @@ export function useEditorContextMenu(
     };
 
     /**
-     * 把图片复制成 PNG 写到系统剪贴板。
+     * 把图片字节转成 PNG Blob。
      *
-     * 流程：拿到原始字节 → `createImageBitmap(blob)` 解码 → canvas → toBlob('image/png')。
-     * 关键点：`createImageBitmap` 的 source 是 Blob（同源数据），canvas 不会被污染，
-     * 所以 toBlob 不会抛 SecurityError。
+     * `createImageBitmap` 的 source 是 Blob（同源数据），canvas 不会被污染，
+     * 所以 toBlob 不会抛 SecurityError。ClipboardItem 在 Chromium 上只稳定支持
+     * image/png，统一转 PNG 最保险。
+     */
+    const toPngBlob = async (bytes: Uint8Array): Promise<Blob> => {
+      const bitmap = await createImageBitmap(new Blob([bytes as BlobPart]));
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Canvas 2D 上下文不可用");
+        ctx.drawImage(bitmap, 0, 0);
+        return await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob(
+            (b) => (b ? resolve(b) : reject(new Error("canvas.toBlob 返回 null"))),
+            "image/png",
+          );
+        });
+      } finally {
+        bitmap.close();
+      }
+    };
+
+    /**
+     * 把图片复制到系统剪贴板，三级降级。
      *
-     * ClipboardItem 在 Chromium 上稳定支持 image/png，统一转 PNG 最稳。
+     * 之所以不直接用 `navigator.clipboard.write()`：WebView 的 Async Clipboard API 要求
+     * 调用时**用户手势仍未过期**（Chromium 约 5 秒）。而这里必须先取字节、解码、再编 PNG，
+     * 大图走完这套手势早没了 → 权限检查退回 permission 询问，WebView2 里无人应答 →
+     * `NotAllowedError: The request is not allowed by the user agent...`。
+     * 用户看到的是"没权限"，但跟 Tauri Capabilities 毫无关系，配权限也修不好。
+     *
+     * 1. 笔记内素材（kb-asset://）→ Rust 侧直接读盘 + 写系统剪贴板，零字节过 IPC，最快也最稳
+     * 2. 外链图 / 第 1 步失败 → 取字节转 PNG 后交给 clipboard-manager 插件（仍走 Rust，不吃手势）
+     * 3. 插件也不行（移动端 write_image 返回 Unsupported）→ 回退 Web Clipboard API
      */
     const copyImageBlob = async (rawSrc: string, el: HTMLElement) => {
+      const kbRel = parseKbAsset(rawSrc);
+      if (kbRel !== null) {
+        try {
+          await imageApi.copyToClipboard(kbRel);
+          message.success("已复制图片");
+          return;
+        } catch {
+          // vault 锁定 / 文件丢失 / 移动端不支持 → 继续走下面的通用路径
+        }
+      }
+
       try {
         const bytes = await fetchImageBytes(rawSrc, el);
         if (!bytes || bytes.length === 0) {
           message.error("无法获取图片数据");
           return;
         }
-        const sourceBlob = new Blob([bytes as BlobPart]);
-        const bitmap = await createImageBitmap(sourceBlob);
-        let pngBlob: Blob;
+        const pngBlob = await toPngBlob(bytes);
         try {
-          const canvas = document.createElement("canvas");
-          canvas.width = bitmap.width;
-          canvas.height = bitmap.height;
-          const ctx = canvas.getContext("2d");
-          if (!ctx) throw new Error("Canvas 2D 上下文不可用");
-          ctx.drawImage(bitmap, 0, 0);
-          pngBlob = await new Promise<Blob>((resolve, reject) => {
-            canvas.toBlob(
-              (b) =>
-                b ? resolve(b) : reject(new Error("canvas.toBlob 返回 null")),
-              "image/png",
-            );
-          });
-        } finally {
-          bitmap.close();
+          await writeImage(new Uint8Array(await pngBlob.arrayBuffer()));
+        } catch {
+          // 插件不可用（移动端）→ 最后回退 Web Clipboard；此路径受手势限制，可能仍失败
+          await navigator.clipboard.write([
+            new ClipboardItem({ "image/png": pngBlob }),
+          ]);
         }
-        await navigator.clipboard.write([
-          new ClipboardItem({ "image/png": pngBlob }),
-        ]);
         message.success("已复制图片");
       } catch (err) {
         message.error(`复制图片失败：${err}`);
