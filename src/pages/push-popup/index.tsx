@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Button, Spin, message } from "antd";
 import { BellRing, Copy, ExternalLink, NotebookPen, X } from "lucide-react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { LogicalSize } from "@tauri-apps/api/dpi";
+import { PhysicalSize } from "@tauri-apps/api/dpi";
 import { MarkdownContent } from "@/components/ai/MarkdownContent";
 import { pushApi, dailyApi } from "@/lib/api";
 import type { PushPopupData } from "@/types";
@@ -76,9 +76,20 @@ export default function PushPopupPage() {
     const desiredH = Math.min(maxH, Math.max(MIN_H, HEADER_H + FOOTER_H + contentH + 24));
     const finalW = Math.max(MIN_W, width);
     const win = getCurrentWindow();
-    win
-      .setSize(new LogicalSize(finalW, desiredH))
-      .then(() => win.center())
+    // 🔴 下发**物理**尺寸而非 LogicalSize：LogicalSize 会被 tao 用它缓存的 scale_factor
+    // 换算，而显示器热插拔后那个缓存可能已经跑偏（tao 不处理 WM_DISPLAYCHANGE，
+    // 详见 src-tauri/src/commands/window.rs 顶部根因注释）—— 弹窗会被放大 / 缩小 1.5 倍。
+    // currentMonitor().scaleFactor 走的是 tao MonitorHandle，实时查 GetDpiForMonitor，
+    // 是真值；取不到才退回窗口缓存值。
+    currentMonitor()
+      .then(async (mon) => {
+        const scale = mon?.scaleFactor ?? (await win.scaleFactor());
+        const s = Number.isFinite(scale) && scale > 0 ? scale : 1;
+        await win.setSize(
+          new PhysicalSize(Math.round(finalW * s), Math.round(desiredH * s)),
+        );
+        await win.center();
+      })
       .catch((e) => console.error("[push-popup] setSize failed:", e));
   }, [data]);
 

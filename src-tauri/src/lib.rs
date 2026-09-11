@@ -712,6 +712,11 @@ pub fn run() {
                     if let Err(e) = window.restore_state(commands::window::TRACKED_STATE_FLAGS) {
                         log::warn!("[window] 还原窗口几何失败，保持默认尺寸: {e}");
                     }
+                    // 🔴 插件存/还原的都是**物理**尺寸：上次退出时若窗口正处在错误缩放下
+                    // （副屏开关留下的 DPI 事故），或用户换了显示器 / 改了系统缩放，还原
+                    // 出来的物理尺寸按当前真实缩放解释就是错的，而插件不做任何校正 ——
+                    // 事故会被这条路径固化，重启也回不来。用逻辑尺寸基准把它拉回。
+                    commands::window::rescue_after_restore(&window);
                 } else if let Some(monitor) = window
                     .current_monitor()
                     .ok()
@@ -736,6 +741,12 @@ pub fn run() {
                 //   按工作区居中，竖排 / 加高任务栏下也不会被压住。
                 // 必须在 show() 之前做完，否则用户会看到窗口先歪一下再跳正。
                 commands::window::fit_into_work_area(&window, !has_saved_window_state);
+
+                // 几何全部落定后再建立「逻辑尺寸基准」——它是运行期跨 DPI 自愈的唯一依据
+                // （副屏开关导致的缩放漂移靠它纠正，详见 commands/window.rs 顶部注释）。
+                // 必须在 fit 之后调：基准要的是「用户想要的尺寸」，函数内部会优先采信存档，
+                // 不会把 fit clamp 出来的结果误记成用户意图。
+                commands::window::init_desired_logical_size(&window);
 
                 // 🔴 Alt 键防护：必须在 show() 之前挂上。
                 // 本窗口是无边框（decorations:false），而 tao 0.34 不拦 SC_KEYMENU ——
@@ -1629,6 +1640,32 @@ pub fn run() {
         ])
         // ─── 窗口事件处理 ─────────────────────────
         .on_window_event(|window, event| {
+            // ─── 跨 DPI / 显示器热插拔的几何自愈（仅主窗口）───
+            // 只有主窗口参与：子窗口（popout-* / push-popup-* / emergency-*）的几何
+            // 各自由 builder 决定，不该被基准机制接管。
+            #[cfg(desktop)]
+            if window.label() == "main" {
+                // on_window_event 给的是 `&Window`，而几何工具函数统一收 `&WebviewWindow`
+                // （与 fit_into_work_area 同口径），这里按 label 取一次。
+                let resolve = || {
+                    use tauri::Manager;
+                    window.app_handle().get_webview_window("main")
+                };
+                match event {
+                    WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                        if let Some(w) = resolve() {
+                            commands::window::schedule_geometry_reconcile(&w, *scale_factor);
+                        }
+                    }
+                    WindowEvent::Resized(_) => {
+                        if let Some(w) = resolve() {
+                            commands::window::note_user_resize(&w);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
             if let WindowEvent::CloseRequested { api, .. } = event {
                 // 关闭决策只对主窗口生效（要读 app_config 里的 window.close_action）。
                 // 子窗口（emergency-*、migration-splash 等）的 close 应该自然完成，

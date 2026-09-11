@@ -92,6 +92,57 @@ pub fn default_window_size(logical_w: f64, logical_h: f64) -> (f64, f64) {
     (w, h)
 }
 
+/// 「期望逻辑尺寸」与实测逻辑尺寸的容差（相对比例）。
+///
+/// 2% 是这么定的：DPI 换算的四舍五入误差在 1500 逻辑像素上约 1px（0.07%），远小于它；
+/// 而真实的跨 DPI 变化最小一档也是 100%↔125%，偏差 20%，远大于它。取 2% 既不会被
+/// 浮点尾差误触发、导致反复下发尺寸，也不会漏掉任何一档真实的缩放变化。
+pub const LOGICAL_SIZE_TOLERANCE: f64 = 0.02;
+
+/// 实测逻辑尺寸是否已偏离「期望逻辑尺寸」到需要纠正的程度。
+///
+/// 🔴 为什么需要这个判据：Windows 11 上 tao 0.34.6 处理 `WM_DPICHANGED` 时，把自己
+/// 算好的「保持逻辑尺寸」结果（`new_physical_inner_size`，`event_loop.rs:1966-1973`）
+/// **丢掉了** —— Win11 分支（`:2102-2105`，`WIN_VERSION.build >= 22000`）直接
+/// `new_outer_rect = suggested_rect`，最终 `SetWindowPos`(`:2107`) 用的是 Windows 给的
+/// 建议矩形，既不保证逻辑尺寸守恒，也不 clamp 到工作区。而显示器热插拔期间 Windows
+/// 给的那个矩形并不可靠，于是出现「软件明明在 100% 主屏、却按 150% 渲染，窗口内容区
+/// 缩水」。Win10 分支反而是用了 `new_physical_inner_size` 的，所以这是 Win11 专属坑。
+///
+/// 任一维度漂移即判 true —— 宽高会被 `fit_into_work_area` 独立 clamp，不能只看一边。
+pub fn logical_size_drifted(cur: (f64, f64), want: (f64, f64)) -> bool {
+    let drift = |c: f64, w: f64| {
+        // 期望值非正（存档损坏）或出现 NaN / inf 时一律判「没漂移」：
+        // 宁可不动窗口，也不能拿垃圾数据去 set_size。
+        // `is_finite` 必须排在 `<= 0.0` 前面 —— NaN 的所有比较都是 false，
+        // 只靠 `w <= 0.0` 是拦不住 NaN 的，靠短路求值先把它筛掉。
+        if !w.is_finite() || w <= 0.0 || !c.is_finite() {
+            return false;
+        }
+        ((c - w).abs() / w) > LOGICAL_SIZE_TOLERANCE
+    };
+    drift(cur.0, want.0) || drift(cur.1, want.1)
+}
+
+/// 把逻辑尺寸按给定缩放换算成**物理**尺寸，顺带兜住非法输入。
+///
+/// 🔴 调用方传进来的 `scale` 必须是**实时查询**的 `MonitorHandle::scale_factor()`
+/// （tao `monitor.rs:226-232` → `GetDpiForMonitor`），**不能**用
+/// `Window::scale_factor()` —— 后者读的是 tao 的窗口状态缓存
+/// （`window.rs:508-510`），而 tao 完全不处理 `WM_DISPLAYCHANGE`（全仓搜不到该消息），
+/// 显示器增删后若 Windows 没补发 `WM_DPICHANGED`，那个缓存会长期停在旧值 ——
+/// 它本身就是要纠正的错误来源。
+pub fn physical_for_logical(logical: (f64, f64), scale: f64) -> (u32, u32) {
+    let s = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    let conv = |v: f64| {
+        if !v.is_finite() || v <= 0.0 {
+            return 1;
+        }
+        (v * s).round().clamp(1.0, u32::MAX as f64) as u32
+    };
+    (conv(logical.0), conv(logical.1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,5 +276,76 @@ mod tests {
         let r = fit_into_work_area(broken, None, 99999, 99999);
         assert_eq!((r.width, r.height), (1, 1));
         assert_eq!((r.x, r.y), (0, 0));
+    }
+
+    // ─── logical_size_drifted ─────────────────────
+
+    /// 每一档真实的 Windows 缩放跳变都必须被识别为漂移（最小一档 100%↔125% 也不能漏）。
+    #[test]
+    fn t_every_real_dpi_step_counts_as_drift() {
+        let want = (1500.0, 950.0);
+        // 物理尺寸没变、缩放被误判成更高 → 逻辑尺寸缩水，正是用户报的症状
+        for scale in [1.25_f64, 1.5, 1.75, 2.0] {
+            let cur = (1500.0 / scale, 950.0 / scale);
+            assert!(
+                logical_size_drifted(cur, want),
+                "缩放 {scale} 造成的逻辑尺寸缩水必须判为漂移"
+            );
+        }
+        // 反方向（缓存卡在高缩放、实际回到 100%）同样要识别
+        assert!(logical_size_drifted((2250.0, 1425.0), want));
+    }
+
+    /// DPI 换算的四舍五入尾差不能被当成漂移 —— 否则每次校正都会再触发一次校正。
+    #[test]
+    fn t_rounding_noise_is_not_drift() {
+        let want = (1500.0, 950.0);
+        // 150% 下 set_size 物理 2250×1425，回读除回来最多差 1px 量级
+        for scale in [1.0_f64, 1.25, 1.5, 2.0] {
+            let (pw, ph) = physical_for_logical(want, scale);
+            let cur = (pw as f64 / scale, ph as f64 / scale);
+            assert!(
+                !logical_size_drifted(cur, want),
+                "缩放 {scale} 下的换算尾差被误判成漂移了：{cur:?}"
+            );
+        }
+    }
+
+    /// 用户自己拖动窗口（同一缩放下的正常改尺寸）由 note_user_resize 记账，
+    /// 但判据本身必须如实反映「已偏离基准」，否则校正会把用户拖的尺寸拉回去。
+    #[test]
+    fn t_drift_is_per_axis() {
+        let want = (1500.0, 950.0);
+        assert!(logical_size_drifted((1200.0, 950.0), want), "只有宽变了也算漂移");
+        assert!(logical_size_drifted((1500.0, 700.0), want), "只有高变了也算漂移");
+        assert!(!logical_size_drifted((1500.0, 950.0), want), "完全相等不算漂移");
+    }
+
+    /// 存档损坏 / 最小化读到 0 / NaN 时一律判「不漂移」：宁可不动窗口，也不拿垃圾去 set_size。
+    #[test]
+    fn t_degenerate_drift_inputs_are_ignored() {
+        assert!(!logical_size_drifted((1500.0, 950.0), (0.0, 0.0)));
+        assert!(!logical_size_drifted((1500.0, 950.0), (-1.0, -1.0)));
+        assert!(!logical_size_drifted((f64::NAN, 950.0), (1500.0, 950.0)));
+        assert!(!logical_size_drifted((1500.0, 950.0), (f64::INFINITY, 950.0)));
+    }
+
+    // ─── physical_for_logical ─────────────────────
+
+    #[test]
+    fn t_physical_for_logical_scales_and_rounds() {
+        assert_eq!(physical_for_logical((1500.0, 950.0), 1.0), (1500, 950));
+        assert_eq!(physical_for_logical((1500.0, 950.0), 1.5), (2250, 1425));
+        assert_eq!(physical_for_logical((1500.0, 845.0), 1.25), (1875, 1056)); // 1056.25 → 1056
+    }
+
+    /// 非法缩放退回 1.0、非法尺寸退回 1px：绝不产生 0 尺寸或 panic。
+    #[test]
+    fn t_physical_for_logical_degenerate_inputs() {
+        assert_eq!(physical_for_logical((1500.0, 950.0), 0.0), (1500, 950));
+        assert_eq!(physical_for_logical((1500.0, 950.0), f64::NAN), (1500, 950));
+        assert_eq!(physical_for_logical((1500.0, 950.0), -2.0), (1500, 950));
+        assert_eq!(physical_for_logical((0.0, -5.0), 1.5), (1, 1));
+        assert_eq!(physical_for_logical((f64::NAN, f64::INFINITY), 1.5), (1, 1));
     }
 }
