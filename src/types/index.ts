@@ -4,6 +4,18 @@ export interface AppConfig {
   value: string;
 }
 
+/** 用户导入的自定义待办提醒提示音（文件落在 app_data_dir/reminder-sounds/） */
+export interface CustomReminderSound {
+  /** 落盘文件名（含扩展名），也是配置里 `custom:<file_name>` 存的句柄 */
+  file_name: string;
+  /** 去掉扩展名的展示名 */
+  display_name: string;
+  /** 绝对路径，前端 convertFileSrc 后喂 <audio> */
+  path: string;
+  /** 字节数 */
+  size: number;
+}
+
 /** 全局快捷键绑定（仅 global scope，由 Rust 侧 global-shortcut 插件管理） */
 export interface ShortcutBinding {
   /** 内部唯一 ID（如 'global.quickCapture'） */

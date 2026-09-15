@@ -70,6 +70,7 @@ import { ShortcutsSection } from "@/components/settings/ShortcutsSection";
 import { EditorHighlightShortcutRow } from "@/components/settings/EditorHighlightShortcutRow";
 import { MCPServerSection } from "@/components/settings/MCPServerSection";
 import { OcrSection } from "@/components/settings/OcrSection";
+import { ReminderSoundSection } from "@/components/settings/ReminderSoundSection";
 import { SnapshotSection } from "@/components/settings/SnapshotSection";
 import { WebClipJinaKeySetting } from "@/components/settings/WebClipJinaKeySetting";
 import { TiptapEditor } from "@/components/editor";
@@ -2483,6 +2484,9 @@ function DesktopSettingsPage() {
               ]}
             />
           </div>
+
+          {/* 提示音：音色 / 音量 / 连响遍数 / 自定义音频（跨窗口配置存 app_config） */}
+          <ReminderSoundSection />
         </Card>
       </div>
 

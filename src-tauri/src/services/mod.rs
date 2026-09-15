@@ -66,6 +66,8 @@ pub mod dataview;
 pub mod plugin;
 pub mod project;
 pub mod prompt;
+// 待办提醒自定义提示音文件管理（复制进 app_data_dir 以落进 assetProtocol scope）
+pub mod reminder_sound;
 pub mod push;
 pub mod quick_capture;
 pub mod safe_filename;

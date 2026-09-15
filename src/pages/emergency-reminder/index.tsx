@@ -5,7 +5,7 @@ import { AlertOctagon, Bell, BellOff, Check, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { taskApi } from "@/lib/api";
 import type { Task } from "@/types";
-import { startBeepLoop } from "@/lib/audio/beep";
+import { startUrgentReminderLoop } from "@/lib/audio/reminderSound";
 
 /** 紧急提醒响铃封顶时长：5 分钟。到点自动停声，但弹窗仍保留显示。 */
 const MAX_BEEP_MS = 5 * 60 * 1000;
@@ -62,12 +62,26 @@ export default function EmergencyReminderPage() {
 
   // 启动循环铃（任务加载后再响）。响铃最长 MAX_BEEP_MS（5 分钟），到点自动停声，
   // 但窗口仍保留显示——避免声音无限循环吵人。
+  //
+  // 铃声音色 / 音量走设置页「待办提醒 → 紧急提醒铃声」，所以要先异步读配置再起循环：
+  // 读配置期间用户可能已经点了静音 / 关窗，用 cancelled 标志兜住，避免起了个停不掉的铃。
   useEffect(() => {
     if (!task || muted || soundStopped) return;
-    const stop = startBeepLoop(1500, MAX_BEEP_MS, () => setSoundStopped(true));
-    stopBeepRef.current = stop;
+    let cancelled = false;
+    let stop: (() => void) | null = null;
+    void startUrgentReminderLoop(MAX_BEEP_MS, () => setSoundStopped(true)).then(
+      (fn) => {
+        if (cancelled) {
+          fn();
+          return;
+        }
+        stop = fn;
+        stopBeepRef.current = fn;
+      },
+    );
     return () => {
-      stop();
+      cancelled = true;
+      stop?.();
       stopBeepRef.current = null;
     };
   }, [task, muted, soundStopped]);

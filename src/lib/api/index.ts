@@ -13,6 +13,7 @@ import type {
   CardStats,
   MobileUpdateInfo,
   AppConfig,
+  CustomReminderSound,
   AppLockStatus,
   SystemInfo,
   TextHealthReport,
@@ -258,6 +259,22 @@ export const configApi = {
   set: (key: string, value: string) =>
     invoke<void>("set_config", { key, value }),
   delete: (key: string) => invoke<void>("delete_config", { key }),
+};
+
+/**
+ * 待办提醒自定义提示音（音频文件管理）。
+ * 文件复制进 app_data_dir/reminder-sounds/，播放时 `resolve` 拿绝对路径 → convertFileSrc。
+ */
+export const reminderSoundApi = {
+  /** 导入用户在原生对话框里选中的音频文件 */
+  import: (srcPath: string) =>
+    invoke<CustomReminderSound>("import_reminder_sound", { srcPath }),
+  list: () => invoke<CustomReminderSound[]>("list_reminder_sounds"),
+  /** 文件不存在时抛错，调用方据此回退到内置预设 */
+  resolve: (fileName: string) =>
+    invoke<string>("resolve_reminder_sound", { fileName }),
+  delete: (fileName: string) =>
+    invoke<void>("delete_reminder_sound", { fileName }),
 };
 
 /** 笔记 API */

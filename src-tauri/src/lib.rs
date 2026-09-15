@@ -1272,6 +1272,11 @@ pub fn run() {
             commands::config::get_config,
             commands::config::set_config,
             commands::config::delete_config,
+            // 待办提醒自定义提示音（音频文件导入 / 列举 / 解析 / 删除）
+            commands::reminder_sound::import_reminder_sound,
+            commands::reminder_sound::list_reminder_sounds,
+            commands::reminder_sound::resolve_reminder_sound,
+            commands::reminder_sound::delete_reminder_sound,
             // 笔记模块
             commands::notes::create_note,
             commands::notes::update_note,

@@ -4,7 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { taskApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import type { Task } from "@/types";
-import { beepOnce } from "@/lib/audio/beep";
+import { playNormalReminder } from "@/lib/audio/reminderSound";
 
 const { Text, Paragraph } = Typography;
 
@@ -29,8 +29,10 @@ export function TaskReminderListener() {
     listen<Task>("task:reminder", (e) => {
       setQueue((prev) => {
         if (prev.some((t) => t.id === e.payload.id)) return prev;
-        // 强烈级提示：弹 Modal 时叮一声（任务栏闪烁已由后端 request_user_attention 触发）
-        beepOnce();
+        // 强烈级提示：弹 Modal 时按用户设置响提示音（音色/音量/连响遍数见设置页
+        // 「待办提醒 → 提醒提示音」；任务栏闪烁已由后端 request_user_attention 触发）。
+        // 异步读配置，失败自己兜底成默认音，这里不 await 也不处理错误
+        void playNormalReminder();
         return [...prev, e.payload];
       });
     }).then((fn) => {

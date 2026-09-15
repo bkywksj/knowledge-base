@@ -29,6 +29,8 @@ pub mod orphan;
 pub mod pdf;
 pub mod projects;
 pub mod prompt;
+// 待办提醒自定义提示音（导入 / 列举 / 删除音频文件）
+pub mod reminder_sound;
 pub mod snapshot;
 pub mod push;
 pub mod search;
