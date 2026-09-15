@@ -14,10 +14,16 @@ import type { Fragment, Node as PMNode } from "@tiptap/pm/model";
  *
  * 本模块**不改「抽哪些文字」**——仍旧逐块 textBetween，marks 全部剥离，
  * 不产生任何 Markdown 标记（保持"粘出来是「内容」而非「**内容**」"的既定诉求）。
- * 只改「块与块之间怎么接」：
- *   · 列表项之间 / 表格单元格之间 → 单 `\n`（本来就该是连续的行）
- *   · 其余块之间                 → `\n\n`（段落间保留一个空行，符合阅读习惯）
- *   · 连续空块产生的多余空行     → 压到最多一个空行
+ * 只改「块与块之间怎么接」，规则全部收敛在 `separatorBetween`：
+ *   · 标题之前               → `\n\n`（标题是分节标记，紧贴上文会被读成正文）
+ *   · 紧凑组与外部正文之间    → `\n\n`（列表 / 表格整体与正文分开）
+ *   · 其余（含连续段落）      → 单 `\n`，跟随编辑器所见
+ *   · 连续空块产生的多余空行  → 压到最多一个空行
+ *
+ * 🔴 连续段落用**单换行**是刻意的（第二轮修复）：编辑器里按 Enter 产生的是新段落，
+ * 但 `.tiptap p` 的 margin 只有 0.45em，用户看到的就是"换了一行"。若段落间一律
+ * `\n\n`，「我敲了空行」和「我没敲空行」粘出来一模一样 —— 空行信息反而丢了。
+ * 现在纯文本里的空行只有两个来源：用户自己敲的空段落，以及标题前的分节。
  */
 
 /** 一个待拼接的块 */
@@ -26,9 +32,15 @@ export interface PlainTextBlock {
   text: string;
   /**
    * 是否属于「紧凑块」——列表项、表格单元格这类天然连续的内容。
-   * 相邻两个紧凑块之间用单换行，其余一律空一行。
+   * 只用来把「组内」和「组外」区分开：紧凑与非紧凑相邻时空一行，
+   * 让列表 / 表格作为一个整体与正文分开。
    */
   tight?: boolean;
+  /**
+   * 是否是标题块。标题在纯文本里承担分节作用，前面固定空一行，
+   * 否则粘出来会和上一段黏成一片、读不出层级。
+   */
+  heading?: boolean;
 }
 
 /**
@@ -102,7 +114,11 @@ export function fragmentToPlainTextBlocks(
         // 标题自动编号是 Decoration，不在 doc 里；这里补进 text/plain，
         // 让粘到 Word / 记事本 / 微信时编号跟着走（既有行为，保持不变）
         const label = headings.next();
-        out.push({ text: label ? `${label} ${text}` : text, tight: nextTight });
+        out.push({
+          text: label ? `${label} ${text}` : text,
+          tight: nextTight,
+          heading: true,
+        });
         return;
       }
 
@@ -115,18 +131,29 @@ export function fragmentToPlainTextBlocks(
 }
 
 /**
+ * 相邻两块之间该垫什么。默认单换行——「编辑器里换一行，纯文本就换一行」；
+ * 只有两种需要视觉分节的位置才空一行。
+ */
+function separatorBetween(prev: PlainTextBlock, next: PlainTextBlock): string {
+  // 标题前空一行。标题的视觉间距靠 CSS margin 撑，doc 里没有空段落承载，
+  // 不补这一行的话粘出来就是"上一段末尾直接接标题"
+  if (next.heading) return "\n\n";
+  // 跨越紧凑组边界（正文 ↔ 列表 / 表格）空一行，保住"这是一组"的分组感；
+  // 组内部（两边都 tight）和组外正文之间（两边都不 tight）都走单换行
+  if (Boolean(prev.tight) !== Boolean(next.tight)) return "\n\n";
+  return "\n";
+}
+
+/**
  * 把块序列拼成最终的 text/plain 内容。
  *
- * 只有「两边都是紧凑块」才收紧成单换行；列表与前后正文之间仍空一行，
- * 否则列表会和段落黏在一起，反而更难读。
+ * 空行不由这里凭空造（标题除外）：用户敲的空段落各自是一个空块，
+ * 自己会贡献换行，`collapseBlankLines` 再兜底压到最多一个空行。
  */
 export function joinPlainTextBlocks(blocks: PlainTextBlock[]): string {
   const parts: string[] = [];
   blocks.forEach((block, i) => {
-    if (i > 0) {
-      const prev = blocks[i - 1];
-      parts.push(prev.tight && block.tight ? "\n" : "\n\n");
-    }
+    if (i > 0) parts.push(separatorBetween(blocks[i - 1], block));
     parts.push(block.text);
   });
   return collapseBlankLines(parts.join(""));
@@ -135,8 +162,8 @@ export function joinPlainTextBlocks(blocks: PlainTextBlock[]): string {
 /**
  * 把 3 个以上连续换行压成 2 个（= 最多一个空行），并去掉首尾空白。
  *
- * 用户在编辑器里敲的空段落会各自序列化成一个空块，两个空段落就是
- * 5 个空行。纯文本保留「最多一个空行」的语义即可，更多没有信息量。
+ * 用户在编辑器里敲的空段落各自序列化成一个空块，连敲几下就摞出几个空行。
+ * 纯文本保留「最多一个空行」的语义即可，更多没有信息量。
  */
 export function collapseBlankLines(text: string): string {
   return text.replace(/\n{3,}/g, "\n\n").trim();

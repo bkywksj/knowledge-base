@@ -95,21 +95,32 @@ describe("复制为纯文本：块拼接", () => {
     expect(out).toBe("一\n\n二");
   });
 
-  it("普通段落之间保留一个空行", () => {
-    expect(render([p("一"), p("二")])).toBe("一\n\n二");
+  it("连续段落之间是单换行——编辑器里换一行，粘出来就是一行（第二轮修复的核心）", () => {
+    // 第一轮修复后这里输出 "一\n\n二"，用户反馈「笔记内只是换行，复制出来多一行空行」
+    expect(render([p("一"), p("二")])).toBe("一\n二");
   });
 
-  it("引用块内多段仍按段落处理（空一行）", () => {
+  it("用户主动敲的空段落仍然换来一个空行（空行信息不丢）", () => {
+    // 与上一条对照：敲没敲空行，粘出来必须不一样
+    expect(render([p("一"), p(), p("二")])).toBe("一\n\n二");
+  });
+
+  it("引用块内多段同样按单换行接", () => {
     const out = render([n.blockquote.create(null, [p("q1"), p("q2")])]);
-    expect(out).toBe("q1\n\nq2");
+    expect(out).toBe("q1\nq2");
   });
 
-  it("标题自动编号仍随文本一起复制（既有行为不回退）", () => {
+  it("标题前空一行（标题的视觉间距靠 CSS，doc 里没有空段落承载）", () => {
+    const out = render([p("上一段"), n.heading.create({ level: 2 }, schema.text("小节"))]);
+    expect(out).toBe("上一段\n\n小节");
+  });
+
+  it("标题自动编号仍随文本一起复制（既有行为不回退）；标题后的正文紧接", () => {
     const out = render(
       [n.heading.create({ level: 1 }, schema.text("第一章")), p("正文")],
       ["1"],
     );
-    expect(out).toBe("1 第一章\n\n正文");
+    expect(out).toBe("1 第一章\n正文");
   });
 
   it("多个标题按文档顺序消费编号；无编号的标题不加前缀", () => {
@@ -171,7 +182,7 @@ describe("joinPlainTextBlocks", () => {
   it("单块原样返回", () => {
     expect(joinPlainTextBlocks([{ text: "只有一块" }])).toBe("只有一块");
   });
-  it("只有两边都 tight 才收紧", () => {
+  it("只在跨越紧凑组边界时空行，组内与组外都走单换行", () => {
     expect(
       joinPlainTextBlocks([
         { text: "段落" },
@@ -179,5 +190,10 @@ describe("joinPlainTextBlocks", () => {
         { text: "项2", tight: true },
       ]),
     ).toBe("段落\n\n项1\n项2");
+  });
+  it("heading 块前面固定空一行", () => {
+    expect(
+      joinPlainTextBlocks([{ text: "正文" }, { text: "标题", heading: true }]),
+    ).toBe("正文\n\n标题");
   });
 });
