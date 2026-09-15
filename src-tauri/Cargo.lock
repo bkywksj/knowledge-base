@@ -3293,7 +3293,7 @@ dependencies = [
 
 [[package]]
 name = "knowledge_base"
-version = "1.62.0"
+version = "1.63.0"
 dependencies = [
  "aes-gcm",
  "argon2",
