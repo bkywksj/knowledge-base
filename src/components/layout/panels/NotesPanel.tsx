@@ -42,6 +42,8 @@ import {
   Search,
   Hash,
   PenTool,
+  FolderOutput,
+  FileDown,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderFilled } from "@ant-design/icons";
@@ -53,6 +55,16 @@ import { aiChatApi, folderApi, importApi, noteApi, searchApi, trashApi } from "@
 import { showExternalMdIntroOnce } from "@/lib/externalMdIntro";
 import { resolveOpenMdMode } from "@/lib/openMdChoice";
 import { ScratchFilesModal } from "@/components/notes/ScratchFilesModal";
+import {
+  ExportFolderModal,
+  type ExportFolderTarget,
+} from "@/components/notes/ExportFolderModal";
+import {
+  exportNoteAsHtml,
+  exportNoteAsMarkdown,
+  exportNoteAsWord,
+  exportNotesBatchAsMarkdown,
+} from "@/lib/exportActions";
 import { highlightText, highlightSnippet } from "@/lib/highlight";
 import type {
   EmptyFolderInfo,
@@ -486,6 +498,7 @@ export function NotesPanel() {
 
   // 右键"从模板…"弹窗状态：folderId=null 表示尚未打开
   const [templatePickerFolder, setTemplatePickerFolder] = useState<number | null>(null);
+  const [exportTarget, setExportTarget] = useState<ExportFolderTarget | null>(null);
 
   // 右键"与另一篇笔记对比…"：第一篇笔记 id；null = 未打开
   const [compareFirstNoteId, setCompareFirstNoteId] = useState<number | null>(null);
@@ -1453,6 +1466,17 @@ export function NotesPanel() {
               },
             },
             {
+              key: "batch-export",
+              icon: <FileDown size={14} />,
+              label: `导出选中的 ${selectedNoteKeys.size} 篇…`,
+              onClick: () => {
+                close();
+                void exportNotesBatchAsMarkdown(
+                  [...selectedNoteKeys].map(noteIdFromKey),
+                );
+              },
+            },
+            {
               key: "batch-trash",
               icon: <Trash2 size={14} />,
               label: `移到回收站（${selectedNoteKeys.size} 篇）`,
@@ -1541,6 +1565,36 @@ export function NotesPanel() {
             close();
           },
         },
+        { type: "divider" },
+        // 导出：与笔记列表页 / 编辑器同口径的三种格式，实现统一走 lib/exportActions
+        {
+          key: "export-md",
+          icon: <FileTypeIcon type="md" size={14} />,
+          label: "导出为 Markdown",
+          onClick: () => {
+            close();
+            void exportNoteAsMarkdown(noteId);
+          },
+        },
+        {
+          key: "export-word",
+          icon: <FileTypeIcon type="docx" size={14} />,
+          label: "导出为 Word (.docx)",
+          onClick: () => {
+            close();
+            void exportNoteAsWord(noteId, name);
+          },
+        },
+        {
+          key: "export-html",
+          icon: <FileDown size={14} />,
+          label: "导出为 HTML (单文件)",
+          onClick: () => {
+            close();
+            void exportNoteAsHtml(noteId, name);
+          },
+        },
+        { type: "divider" },
         {
           key: "compare-with-note",
           icon: <GitCompare size={14} />,
@@ -1673,6 +1727,16 @@ export function NotesPanel() {
         label: "导入 Word…",
         onClick: () => {
           void importWordFlow(folderId);
+          close();
+        },
+      },
+      // 导出与上面的导入成对：侧边栏原先只有导入没有导出，这里补齐
+      {
+        key: "export-folder",
+        icon: <FolderOutput size={14} />,
+        label: "导出此文件夹…",
+        onClick: () => {
+          setExportTarget({ id: folderId, name });
           close();
         },
       },
@@ -2878,6 +2942,9 @@ export function NotesPanel() {
           }}
         />
       )}
+
+      {/* 右键"导出此文件夹…" */}
+      <ExportFolderModal target={exportTarget} onClose={() => setExportTarget(null)} />
 
       {/* 右键"从模板新建…" */}
       <TemplatePickerModal

@@ -20,11 +20,15 @@ impl ExportService {
     /// - `output_dir`: 用户选择的父目录
     /// - `instance_data_dir`: 当前实例的数据根目录（用于资产路径校验，防越权拷贝）
     /// - `folder_id`: 可选，仅导出指定文件夹的笔记；None 表示导出全部
+    /// - `recursive`: `folder_id` 有值时是否连子文件夹一起导出。
+    ///   旧调用方（设置页）曾只能导直属笔记，用户选父文件夹时子目录的笔记会**静默丢失**；
+    ///   这里与「对此文件夹问 AI」对齐到同一个子树口径（`bfs_descendant_ids`）。
     pub fn export_notes<R: Runtime, E: Emitter<R>>(
         db: &Database,
         instance_data_dir: &Path,
         output_dir: &str,
         folder_id: Option<i64>,
+        recursive: bool,
         emitter: &E,
     ) -> Result<ExportResult, AppError> {
         let parent_path = Path::new(output_dir);
@@ -65,12 +69,27 @@ impl ExportService {
             let notes: Vec<(i64, String, String, Option<i64>, bool, Option<String>)> = {
                 let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
                     if let Some(fid) = folder_id {
+                        // 已经持着 conn 锁，必须走接收 &Connection 的 bfs_descendant_ids，
+                        // 不能调 db.collect_descendant_folder_ids（它自己 lock → 死锁）
+                        let ids = if recursive {
+                            crate::database::folders::bfs_descendant_ids(&conn, fid)?
+                        } else {
+                            vec![fid]
+                        };
+                        let placeholders = (1..=ids.len())
+                            .map(|i| format!("?{}", i))
+                            .collect::<Vec<_>>()
+                            .join(",");
                         (
-                            "SELECT id, title, content, folder_id, is_daily, daily_date \
-                             FROM notes WHERE is_deleted = 0 AND folder_id = ?1 \
-                             ORDER BY updated_at DESC"
-                                .into(),
-                            vec![Box::new(fid)],
+                            format!(
+                                "SELECT id, title, content, folder_id, is_daily, daily_date \
+                                 FROM notes WHERE is_deleted = 0 AND folder_id IN ({}) \
+                                 ORDER BY updated_at DESC",
+                                placeholders
+                            ),
+                            ids.into_iter()
+                                .map(|i| Box::new(i) as Box<dyn rusqlite::types::ToSql>)
+                                .collect(),
                         )
                     } else {
                         (
@@ -378,7 +397,7 @@ fn rewrite_assets_for_export(
 /// 单文件导出：把 content 中本地资产 URL 原地替换为 base64 data URI（图片/附件内嵌进 .md），
 /// 不拷贝文件、不建任何目录。返回 `(新 content, 内嵌资产数)`。
 /// 安全策略同 `rewrite_assets_for_export`：仅内嵌 instance 数据目录下的文件；远程/缺失链接原样保留。
-fn inline_assets_base64(content: &str, canon_instance_root: &Path) -> (String, usize) {
+pub(crate) fn inline_assets_base64(content: &str, canon_instance_root: &Path) -> (String, usize) {
     let spans = extract_md_url_spans(content);
     if spans.is_empty() {
         return (content.to_string(), 0);

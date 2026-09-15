@@ -107,6 +107,8 @@ import type {
   MigrationMarker,
   WordExportResult,
   HtmlExportResult,
+  MergeExportResult,
+  MergeFormat,
   ShortcutBinding,
   AsrConfig,
   TranscribeRequest,
@@ -961,8 +963,24 @@ function currentExportFonts(): ExportFonts | undefined {
 export const exportApi = {
   /** 批量导出笔记。`outputDir` 是用户选择的父目录，
    *  实际会在其下创建一层 `知识库导出_YYYYMMDD_HHmmss/` 作为导出根（见返回值 root_dir） */
-  exportNotes: (outputDir: string, folderId?: number | null) =>
-    invoke<ExportResult>("export_notes", { outputDir, folderId }),
+  exportNotes: (outputDir: string, folderId?: number | null, recursive?: boolean) =>
+    invoke<ExportResult>("export_notes", { outputDir, folderId, recursive }),
+  /** 合并导出：把一个文件夹（或全库）合成**单个**带章节结构的文件。
+   *
+   *  与 exportNotes 的分工：那个导出一堆散 .md（备份 / 迁移），这个导出一份带目录和
+   *  章节层级的文档（交付：发同事 / 打印 / 存档）。`targetPath` 是 save dialog 选定的
+   *  最终路径（含扩展名）；`recursive` 缺省 true（文件夹导出含子文件夹符合直觉）。 */
+  exportFolderMerged: (params: {
+    folderId?: number | null;
+    recursive?: boolean;
+    rootTitle: string;
+    targetPath: string;
+    format: MergeFormat;
+  }) =>
+    invoke<MergeExportResult>("export_folder_merged", {
+      ...params,
+      fonts: currentExportFonts(),
+    }),
   /** 导出单篇笔记。`parentDir` 是用户选择的父目录。
    *  - `singleFile=false`（缺省）：在其下建一层 `{标题}/`，放 `{标题}.md` 与 `assets/`
    *  - `singleFile=true`：不建目录，图片/附件 base64 内嵌，直接写单个 `{标题}.md` */

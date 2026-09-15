@@ -271,6 +271,9 @@ function DesktopSettingsPage() {
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
   const [exportResult, setExportResult] = useState<ExportResult | null>(null);
   const [exportFolderId, setExportFolderId] = useState<number | undefined>(undefined);
+  // 选了文件夹时是否连子文件夹一起导出。默认 true —— 旧行为只导直属笔记，
+  // 用户选父文件夹时子目录的笔记会静默丢失（无任何提示）
+  const [exportRecursive, setExportRecursive] = useState(true);
 
   // 模板管理状态
   const [tplList, setTplList] = useState<NoteTemplate[]>([]);
@@ -1025,7 +1028,11 @@ function DesktopSettingsPage() {
     });
 
     try {
-      const result = await exportApi.exportNotes(selected as string, exportFolderId ?? null);
+      const result = await exportApi.exportNotes(
+        selected as string,
+        exportFolderId ?? null,
+        exportRecursive,
+      );
       setExportResult(result);
       if (result.exported > 0) {
         message.success(`成功导出 ${result.exported} 篇笔记`);
@@ -2687,6 +2694,13 @@ function DesktopSettingsPage() {
               onChange={setExportFolderId}
               options={flattenFolders(folders)}
             />
+            <Checkbox
+              checked={exportRecursive}
+              disabled={exportFolderId === undefined}
+              onChange={(e) => setExportRecursive(e.target.checked)}
+            >
+              包含子文件夹
+            </Checkbox>
             <Button
               type="primary"
               icon={<FolderOutput size={14} />}

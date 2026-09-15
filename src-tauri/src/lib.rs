@@ -1483,6 +1483,7 @@ pub fn run() {
             commands::import::take_pending_open_md_path,
             // 导出模块
             commands::export::export_notes,
+            commands::export::export_folder_merged,
             commands::export::export_single_note,
             // T-020 导出 Word / HTML
             // Word 导出仅桌面端（docx_rs 移动端编译失败）

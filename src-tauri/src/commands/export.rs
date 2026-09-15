@@ -6,6 +6,7 @@ use tauri::AppHandle;
 use crate::models::{ExportResult, SingleExportResult};
 use crate::services;
 use crate::services::export_html::{ExportFonts, HtmlExportResult, ResolvedAssetUrl};
+use crate::services::export_merge::{MergeExportResult, MergeFormat};
 // Word 导出仅桌面端（docx_rs 移动端编译失败）
 #[cfg(desktop)]
 use crate::services::export_word::WordExportResult;
@@ -15,19 +16,54 @@ use crate::state::AppState;
 ///
 /// 入参 `output_dir` 是用户选择的父目录；服务会在其下自动创建一层
 /// `知识库导出_YYYYMMDD_HHmmss/` 作为实际导出根（结果中的 `root_dir`）。
+///
+/// `recursive`：指定 `folder_id` 时是否连子文件夹一起导出。缺省 `false` 保持老调用方行为不变。
 #[tauri::command]
 pub fn export_notes(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
     output_dir: String,
     folder_id: Option<i64>,
+    recursive: Option<bool>,
 ) -> Result<ExportResult, String> {
     services::export::ExportService::export_notes(
         &state.db,
         &state.data_dir,
         &output_dir,
         folder_id,
+        recursive.unwrap_or(false),
         &app,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// 合并导出：把一个文件夹（或全库）合成**单个**带章节结构的文件
+///
+/// 与 `export_notes` 的区别：那个导出"一堆散 .md"（备份/迁移），这个导出
+/// "一份带目录和章节层级的文档"（交付：发同事 / 打印 / 存档）。
+///
+/// - `target_path`: 用户在 save dialog 选定的最终文件路径（含扩展名）
+/// - `format`: `markdown` / `html` / `word`（word 仅桌面端）
+/// - `root_title`: 文档顶层标题，一般传文件夹名
+#[tauri::command]
+pub fn export_folder_merged(
+    state: tauri::State<'_, AppState>,
+    folder_id: Option<i64>,
+    recursive: Option<bool>,
+    root_title: String,
+    target_path: String,
+    format: MergeFormat,
+    fonts: Option<ExportFonts>,
+) -> Result<MergeExportResult, String> {
+    services::export_merge::MergeExportService::export_merged(
+        &state.db,
+        &state.data_dir,
+        folder_id,
+        recursive.unwrap_or(true),
+        &root_title,
+        &PathBuf::from(&target_path),
+        format,
+        fonts.as_ref(),
     )
     .map_err(|e| e.to_string())
 }

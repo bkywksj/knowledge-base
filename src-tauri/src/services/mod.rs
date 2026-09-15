@@ -26,6 +26,7 @@ pub mod emergency_window;
 pub mod excel_parser;
 pub mod export;
 pub mod export_html;
+pub mod export_merge;
 // Word 导出仅桌面端：docx_rs 在 Android target 编译失败
 #[cfg(desktop)]
 pub mod export_word;

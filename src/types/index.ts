@@ -961,6 +961,18 @@ export interface HtmlExportResult {
   attachmentsMissing: number;
 }
 
+/** 合并导出的目标格式（与 Rust 侧 MergeFormat 对齐） */
+export type MergeFormat = "markdown" | "html" | "word";
+
+/** 合并导出结果：一个文件夹合成的单个文件 */
+export interface MergeExportResult {
+  filePath: string;
+  /** 实际合并进文档的笔记篇数 */
+  notesMerged: number;
+  imagesInlined: number;
+  imagesMissing: number;
+}
+
 /** 导出进度 */
 export interface ExportProgress {
   current: number;
