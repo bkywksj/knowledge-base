@@ -8,6 +8,7 @@ import {
   folderApi,
   configApi,
   appLockApi,
+  mobileUpdateApi,
   setExportFontsProvider,
 } from "@/lib/api";
 import type { HeadingNumberFormat } from "@/lib/headingNumber";
@@ -34,7 +35,7 @@ async function getConfigOrNull(key: string): Promise<string | null> {
     return null;
   }
 }
-import type { Folder, SystemInfo } from "@/types";
+import type { Folder, MobileUpdateInfo, SystemInfo } from "@/types";
 import type { ThemeMode, ThemeCategory } from "@/theme/tokens";
 import { EDITOR_HIGHLIGHT_SHORTCUT_DEFAULT } from "@/lib/shortcuts/registry";
 import {
@@ -338,6 +339,12 @@ interface AppStore {
   tasksListRefreshTick: number;
   /** 未完成 + 紧急的任务数（用于侧边栏红色 Badge） */
   urgentTodoCount: number;
+  /**
+   * 移动端：启动静默检查发现的新版本（null = 无新版 / 还没检查 / 桌面端）。
+   * 用来给「我的」Tab 打小红点，并在「检查更新」行直接显示版本号，
+   * 省得用户主动点一次才知道有更新。
+   */
+  mobileUpdateAvailable: MobileUpdateInfo | null;
   /** 窗口置顶状态（UI 真相源；托盘 CheckMenuItem 通过事件同步） */
   alwaysOnTop: boolean;
   /** 当前活动视图（Activity Bar 模式）；与 URL 双向同步 */
@@ -641,6 +648,11 @@ interface AppStore {
   /** 重新拉取任务统计（任务变更后调用，用于刷新侧边栏 Badge） */
   refreshTaskStats: () => Promise<void>;
   /**
+   * 移动端启动后静默检查一次更新（失败完全静默 —— 没网 / 更新源挂了都不该打扰用户）。
+   * 桌面端由 tauri-plugin-updater 负责，不会调到这里。
+   */
+  checkMobileUpdateSilently: () => Promise<void>;
+  /**
    * 设置窗口置顶。
    * - skipEmit=true：不再通知 Rust 侧（用于从 Rust 过来的事件回流，避免循环）
    * - 默认会 emit `ui:always-on-top-changed` 让托盘 CheckMenuItem 跟随
@@ -891,6 +903,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   tasksListRefreshTick: 0,
   taskStatsTick: 0,
   urgentTodoCount: 0,
+  mobileUpdateAvailable: null,
   alwaysOnTop: false,
   activeView: "notes",
   enabledViews: new Set(DEFAULT_ENABLED_VIEWS),
@@ -1049,6 +1062,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }));
     } catch {
       // 静默失败：侧边栏 Badge 不是关键路径
+    }
+  },
+  checkMobileUpdateSilently: async () => {
+    try {
+      const info = await mobileUpdateApi.check();
+      set({ mobileUpdateAvailable: info.has_update ? info : null });
+    } catch {
+      // 静默失败：没网 / 三个更新源都不通都不该弹错误打扰用户，
+      // 用户主动点「检查更新」时才会看到真实报错
     }
   },
   setActiveView: (view) => set({ activeView: view }),

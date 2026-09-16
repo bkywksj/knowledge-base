@@ -113,6 +113,9 @@ export function MobileLayout() {
 
   // 用户配置的前 4 格 Tab + 固定「我的」第 5 格
   const tabKeys = useAppStore((s) => s.mobileTabKeys);
+  const checkMobileUpdateSilently = useAppStore((s) => s.checkMobileUpdateSilently);
+  /** 有新版时给「我的」Tab 打个小红点（更新入口在「我的 → 检查更新」） */
+  const hasUpdate = useAppStore((s) => s.mobileUpdateAvailable !== null);
   const TABS: TabItem[] = [
     ...tabKeys.map((k) => metaToTabItem(MOBILE_TAB_REGISTRY[k])),
     ME_TAB,
@@ -127,6 +130,15 @@ export function MobileLayout() {
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
+
+  // 启动静默检查更新：延迟 8 秒避开首屏数据加载高峰（首屏要拉笔记/任务/统计，
+  // 再插一个网络请求会拖慢冷启动观感）。失败完全静默，见 store 里的实现。
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void checkMobileUpdateSilently();
+    }, 8000);
+    return () => window.clearTimeout(timer);
+  }, [checkMobileUpdateSilently]);
 
   return (
     <div
@@ -224,7 +236,16 @@ export function MobileLayout() {
                   minHeight: 44,
                 }}
               >
-                <Icon size={22} strokeWidth={active ? 2.5 : 2} />
+                {/* 图标外包一层 relative，好让更新红点绝对定位到右上角 */}
+                <span className="relative inline-flex">
+                  <Icon size={22} strokeWidth={active ? 2.5 : 2} />
+                  {tab.key === "me" && hasUpdate && (
+                    <span
+                      aria-label="有新版本"
+                      className="absolute -right-1 -top-0.5 h-2 w-2 rounded-full bg-[#ff4d4f]"
+                    />
+                  )}
+                </span>
                 <span
                   className={
                     isRail

@@ -1584,4 +1584,18 @@ export const cardApi = {
  */
 export const mobileUpdateApi = {
   check: () => invoke<MobileUpdateInfo>("check_mobile_update"),
+  /**
+   * 下载 APK 到应用 cache 目录，返回落盘绝对路径。
+   * 进度经 `MOBILE_UPDATE_PROGRESS_EVENT` 事件推送，调用前先 listen。
+   * 支持断点续传：同版本中断后再调会从 .part 接着下。
+   */
+  download: (url: string, version: string) =>
+    invoke<string>("download_mobile_update", { url, version }),
+  /** 拉起系统安装器（Android）。iOS / 桌面返回错误，调用方应回退到浏览器下载 */
+  install: (apkPath: string) => invoke<void>("install_mobile_update", { apkPath }),
+  /** 是否已获「允许安装未知应用」授权（Android 8.0+ 的开关；非 Android 恒 false） */
+  canInstall: () => invoke<boolean>("can_install_mobile_update"),
+  /** 跳到「允许安装未知应用」设置页 —— 系统不允许应用自己授予，只能引导用户开 */
+  openInstallPermissionSettings: () =>
+    invoke<void>("open_install_permission_settings"),
 };

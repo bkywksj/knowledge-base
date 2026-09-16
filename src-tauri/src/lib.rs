@@ -1643,6 +1643,14 @@ pub fn run() {
             // 移动端"检查更新"（桌面端走 tauri-plugin-updater，无此命令）
             #[cfg(mobile)]
             commands::mobile_update::check_mobile_update,
+            #[cfg(mobile)]
+            commands::mobile_update::download_mobile_update,
+            #[cfg(mobile)]
+            commands::mobile_update::install_mobile_update,
+            #[cfg(mobile)]
+            commands::mobile_update::can_install_mobile_update,
+            #[cfg(mobile)]
+            commands::mobile_update::open_install_permission_settings,
         ])
         // ─── 窗口事件处理 ─────────────────────────
         .on_window_event(|window, event| {

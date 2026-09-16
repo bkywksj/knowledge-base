@@ -1804,6 +1804,20 @@ export interface MobileUpdateInfo {
   download_url: string;
 }
 
+/**
+ * APK 下载进度（与 Rust `DownloadProgress` 对齐）。
+ * 后端节流推送（每 ~300ms 或每 512KB 一帧），不是每个 chunk 都发。
+ */
+export interface MobileDownloadProgress {
+  downloaded: number;
+  /** 服务端没给 Content-Length 时为 0，此时 percent 恒为 0，前端应显示不确定进度 */
+  total: number;
+  percent: number;
+}
+
+/** APK 下载进度事件名（与 Rust `EVENT_DOWNLOAD_PROGRESS` 对齐） */
+export const MOBILE_UPDATE_PROGRESS_EVENT = "mobile-update://download-progress";
+
 // ─── 定时推送（v47） ──────────────────────────────
 // 独立子系统：用户维护多条「推送」，每条 = 提示词 +（可选）数据源 + 定时规则 + 推送方式。
 // 字段与 Rust models::PushJob 逐字对齐（snake_case）。

@@ -182,6 +182,15 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_Shell",
 ] }
 
+# ─── Android 专属 ────────────────────────────────
+# APK 安装必须走系统安装器（Intent + FileProvider），而 tauri-plugin-opener 的
+# Android 实现只发 `Intent(ACTION_VIEW, uri)`，既没 setDataAndType 也没
+# FLAG_GRANT_READ_URI_PERMISSION，装不了 APK。所以自己用 JNI 调一段 Kotlin
+# （ApkInstaller.kt），这两个 crate 都已在 tao/wry 依赖树里，版本对齐即可。
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"
+
 # ─── 编译优化 ────────────────────────────────────
 
 [profile.dev]

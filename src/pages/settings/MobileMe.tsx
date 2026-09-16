@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { message, Modal } from "antd";
+import { message, Modal, Progress } from "antd";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Settings,
@@ -30,7 +31,13 @@ import {
   promptApi,
   mobileUpdateApi,
 } from "@/lib/api";
-import type { DashboardStats } from "@/types";
+import {
+  MOBILE_UPDATE_PROGRESS_EVENT,
+  type DashboardStats,
+  type MobileDownloadProgress,
+  type MobileUpdateInfo,
+} from "@/types";
+import { useAppStore } from "@/store";
 
 /**
  * 移动端「我的」页（设计稿：10-me.html）
@@ -58,18 +65,123 @@ export function MobileMe() {
     promptCount: 0,
   });
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  /** 非 null = 正在下载该版本的 APK，弹进度对话框 */
+  const [downloading, setDownloading] = useState<MobileUpdateInfo | null>(null);
+  const [progress, setProgress] = useState<MobileDownloadProgress>({
+    downloaded: 0,
+    total: 0,
+    percent: 0,
+  });
+  /** 进度事件的 unlisten，组件卸载时兜底清理（下载途中切 Tab 不该泄漏监听） */
+  const unlistenRef = useRef<UnlistenFn | null>(null);
+  /** 启动静默检查发现的新版（同时驱动「我的」Tab 的小红点） */
+  const pendingUpdate = useAppStore((s) => s.mobileUpdateAvailable);
+
+  useEffect(
+    () => () => {
+      unlistenRef.current?.();
+      unlistenRef.current = null;
+    },
+    [],
+  );
 
   /**
-   * 检查更新：拉 update.json 比对版本。移动端没法热替换，有新版只能引导用户去下载新 APK。
-   * 用户点"去下载" → openUrl(APK 直链/发布页) → 浏览器接管下载，下完点一下进系统安装器
-   * （首次会提示"允许安装未知应用"，那是浏览器的权限）。
+   * App 内下载 + 安装新版 APK。
+   *
+   * 相比老的「openUrl 丢给浏览器」，这条路径全程留在 App 内：进度条可见、断点续传、
+   * 下完直接拉起系统安装器。最后那个系统确认框是 Android 强制的，绕不过去。
+   *
+   * 「允许安装未知应用」是 Android 8.0+ 的单应用开关，应用不能自己授予 —— 没授权时
+   * 先引导用户去设置页开，回来再点一次。
+   *
+   * 任何一环失败都回退到浏览器下载（老路径），至少不把用户堵死。
+   */
+  async function downloadAndInstall(info: MobileUpdateInfo) {
+    // 下载地址可能是 release 发布页（update-mobile.json 没给直链时的回落），
+    // 那种页面下不了 APK，直接交给浏览器
+    if (!info.download_url.toLowerCase().endsWith(".apk")) {
+      await openUrl(info.download_url);
+      return;
+    }
+
+    setProgress({ downloaded: 0, total: 0, percent: 0 });
+    setDownloading(info);
+    try {
+      unlistenRef.current?.();
+      unlistenRef.current = await listen<MobileDownloadProgress>(
+        MOBILE_UPDATE_PROGRESS_EVENT,
+        (e) => setProgress(e.payload),
+      );
+
+      const apkPath = await mobileUpdateApi.download(
+        info.download_url,
+        info.latest_version,
+      );
+
+      // 装之前先确认权限，省得拉起安装器被系统静默拒绝、用户一脸懵
+      const allowed = await mobileUpdateApi.canInstall().catch(() => false);
+      if (!allowed) {
+        setDownloading(null);
+        Modal.confirm({
+          title: "需要允许安装未知应用",
+          content: (
+            <div className="text-sm text-slate-600">
+              新版已下载完成。Android 要求你在系统设置里给「知识库」单独打开「允许安装未知应用」，
+              打开后返回本页再点一次「检查更新」即可安装。
+            </div>
+          ),
+          okText: "去设置",
+          cancelText: "以后再说",
+          onOk: () =>
+            mobileUpdateApi
+              .openInstallPermissionSettings()
+              .catch((e) => message.error(`打开设置页失败：${e}`)),
+        });
+        return;
+      }
+
+      await mobileUpdateApi.install(apkPath);
+      setDownloading(null);
+      // 安装器已接手，红点该撤了 —— 装完重启 App 会重新静默检查，真没装成也会再亮
+      useAppStore.setState({ mobileUpdateAvailable: null });
+      message.success("已拉起安装器，按提示完成安装");
+    } catch (e) {
+      setDownloading(null);
+      // 下载/安装任一环挂了都回退浏览器，别把用户堵在这
+      Modal.confirm({
+        title: "App 内更新失败",
+        content: (
+          <div className="text-sm">
+            <div className="mb-2 text-slate-600">{String(e)}</div>
+            <div className="text-xs text-slate-400">
+              可以改用浏览器下载：下完在通知栏点一下就能装。
+            </div>
+          </div>
+        ),
+        okText: "用浏览器下载",
+        cancelText: "取消",
+        onOk: () =>
+          openUrl(info.download_url).catch((err) =>
+            message.error(`打开下载链接失败：${err}`),
+          ),
+      });
+    } finally {
+      unlistenRef.current?.();
+      unlistenRef.current = null;
+    }
+  }
+
+  /**
+   * 检查更新：拉 update-mobile.json 比对版本，有新版走 {@link downloadAndInstall}。
    */
   async function handleCheckUpdate() {
-    if (checkingUpdate) return;
+    if (checkingUpdate || downloading) return;
     setCheckingUpdate(true);
     try {
       const info = await mobileUpdateApi.check();
       if (!info.has_update) {
+        // 清掉启动检查留下的红点：用户可能已经装过新版了
+        useAppStore.setState({ mobileUpdateAvailable: null });
         message.success(`已是最新版本 v${info.current_version}`);
         return;
       }
@@ -86,19 +198,13 @@ export function MobileMe() {
               </div>
             )}
             <div className="mt-2 text-xs text-slate-400">
-              点"去下载"会在浏览器里下载新 APK，下载完点一下安装即可（首次需在系统里允许"安装未知应用"）。
+              点"立即更新"会在 App 内下载，下完自动拉起安装器（首次需在系统里允许"安装未知应用"）。
             </div>
           </div>
         ),
-        okText: "去下载",
+        okText: "立即更新",
         cancelText: "以后再说",
-        onOk: async () => {
-          try {
-            await openUrl(info.download_url);
-          } catch (e) {
-            message.error(`打开下载链接失败：${e}`);
-          }
-        },
+        onOk: () => downloadAndInstall(info),
       });
     } catch (e) {
       message.error(`检查更新失败：${e}`);
@@ -313,6 +419,11 @@ export function MobileMe() {
           right={
             checkingUpdate ? (
               <span className="text-xs text-slate-400">检查中…</span>
+            ) : pendingUpdate ? (
+              // 启动静默检查已经发现新版了，直接把版本号摆出来，省一次点击
+              <span className="text-xs font-medium text-[#ff4d4f]">
+                v{pendingUpdate.latest_version} 可更新
+              </span>
             ) : undefined
           }
           onClick={() => void handleCheckUpdate()}
@@ -325,9 +436,47 @@ export function MobileMe() {
         />
       </ListGroup>
 
+      {/*
+        下载进度：故意做成不可关闭（无 X / 点遮罩不关）—— 下载是后端 tokio 任务，
+        前端关掉对话框并不会真的中止它，给个"取消"只会让用户以为停了。
+        真中断（杀进程 / 切后台被回收）时 .part 留在 cache 里，下次点更新自动续传。
+      */}
+      <Modal
+        open={downloading !== null}
+        title={`正在下载 v${downloading?.latest_version ?? ""}`}
+        footer={null}
+        closable={false}
+        maskClosable={false}
+        keyboard={false}
+      >
+        <Progress
+          percent={progress.percent}
+          status="active"
+          // total 为 0 = 服务端没给 Content-Length，百分比无意义，只显示已下字节
+          format={() =>
+            progress.total > 0 ? `${progress.percent}%` : formatBytes(progress.downloaded)
+          }
+        />
+        <div className="mt-2 text-xs text-slate-400">
+          {progress.total > 0
+            ? `${formatBytes(progress.downloaded)} / ${formatBytes(progress.total)}`
+            : "下载中…"}
+        </div>
+        <div className="mt-3 text-xs text-slate-400">
+          下载完成后会自动拉起系统安装器。请保持应用在前台。
+        </div>
+      </Modal>
+
       <div className="h-24" />
     </div>
   );
+}
+
+/** 字节数转人类可读（下载进度用，保留一位小数） */
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function LearnCard({

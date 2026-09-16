@@ -11,6 +11,10 @@
     <!-- 同步完成系统通知：Android 13+（API 33）发通知需声明 POST_NOTIFICATIONS，
          并在运行时申请（tauri-plugin-notification 的 requestPermission 触发系统弹框） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- App 内更新：下载新版 APK 后拉起系统安装器（ApkInstaller.kt + FileProvider）。
+         Android 8.0+ 除了这条声明，用户还得在设置里给本应用单独开「允许安装未知应用」，
+         应用不能自己授予 —— 只能用 Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES 引导过去。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- 没摄像头的设备也允许安装（required=false） -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
