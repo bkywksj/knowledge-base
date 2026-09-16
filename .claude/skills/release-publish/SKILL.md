@@ -44,7 +44,7 @@ CI：构建 Windows + macOS + Linux 安装包 → 上传到 GitHub Release（草
 | **CI 构建** | GitHub Actions | — | 跨平台构建 + 签名 |
 | **安装包下载 + 自动更新（主）** | Cloudflare R2 CDN | **主源** | 国内快，零流量费，全球 CDN |
 | **自动更新备源 + 海外存档** | GitHub 公开 `bkywksj/knowledge-base-release` | **备源 1** | R2 不通时兜底，含签名产物 |
-| **自动更新兜底 + 国内镜像** | Gitee 公开 `bkywksj/knowledge-base-release` | **备源 2** | 国内免代理访问，raw URL 作为 update.json 发现兜底 |
+| **自动更新兜底 + 国内镜像** | Gitee 公开 `bkywksj/knowledge-base-release`（**精简镜像，只留最新 1 版**）| **备源 2** | 国内免代理访问，raw URL 作为 update.json 发现兜底。单仓 1GB 配额，每版 orphan 塌缩，见「步骤 10.1」|
 
 > **Gitee 仓库的 update.json 与 GitHub 版内容完全一致**（url 都指向 GitHub raw）。
 > Gitee endpoint 主要作用是"读取 update.json"时的兜底（在 R2 和 GitHub 都挂的场景下至少能发现新版本）。
@@ -134,10 +134,10 @@ cup_watch 首发在这上面烧了约 10 轮反复误判。**事实固定如下�
 | **R2 rclone 程序** | `~/bin/rclone.exe` |
 | **源码仓库本地路径** | `E:/my/桌面软件tauri/knowledge_base` |
 | **源码仓库分支** | `master`（GitHub remote 名为 `github`，Gitee remote 名为 `origin`）|
-| **Release 仓库（GitHub 公开）** | `https://github.com/bkywksj/knowledge-base-release`（remote: `origin`）|
-| **Release 仓库（Gitee 公开）** | `https://gitee.com/bkywksj/knowledge-base-release`（remote: `gitee`）|
-| **本地 Release 仓库路径** | `E:/my/桌面软件tauri/knowledge-base-release` |
-| **Release 仓库分支** | 本地 `main`；GitHub 远端 `main`；**Gitee 远端 `master`**（推 Gitee 时用 refspec `main:master`）|
+| **Release 仓库（GitHub 全量归档）** | `https://github.com/bkywksj/knowledge-base-release`（remote: `origin`，分支 `main`）|
+| **本地 Release 仓库路径（全量）** | `E:/my/桌面软件tauri/knowledge-base-release` —— 🔴 **只挂 origin(GitHub)，不挂 gitee** |
+| **Release 仓库（Gitee 精简镜像）** | `https://gitee.com/bkywksj/knowledge-base-release`（remote: `gitee`，分支 `master`）|
+| **本地 Release 仓库路径（Gitee 精简）** | `E:/my/桌面软件tauri/knowledge-base-release-gitee` —— 🔴 **独立目录、只挂 gitee**，每版 orphan 塌缩，见「步骤 10.1」|
 | **默认下载目录** | `D:/download/download/`（浏览器下载保存位置）|
 | **GitHub Actions 工作流** | `.github/workflows/release.yml` |
 | **平台配置** | `.claude/release-config.json`（含所有自动化参数）|
@@ -608,24 +608,105 @@ fs.writeFileSync(process.env.NEWPATH, JSON.stringify(next, null, 2));
 curl -s "${R2_PUBLIC}/versions.json" | head -c 500
 ```
 
-### 步骤 10：推送 release 仓库（产物 + update.json + update-r2.json）到 GitHub + Gitee
+### 步骤 10：推送 GitHub 全量 release 仓（产物 + update.json + update-r2.json）
+
+> 🔴 **本地全量仓 `knowledge-base-release` 只挂 `origin`(GitHub)，已刻意移除 `gitee` remote**
+> —— 它 `.git` 9GB / 工作树 12GB，推到 Gitee 必然撑爆 1GB 配额并触发封仓。
+> Gitee 走独立的精简仓，见下方**步骤 10.1**。
 
 ```bash
-cd "$GITHUB_DIR"
+cd "$GITHUB_DIR"    # E:/my/桌面软件tauri/knowledge-base-release
 git add -A
 git commit -m "release: vx.y.z
 
-Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 git pull --rebase origin main
-git push origin main           # GitHub（remote 名 origin，远端分支 main）
-git push gitee main:master     # Gitee（远端分支 master；本地 main → 远端 master 的 refspec 映射）
+git push origin main           # 有 Sigil 时用 mcp__sigil__git_push(credential_name=github1, remote=origin, branch=main)
 
-# 如果任一 push 超时（SSL_ERROR_SYSCALL 等），不要重试，提示用户手动执行：
+# 如果 push 超时（SSL_ERROR_SYSCALL 等），不要重试，提示用户手动执行：
 #   cd "E:/my/桌面软件tauri/knowledge-base-release" && git push origin main
-#   cd "E:/my/桌面软件tauri/knowledge-base-release" && git push gitee main:master
 ```
 
-> **Gitee push 比 GitHub 快**（国内直连，~10 秒）。如果 GitHub 超时而 Gitee 成功，国内用户的自动更新仍然能从 Gitee endpoint 读取 update.json 并通过 update.json 里的 GitHub/R2 url 下载。
+### 🔴 步骤 10.1：Gitee 精简镜像仓（**每版必做** orphan 塌缩）
+
+> **背景（tauri-cc v4.10.0 + 本项目 mobile-v0.2.0 双重实战）**：
+> 每发一版，release 仓 `.git` 涨数百 MB（产物 blob 进历史，光 `rm` 工作树不缩 `.git`）。
+> Gitee **单仓配额 1GB**，超了整仓被管理侧封禁：raw 返回 **HTTP 423 `The Repository has been blocked`**、
+> 主页 403，**force 也救不了**（不是鉴权/非快进问题）。
+> 所以 Gitee 必须用**独立的精简仓**，且**每次发布都塌缩历史**。
+>
+> 🔴 **本项目不能学 tauri-cc「攒 3 版再瘦身」**：它单版 ~190M，我们单版 **353M**
+> （桌面 v1.63.0 入 git 部分）+ 移动端 67M。攒 2 版 = 773M 逼近红线，攒 3 版直接爆配额。
+> **只留最新 1 个桌面版 + 1 个移动版，每版都塌缩。**
+
+**双仓分工**（两个独立本地目录，各挂各的 remote，互不干扰）：
+
+| | 全量仓 `knowledge-base-release` | 精简仓 `knowledge-base-release-gitee` |
+|---|---|---|
+| 远端 | GitHub `origin`/`main` | Gitee `gitee`/`master` |
+| 内容 | 全部历史版本（33+ 个） | **只有最新 1 桌面 + 1 移动** |
+| 提交数 | 增量累积 | **恒为 1**（每版 orphan 重建） |
+| `.git` | 9GB（不管） | ~343M |
+| 角色 | 全量归档源 | 自动更新兜底端点 |
+
+```bash
+GITEE_DIR="E:/my/桌面软件tauri/knowledge-base-release-gitee"
+FULL_DIR="E:/my/桌面软件tauri/knowledge-base-release"
+VERSION="x.y.z"          # 本次桌面版本
+MOBILE="mobile-v0.2.0"   # 当前最新移动版（本次没发移动端就填现有的）
+
+# 1) 换成最新版本产物：删旧的，从全量仓拷新的
+rm -rf "$GITEE_DIR/releases"/*
+cp -r "$FULL_DIR/releases/v$VERSION" "$GITEE_DIR/releases/"
+cp -r "$FULL_DIR/releases/$MOBILE"   "$GITEE_DIR/releases/"
+
+# 2) 同步根文件（README + 4 个 json + .gitignore）
+for f in README.md update.json update-r2.json update-mobile.json update-mobile-r2.json .gitignore; do
+  cp "$FULL_DIR/$f" "$GITEE_DIR/$f"
+done
+# mobile-versions.json 以 R2 上那份为准（全量仓里的可能是旧的）
+curl -s -A "kb" "https://pub-9d9e6c0cb6934fb0a0c505e3c64f39b2.r2.dev/knowledge-base/mobile-versions.json" \
+  -o "$GITEE_DIR/mobile-versions.json"
+
+# 3) orphan 塌缩：多提交历史 → 单根提交（.git 真瘦身的关键，光删文件没用）
+cd "$GITEE_DIR"
+git checkout --orphan slim_tmp
+git add -A
+git commit -F <用 Write 落的 UTF-8 无 BOM 消息文件>   # "release: vX + <MOBILE>（Gitee 精简镜像：仅留最新版本，历史塌缩）"
+git branch -D master && git branch -m master
+
+# 4) force 推（orphan 改了 SHA，必须 force）
+#    mcp__sigil__git_push(repo_path=$GITEE_DIR, remote=gitee, branch=master,
+#                         credential_name=gitee, username=bkywksj, force=true)
+#    若远端已被封导致 force 也推不动 → 先 mcp__sigil__gitee_repo_clear(repo=bkywksj/knowledge-base-release)（需审批）再推
+
+# 5) 回收本地 .git —— 🔴 关键坑：陈旧 tracking ref 拽着旧历史，不删则 gc 不掉
+git update-ref -d refs/remotes/gitee/master
+git update-ref -d refs/remotes/gitee/HEAD 2>/dev/null
+git reflog expire --expire=now --all
+git gc --prune=now --aggressive
+du -sh .git    # 应 ≈ 工作树大小（~343M）
+```
+
+**验证（每次都做）**：
+
+```bash
+# 远端只剩 1 个提交
+#   mcp__sigil__gitee_commits_list(repo=bkywksj/knowledge-base-release, per_page=5)
+# 三个 json 端点可读
+for f in update.json update-mobile.json mobile-versions.json; do
+  curl -sL -A "kb" "https://gitee.com/bkywksj/knowledge-base-release/raw/master/$f" | head -c 80; echo
+done
+```
+
+> - ✅ **删旧版本不伤自动更新**：updater 只认 `update.json` 里的最新版；Gitee 在源列表里垫底
+>   （前面还有 R2 与 GitHub 两个全量源）。被瘦掉的版本在 GitHub 仓 + R2 都有完整存档。
+> - ⚠️ **README 里历史版本的下载链接必须写 R2 绝对直链**，不能写 `releases/v.../` 相对路径
+>   —— 精简仓里那些目录不存在，相对链接会变死链（两仓共用同一份 README）。
+> - ⚠️ **Gitee raw 拒大文件**：APK/exe 等产物 raw 返回 **403**，属已知行为，所以下载链接一律走 R2。
+>   只有 json / README 这类小文件能从 Gitee raw 读出来 —— 兜底端点的作用本来也只是「发现新版本」。
+> - ℹ️ **封禁不一定要申诉**：实测写入后出现的 423 多为 Gitee 内容扫描的**临时锁定**，几分钟自动解除。
+>   先等 5-10 分钟复测，真的持续不通再考虑 `gitee_repo_clear` 或申诉。
 
 ### 步骤 11：发布 GitHub Release（从 draft → published）
 
@@ -874,7 +955,7 @@ curl -I "https://pub-9d9e6c0cb6934fb0a0c505e3c64f39b2.r2.dev/knowledge-base/vX.Y
 | M8 生成 `update-mobile.json` + `update-mobile-r2.json` | 扁平结构（无 minisign signature，Android 自己验 APK 签名）：`{"version":"x.y.z","notes":"...","pub_date":"...","url":"<base>/Knowledge.Base_x.y.z_android-arm64.apk"}`。两份只有 `url` 的 base 不同：GitHub 版 base = `https://github.com/bkywksj/knowledge-base-release/raw/main/releases/mobile-vx.y.z`，R2 版 base = `https://pub-...r2.dev/knowledge-base/mobile-vx.y.z`。写到 release 仓根目录 |
 | M9 上传 R2 `update-mobile.json` | `~/bin/rclone.exe copy update-mobile-r2.json r2:downloads/knowledge-base/` → `~/bin/rclone.exe moveto r2:downloads/knowledge-base/update-mobile-r2.json r2:downloads/knowledge-base/update-mobile.json`；curl 验证 200 |
 | M9.5 更新 R2 `mobile-versions.json` | 文档站下载页的 📱 banner 读这个（构建时由 docs 的 `config.ts` 拉，类似桌面 `versions.json`）。curl 拉 `https://pub-...r2.dev/knowledge-base/mobile-versions.json`（不存在则初始化 `{"versions":[]}`）→ 去重后头部插入 `{version:"mobile-vx.y.z", notes:..., pub_date:now UTC, apk_url:".../mobile-vx.y.z/Knowledge.Base_x.y.z_android-arm64.apk", aab_url:".../...aab"}`（apk_url/aab_url 用 R2 base）→ `~/bin/rclone.exe copyto` 覆盖 `r2:downloads/knowledge-base/mobile-versions.json`；顺手 `~/bin/rclone.exe copyto` 把 APK 也覆盖到 `r2:downloads/knowledge-base/mobile-latest.apk`（稳定链接，mobile.md 指向它）|
-| M10 更新 README + 推 release 仓 | 在 README 的「移动端（Android）」区块加下载行 + 移动端版本历史条目；`git add -A && git commit -m "release(mobile): vx.y.z" && git pull --rebase origin main && git push origin main && git push gitee main:master`（Gitee 失败跳过，已知 fork 分叉） |
+| M10 更新 README + 推 release 仓 | 在 README 的「移动端（Android）」区块加下载行 + 移动端版本历史条目（**下载链接写 R2 绝对直链**，历史版本尤其不能用 `releases/...` 相对路径）；全量仓 `git add -A && git commit -m "release(mobile): vx.y.z" && git pull --rebase origin main && git push origin main`（只推 GitHub）。**Gitee 走精简仓**：按「步骤 10.1」把 `releases/` 换成最新桌面版 + 本次移动版 → orphan 塌缩 → force 推 → gc |
 | M11 publish GitHub Release | 把 `mobile-vx.y.z` 的 draft Release 改 `draft:false`（PATCH，name=`知识库 移动端 vx.y.z`，body=更新说明）。注意 CI 在哪个仓就 publish 哪个仓的 |
 | M12 触发文档站重建 | 改 docs 仓 `docs/public/.last-release-mobile.json`（`{version:"mobile-vx.y.z", published_at:now UTC}`）→ `git add docs/public/.last-release-mobile.json && git commit -m "chore: 同步移动端 vx.y.z" && git push gitee master && git push github master`（docs 仓 remote 只有 gitee+github），EdgeOne 自动重建 → `config.ts` 重新拉 R2 `mobile-versions.json` → 📱 banner 显示新版本 |
 | M13 完成报告 | 移动版本 / 源码 commit / tag / CI / release 仓 commit / R2（含 mobile-versions.json + mobile-latest.apk）/ 自动更新（update-mobile.json）/ 文档站 |
@@ -995,11 +1076,18 @@ downloads/                              ← Bucket 根（与 aicoder 共享）
 | `cd "..."` 后下一条 `git` 又回到原目录 | Bash 工具默认每条命令独立工作目录 | 把 `cd ... && git ...` 写在一条 Bash 调用里，或用绝对路径 `git -C "$DIR" ...` |
 | docs 仓库 `git push origin master` 报 `'origin' does not appear to be a git repository` | docs 仓库 remote 名是 `gitee` + `github`，没有 `origin` | 用 `git push gitee master && git push github master` |
 
-### Gitee release 仓库历史分叉（已知问题）
+### Gitee 精简仓相关（历史分叉问题已于 2026-09-16 根治）
 
-| 现象 | 根因 | 影响 / 处置 |
-|------|------|------------|
-| `git push gitee main:master` 报 non-fast-forward | 旧版本在 Gitee 直接推过 release commit，与 GitHub 历史已分叉 | **不影响主链路**（R2 + GitHub raw 端点正常）。本次跳过 Gitee 推送。后续如要修复，需手动选择保留谁的历史并强推一端 |
+> 老做法（全量仓同时挂 gitee remote、`git push gitee main:master`）已废弃 —— 它既撞历史分叉，
+> 又会把 9GB 历史推向 1GB 配额的 Gitee。现在全量仓**已移除 gitee remote**，Gitee 只经精简仓推，
+> 见「步骤 10.1」。
+
+| 现象 | 根因 | 处置 |
+|------|------|------|
+| Gitee raw 返回 **423 `The Repository has been blocked`**、主页 403 | 仓库超 1GB 配额被 Gitee 管理侧封禁；**或**刚写入后内容扫描的临时锁定 | 先等 5–10 分钟复测（临时锁定会自动解除）。确属配额封禁 → 按步骤 10.1 塌缩瘦身；force 推不动就先 `mcp__sigil__gitee_repo_clear`（需审批，保留仓与可见性）再 force 推 |
+| Gitee raw 取 APK / exe 返回 **403** | Gitee raw 拒绝大文件 | 预期行为。下载链接一律写 R2 直链，Gitee 端点只负责 json / README 这类小文件 |
+| 精简仓 `.git` 塌缩后仍有 GB 级 | 陈旧 `refs/remotes/gitee/*` tracking ref 拽着旧历史，`gc` 清不掉 | `git update-ref -d refs/remotes/gitee/master` 后再 `reflog expire` + `gc --prune=now` |
+| README 里历史版本链接在 Gitee 上 404 | 精简仓只有最新版目录，相对路径 `releases/v.../` 指向不存在的目录 | README 中**所有**版本的下载链接都写 R2 绝对直链（两仓共用一份 README）|
 
 ---
 
