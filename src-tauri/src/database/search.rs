@@ -464,7 +464,8 @@ fn sanitize_fts_query(query: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // 本模块的测试全部走 `Database` 的公开方法（集成风格），不直接调
+    // build_filter_clause / sanitize_fts_query 等私有自由函数，故不需要 `use super::*`。
     use crate::database::Database;
     use crate::models::{NoteInput, SearchFilters};
 

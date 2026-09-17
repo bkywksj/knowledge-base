@@ -31,6 +31,12 @@ impl Database {
     /// 薄包装，委托给 [`upsert_attachment_refs_batch`]，避免两份 SQL 各自演化。
     /// **热路径（附件扫描）不要用它**：逐条调会产生大量锁抖动，直接用批量版。
     /// 目前主要供测试与零星单点写入使用。
+    ///
+    /// `allow(dead_code)`：当前全部调用方都在 `#[cfg(test)]` 里（本文件的测试 +
+    /// `services::sync_v1::manifest` 的测试），非 test 构建下就是没人用。刻意保留而不删 ——
+    /// 它是单点写入的正规入口，删掉会逼着测试去手写第二份 SQL，正是本包装要避免的事。
+    /// 与本文件 `NoteAttachmentRow::note_id` 的处理方式一致。
+    #[allow(dead_code)]
     pub fn upsert_attachment_ref(
         &self,
         note_id: i64,
