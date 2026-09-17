@@ -25,6 +25,39 @@ pub const DEFAULT_WIDTH: f64 = 1524.0;
 /// conf.json 的默认高度，同时作为"永不更小"的下限
 pub const DEFAULT_HEIGHT: f64 = 830.0;
 
+/// conf.json 的 `minWidth`，窗口**逻辑**宽的物理下限（tao 经 `WM_GETMINMAXINFO` 强制）。
+///
+/// ⚠️ 必须与 `tauri.conf.json` 的 `minWidth` 保持一致。
+pub const MIN_WIDTH: f64 = 1080.0;
+/// conf.json 的 `minHeight`，同上。
+pub const MIN_HEIGHT: f64 = 640.0;
+
+/// 这个实测逻辑尺寸是否**可能**是用户真实意图，值得写进基准？
+///
+/// 🔴 存在的理由（v1.63.0 实测事故，窗口每次启动都变成 181×24 的细条）：
+/// `note_user_resize` 挂在 `WindowEvent::Resized` 上，而 Windows 在**最小化 / 隐藏到托盘 /
+/// 跨 DPI 过渡**这些异常态里会投递退化的 `WM_SIZE` —— 客户区不是 0（0 已被拦），而是
+/// 一个荒谬的小矩形。当时唯一的守卫是「宽或高等于 0」，于是 `144x18`、`195x25` 这种值被
+/// 当成用户意图记进 `.window-logical-size.json`，随后 `rescue_after_restore`（每次启动）
+/// 和 `reconcile_geometry`（每次 DPI 变化）都忠实地把好好的窗口"校正"成细条，细条又被
+/// 再记一遍 —— **自锁死循环，重装也好不了**（基准文件不随卸载删除）。
+///
+/// 判据取 conf 的 `minWidth`/`minHeight`。⚠️ 注意这个下限**只拦得住用户拖拽**
+/// （Windows 走 `WM_GETMINMAXINFO`），**程序化的 `set_size` 会直接绕过它** —— 实测
+/// `minWidth: 1080` 的窗口被 `set_size` 打到了 144 宽。正因为如此：低于下限的实测值
+/// 一定不是用户拖出来的，只可能是**程序自己下发的错误尺寸**（坏基准驱动的 rescue）
+/// 或异常过渡态，两种都绝不能回灌进基准 —— 否则就是下面说的自锁回路。
+///
+/// 🔴 自锁回路（已被实测数值坐实）：坏基准 `195x25` → `rescue_after_restore` 按缩放 1.5
+/// 下发物理 `292x37` → 2 秒抑制窗口过后任何一次 `Resized` 把它读回来
+/// （292/1.5 = 194.667、37/1.5 = 24.667）→ 原样写回基准。每轮还因取整微调一点。
+///
+/// 误判方向是刻意选的：**宁可漏记一次用户 resize（基准停在上一个好值，功能无感），
+/// 也绝不让一个垃圾值进基准（会把窗口锁死）**。
+pub fn is_plausible_logical_size((w, h): (f64, f64)) -> bool {
+    w.is_finite() && h.is_finite() && w >= MIN_WIDTH && h >= MIN_HEIGHT
+}
+
 /// 一块**物理**像素矩形（工作区 / 窗口外框都用它表示）。
 ///
 /// 只用于 [`fit_into_work_area`] 的入参出参，刻意不依赖 tauri 类型，方便单测。
@@ -97,6 +130,37 @@ pub fn default_window_size(logical_w: f64, logical_h: f64) -> (f64, f64) {
         .min(logical_h * 0.95)
         .min(1050.0);
     (w, h)
+}
+
+/// 窗口已经退化到不可用（细条 / 一个点）时，给出该把它重置成多大；正常则返回 `None`。
+///
+/// 🔴 为什么光"拒绝垃圾基准"不够：`tauri-plugin-window-state` 在退出时无脑存当前物理尺寸，
+/// 只要有**一次**退出时窗口正处于细条状态，细条就被存进 `.window-state.json`。那之后
+/// 基准已被 [`is_plausible_logical_size`] 挡掉（不再有错误基准去"校正"），
+/// 而 [`fit_into_work_area`] 只保证「不比屏幕大」、不管下限 —— 窗口就会一直细条下去。
+/// 本函数是补上的那半边：**低于下限的尺寸不是用户意图，是损坏，直接重置成默认尺寸并居中。**
+///
+/// `work_logical` 是目标屏工作区的**逻辑**尺寸，判据和重置目标都由它算，原因有二：
+///   1. 屏幕比 `MIN_WIDTH`/`MIN_HEIGHT` 还小时（1024×768 投影仪 / 远程桌面），
+///      窗口本来就只能比下限更小，那是屏幕限制不是损坏，不能误判；
+///   2. 重置目标必须是「这块屏上的默认尺寸」，[`default_window_size`] 已经把它
+///      夹到屏幕 95% 以内。
+///
+/// 🔴 判据下限刻意取 `MIN.min(默认尺寸)` 而不是死板的 `MIN`：保证**返回值自己一定通过
+/// 本判据**（见 `t_rescue_result_is_idempotent`），否则小屏上会每次调用都判定"仍然退化"、
+/// 反复下发 `set_size`。
+pub fn degenerate_size_rescue(
+    cur_logical: (f64, f64),
+    work_logical: (f64, f64),
+) -> Option<(f64, f64)> {
+    let def = default_window_size(work_logical.0, work_logical.1);
+    let floor_w = MIN_WIDTH.min(def.0);
+    let floor_h = MIN_HEIGHT.min(def.1);
+    let degenerate = !cur_logical.0.is_finite()
+        || !cur_logical.1.is_finite()
+        || cur_logical.0 < floor_w
+        || cur_logical.1 < floor_h;
+    degenerate.then_some(def)
 }
 
 /// 「期望逻辑尺寸」与实测逻辑尺寸的容差（相对比例）。
@@ -283,6 +347,130 @@ mod tests {
         let r = fit_into_work_area(broken, None, 99999, 99999);
         assert_eq!((r.width, r.height), (1, 1));
         assert_eq!((r.x, r.y), (0, 0));
+    }
+
+    // ─── is_plausible_logical_size ────────────────
+
+    /// 🔴 核心回归：v1.63.0 实测事故里真实写进 `.window-logical-size.json` 的垃圾值，
+    /// 一个都不许再被当成用户意图。
+    #[test]
+    fn t_real_world_garbage_sizes_are_rejected() {
+        for bad in [
+            (144.0, 17.333_333_333_333_332), // prod 存档实测值，窗口被锁成细条
+            (144.0, 18.0),                   // 09-17 日志里 reconcile 用的基准
+            (195.0, 25.0),                   // 09-15 dev 侧同类污染
+        ] {
+            assert!(
+                !is_plausible_logical_size(bad),
+                "{bad:?} 是过渡态垃圾值，必须拒绝"
+            );
+        }
+    }
+
+    /// 正常尺寸一律放行，尤其是小屏上被 fit_into_work_area 压过的合法尺寸。
+    #[test]
+    fn t_normal_sizes_are_accepted() {
+        assert!(is_plausible_logical_size((DEFAULT_WIDTH, DEFAULT_HEIGHT)));
+        assert!(is_plausible_logical_size((1523.0, 949.0))); // 事故日志里被误"校正"掉的健康窗口
+        assert!(is_plausible_logical_size((1297.0, 730.0))); // 1366×768 老本被 clamp 后
+        assert!(is_plausible_logical_size((MIN_WIDTH, MIN_HEIGHT))); // 恰好卡在下限
+    }
+
+    /// 判据的下限必须与 conf 的 minWidth/minHeight 同源，且不能反过来把默认尺寸判成不合理。
+    #[test]
+    fn t_floor_is_consistent_with_defaults() {
+        assert!(MIN_WIDTH <= DEFAULT_WIDTH, "最小宽不能大于默认宽");
+        assert!(MIN_HEIGHT <= DEFAULT_HEIGHT, "最小高不能大于默认高");
+        // 任意屏上算出的默认尺寸都必须被判为合理，否则「恢复默认大小」会写不进基准
+        for (w, h) in [(1920.0, 1080.0), (1366.0, 768.0), (2560.0, 1440.0), (1707.0, 960.0)] {
+            assert!(
+                is_plausible_logical_size(default_window_size(w, h)),
+                "{w}×{h} 算出的默认尺寸被误判为不合理"
+            );
+        }
+    }
+
+    /// 只差一点点也要拒 —— 不留「差不多就收下」的口子，误判方向刻意偏保守。
+    #[test]
+    fn t_just_below_floor_is_rejected() {
+        assert!(!is_plausible_logical_size((MIN_WIDTH - 1.0, MIN_HEIGHT)));
+        assert!(!is_plausible_logical_size((MIN_WIDTH, MIN_HEIGHT - 1.0)));
+    }
+
+    /// NaN / inf / 0 / 负数（存档损坏、最小化读数）绝不放行，也绝不 panic。
+    #[test]
+    fn t_degenerate_plausibility_inputs() {
+        assert!(!is_plausible_logical_size((0.0, 0.0)));
+        assert!(!is_plausible_logical_size((-1500.0, -950.0)));
+        assert!(!is_plausible_logical_size((f64::NAN, 950.0)));
+        assert!(!is_plausible_logical_size((1500.0, f64::NAN)));
+        assert!(!is_plausible_logical_size((f64::INFINITY, 950.0)));
+    }
+
+    // ─── degenerate_size_rescue ───────────────────
+
+    /// 1080p 工作区（扣 48px 任务栏）的逻辑尺寸，下面几个用例共用
+    fn work_1080p() -> (f64, f64) {
+        (1920.0, 1032.0)
+    }
+
+    /// 🔴 核心回归：`window-state.json` 自己被存成细条时，必须重置成默认尺寸。
+    #[test]
+    fn t_strip_window_is_reset_to_default() {
+        for strip in [(144.0, 17.333_333_333_333_332), (144.0, 18.0), (195.0, 25.0), (1.0, 1.0)] {
+            let got = degenerate_size_rescue(strip, work_1080p());
+            assert_eq!(
+                got,
+                Some(default_window_size(work_1080p().0, work_1080p().1)),
+                "{strip:?} 必须被重置成该屏默认尺寸"
+            );
+        }
+    }
+
+    /// 正常窗口一律不许动 —— 这个兜底绝不能把用户自己调的尺寸吃掉。
+    #[test]
+    fn t_healthy_sizes_are_left_alone() {
+        for ok in [
+            (1524.0, 950.0),  // 默认
+            (1523.0, 949.0),  // 事故日志里被误"校正"掉的那个健康窗口
+            (1100.0, 700.0),  // 用户拖小过，但仍在下限之上
+            (1080.0, 640.0),  // 恰好卡在 conf 下限
+            (1900.0, 1020.0), // 几乎铺满
+        ] {
+            assert_eq!(degenerate_size_rescue(ok, work_1080p()), None, "{ok:?} 不该被动");
+        }
+    }
+
+    /// 🔴 幂等：重置出来的尺寸必须自己通过判据，否则小屏上会反复 set_size 抖动。
+    #[test]
+    fn t_rescue_result_is_idempotent() {
+        // 含比 MIN_WIDTH/MIN_HEIGHT 还小的屏
+        for work in [(1920.0, 1032.0), (1366.0, 720.0), (1024.0, 720.0), (800.0, 600.0)] {
+            let def = default_window_size(work.0, work.1);
+            assert_eq!(
+                degenerate_size_rescue(def, work),
+                None,
+                "{work:?} 上重置出的 {def:?} 又被判成退化，会造成反复下发"
+            );
+        }
+    }
+
+    /// 屏幕本身比下限还小：窗口跟着变小是屏幕限制，不是损坏，不能误判成退化。
+    #[test]
+    fn t_tiny_screen_is_not_mistaken_for_corruption() {
+        let work = (1024.0, 720.0); // 比 MIN_WIDTH 1080 还窄
+        let def = default_window_size(work.0, work.1);
+        assert!(def.0 < MIN_WIDTH, "前提：这块屏上默认尺寸确实低于 MIN_WIDTH");
+        assert_eq!(degenerate_size_rescue(def, work), None, "屏幕小不等于窗口坏");
+        // 但真·细条在小屏上照样要救
+        assert!(degenerate_size_rescue((144.0, 18.0), work).is_some());
+    }
+
+    /// NaN / inf 一律当退化处理（宁可重置成默认，也不把垃圾几何留给用户）。
+    #[test]
+    fn t_non_finite_current_size_is_rescued() {
+        assert!(degenerate_size_rescue((f64::NAN, 950.0), work_1080p()).is_some());
+        assert!(degenerate_size_rescue((1524.0, f64::INFINITY), work_1080p()).is_some());
     }
 
     // ─── logical_size_drifted ─────────────────────

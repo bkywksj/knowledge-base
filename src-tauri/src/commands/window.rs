@@ -117,7 +117,13 @@ fn desired_size_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
         .map(|dir| dir.join(desired_size_filename()))
 }
 
-/// 读基准存档。文件不存在 / 损坏 / 值非正一律当「没有基准」，由调用方决定退路。
+/// 读基准存档。文件不存在 / 损坏 / 值不合理一律当「没有基准」，由调用方决定退路。
+///
+/// 🔴 「不合理」用 `is_plausible_logical_size` 判（低于 conf 的 minWidth/minHeight）：
+/// 这条是**已中招安装的自愈出口**。历史版本会把最小化过渡态的退化尺寸写进基准
+/// （详见该函数的注释），存档一旦被污染，启动期的 `rescue_after_restore` 每次都会把窗口
+/// 缩成细条。在这里把垃圾存档当「没有基准」丢弃，用户下次启动就自动恢复正常，
+/// 不需要手工删文件、更不需要重装。
 #[cfg(desktop)]
 fn load_desired_from_disk(app: &tauri::AppHandle) -> Option<(f64, f64)> {
     let path = desired_size_path(app)?;
@@ -125,7 +131,16 @@ fn load_desired_from_disk(app: &tauri::AppHandle) -> Option<(f64, f64)> {
     let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
     let w = v.get("width")?.as_f64()?;
     let h = v.get("height")?.as_f64()?;
-    (w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0).then_some((w, h))
+    if !crate::services::window_size::is_plausible_logical_size((w, h)) {
+        log::warn!(
+            "[window] 基准存档 {:.0}x{:.0} 低于窗口最小尺寸，判定为历史版本写坏的垃圾值，\
+             本次忽略并按存档物理尺寸走（下次 resize 会重建基准）",
+            w,
+            h,
+        );
+        return None;
+    }
+    Some((w, h))
 }
 
 /// 写基准存档。失败只记 warn —— 丢了基准只是退化成「和以前一样」，不该影响任何功能。
@@ -223,6 +238,17 @@ pub(crate) fn init_desired_logical_size(window: &tauri::WebviewWindow) {
     let Some(cur) = current_logical_size(window, scale) else {
         return;
     };
+    // 🔴 启动期极易读到不可信的实测值：autostart `--start-minimized` 时窗口已隐藏到托盘，
+    // 且几何刚落定、tao 缓存的 scale 与实时 scale 可能还没对齐。建档失败没关系
+    // （下一次真实 resize 会补上），把垃圾建成基准才是灾难。
+    if !crate::services::window_size::is_plausible_logical_size(cur) {
+        log::warn!(
+            "[window] 实测逻辑尺寸 {:.0}x{:.0} 低于窗口最小尺寸，不建基准档（等下次真实 resize）",
+            cur.0,
+            cur.1,
+        );
+        return;
+    }
     log::info!("[window] 逻辑尺寸基准初始化为当前实测值: {:.0}x{:.0}", cur.0, cur.1);
     set_desired_logical_size(&app, cur);
 }
@@ -237,6 +263,12 @@ pub(crate) fn note_user_resize(window: &tauri::WebviewWindow) {
     // 最大化 / 全屏时 inner_size 是屏幕尺寸，不是用户想要的还原尺寸；
     // 这也与 window-state 插件的口径一致（它存的同样是还原尺寸）。
     if window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) {
+        return;
+    }
+    // 🔴 最小化 / 隐藏到托盘时的 Resized 一律不记账。本应用「关闭时最小化到托盘」和
+    // autostart `--start-minimized` 都是常态路径，而这两种状态下 Windows 报的客户区
+    // 是退化矩形（不是 0，所以下面的 0 判据拦不住），记进基准就会把窗口锁死成细条。
+    if window.is_minimized().unwrap_or(false) || !window.is_visible().unwrap_or(true) {
         return;
     }
     // 有挂起的校正（DPI 变化时窗口正处于最大化）→ 现在已还原成普通窗口，
@@ -259,6 +291,19 @@ pub(crate) fn note_user_resize(window: &tauri::WebviewWindow) {
     let Some(cur) = current_logical_size(window, scale) else {
         return;
     };
+    // 🔴 最后一道、也是最关键的一道闸：低于 conf minWidth/minHeight 的尺寸不可能是用户
+    // 拖出来的（拖拽被 WM_GETMINMAXINFO 挡住），只可能是**本程序自己下发的错误尺寸**
+    // ——坏基准驱动的 rescue 用 set_size 绕过了下限——或异常过渡态 / scale 读数错配。
+    // 把它读回来记账正是自锁回路的闭合点，详见 is_plausible_logical_size 的注释。
+    if !crate::services::window_size::is_plausible_logical_size(cur) {
+        log::warn!(
+            "[window] 忽略异常 Resized：实测逻辑 {:.0}x{:.0} 低于窗口最小尺寸（实时缩放 {scale}），\
+             不记入基准",
+            cur.0,
+            cur.1,
+        );
+        return;
+    }
 
     match DESIRED_LOGICAL.lock() {
         Ok(mut g) => *g = Some(cur),
@@ -451,12 +496,49 @@ pub(crate) fn fit_into_work_area(window: &tauri::WebviewWindow, center: bool) ->
     let border_w = outer.width.saturating_sub(inner.width);
     let border_h = outer.height.saturating_sub(inner.height);
 
+    // 🔴 下限兜底：窗口已退化成细条（历史版本把过渡态尺寸存进了 window-state.json）时，
+    // 光靠丢弃垃圾基准救不回来 —— 那份存档本身就是坏的，而下面的 fit 只管上限。
+    // 这里把它重置成这块屏的默认尺寸并强制居中：低于下限的几何不可能是用户意图。
+    //
+    // 最小化时 outer_size 是 Windows 给的退化矩形（不是用户几何），此时判定没有意义，跳过。
+    let mut want_size = (outer.width, outer.height);
+    let mut center = center;
+    if !window.is_minimized().unwrap_or(false) {
+        let scale = monitor.scale_factor();
+        if scale.is_finite() && scale > 0.0 {
+            let cur_logical = (outer.width as f64 / scale, outer.height as f64 / scale);
+            let work_logical = (work.width as f64 / scale, work.height as f64 / scale);
+            if let Some(def) =
+                crate::services::window_size::degenerate_size_rescue(cur_logical, work_logical)
+            {
+                let (pw, ph) = crate::services::window_size::physical_for_logical(def, scale);
+                // 🔴 `want_size` 这个位置要的是**外框**尺寸（下面 fit 出来后会再减一次 border
+                // 才 set_size），而 `physical_for_logical` 给的是**内容区**目标 —— 直接塞进去
+                // 会白白小掉一个 border。实测：退化态 outer 238 / inner 216 算出 border 22x13，
+                // 重置目标 2286x1345 最终落成 2264x1332，比默认尺寸小了一圈。
+                // 这里加回 border、末尾再减掉，正好抵消；border 在退化态即便不可信也无妨，
+                // 因为加减用的是同一个值。
+                let (pw, ph) = (pw.saturating_add(border_w), ph.saturating_add(border_h));
+                log::warn!(
+                    "[window] 窗口几何已退化（逻辑 {:.0}x{:.0}，低于可用下限），\
+                     重置为本屏默认尺寸 {:.0}x{:.0} 并居中（外框 {pw}x{ph}，缩放 {scale}）",
+                    cur_logical.0,
+                    cur_logical.1,
+                    def.0,
+                    def.1,
+                );
+                want_size = (pw, ph);
+                center = true;
+            }
+        }
+    }
+
     let want_pos = if center { None } else { Some((pos.x, pos.y)) };
     let fitted = crate::services::window_size::fit_into_work_area(
         work,
         want_pos,
-        outer.width,
-        outer.height,
+        want_size.0,
+        want_size.1,
     );
 
     let mut changed = false;
