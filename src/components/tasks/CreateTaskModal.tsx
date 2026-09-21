@@ -41,6 +41,20 @@ type RepeatMode = "none" | "daily" | "weekdays" | "weekly" | "monthly" | "custom
 type EndMode = "never" | "until" | "count";
 type CustomUnit = "day" | "week" | "month";
 
+/**
+ * 标题按**单行文本**存：粘贴 / 语音带进来的换行、制表一律折成空格。
+ *
+ * 标题输入框虽然会随字数自动长高（视觉折行，最多 5 行），但存的仍是一行 ——
+ * 列表行、TaskCard、日历、搜索结果的 white-space 都是默认值，真换行只会被折叠成
+ * 空格白改一场；导出 Markdown 的 `- [ ] ${title}` 更会被换行拆断成两条。
+ * 需要分行陈述的内容请写进"备注"。
+ *
+ * 只折叠不 trim：首尾空格得留着，否则用户正打字时空格会被吞。保存时另有 title.trim()。
+ */
+function normalizeTaskTitle(v: string): string {
+  return v.replace(/[\r\n\t]+/g, " ");
+}
+
 interface Props {
   open: boolean;
   editing?: Task | null;
@@ -554,23 +568,45 @@ export function CreateTaskModal({
           >
             标题 <span style={{ color: token.colorError }}>*</span>
           </div>
-          <Input
-            autoFocus
-            placeholder="做什么？"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onPressEnter={handleSave}
-            style={{ fontSize: 15 }}
-            allowClear
-            suffix={
+          {/* 标题框随字数自动长高，5 行封顶后内部滚动——长标题不用再在单行里左右拖着看。
+              TextArea 不支持 suffix，麦克风改成绝对定位钉在右下角（paddingRight 给它留位）。 */}
+          <div className="relative">
+            <Input.TextArea
+              autoFocus
+              placeholder="做什么？"
+              value={title}
+              onChange={(e) => setTitle(normalizeTaskTitle(e.target.value))}
+              onKeyDown={(e) => {
+                // Enter 保存，沿用单行框的肌肉记忆；preventDefault 挡掉 TextArea 默认的插入换行。
+                // isComposing 判断不能省：中文输入法选词时的回车不该把半截拼音存成任务。
+                if (
+                  e.key === "Enter" &&
+                  !e.shiftKey &&
+                  !e.nativeEvent.isComposing
+                ) {
+                  e.preventDefault();
+                  void handleSave();
+                }
+              }}
+              autoSize={{ minRows: 1, maxRows: 5 }}
+              style={{ fontSize: 15, paddingRight: 32, resize: "none" }}
+              // 不用 allowClear：TextArea 的清除图标钉死在右上角，框只有一行高（32px）时
+              // 正好压住右下角的麦克风。标题清空用 Ctrl+A 退格即可，语音入口更值得留。
+            />
+            {/* 定位套在外层 span 上而不是直接给 MicButton 加 .absolute：
+                antd 的 .ant-btn 自带 position:relative（波纹要用），同为单类选择器时
+                谁赢取决于 CSS 注入顺序，不可靠；内联样式没有这个问题。 */}
+            <span style={{ position: "absolute", right: 4, bottom: 4 }}>
               <MicButton
                 stripTrailingPunctuation
                 onTranscribed={(text) =>
-                  setTitle((prev) => (prev ? `${prev} ${text}` : text))
+                  setTitle((prev) =>
+                    normalizeTaskTitle(prev ? `${prev} ${text}` : text),
+                  )
                 }
               />
-            }
-          />
+            </span>
+          </div>
         </div>
 
         {/* 紧急度 + 重要性 */}
