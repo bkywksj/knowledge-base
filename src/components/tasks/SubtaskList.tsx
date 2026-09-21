@@ -14,6 +14,7 @@ import dayjs, { type Dayjs } from "dayjs";
 import { taskApi } from "@/lib/api";
 import type { Task } from "@/types";
 import { MicButton } from "@/components/MicButton";
+import { CopyButton } from "@/components/ui/CopyButton";
 
 /**
  * 子任务列表组件——展示在主任务编辑弹窗的底部。
@@ -295,6 +296,13 @@ export function SubtaskList({ parentTaskId, onChanged, compact = false }: Props)
                 title={
                   t.due_date ? `到点提醒：${t.due_date}` : "设置时间（到点提醒）"
                 }
+              />
+              {/* 复制该条子任务标题：与删除一样 hover 才显形，不干扰平时阅读 */}
+              <CopyButton
+                text={t.title}
+                title="复制子任务内容"
+                iconSize={12}
+                className="opacity-0 group-hover:opacity-100"
               />
               <Button
                 type="text"

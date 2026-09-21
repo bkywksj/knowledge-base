@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { Modal, Button, Tag, Typography, theme as antdTheme } from "antd";
 import { Star, Edit3 } from "lucide-react";
 import type { Project, Task } from "@/types";
-import { projectApi } from "@/lib/api";
+import { projectApi, taskApi } from "@/lib/api";
 import { taskTimeLines } from "@/lib/taskTimestamps";
+import { CopyButton } from "@/components/ui/CopyButton";
 import { SubtaskList } from "./SubtaskList";
 
 const { Text, Paragraph } = Typography;
@@ -118,6 +119,7 @@ export function TaskDetailModal({
                   fill={token.colorWarning}
                 />
               )}
+              <CopyButton text={task.title} title="复制标题" />
             </div>
           </div>
 
@@ -205,9 +207,14 @@ export function TaskDetailModal({
           </div>
 
           <div>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              备注
-            </Text>
+            <div className="flex items-center gap-1">
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                备注
+              </Text>
+              {task.description?.trim() && (
+                <CopyButton text={task.description} title="复制备注" />
+              )}
+            </div>
             <Paragraph
               style={{
                 marginTop: 4,
@@ -232,17 +239,35 @@ export function TaskDetailModal({
                 borderTop: `1px solid ${token.colorBorderSecondary}`,
               }}
             >
-              <Text
-                type="secondary"
-                style={{ fontSize: 12, display: "block", marginBottom: 6 }}
+              <div
+                className="flex items-center gap-1"
+                style={{ marginBottom: 6 }}
               >
-                子任务
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  子任务
+                  {task.subtask_total > 0 && (
+                    <span
+                      style={{ color: token.colorTextTertiary, marginLeft: 6 }}
+                    >
+                      {task.subtask_done}/{task.subtask_total} 已完成
+                    </span>
+                  )}
+                </Text>
                 {task.subtask_total > 0 && (
-                  <span style={{ color: token.colorTextTertiary, marginLeft: 6 }}>
-                    {task.subtask_done}/{task.subtask_total} 已完成
-                  </span>
+                  <CopyButton
+                    // 点击时才现拉一遍：子任务可在本弹窗内增删改，用最新数据才不会复制到旧内容。
+                    // 输出 Markdown 待办格式，粘到笔记 / 聊天窗里勾选状态一眼可见。
+                    text={async () => {
+                      const list = await taskApi.listSubtasks(task.id);
+                      return list
+                        .map((t) => `- [${t.status === 1 ? "x" : " "}] ${t.title}`)
+                        .join("\n");
+                    }}
+                    title="复制全部子任务"
+                    successText="已复制全部子任务"
+                  />
                 )}
-              </Text>
+              </div>
               <SubtaskList
                 parentTaskId={task.id}
                 compact
