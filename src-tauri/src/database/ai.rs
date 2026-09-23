@@ -89,6 +89,23 @@ fn row_to_ai_conversation(row: &rusqlite::Row) -> rusqlite::Result<AiConversatio
 const AI_CONV_COLS: &str =
     "id, title, model_id, attached_note_ids, scope_folder_id, preset_id, created_at, updated_at";
 
+/// ai_messages 行 → AiMessage
+///
+/// 列顺序约定（v63 起 8 列）：
+///   id, conversation_id, role, content, references_json, skill_calls_json, turn_meta_json, created_at
+fn row_to_ai_message(row: &rusqlite::Row) -> rusqlite::Result<AiMessage> {
+    Ok(AiMessage {
+        id: row.get(0)?,
+        conversation_id: row.get(1)?,
+        role: row.get(2)?,
+        content: row.get(3)?,
+        references: row.get(4)?,
+        skill_calls: row.get(5)?,
+        turn_meta: row.get(6)?,
+        created_at: row.get(7)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,6 +498,60 @@ mod tests {
         let hits = db.search_notes_for_rag("订单服务拆分方案", 5, None).unwrap();
         assert_eq!(hits.len(), 1);
         assert!(hits[0].2.contains("讨论了订单服务拆分方案"));
+    }
+
+    /// 建一个带模型的空会话，返回会话 id
+    fn conversation(db: &Database) -> i64 {
+        let model = db.create_ai_model(&input("m")).unwrap();
+        db.create_ai_conversation("t", model.id, None).unwrap().id
+    }
+
+    /// turn_meta 能写进去、原样读回来；不写的消息读回 None
+    #[test]
+    fn turn_meta_round_trips() {
+        let db = temp_db();
+        let cid = conversation(&db);
+        db.add_ai_message(cid, "user", "问", None).unwrap();
+        let meta = r#"{"endReason":"stopped","durationMs":1200}"#;
+        db.add_ai_message_full(cid, "assistant", "答了一半", None, None, Some(meta))
+            .unwrap();
+
+        let msgs = db.list_ai_messages(cid).unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].turn_meta, None);
+        assert_eq!(msgs[1].turn_meta.as_deref(), Some(meta));
+    }
+
+    /// 同一秒写入的提问和回答必须按写入顺序返回（created_at 只精确到秒）
+    #[test]
+    fn messages_in_same_second_keep_insert_order() {
+        let db = temp_db();
+        let cid = conversation(&db);
+        for i in 0..6 {
+            let role = if i % 2 == 0 { "user" } else { "assistant" };
+            db.add_ai_message(cid, role, &i.to_string(), None).unwrap();
+        }
+        let order: Vec<String> = db.list_ai_messages(cid).unwrap().into_iter().map(|m| m.content).collect();
+        assert_eq!(order, ["0", "1", "2", "3", "4", "5"]);
+    }
+
+    /// 从某条起删：含这条、只删本会话
+    #[test]
+    fn delete_from_only_touches_own_conversation_tail() {
+        let db = temp_db();
+        let a = conversation(&db);
+        let b = conversation(&db);
+        let _q1 = db.add_ai_message(a, "user", "q1", None).unwrap();
+        db.add_ai_message(a, "assistant", "a1", None).unwrap();
+        let q2 = db.add_ai_message(a, "user", "q2", None).unwrap();
+        db.add_ai_message(a, "assistant", "a2", None).unwrap();
+        db.add_ai_message(b, "user", "other", None).unwrap();
+
+        assert_eq!(db.delete_ai_messages_from(a, q2.id).unwrap(), 2);
+        let left: Vec<String> = db.list_ai_messages(a).unwrap().into_iter().map(|m| m.content).collect();
+        assert_eq!(left, ["q1", "a1"]);
+        // b 的消息 id 比 q2 大，但不属于会话 a，不能被删
+        assert_eq!(db.list_ai_messages(b).unwrap().len(), 1);
     }
 }
 
@@ -1015,27 +1086,21 @@ impl Database {
     // ─── AI 消息 DAO ─────────────────────────────
 
     /// 获取对话的所有消息
+    ///
+    /// `created_at` 只精确到秒，提问和秒回的回答会落在同一秒；补一个 `id` 做次序键，
+    /// 否则同秒的两条谁先谁后没有保证，卡片会把回答配到错误的提问上。
     pub fn list_ai_messages(&self, conversation_id: i64) -> Result<Vec<AiMessage>, AppError> {
         let conn = self
             .conn
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
         let mut stmt = conn.prepare(
-            "SELECT id, conversation_id, role, content, references_json, skill_calls_json, created_at
-             FROM ai_messages WHERE conversation_id = ?1 ORDER BY created_at",
+            "SELECT id, conversation_id, role, content, references_json, skill_calls_json,
+                    turn_meta_json, created_at
+             FROM ai_messages WHERE conversation_id = ?1 ORDER BY created_at, id",
         )?;
         let messages = stmt
-            .query_map([conversation_id], |row| {
-                Ok(AiMessage {
-                    id: row.get(0)?,
-                    conversation_id: row.get(1)?,
-                    role: row.get(2)?,
-                    content: row.get(3)?,
-                    references: row.get(4)?,
-                    skill_calls: row.get(5)?,
-                    created_at: row.get(6)?,
-                })
-            })?
+            .query_map([conversation_id], row_to_ai_message)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(messages)
     }
@@ -1048,13 +1113,13 @@ impl Database {
         content: &str,
         references: Option<&str>,
     ) -> Result<AiMessage, AppError> {
-        self.add_ai_message_full(conversation_id, role, content, references, None)
+        self.add_ai_message_full(conversation_id, role, content, references, None, None)
     }
 
-    /// 添加消息（含 skill_calls_json）
+    /// 添加消息（含 skill_calls_json / turn_meta_json）
     ///
-    /// 启用 Skills 的 assistant 消息会把 SkillCall 数组 JSON 后经此持久化，
-    /// 前端重绘对话历史时据此还原 "🔧 调用了 xxx" 折叠卡片。
+    /// assistant 消息把本轮的 SkillCall 数组和收尾信息（`TurnMeta`）JSON 后经此持久化，
+    /// 前端重绘对话历史时据此还原整张回复卡片。
     pub fn add_ai_message_full(
         &self,
         conversation_id: i64,
@@ -1062,44 +1127,47 @@ impl Database {
         content: &str,
         references: Option<&str>,
         skill_calls: Option<&str>,
+        turn_meta: Option<&str>,
     ) -> Result<AiMessage, AppError> {
         let conn = self
             .conn
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
         conn.execute(
-            "INSERT INTO ai_messages (conversation_id, role, content, references_json, skill_calls_json)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![conversation_id, role, content, references, skill_calls],
+            "INSERT INTO ai_messages
+                (conversation_id, role, content, references_json, skill_calls_json, turn_meta_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![conversation_id, role, content, references, skill_calls, turn_meta],
         )?;
         let id = conn.last_insert_rowid();
         let msg = conn.query_row(
-            "SELECT id, conversation_id, role, content, references_json, skill_calls_json, created_at
+            "SELECT id, conversation_id, role, content, references_json, skill_calls_json,
+                    turn_meta_json, created_at
              FROM ai_messages WHERE id = ?1",
             [id],
-            |row| {
-                Ok(AiMessage {
-                    id: row.get(0)?,
-                    conversation_id: row.get(1)?,
-                    role: row.get(2)?,
-                    content: row.get(3)?,
-                    references: row.get(4)?,
-                    skill_calls: row.get(5)?,
-                    created_at: row.get(6)?,
-                })
-            },
+            row_to_ai_message,
         )?;
         Ok(msg)
     }
 
-    /// 删除单条消息（用于 API 失败时回滚）
-    pub fn delete_ai_message(&self, id: i64) -> Result<(), AppError> {
+    /// 删除会话里从 `from_id` 起（含）的所有消息，返回删除条数
+    ///
+    /// 给「重新生成 / 编辑重发」用：把那条提问连同之后的回答一起撤掉，再重新发送。
+    /// 带上 `conversation_id` 条件，防止前端传错 id 删到别的会话。
+    pub fn delete_ai_messages_from(
+        &self,
+        conversation_id: i64,
+        from_id: i64,
+    ) -> Result<usize, AppError> {
         let conn = self
             .conn
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
-        conn.execute("DELETE FROM ai_messages WHERE id = ?1", [id])?;
-        Ok(())
+        let n = conn.execute(
+            "DELETE FROM ai_messages WHERE conversation_id = ?1 AND id >= ?2",
+            rusqlite::params![conversation_id, from_id],
+        )?;
+        Ok(n)
     }
 
     // ─── RAG 搜索 DAO ───────────────────────────

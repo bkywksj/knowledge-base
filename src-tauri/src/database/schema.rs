@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 62;
+pub const SCHEMA_VERSION: i32 = 63;
 
 /// `ai_models.max_context` 的历史默认值。v51 把旧默认 32000 统一抬到它，此后新建也默认填它 ——
 /// 所以存量里的 128000 分不清是用户填的还是默认值，v62 一律当作「未设置」。
@@ -98,6 +98,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             59 => migrate_v59_to_v60(conn)?,
             60 => migrate_v60_to_v61(conn)?,
             61 => migrate_v61_to_v62(conn)?,
+            62 => migrate_v62_to_v63(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2390,6 +2391,32 @@ fn migrate_v54_to_v55(conn: &Connection) -> Result<(), AppError> {
 /// 加一列区分而不是另起一张表：份数上限、时间窗节流、内容去重、
 /// 以及笔记删除时的 CASCADE 清理，整套逻辑原样复用。
 /// `target_path` 为 NULL = 笔记正文本身（v57 的既有语义，存量行自动落到这一档）。
+/// v62 -> v63：`ai_messages.turn_meta_json`（一轮回复的收尾信息）。
+///
+/// # 为什么需要
+/// AI 助手改成「一轮回复 = 一张卡片」后，卡片要显示这一轮是怎么结束的（完成 / 被停止 / 失败）、
+/// 花了多久、智能模式下每轮调工具前说了什么、推理模型的思考过程。这些以前要么只在流式期间
+/// 存在内存里（重开会话就没了），要么根本没记：
+/// - 停止：智能模式直接 return，已经调过的工具和写了一半的回答全丢
+/// - 失败：连用户那条提问都删掉，只弹一个几秒就消失的 toast
+///
+/// # 为什么是一列 JSON 而不是多列
+/// 这些字段只给前端渲染卡片用，不参与任何查询 / 排序 / 同步冲突判断；结构后面还会长
+/// （token 用量等），塞一列 JSON 省得每加一项就升一次版本。与 `skill_calls_json` 同一思路。
+///
+/// 存量行为 NULL：前端按「已完成、无统计」渲染。
+fn migrate_v62_to_v63(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v62 -> v63 (ai_messages.turn_meta_json)");
+
+    let cols = list_columns(conn, "ai_messages")?;
+    if !cols.iter().any(|c| c == "turn_meta_json") {
+        conn.execute_batch("ALTER TABLE ai_messages ADD COLUMN turn_meta_json TEXT;")?;
+    }
+
+    set_version(conn, 63)?;
+    Ok(())
+}
+
 /// v61 -> v62：模型服务改由 ai-profile crate 提供。
 ///
 /// 三件事，都是「把旧语义写进数据」，让切换到 crate 后行为不变：

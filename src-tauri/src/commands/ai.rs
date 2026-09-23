@@ -331,6 +331,20 @@ pub fn list_ai_messages(
         .map_err(|e| e.to_string())
 }
 
+/// 删除会话里从某条消息起（含）的所有消息，返回删除条数
+///
+/// 给「重新生成 / 编辑重发」用：前端传那一轮提问的 id，连同它之后的回答一起撤掉，
+/// 再用原文或改过的文字重新 `send_ai_message`。
+#[tauri::command]
+pub fn delete_ai_messages_from(
+    state: State<'_, AppState>,
+    conversation_id: i64,
+    from_message_id: i64,
+) -> Result<usize, String> {
+    AiService::truncate_conversation_from(&state.db, conversation_id, from_message_id)
+        .map_err(|e| e.to_string())
+}
+
 /// 发送消息并流式获取 AI 回复
 ///
 /// `use_skills=Some(true)` 时走 Skills 框架（T-004）：
@@ -680,7 +694,8 @@ pub fn archive_ai_conversation_to_note(
         "> 由 AI 对话归档于 {}\n\n",
         chrono::Local::now().format("%Y-%m-%d %H:%M")
     ));
-    for msg in &messages {
+    // 失败 / 空的回复卡片不归档：笔记里出现一段空白的「## AI」只会让人困惑
+    for msg in messages.iter().filter(|m| crate::services::ai::usable_in_history(m)) {
         let label = match msg.role.as_str() {
             "user" => "## 我",
             "assistant" => "## AI",

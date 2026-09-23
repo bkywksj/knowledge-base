@@ -10,7 +10,7 @@ use crate::models::{
     AiMessage, AiModel, AiModelInput, AiModelTestResult, AttachmentPreview, DraftNoteRequest,
     DraftNoteResponse, ExcelPreview, Folder, MessageAttachment, MilestoneDraft, PdfPreview,
     PlanFromExcelRequest, PlanFromGoalRequest, PlanFromGoalResponse, PlanTodayRequest,
-    PlanTodayResponse, SkillCall, TaskQuery, TaskSuggestion, TextPreview,
+    PlanTodayResponse, SkillCall, TaskQuery, TaskSuggestion, TextPreview, TurnMeta,
 };
 use crate::services::citations;
 use crate::services::skills;
@@ -341,6 +341,117 @@ fn emit_ai_error(app: &AppHandle, conversation_id: i64, error: &str) {
         "ai:error",
         json!({ "conversationId": conversation_id, "error": error }),
     );
+}
+
+/// 发出流式请求，等响应头期间也能被「停止」打断；被打断返回 None
+///
+/// 各流式函数原来只在**读流**的循环里 select 取消信号，而等响应头这一步（`send().await`）
+/// 不看信号。本地模型首次加载 / prompt-eval 可能在这里卡几十秒到几分钟，期间点「停止」
+/// 毫无反应，要等模型开口才生效。drop 掉 send 的 future 会断开连接，Ollama 等服务端
+/// 看到断开会停止生成，不会在后台继续白算。
+async fn send_unless_cancelled(
+    request: reqwest::RequestBuilder,
+    cancel_rx: &mut watch::Receiver<bool>,
+) -> Option<Result<reqwest::Response, reqwest::Error>> {
+    if *cancel_rx.borrow() {
+        return None;
+    }
+    tokio::select! {
+        r = request.send() => Some(r),
+        _ = async {
+            // changed() 出错 = Sender 已 drop（命令结束），不算取消，永远挂起让 send 跑完
+            while cancel_rx.changed().await.is_ok() {
+                if *cancel_rx.borrow() {
+                    return;
+                }
+            }
+            std::future::pending::<()>().await
+        } => None,
+    }
+}
+
+/// 发 `ai:tool_call` 事件：SkillCall 的字段再加一个 `conversationId`。
+///
+/// 同一个 id 会发两次（running → ok/error），前端按 id 覆盖。带会话 ID 的理由同 `emit_ai_token`。
+fn emit_tool_call(app: &AppHandle, conversation_id: i64, sc: &SkillCall) {
+    let mut payload = serde_json::to_value(sc).unwrap_or_else(|_| json!({}));
+    payload["conversationId"] = json!(conversation_id);
+    let _ = app.emit("ai:tool_call", payload);
+}
+
+/// 这条历史消息要不要发给模型当上下文
+///
+/// 失败的回复（`turn_meta.endReason = "error"`）和空回复（刚开口就被停止）只给用户看，
+/// 不能进上下文：前者正文是半截或空的，后者会变成一条空 assistant 消息，部分服务商直接 400。
+/// 跳过它们后会出现连续两条 user 消息 —— `build_messages` 本来就会合并连续同角色，
+/// OpenAI 兼容协议也接受连续 user。
+pub fn usable_in_history(m: &AiMessage) -> bool {
+    if m.role != "assistant" {
+        return true;
+    }
+    if m.content.trim().is_empty() {
+        return false;
+    }
+    let failed = m
+        .turn_meta
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<TurnMeta>(s).ok())
+        .is_some_and(|t| t.end_reason == "error");
+    !failed
+}
+
+/// 保存一轮 assistant 回复（正文 + 工具调用 + 收尾信息）
+///
+/// 所有结局（完成 / 停止 / 失败）都走这里落库，前端据此把整张卡片原样还原。
+fn save_turn(
+    db: &Database,
+    conversation_id: i64,
+    content: &str,
+    references: Option<&str>,
+    skill_calls: &[SkillCall],
+    meta: &TurnMeta,
+) -> Result<AiMessage, AppError> {
+    let skill_calls_json = if skill_calls.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(skill_calls)?)
+    };
+    let meta_json = serde_json::to_string(meta)?;
+    let msg = db.add_ai_message_full(
+        conversation_id,
+        "assistant",
+        content,
+        references,
+        skill_calls_json.as_deref(),
+        Some(&meta_json),
+    )?;
+    db.touch_ai_conversation(conversation_id)?;
+    Ok(msg)
+}
+
+/// 失败收尾：把错误存成这一轮的卡片（提问保留），再把错误原样交还给调用方
+///
+/// 以前失败会把用户那条提问一起删掉、只弹 toast —— 用户既看不到自己问了什么，
+/// 也没法对着那张卡片点「重试」。存库本身再失败时只记日志，不能盖掉真正的错误。
+fn fail_turn(
+    db: &Database,
+    conversation_id: i64,
+    skill_calls: &[SkillCall],
+    round_texts: Vec<String>,
+    started: std::time::Instant,
+    err: String,
+) -> AppError {
+    let meta = TurnMeta {
+        end_reason: "error".into(),
+        error: Some(err.clone()),
+        duration_ms: started.elapsed().as_millis() as u64,
+        round_texts,
+        reasoning: String::new(),
+    };
+    if let Err(e) = save_turn(db, conversation_id, "", None, skill_calls, &meta) {
+        log::warn!("[ai] 保存失败卡片出错（conversation {}）: {}", conversation_id, e);
+    }
+    AppError::Custom(err)
 }
 
 /// P1：把跨网络 chunk 的字节流按 `\n` 切成【完整行】再交给上层解析。
@@ -1383,6 +1494,26 @@ impl AiService {
         Ok(full_response)
     }
 
+    /// 撤回会话里从 `from_message_id` 起（含）的所有消息（重新生成 / 编辑重发）
+    ///
+    /// 只允许从一条 **user** 消息开始撤：从回答中间截断会留下一条没有回答的孤立提问，
+    /// 或者把下一轮的提问配给上一轮的回答。
+    pub fn truncate_conversation_from(
+        db: &Database,
+        conversation_id: i64,
+        from_message_id: i64,
+    ) -> Result<usize, AppError> {
+        let messages = db.list_ai_messages(conversation_id)?;
+        let anchor = messages
+            .iter()
+            .find(|m| m.id == from_message_id)
+            .ok_or_else(|| AppError::Custom("要撤回的消息不在这个会话里".into()))?;
+        if anchor.role != "user" {
+            return Err(AppError::Custom("只能从一条提问开始撤回".into()));
+        }
+        db.delete_ai_messages_from(conversation_id, from_message_id)
+    }
+
     /// 流式聊天：发送消息 → 检索笔记 → 调用 AI → 流式返回
     ///
     /// 通过 Tauri Event 实时推送 token 到前端：
@@ -1397,6 +1528,7 @@ impl AiService {
         use_rag: bool,
         cancel_rx: watch::Receiver<bool>,
     ) -> Result<(), AppError> {
+        let started = std::time::Instant::now();
         // 1. 获取对话（含附加笔记 IDs）和使用的模型
         let conv = db.get_ai_conversation(conversation_id)?;
         let model = db.get_ai_model(conv.model_id)?;
@@ -1501,11 +1633,16 @@ impl AiService {
         // 而用户真正关心的是"这条回答用了哪几篇"。改为在下面把**校验过的**引用
         // 挂到 assistant 消息上 —— 否则两个气泡都会显示"参考了 N 篇"，且提问那条
         // 报的还是没被用上的候选数，反而误导。
-        let user_msg = db.add_ai_message(conversation_id, "user", user_message, None)?;
+        db.add_ai_message(conversation_id, "user", user_message, None)?;
         db.touch_ai_conversation(conversation_id)?;
 
         // 4. 构建历史消息并发送（支持自动重试递减历史）
-        let history = db.list_ai_messages(conversation_id)?;
+        //    失败 / 空的回复卡片只给用户看，不进上下文（见 usable_in_history）
+        let history: Vec<AiMessage> = db
+            .list_ai_messages(conversation_id)?
+            .into_iter()
+            .filter(usable_in_history)
+            .collect();
 
         // 角色预设（v50）：查一次复用给所有重试轮次；查不到就当没设
         let preset = db
@@ -1562,10 +1699,16 @@ impl AiService {
                     // 存库前剥掉标记：历史记录里不该留这行给用户看见
                     let clean = citations::strip_citation_marker(&response);
 
+                    // 被停止时流函数返回的是已生成的那一截，照样存下来，只是标成 stopped
+                    let stopped = *cancel_rx.borrow();
+
                     // 模型没给标记（老模型 / 小模型不遵从格式）时回退成"检索召回了什么"，
                     // 保持改造前的行为，不至于让引用展示凭空消失。
+                    // 被停止的回答例外：标记写在末尾，停在半截时本来就没有，回退会把召回的
+                    // 候选全挂上去 —— 连一个字都没生成的回答也显示「参考了 N 篇笔记」
                     let assistant_refs = match &verified {
                         Some(ids) => ids.clone(),
+                        None if stopped => Vec::new(),
                         None => ref_ids.clone(),
                     };
                     if let Some(ids) = &verified {
@@ -1581,14 +1724,20 @@ impl AiService {
                         serde_json::to_string(&assistant_refs).ok()
                     };
 
-                    // 成功：保存 AI 回复（引用挂在 assistant 消息上，表示"这条回答用了哪些笔记"）
-                    db.add_ai_message(
+                    let meta = TurnMeta {
+                        end_reason: if stopped { "stopped" } else { "done" }.into(),
+                        duration_ms: started.elapsed().as_millis() as u64,
+                        ..Default::default()
+                    };
+                    // 保存 AI 回复（引用挂在 assistant 消息上，表示"这条回答用了哪些笔记"）
+                    save_turn(
+                        db,
                         conversation_id,
-                        "assistant",
                         &clean,
                         assistant_refs_json.as_deref(),
+                        &[],
+                        &meta,
                     )?;
-                    db.touch_ai_conversation(conversation_id)?;
 
                     // 若会话仍是"新对话"默认名，用用户首问的前 24 个字符作为标题
                     let auto_title = derive_conversation_title(user_message);
@@ -1615,16 +1764,19 @@ impl AiService {
                         last_error = Some(e.to_string());
                         continue;
                     }
-                    // 其他错误不重试，直接返回
-                    let _ = db.delete_ai_message(user_msg.id);
-                    return Err(AppError::Custom(err_str));
+                    // 其他错误不重试：提问留着，错误存成这一轮的卡片
+                    return Err(fail_turn(db, conversation_id, &[], Vec::new(), started, err_str));
                 }
             }
         }
 
         // 所有重试都失败了
-        let _ = db.delete_ai_message(user_msg.id);
-        Err(AppError::Custom(
+        Err(fail_turn(
+            db,
+            conversation_id,
+            &[],
+            Vec::new(),
+            started,
             last_error.unwrap_or_else(|| "AI 请求失败".to_string()),
         ))
     }
@@ -1738,14 +1890,11 @@ impl AiService {
         });
         apply_max_tokens(&mut body, model);
 
-        let response = match client
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
+        let response = match send_unless_cancelled(client.post(&url).json(&body), &mut cancel_rx).await {
+            // 还没开口就被停止：返回空文本，由 chat_stream 存成「已停止」卡片
+            None => return Ok(String::new()),
+            Some(Ok(r)) => r,
+            Some(Err(e)) => {
                 // Bug B: 请求没发出去（连接失败 / read_timeout）也要让前端收到 ai:error，
                 // 否则只靠 command reject 不够显眼，用户只见 UI"一直停止"
                 log::warn!("[Ollama] 请求发送失败: {}", ollama_send_error_diag(&e, &url));
@@ -1805,7 +1954,7 @@ impl AiService {
                 }
                 _ = cancel_rx.changed() => {
                     if *cancel_rx.borrow() {
-                        let _ = app.emit("ai:done", conversation_id);
+                        // 不在这里发 ai:done：调用方把这一截存成「已停止」卡片后再发，否则前端先刷到一个没有这轮回复的列表
                         return Ok(full_response);
                     }
                 }
@@ -1855,9 +2004,11 @@ impl AiService {
             }
         }
 
-        let response = match request.send().await {
-            Ok(r) => r,
-            Err(e) => {
+        let response = match send_unless_cancelled(request, &mut cancel_rx).await {
+            // 还没开口就被停止：返回空文本，由 chat_stream 存成「已停止」卡片
+            None => return Ok(String::new()),
+            Some(Ok(r)) => r,
+            Some(Err(e)) => {
                 let msg = format!("API 请求失败: {}", e);
                 emit_ai_error(app, conversation_id, &msg);
                 return Err(AppError::Custom(msg));
@@ -1909,7 +2060,7 @@ impl AiService {
                 }
                 _ = cancel_rx.changed() => {
                     if *cancel_rx.borrow() {
-                        let _ = app.emit("ai:done", conversation_id);
+                        // 同 stream_ollama：ai:done 由调用方存库后再发
                         return Ok(full_response);
                     }
                 }
@@ -1973,6 +2124,7 @@ impl AiService {
         // `allow_tools=false`。这种结构能防死循环，但需要小心 finalization 轮里模型
         // 可能输出"伪工具调用文本"（详见 strip_pseudo_tool_calls 的注释）。
         const MAX_TOOL_ROUNDS: usize = 3;
+        let started = std::time::Instant::now();
 
         // 1. 取会话使用的模型
         let conv_model_id = {
@@ -2019,11 +2171,16 @@ impl AiService {
         let is_ollama = model.provider == "ollama";
 
         // 2. 保存用户消息
-        let user_msg = db.add_ai_message(conversation_id, "user", user_message, None)?;
+        db.add_ai_message(conversation_id, "user", user_message, None)?;
         db.touch_ai_conversation(conversation_id)?;
 
         // 3. 构建消息数组（带 skills 指引的 system prompt + 历史）
-        let history = db.list_ai_messages(conversation_id)?;
+        //    失败 / 空的回复卡片只给用户看，不进上下文（见 usable_in_history）
+        let history: Vec<AiMessage> = db
+            .list_ai_messages(conversation_id)?
+            .into_iter()
+            .filter(usable_in_history)
+            .collect();
         let system_prompt = "你是一个知识库助手。你可以调用以下内置工具辅助回答：\n\
             - search_notes(query, limit?)：搜笔记\n\
             - get_note(id)：读单篇笔记全文\n\
@@ -2085,6 +2242,10 @@ impl AiService {
         // 4. tool-use 循环
         let mut all_skill_calls: Vec<SkillCall> = Vec::new();
         let mut final_content = String::new();
+        // 每轮「调工具之前模型说的话」，下标 = 轮次；存进 TurnMeta 给卡片时间线用
+        let mut round_texts: Vec<String> = Vec::new();
+        // 推理模型走 reasoning_content 的思考过程，跨轮累积
+        let mut reasoning = String::new();
         // M5-3：tool_schemas 现在融合内置 5 skills + 所有 enabled 外部 MCP server 的工具
         // 工具命名约定：MCP 工具加 mcp__<server_id>__ 前缀；dispatch 时按前缀路由
         let tool_schemas = skills::tool_schemas_with_mcp(&app).await;
@@ -2092,6 +2253,13 @@ impl AiService {
         for round in 0..=MAX_TOOL_ROUNDS {
             // 最后一轮不给 tools，强制 AI 给出最终答复（防死循环）
             let allow_tools = round < MAX_TOOL_ROUNDS;
+
+            // 告诉前端新一轮开始：之后的 token 属于这一轮。前端靠它把「调工具前说的话」
+            // 和最终回答分开 —— 两者都走 ai:token，不分轮就只能糊成一段
+            let _ = app.emit(
+                "ai:round",
+                json!({ "conversationId": conversation_id, "round": round }),
+            );
 
             // finalization 轮：临时往 messages 里加一条 system 提示，劝模型不要继续模仿
             // 工具调用语法（前几轮的 tool_calls 历史会让模型有"再调一次"的惯性）。
@@ -2130,6 +2298,7 @@ impl AiService {
                     req_messages.as_ref(),
                     tools_arg,
                     cancel_rx.clone(),
+                    &mut reasoning,
                 )
                 .await
             };
@@ -2138,8 +2307,15 @@ impl AiService {
                 Ok(c) => (c, tool_calls.unwrap_or_default()),
                 Err(e) => {
                     log::warn!("[skills] round={} 失败: {}", round, e);
-                    let _ = db.delete_ai_message(user_msg.id);
-                    return Err(e);
+                    // 提问和已经跑完的工具都留着，错误存成这一轮的卡片
+                    return Err(fail_turn(
+                        db,
+                        conversation_id,
+                        &all_skill_calls,
+                        round_texts,
+                        started,
+                        e.to_string(),
+                    ));
                 }
             };
             log::info!(
@@ -2151,9 +2327,25 @@ impl AiService {
                 tool_calls.len()
             );
 
-            // 取消信号：上面 stream 函数已经 emit ai:done "cancelled"，直接返回
+            // 取消：已经调过的工具和这一轮写了一半的话照样存成「已停止」卡片，
+            // 以前直接 return，刷新后这一轮整个消失
             if *cancel_rx.borrow() {
-                // 不删用户消息（用户想保留这条），直接结束
+                let meta = TurnMeta {
+                    end_reason: "stopped".into(),
+                    duration_ms: started.elapsed().as_millis() as u64,
+                    round_texts,
+                    reasoning,
+                    ..Default::default()
+                };
+                save_turn(
+                    db,
+                    conversation_id,
+                    strip_pseudo_tool_calls(&content).trim(),
+                    None,
+                    &all_skill_calls,
+                    &meta,
+                )?;
+                let _ = app.emit("ai:done", conversation_id);
                 return Ok(());
             }
 
@@ -2189,6 +2381,10 @@ impl AiService {
                 break;
             }
 
+            // 这一轮要调工具：它在调用前说的话记下来，卡片时间线里穿插在两轮之间。
+            // 每个调工具的轮次都 push 一条（没说话就是空串），保证下标 = 轮次
+            round_texts.push(strip_pseudo_tool_calls(&content).trim().to_string());
+
             // 有工具调用：追加 assistant tool_calls 消息 + 各 tool 结果
             // P0: content: null 改为空字符串。OpenAI spec 允许 null，但 deepseek/glm 等部分实现
             // 遇到 null content 直接返回 400
@@ -2206,20 +2402,21 @@ impl AiService {
             }));
 
             for tc in &tool_calls {
+                let mut sc = SkillCall {
+                    id: tc.id.clone(),
+                    name: tc.name.clone(),
+                    args_json: tc.args_json.clone(),
+                    result: String::new(),
+                    status: "running".to_string(),
+                    round: round as u32,
+                    duration_ms: None,
+                };
                 // 通知前端"正在调用"
-                let _ = app.emit(
-                    "ai:tool_call",
-                    json!({
-                        "id": tc.id,
-                        "name": tc.name,
-                        "argsJson": tc.args_json,
-                        "result": "",
-                        "status": "running",
-                    }),
-                );
+                emit_tool_call(&app, conversation_id, &sc);
 
                 // 执行：dispatch_with_mcp 会按前缀路由（mcp__<id>__<name> → mcp_external，否则原 skills）
                 // P1: tool 失败时把错误包装为友好提示，避免部分模型遇到 "ERROR: ..." 直接放弃
+                let tool_started = std::time::Instant::now();
                 let (result_text, status) =
                     match skills::dispatch_with_mcp(
                         &app,
@@ -2242,14 +2439,10 @@ impl AiService {
                         ),
                     };
 
-                let sc = SkillCall {
-                    id: tc.id.clone(),
-                    name: tc.name.clone(),
-                    args_json: tc.args_json.clone(),
-                    result: result_text.clone(),
-                    status: status.to_string(),
-                };
-                let _ = app.emit("ai:tool_call", &sc);
+                sc.result = result_text.clone();
+                sc.status = status.to_string();
+                sc.duration_ms = Some(tool_started.elapsed().as_millis() as u64);
+                emit_tool_call(&app, conversation_id, &sc);
                 all_skill_calls.push(sc);
 
                 // 回注给模型
@@ -2263,24 +2456,19 @@ impl AiService {
         }
 
         // 5. 保存 assistant 最终消息
-        let skill_calls_json = if all_skill_calls.is_empty() {
-            None
-        } else {
-            Some(serde_json::to_string(&all_skill_calls).unwrap_or_default())
-        };
         log::info!(
             "[skills] 结束: final_content_len={} skill_calls={}",
             final_content.chars().count(),
             all_skill_calls.len()
         );
-        db.add_ai_message_full(
-            conversation_id,
-            "assistant",
-            &final_content,
-            None,
-            skill_calls_json.as_deref(),
-        )?;
-        db.touch_ai_conversation(conversation_id)?;
+        let meta = TurnMeta {
+            end_reason: "done".into(),
+            duration_ms: started.elapsed().as_millis() as u64,
+            round_texts,
+            reasoning,
+            ..Default::default()
+        };
+        save_turn(db, conversation_id, &final_content, None, &all_skill_calls, &meta)?;
 
         // 6. 自动生成会话标题（沿用 chat_stream 的策略）
         let auto_title = derive_conversation_title(user_message);
@@ -2299,7 +2487,10 @@ impl AiService {
     /// - `tool_calls` 按 `index` 聚合每个工具调用（OpenAI 流式 tool_calls 按分片返回
     ///   name/arguments，必须按 index 累加到完整 JSON 才能 dispatch）
     ///
-    /// 被取消时：发 `ai:done`（带会话 ID）并返回当前累积内容（tool_calls 清空）。
+    /// 被取消时：返回当前累积内容（tool_calls 清空）；`ai:done` 由调用方存库后再发。
+    ///
+    /// `reasoning_out`：本轮 `reasoning_content` 追加到这里（跨轮累积，存进 TurnMeta）。
+    /// 正文为空、思考被提升成正文时不追加，免得卡片上同一段话显示两遍。
     async fn stream_openai_with_tools(
         app: &AppHandle,
         conversation_id: i64,
@@ -2307,6 +2498,7 @@ impl AiService {
         messages: &[Value],
         tools: &[Value],
         mut cancel_rx: watch::Receiver<bool>,
+        reasoning_out: &mut String,
     ) -> (Result<String, AppError>, Option<Vec<ToolCallAccum>>) {
         let client = crate::services::http_client::shared();
         let url = build_openai_chat_url(&model.api_url);
@@ -2332,9 +2524,11 @@ impl AiService {
             }
         }
 
-        let response = match request.send().await {
-            Ok(r) => r,
-            Err(e) => {
+        let response = match send_unless_cancelled(request, &mut cancel_rx).await {
+            // 还没开口就被停止：chat_stream_with_skills 看到取消信号后存「已停止」卡片
+            None => return (Ok(String::new()), Some(Vec::new())),
+            Some(Ok(r)) => r,
+            Some(Err(e)) => {
                 let msg = format!("API 请求失败: {}", e);
                 emit_ai_error(app, conversation_id, &msg);
                 return (Err(AppError::Custom(msg)), None);
@@ -2392,7 +2586,8 @@ impl AiService {
                 }
                 _ = cancel_rx.changed() => {
                     if *cancel_rx.borrow() {
-                        let _ = app.emit("ai:done", conversation_id);
+                        // ai:done 由 chat_stream_with_skills 把「已停止」卡片存库后再发
+                        reasoning_out.push_str(&reasoning_content);
                         return (Ok(content), Some(Vec::new()));
                     }
                 }
@@ -2419,6 +2614,8 @@ impl AiService {
         if content.trim().is_empty() && !reasoning_content.trim().is_empty() {
             content.push_str(&reasoning_content);
             emit_ai_token(app, conversation_id, &reasoning_content);
+        } else {
+            reasoning_out.push_str(&reasoning_content);
         }
 
         // finish_reason 异常处理：
@@ -2504,9 +2701,11 @@ impl AiService {
         // 优雅降级成纯对话，而不是整条请求挂掉、前端一直转圈（Bug B）。
         // 失败的早返回路径都补发 ai:error，保证错误一定能冒到前端 UI。
         let response = loop {
-            let resp = match client.post(&url).json(&request_body).send().await {
-                Ok(r) => r,
-                Err(e) => {
+            let resp = match send_unless_cancelled(client.post(&url).json(&request_body), &mut cancel_rx).await {
+                // 还没开口就被停止：chat_stream_with_skills 看到取消信号后存「已停止」卡片
+                None => return (Ok(String::new()), Some(Vec::new())),
+                Some(Ok(r)) => r,
+                Some(Err(e)) => {
                     log::warn!("[Ollama/tools] 请求发送失败: {}", ollama_send_error_diag(&e, &url));
                     let msg = format_ollama_send_error(&e, &url);
                     emit_ai_error(app, conversation_id, &msg);
@@ -2584,7 +2783,7 @@ impl AiService {
                 }
                 _ = cancel_rx.changed() => {
                     if *cancel_rx.borrow() {
-                        let _ = app.emit("ai:done", conversation_id);
+                        // 同 stream_openai_with_tools：ai:done 由调用方存库后再发
                         return (Ok(content), Some(Vec::new()));
                     }
                 }
@@ -2646,7 +2845,11 @@ fn handle_openai_stream_line(
     if let Some(r) = delta["reasoning_content"].as_str() {
         if !r.is_empty() {
             reasoning_content.push_str(r);
-            let _ = app.emit("ai:reasoning", r);
+            // 带会话 ID，理由同 emit_ai_token（多会话串台）
+            let _ = app.emit(
+                "ai:reasoning",
+                json!({ "conversationId": conversation_id, "content": r }),
+            );
         }
     }
     // tool_calls 分片
@@ -4635,5 +4838,157 @@ mod remote_model_list_tests {
         assert_eq!(ollama_native_root("http://localhost:11434/v1/"), "http://localhost:11434");
         assert_eq!(ollama_native_root("http://localhost:11434"), "http://localhost:11434");
         assert_eq!(ollama_native_root(" http://10.0.0.2:11434/ "), "http://10.0.0.2:11434");
+    }
+}
+
+#[cfg(test)]
+mod turn_tests {
+    use super::*;
+
+    fn msg(role: &str, content: &str, meta: Option<&str>) -> AiMessage {
+        AiMessage {
+            id: 1,
+            conversation_id: 1,
+            role: role.into(),
+            content: content.into(),
+            references: None,
+            skill_calls: None,
+            turn_meta: meta.map(Into::into),
+            created_at: String::new(),
+        }
+    }
+
+    /// 失败卡片和空回复只给人看，不进模型上下文；其余照常
+    #[test]
+    fn history_skips_failed_and_empty_replies() {
+        assert!(usable_in_history(&msg("user", "问", None)));
+        assert!(usable_in_history(&msg("assistant", "答", None)));
+        // 被停止但写了一半：用户看到过这段话，留在上下文里
+        assert!(usable_in_history(&msg("assistant", "答了一半", Some(r#"{"endReason":"stopped"}"#))));
+        assert!(!usable_in_history(&msg("assistant", "   ", Some(r#"{"endReason":"stopped"}"#))));
+        assert!(!usable_in_history(&msg("assistant", "", None)));
+        assert!(!usable_in_history(&msg(
+            "assistant",
+            "半截",
+            Some(r#"{"endReason":"error","error":"boom"}"#)
+        )));
+        // meta 坏了不影响判断，按正常回复处理
+        assert!(usable_in_history(&msg("assistant", "答", Some("not json"))));
+    }
+
+    /// 服务端迟迟不回响应头（本地模型加载 / prompt-eval）时，「停止」也要立刻生效
+    #[tokio::test]
+    async fn send_is_interrupted_by_cancel_before_headers() {
+        // 只 accept 不回话的服务端，模拟卡在 prompt-eval 的 Ollama
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (_sock, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        });
+
+        let (tx, mut rx) = watch::channel(false);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let _ = tx.send(true);
+            // tx 在这里被 drop；已经发出的 true 仍然要被识别为取消
+        });
+
+        let started = std::time::Instant::now();
+        let req = reqwest::Client::new().get(format!("http://{addr}/"));
+        let out = send_unless_cancelled(req, &mut rx).await;
+        assert!(out.is_none(), "应被取消");
+        assert!(started.elapsed() < std::time::Duration::from_secs(5), "取消没有及时生效");
+    }
+
+    /// 没人取消、Sender 中途被 drop 时，请求照常完成（不能被误判为取消）
+    #[tokio::test]
+    async fn send_completes_when_sender_dropped_without_cancel() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = sock.read(&mut buf).await;
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let _ = sock
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
+                .await;
+        });
+
+        let (tx, mut rx) = watch::channel(false);
+        drop(tx);
+        let req = reqwest::Client::new().get(format!("http://{addr}/"));
+        let out = send_unless_cancelled(req, &mut rx).await;
+        assert!(matches!(out, Some(Ok(_))), "应正常拿到响应");
+    }
+
+    /// 存量 SkillCall（v63 前）没有 round / durationMs，照样能读
+    #[test]
+    fn legacy_skill_call_json_still_parses() {
+        let legacy = r#"[{"id":"c1","name":"search_notes","argsJson":"{}","result":"r","status":"ok"}]"#;
+        let calls: Vec<SkillCall> = serde_json::from_str(legacy).unwrap();
+        assert_eq!(calls[0].round, 0);
+        assert_eq!(calls[0].duration_ms, None);
+    }
+}
+
+#[cfg(all(test, desktop))]
+mod truncate_tests {
+    use super::*;
+
+    fn temp_db() -> Database {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let n = N.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("kb_aitrunc_{}_{}", std::process::id(), n));
+        std::fs::create_dir_all(&dir).unwrap();
+        Database::init(dir.join("t.db").to_str().unwrap()).expect("init db")
+    }
+
+    fn conversation(db: &Database) -> i64 {
+        let model = db
+            .create_ai_model(&AiModelInput {
+                name: "m".into(),
+                provider: "custom".into(),
+                api_url: "http://localhost".into(),
+                api_key: None,
+                model_id: "m".into(),
+                max_context: None,
+                max_tokens: None,
+                limits_source: None,
+                max_output: None,
+            })
+            .unwrap();
+        db.create_ai_conversation("t", model.id, None).unwrap().id
+    }
+
+    /// 只能从提问开始撤回；从回答开始撤会留下没有回答的孤立提问
+    #[test]
+    fn truncate_must_start_at_user_message() {
+        let db = temp_db();
+        let cid = conversation(&db);
+        let q = db.add_ai_message(cid, "user", "q", None).unwrap();
+        let a = db.add_ai_message(cid, "assistant", "a", None).unwrap();
+
+        assert!(AiService::truncate_conversation_from(&db, cid, a.id).is_err());
+        assert_eq!(db.list_ai_messages(cid).unwrap().len(), 2);
+
+        assert_eq!(AiService::truncate_conversation_from(&db, cid, q.id).unwrap(), 2);
+        assert!(db.list_ai_messages(cid).unwrap().is_empty());
+    }
+
+    /// 别的会话的消息 id 不能拿来删本会话
+    #[test]
+    fn truncate_rejects_foreign_message_id() {
+        let db = temp_db();
+        let a = conversation(&db);
+        let b = conversation(&db);
+        db.add_ai_message(a, "user", "qa", None).unwrap();
+        let qb = db.add_ai_message(b, "user", "qb", None).unwrap();
+
+        assert!(AiService::truncate_conversation_from(&db, a, qb.id).is_err());
+        assert_eq!(db.list_ai_messages(b).unwrap().len(), 1);
     }
 }

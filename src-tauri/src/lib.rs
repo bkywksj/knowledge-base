@@ -1447,6 +1447,7 @@ pub fn run() {
             commands::ai::rename_ai_conversation,
             commands::ai::update_ai_conversation_model,
             commands::ai::list_ai_messages,
+            commands::ai::delete_ai_messages_from,
             commands::ai::send_ai_message,
             commands::ai::cancel_ai_generation,
             commands::ai::ai_write_assist,

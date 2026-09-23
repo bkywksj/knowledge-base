@@ -728,7 +728,37 @@ pub struct AiMessage {
     /// 前端拿到后反序列化成 SkillCall[] 渲染折叠卡片；为 None 表示没调用过工具。
     /// 只在 role="assistant" 且启用 skills 的对话里会写入。
     pub skill_calls: Option<String>,
+    /// 一轮回复的收尾信息（JSON 序列化的 [`TurnMeta`]，v63 起）
+    ///
+    /// 只有 assistant 消息会写；存量消息为 None，前端按「已完成、无统计」渲染。
+    #[serde(default)]
+    pub turn_meta: Option<String>,
     pub created_at: String,
+}
+
+/// 一轮回复的收尾信息，存在 `ai_messages.turn_meta_json`
+///
+/// 给前端「一轮回复 = 一张卡片」渲染用：卡片头的状态 / 耗时、执行过程里每轮调工具前的话、
+/// 可折叠的思考过程、失败原因。不参与发给模型的上下文。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnMeta {
+    /// "done" / "stopped" / "error"
+    pub end_reason: String,
+    /// end_reason = "error" 时的错误原文（多行，前端原样展示）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// 从收到提问到这一轮结束的耗时
+    #[serde(default)]
+    pub duration_ms: u64,
+    /// 智能模式下各轮「调工具之前模型说的话」，下标 = 轮次（与 [`SkillCall::round`] 对应）。
+    /// 最后一轮不调工具，它的话就是最终回答，存在消息 content 里，不在这里。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub round_texts: Vec<String>,
+    /// 推理模型走 `reasoning_content` 字段吐出的思考过程（deepseek-r1 官方 API 等）。
+    /// 混在正文里的 `<think>` 块不在这里，前端渲染时自己拆。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub reasoning: String,
 }
 
 /// AI 聊天请求
@@ -1535,6 +1565,13 @@ pub struct SkillCall {
     pub result: String,
     /// "ok" / "error" / "running"（服务器侧持久化时只会写 ok/error）
     pub status: String,
+    /// 第几轮发起的调用（从 0 开始）。同一轮的多个调用是模型一次性要的，前端标成「并行」。
+    /// v63 之前的存量记录没有这个字段，按 0 处理（全部归到第 1 轮）。
+    #[serde(default)]
+    pub round: u32,
+    /// 工具执行耗时；running 状态下为 None
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
 }
 
 // ─── AI 规划今日待办（T-005） ──────────────
