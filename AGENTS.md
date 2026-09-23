@@ -210,6 +210,7 @@ tauri/
 | `collaborating-with-antigravity` | Antigravity、反重力、agy、agy协同、agy CLI、委托给 Antigravity（**仅限用户点名 Antigravity**；未点名的 多模型 / 交叉验证 / 结构化输出**不要**激活本技能） |
 | `collaborating-with-codex` | Codex、codex协同、codex CLI、委托给 Codex、codex_bridge（**仅限用户点名 Codex**；未点名的 原型 / 算法分析 / 代码审查 / Diff 生成**不要**激活本技能） |
 | `collaborating-with-gemini` | Gemini、gemini协同、gemini CLI、委托给 Gemini、gemini_bridge（**仅限用户点名 Gemini**；未点名的 UI设计 / 前端原型 / CSS / 代码审查**不要**激活本技能） |
+| `ai-profile-integration` | ai-profile、模型服务、预置、服务商、新模型、加模型、ai.profile、获取模型、测试连接、限额、上下文窗口、升级crate |
 | `database-ops` | 数据库、SQLite、SQL、持久化、存储、表、查询、CRUD、数据 |
 | `docs-management` | 文档站点、VitePress、docs 站点、用户手册、更新文档、文档同步、.docs-meta.json、website 目录、文档仓库 |
 | `error-handler` | 异常、错误处理、Error、Result、try-catch、panic、崩溃、错误边界 |
