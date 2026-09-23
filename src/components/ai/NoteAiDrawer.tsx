@@ -7,6 +7,7 @@ import { Send, StopCircle, ExternalLink, Bot, RefreshCw, Quote, X } from "lucide
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { aiChatApi } from "@/lib/api";
 import { stripPseudoToolCalls } from "@/lib/aiFilter";
+import { compactTurnText } from "@/components/ai/turnModel";
 import type { AiConversation, AiMessage } from "@/types";
 
 const { TextArea } = Input;
@@ -457,9 +458,10 @@ function MiniBubble({
 }) {
   const isUser = msg.role === "user";
   const [expanded, setExpanded] = useState(false);
+  // 失败 / 停止的回复正文可能是空的，compactTurnText 补一句结局说明
   const { quote, body } = isUser
     ? splitQuoteAndBody(msg.content)
-    : { quote: null, body: msg.content };
+    : { quote: null, body: compactTurnText(msg) };
   const refs: number[] = msg.references ? JSON.parse(msg.references) : [];
 
   return (

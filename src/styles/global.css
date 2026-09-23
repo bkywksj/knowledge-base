@@ -1635,10 +1635,12 @@ body,
   font-size: 0.85em;
   font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
 }
+/* 模型常用 `---` 分段：上下留同样的空白，线色跟卡片内其他分隔线一致（更浅），
+   否则一根深色线紧贴下一段，读起来像断开的两张卡片 */
 .ai-markdown hr {
   border: none;
-  border-top: 1px solid var(--ant-color-border, #d9d9d9);
-  margin: 0.5em 0;
+  border-top: 1px solid var(--ant-color-border-secondary, #f0f0f0);
+  margin: 14px 0;
 }
 .ai-markdown strong { font-weight: 600; }
 .ai-markdown a { color: var(--ant-color-primary, #1677ff); }

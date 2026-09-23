@@ -1,6 +1,4 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { MarkdownContent as Markdown } from "@/components/ai/MarkdownContent";
-import { NoteImageRefs } from "@/components/ai/NoteImageRefs";
 import {
   Button,
   Input,
@@ -26,11 +24,7 @@ import {
   MoreHorizontal,
   Edit3,
   Wrench,
-  ChevronDown,
-  ChevronRight,
-  CheckCircle2,
-  XCircle,
-  Loader2,
+  ChevronsDownUp,
   Paperclip,
   Save,
   X,
@@ -65,6 +59,18 @@ import type {
   SkillCall,
 } from "@/types";
 import { AttachmentChip } from "@/components/ai/AttachmentChip";
+import { TurnCard } from "@/components/ai/TurnCard";
+import {
+  liveAppendReasoning,
+  liveAppendToken,
+  liveStartRound,
+  liveUpsertCall,
+  newLiveTurn,
+  turnFromLive,
+  turnFromMessage,
+  type LiveTurn,
+  type TurnView,
+} from "@/components/ai/turnModel";
 import { MicButton } from "@/components/MicButton";
 
 /** 多附件总字符上限：超过则阻止再加，避免炸 context window */
@@ -101,7 +107,6 @@ function previewToMessageAttachment(a: AttachmentPreview): MessageAttachment {
   }
 }
 import { relativeTime } from "@/lib/utils";
-import { stripPseudoToolCalls } from "@/lib/aiFilter";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import {
   ContextMenuOverlay,
@@ -191,7 +196,13 @@ function DesktopAiChatPage() {
   //   A 后续吐的 token 不会再贴到 B 上（多会话串台 Bug）
   // - "停止"按钮 / 流式气泡 / 输入框禁用只对「正在被查看的那个会话」生效
   const [streamingConvId, setStreamingConvId] = useState<number | null>(null);
-  const [streamingText, setStreamingText] = useState("");
+  // 正在生成的这一轮：按 ai:round / ai:token / ai:tool_call / ai:reasoning 累积，
+  // 渲染成与历史回复同一种 TurnCard；ai:done 后清空，改由落库的那条消息接管
+  const [live, setLive] = useState<LiveTurn | null>(null);
+  // 「编辑重发」：正在编辑的那条提问 id。发送时先撤回它及之后的消息再发
+  const [editingFrom, setEditingFrom] = useState<AiMessage | null>(null);
+  // 「全部收起」：每点一次加 1，各卡片据此收起执行过程
+  const [collapseSignal, setCollapseSignal] = useState(0);
   // 附加笔记（A 方向）：当前对话的 attached_note_ids 对应的完整笔记对象
   const [attachedNotes, setAttachedNotes] = useState<Note[]>([]);
   const [attachOpen, setAttachOpen] = useState(false);
@@ -216,8 +227,6 @@ function DesktopAiChatPage() {
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveTitle, setArchiveTitle] = useState("");
   const [archiving, setArchiving] = useState(false);
-  // 流式过程中 AI 调用的工具列表（带 running/ok/error 状态）；done 后并入 messages 清空
-  const [streamingSkillCalls, setStreamingSkillCalls] = useState<SkillCall[]>([]);
   // 路线 A 会话附件：当前输入框「待发送」的附件列表（Excel/Text/PDF 混合），发送后清空
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentPreview[]>([]);
   const [attachingFile, setAttachingFile] = useState(false);
@@ -297,70 +306,66 @@ function DesktopAiChatPage() {
     let unlistens: UnlistenFn[] = [];
     let cancelled = false;
 
+    // 只把事件记到「它所属会话」的流式卡片上：payload 都带 conversationId，
+    // 会话 A 流式还没完就切到 / 新建会话 B 时，A 后续的事件不能贴到 B 上（多会话串台 Bug）。
+    // 按流式会话而不是「正在看的会话」过滤：切走再切回来，A 的卡片照样是完整的。
+    const updateLive = (cid: number, fn: (t: LiveTurn) => LiveTurn) =>
+      setLive((prev) => (prev && prev.convId === cid ? fn(prev) : prev));
+
     (async () => {
-      // ai:token / ai:error 现在 payload 带 conversationId（后端改造），按"当前正在查看的会话"过滤：
-      // 会话 A 流式还没完就切到 / 新建会话 B 时，A 后续吐的 token 不能再贴到 B 上（多会话串台 Bug）。
+      const roundUnlisten = await listen<{ conversationId: number; round: number }>(
+        "ai:round",
+        (event) => updateLive(event.payload.conversationId, (t) => liveStartRound(t, event.payload.round)),
+      );
       const tokenUnlisten = await listen<{ conversationId: number; content: string }>(
         "ai:token",
-        (event) => {
-          if (event.payload.conversationId !== activeConvIdRef.current) return;
-          setStreamingText((prev) => prev + event.payload.content);
-        },
+        (event) => updateLive(event.payload.conversationId, (t) => liveAppendToken(t, event.payload.content)),
+      );
+      // tool_call 事件可能多次触发（running → ok/error），按 id upsert
+      const toolCallUnlisten = await listen<SkillCall & { conversationId: number }>(
+        "ai:tool_call",
+        (event) => updateLive(event.payload.conversationId, (t) => liveUpsertCall(t, event.payload)),
+      );
+      const reasoningUnlisten = await listen<{ conversationId: number; content: string }>(
+        "ai:reasoning",
+        (event) =>
+          updateLive(event.payload.conversationId, (t) => liveAppendReasoning(t, event.payload.content)),
       );
       const doneUnlisten = await listen<number>("ai:done", async (event) => {
         const cid = event.payload;
         // 不管哪个会话结束都刷一下侧边栏（标题可能自动改了 / updated_at 变了导致排序变）
         await loadConversations();
-        // 只在"结束的会话正是当前查看的会话"时重拉消息列表；其它会话切回去时自然会 loadMessages
-        if (cid === activeConvIdRef.current) {
-          await loadMessages(cid);
-        }
-        // 结束的会话正是当前流式的会话 → 清掉流式状态
+        // 只在"结束的会话正是当前查看的会话"时重拉消息列表；其它会话切回去时自然会 loadMessages。
+        // 先拿到列表、再在同一个同步块里「换上新列表 + 撤掉流式卡片」：两个 setState 被合并成
+        // 一次渲染，不会出现新卡片和流式卡片同时在屏上的那一帧
+        const list =
+          cid === activeConvIdRef.current
+            ? await aiChatApi.listMessages(cid).catch((e) => {
+                message.error(`加载消息失败: ${e}`);
+                return null;
+              })
+            : null;
+        if (list) setMessages(list);
+        // 结束的会话正是当前流式的会话 → 清掉流式状态（此时这一轮已经落库，由消息列表接管）
         if (cid === streamingConvIdRef.current) {
           streamingConvIdRef.current = null;
           setStreamingConvId(null);
-          setStreamingText("");
-          setStreamingSkillCalls([]);
+          setLive(null);
         }
       });
-      const errorUnlisten = await listen<{ conversationId: number; error: string }>(
-        "ai:error",
-        (event) => {
-          // 只处理"当前流式会话"的错误：清掉流式状态 + 提示用户
-          if (event.payload.conversationId === streamingConvIdRef.current) {
-            streamingConvIdRef.current = null;
-            setStreamingConvId(null);
-            // 不清空 streamingText / streamingSkillCalls：保留已累积内容（虽然气泡随 streaming 收起，
-            // 但 done 没来、catch 也没触发的极端情况下还能留点痕迹）
-            message.error(`AI 错误: ${event.payload.error}`);
-          }
-        },
-      );
-      // tool_call 事件可能多次触发（running → ok/error），按 id upsert
-      const toolCallUnlisten = await listen<SkillCall>(
-        "ai:tool_call",
-        (event) => {
-          const incoming = event.payload;
-          setStreamingSkillCalls((prev) => {
-            const idx = prev.findIndex((c) => c.id === incoming.id);
-            if (idx >= 0) {
-              const next = prev.slice();
-              next[idx] = incoming;
-              return next;
-            }
-            return [...prev, incoming];
-          });
-        },
-      );
+      // 不再监听 ai:error：失败以 send_ai_message 的 reject 为准（见 handleSend 的 catch）。
+      // 上下文超长时后端会先发一次 ai:error 再自动减历史重试，按事件收尾会把一次能成功的回复
+      // 提前判死；而最终失败时后端已把错误存成这一轮的卡片，不需要事件来驱动 UI。
 
       if (cancelled) {
         // 注册期间已 unmount，立即解绑
+        roundUnlisten();
         tokenUnlisten();
-        doneUnlisten();
-        errorUnlisten();
         toolCallUnlisten();
+        reasoningUnlisten();
+        doneUnlisten();
       } else {
-        unlistens = [tokenUnlisten, doneUnlisten, errorUnlisten, toolCallUnlisten];
+        unlistens = [roundUnlisten, tokenUnlisten, toolCallUnlisten, reasoningUnlisten, doneUnlisten];
       }
     })();
 
@@ -444,7 +449,7 @@ function DesktopAiChatPage() {
   // 自动滚动到底部
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingText]);
+  }, [messages, live]);
 
   async function loadConversations() {
     try {
@@ -624,7 +629,17 @@ function DesktopAiChatPage() {
     }
   }
 
-  const handleSend = useCallback(async (textOverride?: string) => {
+  /**
+   * 发送一条提问。
+   *
+   * @param textOverride 不传就取输入框
+   * @param opts.resendFrom 「重新生成 / 编辑重发」：先撤回这条提问及之后的所有消息再发
+   * @param opts.skipAttachments 重新生成时附件内容已经在原提问正文里了，别把输入框里待发的附件再塞一遍
+   */
+  const handleSend = useCallback(async (
+    textOverride?: string,
+    opts: { resendFrom?: AiMessage; skipAttachments?: boolean } = {},
+  ) => {
     const raw = textOverride ?? inputText;
     const text = raw.trim();
     if (!text || !activeConvId || streaming) return;
@@ -633,59 +648,87 @@ function DesktopAiChatPage() {
     // 造成同一句话被连发十几遍。streamingConvIdRef 上一次发送时已同步标记为本会话 id，
     // 用它挡住这些「渲染前」的重复发送（state 尚未翻转，但 ref 已经是最新值）。
     if (streamingConvIdRef.current === activeConvId) return;
+    const convId = activeConvId;
+    const resendFrom = opts.resendFrom ?? editingFrom ?? undefined;
     if (!textOverride) setInputText("");
+    setEditingFrom(null);
     // 直接同步 ref：紧接着可能就有 ai:token 事件进来，得让 handler 立刻知道当前流式会话是谁
-    streamingConvIdRef.current = activeConvId;
-    setStreamingConvId(activeConvId);
-    setStreamingText("");
-    setStreamingSkillCalls([]);
+    streamingConvIdRef.current = convId;
+    setStreamingConvId(convId);
+    setLive(newLiveTurn(convId));
 
-    // 乐观添加用户消息
+    if (resendFrom) {
+      try {
+        await aiChatApi.truncateFrom(convId, resendFrom.id);
+      } catch (e) {
+        streamingConvIdRef.current = null;
+        setStreamingConvId(null);
+        setLive(null);
+        showAiError(e);
+        return;
+      }
+    }
+
+    // 乐观添加用户消息（撤回的那几条同时从列表里拿掉）
     const userMsg: AiMessage = {
       id: Date.now(),
-      conversation_id: activeConvId,
+      conversation_id: convId,
       role: "user",
       content: text,
       references: null,
       skill_calls: null,
       created_at: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, userMsg]);
+    setMessages((prev) => [
+      ...(resendFrom ? prev.filter((m) => m.id < resendFrom.id) : prev),
+      userMsg,
+    ]);
 
     // 注：ai:* 事件 listener 已经在顶层 useEffect 全局注册（mount once），
-    // 这里只管发请求。事件流期间 streamingText / streamingSkillCalls 会被
-    // 全局 listener 持续刷新，无需再 register / cleanup。
+    // 这里只管发请求。事件流期间 live 会被全局 listener 持续刷新，无需再 register / cleanup。
 
     // 把 AttachmentPreview 按 kind 转成后端期望的 MessageAttachment
-    const attachmentsPayload: MessageAttachment[] = pendingAttachments.map(
-      previewToMessageAttachment,
-    );
+    const attachmentsPayload: MessageAttachment[] = opts.skipAttachments
+      ? []
+      : pendingAttachments.map(previewToMessageAttachment);
 
     try {
       // use_rag 永远传 false：智能模式下由 LLM 自己调 search_notes，
       // 不再走自动预召回（避免 token 浪费 + 让 LLM 有判断空间）。
       // 关掉智能模式时也不开 RAG，纯聊天体验最干净。
       await aiChatApi.sendMessage(
-        activeConvId,
+        convId,
         text,
         false,
         useSkills,
         attachmentsPayload.length > 0 ? attachmentsPayload : undefined,
       );
       // 发送成功后清空附件（失败时保留，让用户重试）
-      setPendingAttachments([]);
+      if (!opts.skipAttachments) setPendingAttachments([]);
     } catch (e) {
-      // 兜底：command reject 时（通常 ai:error 已经先到了，但保险）清掉流式状态。
+      // 失败时 ai:done 不会来，这里收尾。
       // 仅当"当前流式会话还是我这次发起的那个"才清，避免误伤期间又开始的另一个会话的流。
-      if (streamingConvIdRef.current === activeConvId) {
+      if (streamingConvIdRef.current === convId) {
         streamingConvIdRef.current = null;
         setStreamingConvId(null);
-        setStreamingText("");
-        setStreamingSkillCalls([]);
+        setLive(null);
       }
-      showAiError(e);
+      // 后端已把错误存成这一轮的卡片 → 重拉列表让卡片显示出来，不再另弹提示。
+      // 模型没配好这类「提问都没存下」的早期失败没有卡片可挂，才退回弹窗。
+      let shownOnCard = false;
+      if (convId === activeConvIdRef.current) {
+        try {
+          const list = await aiChatApi.listMessages(convId);
+          setMessages(list);
+          const last = list[list.length - 1];
+          shownOnCard = last?.role === "assistant" && turnFromMessage(last).status === "error";
+        } catch {
+          // 拉不到就走弹窗兜底
+        }
+      }
+      if (!shownOnCard) showAiError(e);
     }
-  }, [inputText, activeConvId, streaming, useSkills, pendingAttachments]);
+  }, [inputText, activeConvId, streaming, useSkills, pendingAttachments, editingFrom]);
 
   // handleSend 是 useCallback,闭包会随依赖变化重新生成；
   // pendingAutoSend 触发时需要拿最新的 handleSend,用 ref 桥接
@@ -802,6 +845,38 @@ function DesktopAiChatPage() {
         console.error("取消生成失败:", e);
       }
     }
+  }
+
+  // 每条 assistant 消息解析一次（skill_calls / turn_meta 的 JSON），别在每次流式刷新时重算
+  const turnViews = useMemo(() => {
+    const map = new Map<number, TurnView>();
+    for (const m of messages) if (m.role === "assistant") map.set(m.id, turnFromMessage(m));
+    return map;
+  }, [messages]);
+
+  /** 重新生成：撤回这一轮的提问及回答，用原提问再问一次 */
+  function handleRegenerate(assistantIdx: number) {
+    const question = messages
+      .slice(0, assistantIdx)
+      .reverse()
+      .find((m) => m.role === "user");
+    if (!question) {
+      message.warning("找不到这条回答对应的提问");
+      return;
+    }
+    // 原提问正文里已经拼好了附件内容，不能再带输入框里待发的附件
+    handleSend(question.content, { resendFrom: question, skipAttachments: true });
+  }
+
+  /** 编辑重发：把提问放回输入框，发送时撤回它及之后的消息 */
+  function startEdit(msg: AiMessage) {
+    setEditingFrom(msg);
+    setInputText(msg.content);
+  }
+
+  function cancelEdit() {
+    setEditingFrom(null);
+    setInputText("");
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -1141,6 +1216,17 @@ function DesktopAiChatPage() {
                     存为笔记
                   </Button>
                 </Tooltip>
+                <Tooltip title="把所有回复的执行过程收成一行摘要">
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={<ChevronsDownUp size={14} />}
+                    disabled={messages.length === 0}
+                    onClick={() => setCollapseSignal((n) => n + 1)}
+                  >
+                    收起过程
+                  </Button>
+                </Tooltip>
               </div>
             </div>
 
@@ -1166,83 +1252,44 @@ function DesktopAiChatPage() {
                 </div>
               )}
 
-              {messages.map((msg) => (
-                <MessageBubble
-                  key={msg.id}
-                  message={msg}
-                  token={token}
-                  onContextMenu={(e, m) => msgCtx.open(e.nativeEvent, m)}
-                  contextActive={msgCtx.state.payload?.id === msg.id}
-                />
-              ))}
-
-              {/* 流式响应中 —— 渲染前剥掉伪 tool_call 残文（与 Rust 侧 strip_pseudo_tool_calls
-                  同口径），避免最后一轮模型退化输出的 XML/围栏标签直接秀给用户 */}
-              {streaming && (() => {
-                const cleanText = stripPseudoToolCalls(streamingText);
-                // 首 token / 首个工具调用到达前，用「正在分析」占位气泡替代空白，
-                // 让用户能明确区分「AI 在思考」和「卡死了」——尤其本地 Ollama + 智能模式下
-                // 首次 prompt-eval 可能要等数十秒甚至几分钟，没有指示会被误判为无响应而狂点重发。
-                if (!cleanText && streamingSkillCalls.length === 0) {
-                  return (
-                    <div className="flex gap-3 mb-4">
-                      <div
-                        className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-bold"
-                        style={{
-                          background: token.colorPrimaryBg,
-                          color: token.colorPrimary,
-                        }}
-                      >
-                        AI
-                      </div>
-                      <div
-                        className="px-3 py-2 rounded-lg text-sm flex items-center gap-2"
-                        style={{
-                          background: token.colorBgContainer,
-                          color: token.colorTextSecondary,
-                        }}
-                      >
-                        <Loader2
-                          size={14}
-                          className="animate-spin"
-                          style={{ color: token.colorPrimary }}
-                        />
-                        <span>AI 正在分析…</span>
-                      </div>
-                    </div>
-                  );
-                }
-                return (
-                  <div className="flex gap-3 mb-4">
-                    <div
-                      className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-bold"
-                      style={{
-                        background: token.colorPrimaryBg,
-                        color: token.colorPrimary,
-                      }}
-                    >
-                      AI
-                    </div>
-                    <div className="max-w-[75%] flex flex-col gap-2">
-                      {streamingSkillCalls.length > 0 && (
-                        <SkillCallList calls={streamingSkillCalls} token={token} defaultOpen />
-                      )}
-                      {cleanText && (
-                        <div
-                          className="px-3 py-2 rounded-lg text-sm ai-markdown"
-                          style={{
-                            background: token.colorBgContainer,
-                            color: token.colorText,
-                          }}
-                        >
-                          <Markdown>{cleanText}</Markdown>
-                          <span className="inline-block w-1.5 h-4 ml-0.5 animate-pulse" style={{ background: token.colorPrimary }} />
-                        </div>
-                      )}
-                    </div>
+              {messages.map((msg, idx) =>
+                msg.role === "user" ? (
+                  <UserBubble
+                    key={msg.id}
+                    message={msg}
+                    editing={editingFrom?.id === msg.id}
+                    canEdit={!streaming && !isOptimisticId(msg.id)}
+                    onEdit={() => startEdit(msg)}
+                    onContextMenu={(e, m) => msgCtx.open(e.nativeEvent, m)}
+                    contextActive={msgCtx.state.payload?.id === msg.id}
+                  />
+                ) : (
+                  <div key={msg.id} className="mb-4">
+                    <TurnCard
+                      view={turnViews.get(msg.id) ?? turnFromMessage(msg)}
+                      isLast={idx === messages.length - 1}
+                      busy={streaming}
+                      collapseSignal={collapseSignal}
+                      onRegenerate={() => handleRegenerate(idx)}
+                      onContextMenu={(e, m) => msgCtx.open(e.nativeEvent, m)}
+                      contextActive={msgCtx.state.payload?.id === msg.id}
+                    />
                   </div>
-                );
-              })()}
+                ),
+              )}
+
+              {/* 正在生成的这一轮：与历史回复同一种卡片，只是状态实时变化 */}
+              {streaming && live && live.convId === activeConvId && (
+                <div className="mb-4">
+                  <TurnCard
+                    view={turnFromLive(live)}
+                    isLast
+                    busy
+                    collapseSignal={collapseSignal}
+                    onStop={handleCancel}
+                  />
+                </div>
+              )}
 
               <div ref={messagesEndRef} />
             </div>
@@ -1255,6 +1302,25 @@ function DesktopAiChatPage() {
                 background: token.colorBgContainer,
               }}
             >
+              {editingFrom && (
+                <div
+                  className="flex items-center gap-2 mb-2 text-xs px-2 py-1 rounded"
+                  style={{ background: token.colorWarningBg, color: token.colorWarningText }}
+                >
+                  <Edit3 size={12} />
+                  <span className="flex-1">
+                    正在编辑一条提问：发送后会撤回它
+                    {(() => {
+                      const after = messages.filter((m) => m.id > editingFrom.id).length;
+                      return after > 0 ? `及之后的 ${after} 条消息` : "";
+                    })()}
+                    ，再用新内容重新提问
+                  </span>
+                  <Button size="small" type="link" className="!px-0" onClick={cancelEdit}>
+                    取消编辑
+                  </Button>
+                </div>
+              )}
               {/* 文件夹范围标识：scope_folder_id 不为空时提示本会话已限定检索范围
                   （由侧边栏「对此文件夹问 AI」发起；会话标题里的 📁 文件夹名进一步指明是哪个）*/}
               {conversations.find((c) => c.id === activeConvId)?.scope_folder_id != null && (
@@ -1658,35 +1724,40 @@ function AttachNotesModal({
   );
 }
 
-/** 消息气泡组件 */
-function MessageBubble({
+/**
+ * 乐观插入的提问用 `Date.now()` 当临时 id（毫秒时间戳，13 位），真实 id 是自增主键。
+ * 临时 id 在库里不存在，不能拿来「编辑重发」—— 等 ai:done 重拉列表换成真 id 后再允许。
+ */
+function isOptimisticId(id: number): boolean {
+  return id >= 1_000_000_000_000;
+}
+
+/** 带附件的提问：正文前面拼了整段附件内容（见后端 build_message_with_attachments） */
+const ATTACHMENT_PREFIX = "📎 用户附带了";
+
+/** 用户提问气泡（AI 的回复用 TurnCard） */
+function UserBubble({
   message: msg,
-  token,
+  editing,
+  canEdit,
+  onEdit,
   onContextMenu,
   contextActive,
 }: {
   message: AiMessage;
-  token: any;
+  editing: boolean;
+  canEdit: boolean;
+  onEdit: () => void;
   onContextMenu?: (e: React.MouseEvent, m: AiMessage) => void;
   contextActive?: boolean;
 }) {
-  const isUser = msg.role === "user";
-  const refs: number[] = msg.references
-    ? JSON.parse(msg.references)
-    : [];
-  // T-004: 历史消息里如果有 skill_calls_json 就反序列化出来展示
-  let skillCalls: SkillCall[] = [];
-  if (msg.skill_calls) {
-    try {
-      skillCalls = JSON.parse(msg.skill_calls);
-    } catch {
-      // 静默忽略：坏数据不阻断消息渲染
-    }
-  }
+  const { token } = antdTheme.useToken();
+  // 附件内容动辄几万字，塞回输入框没法编辑；这类提问只能「重新生成」
+  const hasAttachment = msg.content.startsWith(ATTACHMENT_PREFIX);
 
   return (
     <div
-      className={`flex gap-3 mb-4 ${isUser ? "flex-row-reverse" : ""}`}
+      className="group flex flex-col items-end gap-1 mb-4"
       onContextMenu={
         onContextMenu
           ? (e) => {
@@ -1696,185 +1767,35 @@ function MessageBubble({
           : undefined
       }
     >
-      {/* 头像 */}
+      {/* min-w-0 + overflowWrap: anywhere：无空格的长串（URL / DOI）也能断行，不撑破聊天区 */}
       <div
-        className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-bold"
+        className="max-w-[75%] min-w-0 px-3 py-2 rounded-lg text-sm whitespace-pre-wrap break-words"
         style={{
-          background: isUser ? token.colorPrimary : token.colorPrimaryBg,
-          color: isUser ? "#fff" : token.colorPrimary,
+          background: token.colorPrimary,
+          color: "#fff",
+          overflowWrap: "anywhere",
+          outline: contextActive || editing ? `2px solid ${token.colorPrimaryBorder}` : "none",
+          outlineOffset: 2,
+          opacity: editing ? 0.7 : 1,
+          transition: "outline .1s",
         }}
       >
-        {isUser ? "我" : "AI"}
+        {msg.content}
       </div>
-
-      {/* 内容
-          min-w-0：默认 flex 子项 min-width: auto = 内容固有宽度，会顶破 max-w-[75%]；
-          手动归零才能让 max-width 生效，长文本/无空格长串才能被裁到 75% 以内。 */}
-      <div className={`max-w-[75%] min-w-0 flex flex-col gap-2 ${isUser ? "items-end" : "items-start"}`}>
-        {/* Skill 调用折叠卡片（在气泡上方） */}
-        {skillCalls.length > 0 && (
-          <SkillCallList calls={skillCalls} token={token} />
-        )}
-
-        <div
-          className={`px-3 py-2 rounded-lg text-sm break-words ${isUser ? "whitespace-pre-wrap" : "ai-markdown"}`}
-          style={{
-            background: isUser ? token.colorPrimary : token.colorBgContainer,
-            color: isUser ? "#fff" : token.colorText,
-            // overflowWrap: anywhere 比 break-word 更激进：连无空格的纯英文长串
-            // （如 DOI / URL）也能在任意字符处断行，避免气泡被撑开溢出聊天区
-            overflowWrap: "anywhere",
-            maxWidth: "100%",
-            outline: contextActive ? `1px solid ${token.colorPrimary}` : "none",
-            outlineOffset: 2,
-            transition: "outline .1s",
-          }}
+      {canEdit && !hasAttachment && !editing && (
+        <button
+          type="button"
+          className="flex items-center gap-1 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+          style={{ color: token.colorTextTertiary }}
+          onClick={onEdit}
+          title="把这条提问放回输入框修改后重发（会撤回它之后的消息）"
         >
-          {isUser ? msg.content : <Markdown>{msg.content}</Markdown>}
-        </div>
-
-        {/* 引用笔记 */}
-        {refs.length > 0 && (
-          <div
-            className="text-xs flex items-center gap-1"
-            style={{ color: token.colorTextQuaternary }}
-          >
-            <BookOpen size={10} />
-            参考了 {refs.length} 篇笔记
-          </div>
-        )}
-
-        {/* 溯源图片：把引用笔记里的图片挂出来，点击可放大 */}
-        {refs.length > 0 && <NoteImageRefs noteIds={refs} />}
-      </div>
-    </div>
-  );
-}
-
-/** Skill 调用列表（折叠卡片）
- *
- * 一组工具调用整体默认折叠：头部显示"🔧 调用了 N 个工具"，展开后逐条列出
- * 参数和结果。流式进行中（`defaultOpen`）自动展开，让用户能看到 running 过程。
- */
-function SkillCallList({
-  calls,
-  token,
-  defaultOpen = false,
-}: {
-  calls: SkillCall[];
-  token: any;
-  defaultOpen?: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  const hasRunning = calls.some((c) => c.status === "running");
-  const hasError = calls.some((c) => c.status === "error");
-
-  return (
-    <div
-      className="rounded-md text-xs"
-      style={{
-        background: token.colorFillQuaternary,
-        border: `1px solid ${token.colorBorderSecondary}`,
-        minWidth: 260,
-      }}
-    >
-      <button
-        className="w-full flex items-center gap-1.5 px-2 py-1.5 text-left"
-        style={{ color: token.colorTextSecondary }}
-        onClick={() => setOpen(!open)}
-      >
-        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        <Wrench size={12} style={{ color: token.colorPrimary }} />
-        <span>
-          AI 调用了 {calls.length} 个工具
-        </span>
-        {hasRunning && (
-          <Loader2 size={12} className="animate-spin" style={{ color: token.colorPrimary }} />
-        )}
-        {!hasRunning && hasError && (
-          <XCircle size={12} style={{ color: token.colorError }} />
-        )}
-        {!hasRunning && !hasError && (
-          <CheckCircle2 size={12} style={{ color: token.colorSuccess }} />
-        )}
-      </button>
-      {open && (
-        <div
-          style={{
-            borderTop: `1px solid ${token.colorBorderSecondary}`,
-            padding: 8,
-          }}
-        >
-          {calls.map((c) => (
-            <SkillCallItem key={c.id} call={c} token={token} />
-          ))}
-        </div>
+          <Edit3 size={11} />
+          编辑重发
+        </button>
       )}
     </div>
   );
-}
-
-function SkillCallItem({ call, token }: { call: SkillCall; token: any }) {
-  const statusIcon = (() => {
-    if (call.status === "running")
-      return <Loader2 size={11} className="animate-spin" style={{ color: token.colorPrimary }} />;
-    if (call.status === "error")
-      return <XCircle size={11} style={{ color: token.colorError }} />;
-    return <CheckCircle2 size={11} style={{ color: token.colorSuccess }} />;
-  })();
-
-  // 参数 JSON 尽量美化一下；解析失败就原样显示
-  let prettyArgs = call.argsJson;
-  try {
-    prettyArgs = JSON.stringify(JSON.parse(call.argsJson), null, 2);
-  } catch {
-    // keep original
-  }
-
-  return (
-    <div className="mb-1.5 last:mb-0">
-      <div className="flex items-center gap-1.5 mb-1" style={{ color: token.colorText }}>
-        {statusIcon}
-        <code
-          style={{
-            background: token.colorFillTertiary,
-            padding: "1px 4px",
-            borderRadius: 3,
-            fontFamily: "var(--font-mono, monospace)",
-          }}
-        >
-          {call.name}
-        </code>
-      </div>
-      <pre
-        className="whitespace-pre-wrap break-all"
-        style={{
-          margin: 0,
-          fontSize: 11,
-          color: token.colorTextSecondary,
-          fontFamily: "var(--font-mono, monospace)",
-          maxHeight: 160,
-          overflow: "auto",
-          padding: "4px 6px",
-          background: token.colorBgContainer,
-          borderRadius: 3,
-        }}
-      >
-        {prettyArgs}
-        {call.result && call.status !== "running" && (
-          <>
-            {"\n\n→ "}
-            {truncateForDisplay(call.result, 500)}
-          </>
-        )}
-      </pre>
-    </div>
-  );
-}
-
-function truncateForDisplay(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return s.slice(0, max) + `…（共 ${s.length} 字符）`;
 }
 
 import { useIsMobile } from "@/hooks/useIsMobile";

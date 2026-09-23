@@ -813,6 +813,12 @@ export const aiChatApi = {
   listMessages: (conversationId: number) =>
     invoke<AiMessage[]>("list_ai_messages", { conversationId }),
   /**
+   * 撤回会话里从某条提问起（含）的所有消息，返回删除条数。
+   * 给「重新生成 / 编辑重发」用；`fromMessageId` 必须是一条 user 消息，否则后端拒绝。
+   */
+  truncateFrom: (conversationId: number, fromMessageId: number) =>
+    invoke<number>("delete_ai_messages_from", { conversationId, fromMessageId }),
+  /**
    * 发送消息并流式接收回复。
    * - `useRag`: 是否启用 RAG（默认 true）。`useSkills=true` 时自动失效（AI 自行调 search_notes）
    * - `useSkills`: T-004 Skills 框架。AI 可调 search_notes / get_note / list_tags 等工具

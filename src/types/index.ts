@@ -652,7 +652,22 @@ export interface AiMessage {
   references: string | null;
   /** T-004: Skills 框架下 AI 调用的工具记录（JSON 字符串，反序列化后是 SkillCall[]）*/
   skill_calls: string | null;
+  /** v63：一轮回复的收尾信息（JSON 字符串，反序列化后是 TurnMeta）；存量消息为 null */
+  turn_meta?: string | null;
   created_at: string;
+}
+
+/** 一轮回复的收尾信息（与 Rust `models::TurnMeta` 对齐）*/
+export interface TurnMeta {
+  endReason: "done" | "stopped" | "error";
+  /** endReason = "error" 时的错误原文 */
+  error?: string;
+  /** 从收到提问到这一轮结束的耗时 */
+  durationMs?: number;
+  /** 智能模式下各轮调工具前模型说的话，下标 = 轮次 */
+  roundTexts?: string[];
+  /** 推理模型走 reasoning_content 的思考过程 */
+  reasoning?: string;
 }
 
 /** AI Skill 调用记录（T-004）*/
@@ -665,6 +680,10 @@ export interface SkillCall {
   result: string;
   /** 'running' | 'ok' | 'error' */
   status: "running" | "ok" | "error";
+  /** 第几轮发起的调用（从 0 开始）；v63 前的存量记录没有，按 0 处理 */
+  round?: number;
+  /** 工具执行耗时；running 时没有 */
+  durationMs?: number;
 }
 
 // ─── AI 规划今日待办（T-005） ────────────

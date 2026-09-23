@@ -17,6 +17,7 @@ import type { AiConversation, AiMessage, AiModel } from "@/types";
 import { MobileAiModelModal } from "@/components/ai/MobileAiModelModal";
 import { useKeyboardInset } from "@/hooks/useKeyboardInset";
 import { stripPseudoToolCalls } from "@/lib/aiFilter";
+import { compactTurnText } from "@/components/ai/turnModel";
 
 /**
  * 移动端 AI 对话页（设计稿：07-ai-chat.html）
@@ -440,7 +441,8 @@ function MessageBubble({
       </div>
       <div className="flex-1 min-w-0">
         <div className="rounded-2xl rounded-tl-md bg-white px-4 py-3 text-sm text-slate-700 shadow-sm whitespace-pre-wrap break-words">
-          {msg.content}
+          {/* 失败 / 停止的回复正文可能是空的，补一句结局说明 */}
+          {compactTurnText(msg)}
         </div>
         <div className="mt-1.5 flex items-center gap-3 px-1 text-[11px] text-slate-400">
           <button
