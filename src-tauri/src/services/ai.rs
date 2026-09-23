@@ -186,47 +186,23 @@ fn apply_max_tokens(body: &mut Value, model: &AiModel) {
     }
 }
 
-/// 在用户填的 base 上接一段 API 路径，按末段是否已是 `vN` / `vN.M` 决定要不要补 `/v1`。
+/// 在 base 上接一段 API 路径（如 `models`）。
 ///
-/// 用户填的地址千奇百怪：`https://api.deepseek.com`、`.../v1`、`.../v1beta` 都有，
-/// 无脑拼 `/v1/xxx` 会出 `/v1/v1/xxx`。抽出来是为了 `/chat/completions` 和
-/// `/models` 两条路走**同一套**判断 —— 各写一份必然有一天分叉。
-///
-/// # `#` 结尾 = 关掉版本段推断
-///
-/// 「末段是不是版本段」这个启发式覆盖不了**版本段不在末尾**的端点。实例就是我们自己
-/// 预置的 Gemini：`https://generativelanguage.googleapis.com/v1beta/openai` —— 末段是
-/// `openai`，被判成"没有版本段"，于是补出 `/v1beta/openai/v1/chat/completions`，必 404。
-/// 这类地址无法靠猜解决，所以给一个显式终止符：**base 以 `#` 结尾就只拼 `path`、
-/// 绝不补版本段**。这是 Cherry Studio / NextChat 等客户端的通行约定，从别处迁配置过来的
-/// 用户会习惯性带上它。
-///
-/// # 会先把完整对话端点剥回 base
-///
-/// [`build_openai_chat_url`] 允许用户直接粘贴完整的 `/chat/completions`，那么这类配置的
-/// 「获取模型」也必须能用。不剥的话会拼出 `.../chat/completions/v1/models`，
-/// 表现为"能聊天却拉不到模型"。
+/// 🔴 规则归 ai-profile：**base 原样使用、绝不推断版本段**。v1.64.0 之前这里会自动补 `/v1`
+/// （末尾 `#` 禁止补），存量地址已由 schema v62 按旧规则补齐（`services::legacy_api_url`），
+/// 所以切换后请求地址与以前逐字相同。完整对话端点（`…/chat/completions`）会先剥回 base。
 fn build_openai_api_url(api_url: &str, path: &str) -> String {
-    let trimmed = api_url.trim();
-    let pinned = trimmed.ends_with('#');
-    let base = strip_chat_endpoint(trimmed.trim_end_matches('#').trim_end_matches('/'));
-    let has_version_segment = base.rsplit('/').next().is_some_and(|seg| {
-        seg.starts_with('v')
-            && seg.len() > 1
-            && seg[1..].chars().all(|c| c.is_ascii_digit() || c == '.')
-    });
-    if pinned || has_version_segment {
-        format!("{}/{}", base, path)
-    } else {
-        format!("{}/v1/{}", base, path)
-    }
+    ai_profile::endpoint::join_api_path(api_url, path)
 }
 
-/// 把完整对话端点还原成 base（见 [`build_openai_api_url`] 的说明）。
-fn strip_chat_endpoint(base: &str) -> &str {
-    base.strip_suffix("chat/completions")
-        .map(|rest| rest.trim_end_matches('/'))
-        .unwrap_or(base)
+/// Ollama 原生接口（`/api/chat`、`/api/tags`）的根地址。
+///
+/// 存储里的 Ollama 地址是它 OpenAI 兼容层的 `http://host:11434/v1`（与 crate 预置一致；
+/// 5 个非流式功能走的就是这一层），原生接口挂在根上，所以去掉末尾的 `/v1`。
+/// 用户填的是根地址也照样能用。
+fn ollama_native_root(api_url: &str) -> String {
+    let base = api_url.trim().trim_end_matches('#').trim_end_matches('/');
+    base.strip_suffix("/v1").unwrap_or(base).to_string()
 }
 
 /// 从 `/models` 或 `/api/tags` 的响应数组里抽出模型标识，去重 + 排序。
@@ -249,15 +225,9 @@ fn collect_model_ids(arr: Option<&Vec<Value>>, field: &str) -> Vec<String> {
     ids
 }
 
+/// OpenAI 兼容对话端点。用户粘贴的完整 `…/chat/completions` 原样用（规则见 [`build_openai_api_url`]）。
 fn build_openai_chat_url(api_url: &str) -> String {
-    // 先摘掉可能存在的 `#`（版本段推断终止符，见 build_openai_api_url），
-    // 否则带 # 的完整端点会漏过下面这条判断
-    let base = api_url.trim().trim_end_matches('#').trim_end_matches('/');
-    // 用户直接把完整 chat 端点粘进来的情况，原样用
-    if base.ends_with("/chat/completions") {
-        return base.to_string();
-    }
-    build_openai_api_url(api_url, "chat/completions")
+    ai_profile::endpoint::join_chat_endpoint(api_url, "chat/completions")
 }
 
 /// 把一个 error 链展开成 `msg ← cause ← cause …`，并对每一层尝试 downcast 成 `std::io::Error`，
@@ -962,7 +932,7 @@ impl AiService {
         let seed: u32 = rand::random();
         let timeout = std::time::Duration::from_secs(10);
         let raw = if model.provider == "ollama" {
-            let url = format!("{}/api/chat", model.api_url.trim().trim_end_matches('/'));
+            let url = format!("{}/api/chat", ollama_native_root(&model.api_url));
             let client = build_ollama_client();
             let response = client
                 .post(&url)
@@ -1078,7 +1048,7 @@ impl AiService {
         let timeout = std::time::Duration::from_secs(90);
 
         let raw = if model.provider == "ollama" {
-            let url = format!("{}/api/chat", model.api_url.trim().trim_end_matches('/'));
+            let url = format!("{}/api/chat", ollama_native_root(&model.api_url));
             let client = build_ollama_client();
             let response = client
                 .post(&url)
@@ -1177,7 +1147,7 @@ impl AiService {
         let started = std::time::Instant::now();
 
         if input.provider == "ollama" {
-            let url = format!("{}/api/chat", input.api_url.trim().trim_end_matches('/'));
+            let url = format!("{}/api/chat", ollama_native_root(&input.api_url));
             let client = build_ollama_client();
             let response = client
                 .post(&url)
@@ -1278,7 +1248,7 @@ impl AiService {
 
         // ── Ollama：本机服务，列的是已 pull 到本地的模型 ──
         if provider == "ollama" {
-            let url = format!("{}/api/tags", base);
+            let url = format!("{}/api/tags", ollama_native_root(base));
             let response = build_ollama_client()
                 .get(&url)
                 .timeout(timeout)
@@ -1341,7 +1311,7 @@ impl AiService {
         messages: &[Value],
         mut cancel_rx: watch::Receiver<bool>,
     ) -> Result<String, AppError> {
-        let url = format!("{}/api/chat", model.api_url.trim().trim_end_matches('/'));
+        let url = format!("{}/api/chat", ollama_native_root(&model.api_url));
         let client = build_ollama_client();
         let mut body = json!({
             "model": model.model_id,
@@ -1843,7 +1813,7 @@ impl AiService {
         messages: &[Value],
         mut cancel_rx: watch::Receiver<bool>,
     ) -> Result<String, AppError> {
-        let url = format!("{}/api/chat", model.api_url.trim().trim_end_matches('/'));
+        let url = format!("{}/api/chat", ollama_native_root(&model.api_url));
         let client = build_ollama_client();
         log::info!(
             "[Ollama] POST {} (raw api_url={:?}) model={} msgs={}",
@@ -2600,7 +2570,7 @@ impl AiService {
         tools: &[Value],
         mut cancel_rx: watch::Receiver<bool>,
     ) -> (Result<String, AppError>, Option<Vec<ToolCallAccum>>) {
-        let url = format!("{}/api/chat", model.api_url.trim().trim_end_matches('/'));
+        let url = format!("{}/api/chat", ollama_native_root(&model.api_url));
         let client = build_ollama_client();
 
         let mut request_body = json!({
@@ -4657,88 +4627,40 @@ mod note_quota_and_max_tokens_tests {
 mod remote_model_list_tests {
     use super::*;
 
-    /// base 地址的形态由用户手填，五花八门。这组用例钉住"要不要补 /v1"的判断，
-    /// 因为拼错的表现是 404 —— 用户只会看到"获取失败"，猜不到是多了一层 v1。
+    /// 🔴 base 原样使用、不再推断 `/v1`（旧规则的对照测试在 `legacy_api_url`）。
     #[test]
-    fn models_url_respects_existing_version_segment() {
-        // 官方给的 base 多数已经带 /v1
+    fn urls_use_base_verbatim() {
         assert_eq!(
-            build_openai_api_url("https://api.anthropic.com/v1", "models"),
-            "https://api.anthropic.com/v1/models"
-        );
-        assert_eq!(
-            build_openai_api_url("https://api.openai.com/v1/", "models"),
-            "https://api.openai.com/v1/models"
-        );
-        // 不带版本段的要补
-        assert_eq!(
-            build_openai_api_url("https://api.deepseek.com", "models"),
+            build_openai_api_url("https://api.deepseek.com/v1", "models"),
             "https://api.deepseek.com/v1/models"
         );
-        // vNbeta 这类不是纯数字版本段，按"没有版本"处理
-        assert_eq!(
-            build_openai_api_url("https://x.test/v1beta", "models"),
-            "https://x.test/v1beta/v1/models"
-        );
-        // v1.5 这种带点的仍算版本段
-        assert_eq!(
-            build_openai_api_url("https://x.test/v1.5", "models"),
-            "https://x.test/v1.5/models"
-        );
-    }
-
-    /// 🔴 Gemini 回归守护：它的版本段 `v1beta` **不在末尾**（末段是 `openai`），
-    /// 靠"末段是不是版本段"这个启发式必然判错 —— 曾经补出
-    /// `/v1beta/openai/v1/chat/completions`，我们内置的 Gemini 档因此从来没连通过。
-    /// 末尾 `#` 是显式终止符，把这个坑封在预置里，用户不必懂这条规则。
-    #[test]
-    fn hash_suffix_pins_base_without_version_guess() {
-        assert_eq!(
-            build_openai_chat_url("https://generativelanguage.googleapis.com/v1beta/openai#"),
-            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-        );
-        assert_eq!(
-            build_openai_api_url("https://generativelanguage.googleapis.com/v1beta/openai#", "models"),
-            "https://generativelanguage.googleapis.com/v1beta/openai/models"
-        );
-        // 不带 # 时仍走启发式（会补 /v1）—— 这正是 # 要解决的那个坑
-        assert_eq!(
-            build_openai_chat_url("https://generativelanguage.googleapis.com/v1beta/openai"),
-            "https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions"
-        );
-    }
-
-    /// 填了完整对话端点的配置，「获取模型」也要能用 —— 先把端点段剥回 base 再拼 `/models`。
-    /// 不剥就会拼出 `.../chat/completions/v1/models`，表现为"能聊天却拉不到模型"。
-    #[test]
-    fn models_url_strips_full_chat_endpoint() {
-        assert_eq!(
-            build_openai_api_url("https://proxy.test/v1/chat/completions", "models"),
-            "https://proxy.test/v1/models"
-        );
-        // 带 # 的完整端点同样要剥
-        assert_eq!(
-            build_openai_api_url("https://x.test/v1beta/openai/chat/completions#", "models"),
-            "https://x.test/v1beta/openai/models"
-        );
-    }
-
-    #[test]
-    fn chat_url_keeps_using_the_same_rule() {
-        // 两条路共用 build_openai_api_url，别哪天只改了一边
         assert_eq!(
             build_openai_chat_url("https://api.deepseek.com"),
-            "https://api.deepseek.com/v1/chat/completions"
+            "https://api.deepseek.com/chat/completions",
+            "不再替用户补 /v1"
         );
         assert_eq!(
-            build_openai_chat_url("https://api.openai.com/v1"),
-            "https://api.openai.com/v1/chat/completions"
+            build_openai_chat_url("https://generativelanguage.googleapis.com/v1beta/openai"),
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            "版本段不在末尾的地址照抄即可，不需要 #"
         );
-        // 用户把完整端点粘进来时原样用，不再往后接
+        // 完整端点：对话原样用，获取模型剥回 base
         assert_eq!(
             build_openai_chat_url("https://proxy.test/v1/chat/completions"),
             "https://proxy.test/v1/chat/completions"
         );
+        assert_eq!(
+            build_openai_api_url("https://proxy.test/v1/chat/completions", "models"),
+            "https://proxy.test/v1/models"
+        );
+    }
+
+    #[test]
+    fn ollama_native_root_strips_v1() {
+        assert_eq!(ollama_native_root("http://localhost:11434/v1"), "http://localhost:11434");
+        assert_eq!(ollama_native_root("http://localhost:11434/v1/"), "http://localhost:11434");
+        assert_eq!(ollama_native_root("http://localhost:11434"), "http://localhost:11434");
+        assert_eq!(ollama_native_root(" http://10.0.0.2:11434/ "), "http://10.0.0.2:11434");
     }
 
     #[test]

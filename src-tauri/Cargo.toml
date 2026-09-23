@@ -47,6 +47,10 @@ tauri-plugin-process = "2"
 # reqwest：移动端 NDK 不带 OpenSSL，统一用 rustls-tls（桌面端也能用，行为一致；
 # 系统证书池靠 rustls-native-certs 加载，避免迁移成本）
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "rustls-tls-native-roots"] }
+# ai-profile：模型服务的预置、协议拼写、端点拼接、零成本验证、限额、ai.profile 协议（同级公共库）。
+# 按提交号引用；升级流程见 ai-profile 仓库的 docs/downstream.md 与本项目技能 ai-profile-integration。
+# client feature 用的是 rustls（与上面 reqwest 同一套 TLS），不会把 OpenSSL 带进 Android 构建。
+ai-profile = { git = "https://github.com/bkywksj/ai-profile", rev = "2a32261", features = ["chat", "client"] }
 # net：url_safety 的 SSRF 校验直接用 tokio::net::lookup_host 做 DNS 解析。
 # 实测不写这条也能编过（reqwest→hyper-util 会间接启用 net），但那是**隐式**的：
 # 哪天 reqwest 换掉或改了 feature 结构，就会突然报 "lookup_host not found"，

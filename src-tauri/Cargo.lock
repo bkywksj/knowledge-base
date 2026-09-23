@@ -85,6 +85,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai-profile"
+version = "0.1.0"
+source = "git+https://github.com/bkywksj/ai-profile?rev=2a32261#2a32261aaed2bd80b59fa7e77b40a874cb3c9756"
+dependencies = [
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "alloc-no-stdlib"
 version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3296,6 +3308,7 @@ name = "knowledge_base"
 version = "1.64.0"
 dependencies = [
  "aes-gcm",
+ "ai-profile",
  "argon2",
  "axum",
  "base64 0.22.1",

@@ -3,7 +3,11 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 61;
+pub const SCHEMA_VERSION: i32 = 62;
+
+/// `ai_models.max_context` 的历史默认值。v51 把旧默认 32000 统一抬到它，此后新建也默认填它 ——
+/// 所以存量里的 128000 分不清是用户填的还是默认值，v62 一律当作「未设置」。
+pub const LEGACY_DEFAULT_MAX_CONTEXT: i64 = 128_000;
 
 /// 获取数据库版本
 pub fn get_version(conn: &Connection) -> Result<i32, AppError> {
@@ -93,6 +97,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             58 => migrate_v58_to_v59(conn)?,
             59 => migrate_v59_to_v60(conn)?,
             60 => migrate_v60_to_v61(conn)?,
+            61 => migrate_v61_to_v62(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2385,6 +2390,71 @@ fn migrate_v54_to_v55(conn: &Connection) -> Result<(), AppError> {
 /// 加一列区分而不是另起一张表：份数上限、时间窗节流、内容去重、
 /// 以及笔记删除时的 CASCADE 清理，整套逻辑原样复用。
 /// `target_path` 为 NULL = 笔记正文本身（v57 的既有语义，存量行自动落到这一档）。
+/// v61 -> v62：模型服务改由 ai-profile crate 提供。
+///
+/// 三件事，都是「把旧语义写进数据」，让切换到 crate 后行为不变：
+///
+/// 1. **`api_url` 规范化**：旧拼接会自动补 `/v1`，crate 原样使用。按旧规则把会补的那段写进
+///    地址（`services::legacy_api_url`，对照测试保证修正前后请求地址逐字相同）。Ollama 的
+///    `http://localhost:11434` 也在内 —— 5 个非流式功能靠补 `/v1` 走它的 OpenAI 兼容层；
+///    原生 `/api/chat` 改由应用侧从 `…/v1` 反推根地址。
+/// 2. **`provider` 改存 crate 预置 key**：`kimi` → `moonshot` 等；`claude` / 混元 / 零一万物 /
+///    未知 → 「OpenAI 兼容自定义」（映射表见 `legacy_provider_key`）。
+/// 3. **限额来源**：新增 `limits_source`（`user` / `endpoint`，NULL = 没设）与 `max_output`
+///    （端点上报的模型输出上限，用来给 `max_tokens` 封顶）。`max_context` 列保持 NOT NULL，
+///    改用 **0 表示未设置**（避免重建表；代码里 `<= 0` 本来就按「未知」处理）。
+///    恰好等于历史默认 128000 的行分不清是不是用户填的，当作未设置 —— 回落到端点上报或预置值；
+///    其余值视为用户设置。
+///
+/// 🔴 整个迁移包在一个事务里：逐行重写中途被杀掉会回滚到 v61，重启重跑。`ALTER TABLE` 在
+/// SQLite 里受事务保护。
+///
+/// 整库恢复（ZIP / WebDAV / `.bak`）后 `Database::init` 会重新跑迁移，所以恢复进来的旧库同样被修正。
+fn migrate_v61_to_v62(conn: &Connection) -> Result<(), AppError> {
+    use crate::services::legacy_api_url::{legacy_provider_key, normalize_legacy_api_url};
+
+    log::info!("数据库迁移: v61 -> v62 (模型服务接入 ai-profile)");
+    // drop 未 commit 的 tx 会自动回滚
+    let tx = conn.unchecked_transaction()?;
+    let conn: &Connection = &tx;
+
+    conn.execute_batch(
+        "ALTER TABLE ai_models ADD COLUMN limits_source TEXT;
+         ALTER TABLE ai_models ADD COLUMN max_output INTEGER;",
+    )?;
+
+    let rows: Vec<(i64, String, String, i64)> = {
+        let mut stmt = conn.prepare("SELECT id, provider, api_url, max_context FROM ai_models")?;
+        let it = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        it.collect::<Result<_, _>>()?
+    };
+
+    for (id, provider, api_url, max_context) in &rows {
+        let (context, source): (i64, Option<&str>) =
+            if *max_context <= 0 || *max_context == LEGACY_DEFAULT_MAX_CONTEXT {
+                (0, None)
+            } else {
+                (*max_context, Some("user"))
+            };
+        conn.execute(
+            "UPDATE ai_models SET provider = ?1, api_url = ?2, max_context = ?3, limits_source = ?4
+             WHERE id = ?5",
+            rusqlite::params![
+                legacy_provider_key(provider),
+                normalize_legacy_api_url(api_url),
+                context,
+                source,
+                id
+            ],
+        )?;
+    }
+
+    set_version(conn, 62)?;
+    tx.commit()?;
+    log::info!("数据库迁移: v61 -> v62 完成，修正 {} 个模型配置", rows.len());
+    Ok(())
+}
+
 /// v60 -> v61：`ai_models.max_tokens`（单次回答长度上限）。
 ///
 /// # 为什么需要
@@ -2908,6 +2978,65 @@ mod tests {
         );
         assert_eq!(read("本地·手动填"), 4_096);
         assert_eq!(get_version(&conn).unwrap(), 51);
+    }
+
+    /// v62：地址按旧规则补齐、厂商 id 改用 crate key、历史默认窗口视为未设置。
+    #[test]
+    fn v62_rewrites_ai_models_for_ai_profile() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE ai_models (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                api_url TEXT NOT NULL,
+                max_context INTEGER NOT NULL
+            );
+            INSERT INTO ai_models (name, provider, api_url, max_context) VALUES
+                ('DS 裸根',     'deepseek', 'https://api.deepseek.com',                 128000),
+                ('Kimi',        'kimi',     'https://api.moonshot.cn/v1',                 8000),
+                ('Claude',      'claude',   'https://api.anthropic.com/v1',             200000),
+                ('Gemini 预置', 'gemini',   'https://generativelanguage.googleapis.com/v1beta/openai#', 128000),
+                ('本地 Ollama', 'ollama',   'http://localhost:11434',                    32000),
+                ('混元',        'hunyuan',  'https://api.hunyuan.cloud.tencent.com/v1',  128000);
+            "#,
+        )
+        .unwrap();
+        set_version(&conn, 61).unwrap();
+
+        migrate_v61_to_v62(&conn).unwrap();
+
+        let read = |name: &str| -> (String, String, i64, Option<String>) {
+            conn.query_row(
+                "SELECT provider, api_url, max_context, limits_source FROM ai_models WHERE name = ?1",
+                [name],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap()
+        };
+
+        let ds = read("DS 裸根");
+        assert_eq!(ds.1, "https://api.deepseek.com/v1", "旧规则会补 /v1，要写进数据");
+        assert_eq!((ds.2, ds.3), (0, None), "历史默认 128000 当作未设置");
+
+        let kimi = read("Kimi");
+        assert_eq!(kimi.0, "moonshot", "厂商 id 改用 crate key");
+        assert_eq!((kimi.2, kimi.3.as_deref()), (8000, Some("user")), "用户填的值保留并标来源");
+
+        let claude = read("Claude");
+        assert_eq!(claude.0, "openai_compatible_custom", "没有 Anthropic 原生对话，归自定义");
+        assert_eq!(claude.1, "https://api.anthropic.com/v1", "地址不变");
+
+        assert!(read("Gemini 预置").1.ends_with("/openai#"), "带 # 的原样保留（幂等）");
+
+        let ollama = read("本地 Ollama");
+        assert_eq!(ollama.0, "ollama");
+        assert_eq!(ollama.1, "http://localhost:11434/v1", "OpenAI 兼容层要 /v1；原生路径由应用侧反推");
+        assert_eq!(ollama.2, 32_000, "Ollama 的 32000 是 v51 刻意保留的，不是历史默认");
+
+        assert_eq!(read("混元").0, "openai_compatible_custom");
+        assert_eq!(get_version(&conn).unwrap(), 62);
     }
 
     #[test]
