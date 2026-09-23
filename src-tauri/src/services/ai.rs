@@ -1767,13 +1767,14 @@ impl AiService {
             system_prompt.push_str(preset);
         }
 
-        // Claude 使用 system 字段，OpenAI/Ollama 使用 system role message
-        if model.provider != "claude" {
-            messages.push(json!({
-                "role": "system",
-                "content": system_prompt
-            }));
-        }
+        // 一律用 system role message：本项目只有 Ollama 原生与 OpenAI 兼容两种协议，都认它。
+        // 🔴 此前对 provider == "claude" 整段跳过（以为 Claude 要走单独的 system 字段），
+        //    但本项目的 claude 走的是 Anthropic 的 OpenAI 兼容端点，那里同样收 system 消息 ——
+        //    结果选 Claude 时检索到的笔记、角色设定全被丢掉，模型只看到裸问题
+        messages.push(json!({
+            "role": "system",
+            "content": system_prompt
+        }));
 
         // 历史消息：按 max_history 限制数量
         let start = if history.len() > max_history {
