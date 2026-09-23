@@ -4,17 +4,23 @@ use crate::models::{AiConversation, AiMessage, AiModel, AiModelInput};
 
 use super::Database;
 
-/// 新建模型时 max_context 的默认值（token）。
+/// 用户手填的上下文窗口下限（token）。
 ///
-/// 2026 年主流模型（DeepSeek / GPT / Claude / Qwen…）都是 128K 起步。
-/// 老默认值 32000 会让 RAG 检索和挂载笔记只拿到四分之一的预算，
-/// AI 常基于被截断的片段作答 —— schema v51 已把存量的 32000 一并抬上来。
-const DEFAULT_MAX_CONTEXT: i64 = 128_000;
+/// schema v62 起不再给默认值：没填 = 0 = 未设置，对话时回落到端点上报 / ai-profile 预置
+/// （`model_service::effective_context_window`）。此前默认塞 128000，那个数字对本地小模型是错的，
+/// 而且与用户真填的 128000 分不清。
+const MIN_MAX_CONTEXT: i64 = 1000;
+
+/// 表单 / 导入给的窗口 → 入库值：没填或非正数 = 0（未设置），其余不低于 [`MIN_MAX_CONTEXT`]。
+fn stored_max_context(v: Option<i64>) -> i64 {
+    v.filter(|n| *n > 0).map(|n| n.max(MIN_MAX_CONTEXT)).unwrap_or(0)
+}
 
 /// 把一行 ai_models 查询结果转成 AiModel
 ///
-/// 列顺序约定（v61 起 10 列）：
-///   id, name, provider, api_url, api_key, model_id, is_default, max_context, max_tokens, created_at
+/// 列顺序约定（v62 起 12 列，新列追加在末尾，前 10 列下标不变）：
+///   id, name, provider, api_url, api_key, model_id, is_default, max_context, max_tokens, created_at,
+///   limits_source, max_output
 ///
 /// api_key 自 schema v59 起在库里是密文（`enc:v1:` 前缀），这里是**唯一**的读取入口，
 /// 解密放在这一层，上面 16 个 `db.get_ai_model()` / `get_default_ai_model()` 调用点
@@ -40,6 +46,8 @@ fn row_to_ai_model(row: &rusqlite::Row) -> rusqlite::Result<AiModel> {
         max_context: row.get(7)?,
         max_tokens: row.get(8)?,
         created_at: row.get(9)?,
+        limits_source: row.get(10)?,
+        max_output: row.get(11)?,
     })
 }
 
@@ -55,8 +63,8 @@ fn encrypt_api_key(raw: Option<&str>) -> Result<Option<String>, AppError> {
 }
 
 /// 标准 ai_models 查询列表达式（与 row_to_ai_model 对齐）
-const AI_MODEL_COLS: &str =
-    "id, name, provider, api_url, api_key, model_id, is_default, max_context, max_tokens, created_at";
+const AI_MODEL_COLS: &str = "id, name, provider, api_url, api_key, model_id, is_default, \
+     max_context, max_tokens, created_at, limits_source, max_output";
 
 /// 把一行 ai_conversations 查询结果转成 AiConversation
 ///
@@ -116,6 +124,8 @@ mod tests {
             model_id: "test-model".into(),
             max_context: None,
             max_tokens: None,
+            limits_source: None,
+            max_output: None,
         }
     }
 
@@ -166,7 +176,7 @@ mod tests {
     fn update_without_max_context_keeps_stored_value() {
         let db = temp_db();
         let created = db
-            .create_ai_model(&AiModelInput { max_context: Some(8_000), ..input("小窗口模型") })
+            .create_ai_model(&AiModelInput { max_context: Some(Some(8_000)), ..input("小窗口模型") })
             .unwrap();
         assert_eq!(created.max_context, 8_000);
 
@@ -177,7 +187,7 @@ mod tests {
         assert_eq!(updated.max_context, 8_000, "没传 max_context，不该被重置");
 
         let changed = db
-            .update_ai_model(created.id, &AiModelInput { max_context: Some(32_000), ..input("改了个名字") })
+            .update_ai_model(created.id, &AiModelInput { max_context: Some(Some(32_000)), ..input("改了个名字") })
             .unwrap();
         assert_eq!(changed.max_context, 32_000, "传了就照改");
     }
@@ -550,15 +560,15 @@ impl Database {
             .conn
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
-        // max_context 缺省时给 128000：2026 年主流模型都是 128K 起步，
-        // 老的 32000 会让 RAG / 挂载笔记白白少拿三四倍预算（见 schema v51 迁移）
-        let max_ctx = input.max_context.unwrap_or(DEFAULT_MAX_CONTEXT).max(1000);
+        // 没填 = 0 = 未设置（schema v62），对话时回落到端点上报 / 预置值
+        let max_ctx = stored_max_context(input.max_context.flatten());
         // v59 起 API Key 加密入库，防 app.db 被复制走后明文泄漏
         let api_key_enc = encrypt_api_key(input.api_key.as_deref())?;
         conn.execute(
             "INSERT INTO ai_models
-                (name, provider, api_url, api_key, model_id, max_context, max_tokens)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                (name, provider, api_url, api_key, model_id, max_context, max_tokens,
+                 limits_source, max_output)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![
                 input.name,
                 input.provider,
@@ -568,6 +578,8 @@ impl Database {
                 max_ctx,
                 // 新建时外层 None（没提供）与 Some(None)（显式清空）等价，都落 NULL
                 input.max_tokens.flatten(),
+                input.limits_source.clone().flatten(),
+                input.max_output.flatten(),
             ],
         )?;
         let id = conn.last_insert_rowid();
@@ -601,7 +613,8 @@ impl Database {
             .map_err(|e| AppError::Custom(e.to_string()))?;
         // 用户没传 max_context 时保持原值 —— 此前这里写的是 unwrap_or(默认值)，
         // 与这句注释相反：只改名字、不带 max_context 的更新会把用户调过的窗口静默重置成 128000
-        let max_ctx = input.max_context.map(|v| v.max(1000));
+        // 三态：外层 None = 保持原值；Some(None) = 清除（0 = 未设置）；Some(Some(n)) = 设为 n
+        let max_ctx = input.max_context.map(stored_max_context);
 
         // 两个字段都是三态（api_key 见其注释，max_tokens 同理），
         // 各自独立决定"要不要出现在 SET 里"。
@@ -644,6 +657,18 @@ impl Database {
         if input.max_tokens.is_some() {
             sets.push("max_tokens = :max_tokens");
             params.push((":max_tokens", &max_tokens_val));
+        }
+
+        // 限额来源与端点上报的输出上限：同为三态，随「获取」/ 手填一起更新
+        let limits_source_val = input.limits_source.clone().flatten();
+        if input.limits_source.is_some() {
+            sets.push("limits_source = :limits_source");
+            params.push((":limits_source", &limits_source_val));
+        }
+        let max_output_val = input.max_output.flatten();
+        if input.max_output.is_some() {
+            sets.push("max_output = :max_output");
+            params.push((":max_output", &max_output_val));
         }
 
         let sql = format!(

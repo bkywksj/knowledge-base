@@ -108,6 +108,8 @@ pub fn compute_context_budget(max_context: i64, has_attached: bool) -> ContextBu
     }
 }
 
+use crate::services::model_service;
+
 pub struct AiService;
 
 /// 获取用于 Ollama 的 HTTP 客户端：始终绕过系统代理。
@@ -166,7 +168,8 @@ fn strip_unsupported_response_format(body: &mut Value, model: &AiModel) {
 /// 且 issue #7691 指出文档与实际不符。这种不确定性靠"不传"消不掉，
 /// 所以迁移时给 Ollama 统一置 -1（无限）—— 本地推理不计费，没有成本风险。
 fn apply_max_tokens(body: &mut Value, model: &AiModel) {
-    let Some(mt) = model.max_tokens else { return };
+    // 用户填超了模型真实输出上限会直接 400 —— 按端点上报 / 预置的上限收紧（只收紧不放大）
+    let Some(mt) = model_service::clamp_max_tokens(model) else { return };
     if model.provider == "ollama" {
         // Ollama 的生成参数统一挂在 options 下，且用 num_predict 这个名字
         body.as_object_mut()
@@ -182,15 +185,6 @@ fn apply_max_tokens(body: &mut Value, model: &AiModel) {
     }
 }
 
-/// 在 base 上接一段 API 路径（如 `models`）。
-///
-/// 🔴 规则归 ai-profile：**base 原样使用、绝不推断版本段**。v1.64.0 之前这里会自动补 `/v1`
-/// （末尾 `#` 禁止补），存量地址已由 schema v62 按旧规则补齐（`services::legacy_api_url`），
-/// 所以切换后请求地址与以前逐字相同。完整对话端点（`…/chat/completions`）会先剥回 base。
-fn build_openai_api_url(api_url: &str, path: &str) -> String {
-    ai_profile::endpoint::join_api_path(api_url, path)
-}
-
 /// Ollama 原生接口（`/api/chat`、`/api/tags`）的根地址。
 ///
 /// 存储里的 Ollama 地址是它 OpenAI 兼容层的 `http://host:11434/v1`（与 crate 预置一致；
@@ -201,27 +195,11 @@ fn ollama_native_root(api_url: &str) -> String {
     base.strip_suffix("/v1").unwrap_or(base).to_string()
 }
 
-/// 从 `/models` 或 `/api/tags` 的响应数组里抽出模型标识，去重 + 排序。
+/// OpenAI 兼容对话端点。
 ///
-/// 排序是因为各家返回顺序毫无规律（OpenRouter 几百条按上架时间乱序），
-/// 用户是来"找我要的那个"的，字母序最好扫。
-fn collect_model_ids(arr: Option<&Vec<Value>>, field: &str) -> Vec<String> {
-    let mut ids: Vec<String> = arr
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|m| m[field].as_str())
-                .map(str::to_string)
-                .filter(|s| !s.is_empty())
-                .collect()
-        })
-        .unwrap_or_default();
-    ids.sort_unstable();
-    ids.dedup();
-    ids
-}
-
-/// OpenAI 兼容对话端点。用户粘贴的完整 `…/chat/completions` 原样用（规则见 [`build_openai_api_url`]）。
+/// 🔴 规则归 ai-profile：**base 原样使用、绝不推断版本段**。v1.64.0 之前这里会自动补 `/v1`
+/// （末尾 `#` 禁止补），存量地址已由 schema v62 按旧规则补齐（`services::legacy_api_url`），
+/// 所以切换后请求地址与以前逐字相同。用户粘贴的完整 `…/chat/completions` 原样用。
 fn build_openai_chat_url(api_url: &str) -> String {
     ai_profile::endpoint::join_chat_endpoint(api_url, "chat/completions")
 }
@@ -281,11 +259,14 @@ fn format_ollama_send_error(e: &reqwest::Error, url: &str) -> String {
     }
 }
 
+/// 上下文超长错误的固定标题。`chat_stream` 的历史降档靠它认出「该少带点历史再试」这类错误。
+const CONTEXT_OVERFLOW_TITLE: &str = "对话超出模型的上下文窗口";
+
 /// 将 OpenAI 兼容接口（OpenAI / DeepSeek / 智谱 / Claude 代理）的 HTTP 错误
 /// 转成用户友好的中文提示。优先解析 body 里的 `error.message`。
 fn format_openai_api_error(status: reqwest::StatusCode, body: &str) -> String {
     // 尝试从 body 提取 OpenAI 风格的 error.message
-    let api_msg = serde_json::from_str::<Value>(body)
+    let api_msg: String = serde_json::from_str::<Value>(body)
         .ok()
         .and_then(|v| {
             v.get("error")
@@ -294,6 +275,15 @@ fn format_openai_api_error(status: reqwest::StatusCode, body: &str) -> String {
                 .map(|s| s.to_string())
         })
         .unwrap_or_else(|| body.chars().take(200).collect());
+
+    // 上下文超长由 ai-profile 识别（覆盖 OpenAI / DeepSeek / Gemini / Kimi / 通义 / 智谱 / 413 等写法，
+    // 限流与「max_tokens 太大」不误判）。标题固定为 CONTEXT_OVERFLOW_TITLE，对话降档靠它认出这类错误
+    if ai_profile::history::is_context_overflow(status.as_u16(), body) {
+        return format!(
+            "{} ({})\n对话历史、检索到的笔记与挂载笔记加起来超出了模型能接收的长度。\n\n详情: {}",
+            CONTEXT_OVERFLOW_TITLE, status, api_msg
+        );
+    }
 
     let (title, hint) = match status.as_u16() {
         401 => (
@@ -537,7 +527,7 @@ fn build_attached_notes_context(db: &Database, note_ids: &[i64], model: &AiModel
 
     // 字符预算由统一函数给出。此前这里写的是 `max_context * 0.6` 直接当字符数用，
     // 漏了 token→字符的 1.5 倍换算，白白少给三分之一预算。
-    let total_budget_chars = compute_context_budget(model.max_context, true).attached;
+    let total_budget_chars = compute_context_budget(model_service::effective_context_window(model), true).attached;
     let quotas = allocate_note_quotas(&notes, total_budget_chars);
 
     let mut out = String::with_capacity(total_budget_chars);
@@ -1221,85 +1211,6 @@ impl AiService {
         })
     }
 
-    /// 拉服务商当前可用的模型列表，供设置页「获取」按钮填充候选。
-    ///
-    /// 三种协议各一条路：
-    ///   · Ollama          `GET {base}/api/tags`  → `models[].name`（本机已 pull 的）
-    ///   · Anthropic 官方  `GET {base}/models`    → `data[].id`（`x-api-key` + `anthropic-version`）
-    ///   · OpenAI 兼容     `GET {base}/v1/models` → `data[].id`（`Authorization: Bearer`）
-    ///
-    /// 拿不到就如实报错，不做静默兜底 —— 自建 / 中转端点不实现 `/models` 很常见，
-    /// 返回空列表会被误读成"这家一个模型都没有"，还不如直说让用户手填。
-    pub async fn list_remote_models(
-        provider: &str,
-        api_url: &str,
-        api_key: Option<&str>,
-    ) -> Result<Vec<String>, AppError> {
-        if api_url.trim().is_empty() {
-            return Err(AppError::InvalidInput("API 地址不能为空".into()));
-        }
-        let timeout = std::time::Duration::from_secs(15);
-        let base = api_url.trim().trim_end_matches('/');
-        let key = api_key.map(str::trim).filter(|k| !k.is_empty());
-
-        // ── Ollama：本机服务，列的是已 pull 到本地的模型 ──
-        if provider == "ollama" {
-            let url = format!("{}/api/tags", ollama_native_root(base));
-            let response = build_ollama_client()
-                .get(&url)
-                .timeout(timeout)
-                .send()
-                .await
-                .map_err(|e| AppError::Custom(format_ollama_send_error(&e, &url)))?;
-            if !response.status().is_success() {
-                return Err(AppError::Custom(format!(
-                    "Ollama 返回错误 {}（{}）",
-                    response.status(),
-                    url
-                )));
-            }
-            let body: Value = response
-                .json()
-                .await
-                .map_err(|e| AppError::Custom(format!("Ollama 响应解析失败: {}", e)))?;
-            return Ok(collect_model_ids(body["models"].as_array(), "name"));
-        }
-
-        // ── Anthropic 官方：换一套鉴权头，Bearer 在这儿是 401 ──
-        let is_anthropic = provider == "claude";
-        let url = build_openai_api_url(base, "models");
-        let client = crate::services::http_client::shared();
-        let mut request = client.get(&url).timeout(timeout);
-        if let Some(k) = key {
-            request = if is_anthropic {
-                request
-                    .header("x-api-key", k)
-                    .header("anthropic-version", "2023-06-01")
-            } else {
-                request.header("Authorization", format!("Bearer {}", k))
-            };
-        }
-
-        let response = request
-            .send()
-            .await
-            .map_err(|e| AppError::Custom(format!("请求模型列表失败: {}", e)))?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(AppError::Custom(format!(
-                "{}\n\n（请求的是 {}；部分中转 / 自建端点不提供该接口，可手动填模型标识）",
-                format_openai_api_error(status, &body),
-                url
-            )));
-        }
-        let body: Value = response
-            .json()
-            .await
-            .map_err(|e| AppError::Custom(format!("模型列表解析失败: {}", e)))?;
-        Ok(collect_model_ids(body["data"].as_array(), "id"))
-    }
-
     /// 通用 Ollama 流式请求（使用 EventEmitter trait）
     async fn stream_ollama_generic(
         emitter: &dyn AiEventEmitter,
@@ -1522,7 +1433,7 @@ impl AiService {
             if !notes.is_empty() {
                 // 挂载笔记已占掉的部分不再给 RAG（联合约束，防两者叠加撑爆窗口）
                 let total_budget =
-                    compute_context_budget(model.max_context, !attached_context.is_empty()).rag;
+                    compute_context_budget(model_service::effective_context_window(&model), !attached_context.is_empty()).rag;
                 // 单篇硬上限：防一篇长笔记吃掉整个预算，让后面的候选一条都进不来。
                 //
                 // 曾经写死 16000 —— 对 128K 模型只占预算的 11%，白白浪费长窗口；
@@ -1579,7 +1490,7 @@ impl AiService {
                     included,
                     used,
                     total_budget,
-                    model.max_context,
+                    model_service::effective_context_window(&model),
                 );
             }
         }
@@ -1608,7 +1519,6 @@ impl AiService {
 
         for &max_hist in &max_history_attempts {
             let messages = Self::build_messages(
-                &model,
                 &history,
                 &rag_context,
                 &attached_context,
@@ -1691,9 +1601,11 @@ impl AiService {
                 }
                 Err(ref e) => {
                     let err_str = e.to_string();
-                    // 仅在消息格式/轮数限制错误时重试（减少历史）
-                    if err_str.contains("convert_request_failed")
-                        || err_str.contains("context_length_exceeded")
+                    // 仅在上下文超长 / 消息格式错误时重试（减少历史）。
+                    // 超长由 format_openai_api_error 用 ai-profile 识别后打上固定标题；
+                    // 此前只认 context_length_exceeded 一个串，Gemini / Kimi / 通义等的超长写法都漏了
+                    if err_str.contains(CONTEXT_OVERFLOW_TITLE)
+                        || err_str.contains("convert_request_failed")
                     {
                         log::warn!(
                             "API 请求失败(max_history={}), 尝试减少历史: {}",
@@ -1719,7 +1631,6 @@ impl AiService {
 
     /// 构建发送给 AI 的消息列表
     fn build_messages(
-        model: &AiModel,
         history: &[AiMessage],
         rag_context: &str,
         attached_context: &str,
@@ -2317,7 +2228,7 @@ impl AiService {
                         &tc.args_json,
                         scope_ids.as_deref(),
                         // 单次工具返回的字符上限随模型窗口走，别让 get_note 只能读到开头
-                        skills::result_limit_for(model.max_context),
+                        skills::result_limit_for(model_service::effective_context_window(&model)),
                     )
                     .await
                     {
@@ -4474,6 +4385,8 @@ mod note_quota_and_max_tokens_tests {
             max_context: 128_000,
             max_tokens,
             created_at: String::new(),
+            limits_source: Some("user".into()),
+            max_output: None,
         }
     }
 
@@ -4646,10 +4559,6 @@ mod remote_model_list_tests {
     #[test]
     fn urls_use_base_verbatim() {
         assert_eq!(
-            build_openai_api_url("https://api.deepseek.com/v1", "models"),
-            "https://api.deepseek.com/v1/models"
-        );
-        assert_eq!(
             build_openai_chat_url("https://api.deepseek.com"),
             "https://api.deepseek.com/chat/completions",
             "不再替用户补 /v1"
@@ -4659,14 +4568,10 @@ mod remote_model_list_tests {
             "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
             "版本段不在末尾的地址照抄即可，不需要 #"
         );
-        // 完整端点：对话原样用，获取模型剥回 base
+        // 完整端点原样用
         assert_eq!(
             build_openai_chat_url("https://proxy.test/v1/chat/completions"),
             "https://proxy.test/v1/chat/completions"
-        );
-        assert_eq!(
-            build_openai_api_url("https://proxy.test/v1/chat/completions", "models"),
-            "https://proxy.test/v1/models"
         );
     }
 
@@ -4676,40 +4581,5 @@ mod remote_model_list_tests {
         assert_eq!(ollama_native_root("http://localhost:11434/v1/"), "http://localhost:11434");
         assert_eq!(ollama_native_root("http://localhost:11434"), "http://localhost:11434");
         assert_eq!(ollama_native_root(" http://10.0.0.2:11434/ "), "http://10.0.0.2:11434");
-    }
-
-    #[test]
-    fn collects_openai_shaped_ids_sorted_and_deduped() {
-        let body = json!({
-            "data": [
-                { "id": "gpt-4o" },
-                { "id": "gpt-3.5-turbo" },
-                { "id": "gpt-4o" },
-                { "object": "model" },
-                { "id": "" }
-            ]
-        });
-        assert_eq!(
-            collect_model_ids(body["data"].as_array(), "id"),
-            vec!["gpt-3.5-turbo", "gpt-4o"]
-        );
-    }
-
-    #[test]
-    fn collects_ollama_shaped_names() {
-        // Ollama 用的是 models[].name，不是 data[].id
-        let body = json!({ "models": [ { "name": "qwen2.5:7b" }, { "name": "llama3:8b" } ] });
-        assert_eq!(
-            collect_model_ids(body["models"].as_array(), "name"),
-            vec!["llama3:8b", "qwen2.5:7b"]
-        );
-    }
-
-    #[test]
-    fn missing_or_wrong_shape_yields_empty_not_panic() {
-        // 中转端点返回 {"data":{}} / 直接一个报错对象都见过，不能 panic
-        let body = json!({ "error": "not supported" });
-        assert!(collect_model_ids(body["data"].as_array(), "id").is_empty());
-        assert!(collect_model_ids(None, "id").is_empty());
     }
 }

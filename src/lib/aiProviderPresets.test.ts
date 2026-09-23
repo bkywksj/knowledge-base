@@ -1,83 +1,56 @@
 import { describe, it, expect } from "vitest";
-import {
-  PROVIDERS,
-  DEFAULT_URLS,
-  MODEL_ID_PLACEHOLDERS,
-  MODEL_PRESETS,
-  PROVIDER_NAME_MAP,
-} from "./aiProviderPresets";
+import { groupProviderOptions, modelPlaceholder, presetContextWindow } from "./aiProviderPresets";
+import type { AiProviderPreset } from "@/types";
 
 /**
- * 这份预置表有 5 个平行的 Record，加一家新服务要同时改 5 处 ——
- * 漏一处的表现是"选了某个 provider，地址栏空白 / 没有模型候选 / 名字回退成 id"，
- * 而且不报错、只在用户实际点到那一项时才发现。
- *
- * 这些用例就是替人记住那 5 处。
+ * 预置数据本身归 ai-profile crate（它有自己的守卫测试：分组连续、地址带版本段、默认模型在清单里…），
+ * 这里只测前端适配：分组切分、占位符、静态窗口查找。
  */
-describe("AI provider 预置表完整性", () => {
-  const ids = PROVIDERS.map((p) => p.value);
+function preset(key: string, group: string, models: string[] = []): AiProviderPreset {
+  return {
+    key,
+    groupKey: `g.${group}`,
+    groupLabel: group,
+    label: key.toUpperCase(),
+    hint: `${key} 的要点`,
+    baseUrl: `https://${key}.example.com/v1`,
+    model: models[0] ?? "",
+    models: models.map((m) => ({ value: m, label: m, contextWindow: m === "big" ? 1000000 : null, maxOutput: null })),
+    isLocal: key === "ollama",
+  };
+}
 
-  it("provider 值不重复", () => {
-    expect(new Set(ids).size).toBe(ids.length);
+describe("aiProviderPresets 适配层", () => {
+  const list = [
+    preset("deepseek", "国内", ["deepseek-flash", "deepseek-pro"]),
+    preset("zhipu", "国内"),
+    preset("openrouter", "国际", ["a", "b", "c", "d"]),
+    preset("ollama", "本地"),
+  ];
+
+  it("按连续分组切 optGroup，不重复开组", () => {
+    const g = groupProviderOptions(list);
+    expect(g.map((x) => x.label)).toEqual(["国内", "国际", "本地"]);
+    expect(g[0].options.map((o) => o.value)).toEqual(["deepseek", "zhipu"]);
   });
 
-  it("每条都有 label 和 desc（desc 是下拉副文本，别把说明挤进 label 括号）", () => {
-    for (const p of PROVIDERS) {
-      expect(p.label.trim(), `${p.value} 缺 label`).not.toBe("");
-      expect(p.desc.trim(), `${p.value} 缺 desc`).not.toBe("");
-    }
+  it("副文本参与搜索", () => {
+    const opt = groupProviderOptions(list)[2].options[0];
+    expect(opt.searchText).toContain("ollama 的要点");
+    expect(opt.title).toBe("OLLAMA");
   });
 
-  it.each(ids)("%s 在四个 Record 里都有条目", (id) => {
-    expect(DEFAULT_URLS, `${id} 缺 DEFAULT_URLS`).toHaveProperty(id);
-    expect(MODEL_ID_PLACEHOLDERS, `${id} 缺 placeholder`).toHaveProperty(id);
-    expect(MODEL_PRESETS, `${id} 缺 MODEL_PRESETS`).toHaveProperty(id);
-    expect(PROVIDER_NAME_MAP, `${id} 缺 NAME_MAP`).toHaveProperty(id);
+  it("占位符取前三个模型，空清单给通用提示", () => {
+    expect(modelPlaceholder(list[2])).toBe("如: a / b / c");
+    expect(modelPlaceholder(list[1])).toBe("填写服务商文档里的模型名");
+    expect(modelPlaceholder(undefined)).toBe("填写服务商文档里的模型名");
   });
 
-  it("Record 里不能有 PROVIDERS 中不存在的孤儿键", () => {
-    for (const [name, rec] of [
-      ["DEFAULT_URLS", DEFAULT_URLS],
-      ["MODEL_ID_PLACEHOLDERS", MODEL_ID_PLACEHOLDERS],
-      ["MODEL_PRESETS", MODEL_PRESETS],
-      ["PROVIDER_NAME_MAP", PROVIDER_NAME_MAP],
-    ] as const) {
-      for (const k of Object.keys(rec)) {
-        expect(ids, `${name} 里的 ${k} 不在 PROVIDERS 中`).toContain(k);
-      }
-    }
-  });
-
-  it("除自定义端点外都要有默认 baseUrl", () => {
-    for (const id of ids) {
-      if (id === "custom") {
-        // 自定义故意留空 —— 有值反而会误导用户以为该填那个地址
-        expect(DEFAULT_URLS[id]).toBe("");
-      } else {
-        expect(DEFAULT_URLS[id], `${id} 的 baseUrl 为空`).not.toBe("");
-      }
-    }
-  });
-
-  it("baseUrl 不能带 /chat/completions 后缀（后端自己拼）", () => {
-    for (const [id, url] of Object.entries(DEFAULT_URLS)) {
-      expect(url, `${id} 的 URL 带了 chat/completions`).not.toContain(
-        "chat/completions",
-      );
-      expect(url, `${id} 的 URL 结尾多了斜杠`).not.toMatch(/\/$/);
-    }
-  });
-
-  it("Claude 与 OpenRouter 是两条独立 provider，指向各自官方地址", () => {
-    // 早先它们被混成一条「Claude (经 OpenRouter 等代理)」：
-    // 官方 API 反而选不了，OpenRouter 能跑几百个模型也看不出来
-    expect(ids).toContain("claude");
-    expect(ids).toContain("openrouter");
-    expect(DEFAULT_URLS.claude).toContain("api.anthropic.com");
-    expect(DEFAULT_URLS.openrouter).toContain("openrouter.ai");
-  });
-
-  it("必须保留自定义端点这个兜底项", () => {
-    expect(ids).toContain("custom");
+  it("静态窗口按模型名查，查不到给 null（不猜）", () => {
+    const p = preset("x", "g", ["big", "small"]);
+    expect(presetContextWindow(p, "big")).toBe(1000000);
+    expect(presetContextWindow(p, " big ")).toBe(1000000);
+    expect(presetContextWindow(p, "small")).toBeNull();
+    expect(presetContextWindow(p, "nope")).toBeNull();
   });
 });

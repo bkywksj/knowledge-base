@@ -38,6 +38,7 @@ pub mod http_client;
 pub mod image;
 pub mod image_download;
 pub mod legacy_api_url;
+pub mod model_service;
 pub mod import;
 pub mod import_attachments;
 pub mod import_video_attachments;

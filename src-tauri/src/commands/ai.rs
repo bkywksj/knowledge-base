@@ -8,6 +8,7 @@ use crate::models::{
     PlanTodayResponse, TaskSuggestion,
 };
 use crate::services::ai::AiService;
+use crate::services::model_service;
 use crate::state::AppState;
 
 // ─── AI 模型 Commands ────────────────────────
@@ -91,9 +92,11 @@ pub async fn test_saved_ai_model(
         api_url: m.api_url,
         api_key: m.api_key,
         model_id: m.model_id,
-        max_context: Some(m.max_context),
-        // 连通性测试固定发 max_tokens=1，用不到这个值；给 None 表示"不改动"
+        max_context: Some(Some(m.max_context)),
+        // 连通性测试固定发 max_tokens=1，用不到这些值；给 None 表示"不改动"
         max_tokens: None,
+        limits_source: None,
+        max_output: None,
     };
     AiService::test_model_connection(&input)
         .await
@@ -123,28 +126,71 @@ pub async fn test_ai_model(input: AiModelInput) -> Result<AiModelTestResult, Str
         .map_err(|e| e.to_string())
 }
 
-/// 拉取服务商可用模型列表，供设置页模型标识旁的「获取」按钮用。
+/// 服务商预置（ai-profile crate，只含本项目能说的 OpenAI 兼容协议）。静态数据，不含任何密钥。
+#[tauri::command]
+pub fn list_ai_provider_presets() -> Vec<ai_profile::ProviderPreset> {
+    model_service::presets()
+}
+
+/// 「获取」：零成本验证地址与密钥，拿回已清洗的模型清单与端点上报的限额。
+///
+/// 失败走返回值（`ok: false` + 结构化原因），界面按原因给动作；只有读库 / 解密这类真异常走 `Err`。
 ///
 /// `saved_id` 是给**编辑已有模型**用的：Key 保存后前端就拿不到明文了（只回 `has_api_key`），
 /// 用户不重新输入时，这里按 id 去库里取明文补上 —— 否则一改别的字段再点获取就 401。
 /// 表单里现填了 Key 就优先用现填的（用户可能正是在换 Key）。
 #[tauri::command]
-pub async fn list_remote_ai_models(
+pub async fn verify_ai_model_endpoint(
     state: State<'_, AppState>,
     provider: String,
     api_url: String,
     api_key: Option<String>,
+    model_id: Option<String>,
     saved_id: Option<i64>,
-) -> Result<Vec<String>, String> {
+) -> Result<model_service::VerifyOutcome, String> {
     let typed = api_key.filter(|k| !k.trim().is_empty());
     let effective = match (typed, saved_id) {
         (Some(k), _) => Some(k),
         (None, Some(id)) => state.db.get_ai_model(id).map_err(|e| e.to_string())?.api_key,
         (None, None) => None,
     };
-    AiService::list_remote_models(&provider, &api_url, effective.as_deref())
-        .await
-        .map_err(|e| e.to_string())
+    model_service::verify(
+        &provider,
+        &api_url,
+        effective.as_deref(),
+        model_id.as_deref().unwrap_or(""),
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// 解析 ai.profile（单条或多条打包），已换成 ai_models 字段口径。
+///
+/// 🔴 返回值含明文密钥（导入要用），只回给「导入配置」弹窗。
+#[tauri::command]
+pub fn parse_ai_profile_text(text: String) -> Result<model_service::ImportedAiModels, String> {
+    model_service::parse_ai_profile(&text).map_err(|e| e.to_string())
+}
+
+/// 生成 ai.profile 文本。密钥由调用方传入（分享流程已经显式取过一次明文）。
+#[tauri::command]
+pub fn ai_model_to_ai_profile(
+    name: String,
+    api_url: String,
+    api_key: String,
+    model_id: String,
+) -> String {
+    model_service::to_ai_profile(&name, &api_url, &api_key, &model_id)
+}
+
+/// 旧版本（v1.64.0 及以前）导出的模型配置 → 新口径。只给没有 `api_url_verbatim` 标记的导入用。
+#[tauri::command]
+pub fn fix_legacy_ai_model(
+    provider: String,
+    api_url: String,
+    max_context: Option<i64>,
+) -> model_service::LegacyAiModelFix {
+    model_service::fix_legacy_ai_model(&provider, &api_url, max_context)
 }
 
 // ─── AI 对话 Commands ────────────────────────

@@ -37,6 +37,10 @@ import type {
   AiModel,
   AiModelInput,
   AiModelTestResult,
+  AiProviderPreset,
+  ImportedAiModels,
+  LegacyAiModelFix,
+  VerifyOutcome,
   AiConversation,
   AiMessage,
   ImportConflictPolicy,
@@ -748,23 +752,46 @@ export const aiModelApi = {
    * 别拿它去做展示或判断（判断用 `has_api_key`）。
    */
   getApiKey: (id: number) => invoke<string | null>("get_ai_model_api_key", { id }),
+  /** 服务商预置（ai-profile crate，只含本项目能说的 OpenAI 兼容协议）。静态数据，前端缓存一次即可 */
+  listPresets: () => invoke<AiProviderPreset[]>("list_ai_provider_presets"),
   /**
-   * 拉服务商可用模型列表（设置页模型标识旁的「获取」按钮）。
+   * 「获取」：零成本验证地址与密钥，拿回已清洗的模型清单与端点上报的限额。
    *
+   * 失败走返回值（`ok: false` + 结构化 `error`），不走异常 —— 界面按原因给动作。
    * `savedId` 传编辑中模型的 id：Key 保存后前端只剩 `has_api_key`，
    * 用户不重输 Key 时靠它让后端去库里取明文，否则一点获取就 401。
    */
-  listRemoteModels: (args: {
+  verify: (args: {
     provider: string;
     apiUrl: string;
     apiKey?: string | null;
+    modelId?: string | null;
     savedId?: number | null;
   }) =>
-    invoke<string[]>("list_remote_ai_models", {
+    invoke<VerifyOutcome>("verify_ai_model_endpoint", {
       provider: args.provider,
       apiUrl: args.apiUrl,
       apiKey: args.apiKey ?? null,
+      modelId: args.modelId ?? null,
       savedId: args.savedId ?? null,
+    }),
+  /** 解析 ai.profile（单条或打包），已换成 ai_models 字段口径。解析失败抛中文原因 */
+  parseAiProfile: (text: string) =>
+    invoke<ImportedAiModels>("parse_ai_profile_text", { text }),
+  /** 生成 ai.profile 文本（规范写法）。🔴 含明文密钥，仅供用户点「分享」 */
+  toAiProfile: (args: { name: string; apiUrl: string; apiKey: string | null; modelId: string }) =>
+    invoke<string>("ai_model_to_ai_profile", {
+      name: args.name,
+      apiUrl: args.apiUrl,
+      apiKey: args.apiKey ?? "",
+      modelId: args.modelId,
+    }),
+  /** 旧版本（v1.64.0 及以前）导出的模型配置 → 新口径（地址补齐、厂商 id 换 key、历史默认窗口清空） */
+  fixLegacy: (provider: string, apiUrl: string, maxContext: number | null | undefined) =>
+    invoke<LegacyAiModelFix>("fix_legacy_ai_model", {
+      provider,
+      apiUrl,
+      maxContext: maxContext ?? null,
     }),
 };
 

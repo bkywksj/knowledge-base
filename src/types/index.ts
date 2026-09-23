@@ -453,8 +453,12 @@ export interface GraphData {
 export interface AiModel {
   id: number;
   name: string;
-  /** 模型提供商: openai / claude / ollama */
+  /**
+   * 服务商预置 key（ai-profile crate 的 `ProviderPreset.key`，如 `deepseek` / `ollama` /
+   * `openai_compatible_custom`）。schema v62 起不再是本项目自己的厂商 id。
+   */
   provider: string;
+  /** 接口地址，**原样使用、不推断版本段**（含 `/v1` 等，不含 `/chat/completions`） */
   api_url: string;
   /**
    * 🔴 **恒为 null** —— Command 层会擦掉明文（P0-1b）。
@@ -467,8 +471,15 @@ export interface AiModel {
   /** 模型标识 (如 gpt-4o-mini, claude-sonnet-4-20250514, llama3) */
   model_id: string;
   is_default: boolean;
-  /** 模型支持的最大上下文 token 数（默认 32000，AI 页拼附加笔记按这个算预算） */
+  /**
+   * 已存的上下文窗口（token）。**0 = 未设置**，对话时回落到端点上报 / 预置值
+   * （生效值由后端 `effective_limits` 算，决定 RAG 与挂载笔记的预算）。
+   */
   max_context: number;
+  /** `max_context` / `max_output` 的来源：`user` 手填、`endpoint`「获取」时端点上报；null = 没存 */
+  limits_source: "user" | "endpoint" | null;
+  /** 端点上报的模型输出上限，用来给 `max_tokens` 封顶；null = 不知道 */
+  max_output: number | null;
   /**
    * 单次回答的 token 上限。**null = 不传该参数**，用服务商默认值。
    *
@@ -496,8 +507,12 @@ export interface AiModelInput {
    */
   api_key?: string | null;
   model_id: string;
-  /** 可选：缺省时后端按 32000 入库 */
-  max_context?: number;
+  /** 上下文窗口；缺省 / null / 0 = 未设置（回落端点上报 / 预置） */
+  max_context?: number | null;
+  /** 限额来源，与 `max_context` / `max_output` 一起传；null = 清除 */
+  limits_source?: "user" | "endpoint" | null;
+  /** 端点上报的输出上限（「获取」时带回） */
+  max_output?: number | null;
   /**
    * 单次回答 token 上限，**三态**（与 `api_key` 同理）：
    * - 字段缺失 / `undefined` → 保持原值不变
@@ -505,6 +520,101 @@ export interface AiModelInput {
    * - 数字 → 设为该值（Ollama 可用 -1 表示无限）
    */
   max_tokens?: number | null;
+}
+
+/** 服务商预置里的一个模型候选（ai-profile `ModelOption` 的线格式）。 */
+export interface AiPresetModel {
+  value: string;
+  label: string;
+  /** 预置静态限额；null = 官方文档没写，不猜 */
+  contextWindow: number | null;
+  maxOutput: number | null;
+}
+
+/**
+ * 服务商预置（ai-profile `ProviderPreset` 的线格式，camelCase）。
+ *
+ * 🔴 清单本体在 **ai-profile crate**（`E:/my/桌面软件tauri/ai-profile`），后端只暴露
+ * OpenAI 兼容协议的那些 —— 加服务商 / 加模型去那个仓库改，本项目只升依赖。
+ * 本项目没有多语言，用纯文本的 `label` / `hint` / `groupLabel`。
+ */
+export interface AiProviderPreset {
+  key: string;
+  groupKey: string;
+  groupLabel: string;
+  label: string;
+  /** 一句「选择的依据」，下拉副文本 */
+  hint: string | null;
+  /** 预填地址（含版本段）；null = 该档不预填 */
+  baseUrl: string | null;
+  /** 默认模型；空串 = 让用户自己填 */
+  model: string;
+  models: AiPresetModel[];
+  /** 本机推理服务（Ollama / LM Studio / vLLM），通常不需要密钥 */
+  isLocal: boolean;
+}
+
+/** ai-profile 的 token 限额（线格式） */
+export interface TokenLimits {
+  contextWindow: number | null;
+  maxOutput: number | null;
+  source: "user" | "endpoint" | "preset";
+}
+
+/** 零成本验证失败的结构化原因。🔴 字段是 snake_case，每个 code 对应一个界面动作 */
+export type VerifyError =
+  | { code: "auth_failed"; detail: string }
+  | { code: "not_found"; requested_url: string; suggested_url: string | null }
+  | { code: "unreachable"; proxy_hint: boolean }
+  | { code: "model_not_found"; available: string[] }
+  | { code: "protocol_mismatch"; expect: string }
+  | { code: "missing_extra_field"; key: string }
+  | { code: "malformed"; detail: string };
+
+export interface VerifyOk {
+  latencyMs: number;
+  /** 已清洗（去重 + 滤掉向量 / 重排 / 语音等）的对话模型清单 */
+  models: string[];
+  /** 清洗时滤掉的条数 */
+  dropped: number;
+  modelInList: boolean;
+  limits: TokenLimits | null;
+  /** 端点逐个模型上报的限额 */
+  modelLimits: [string, TokenLimits][];
+}
+
+/** 「获取」的结果。`ok: false` 不是调用失败 —— 连不上本身就是验证结果 */
+export interface VerifyOutcome {
+  ok: boolean;
+  result: VerifyOk | null;
+  error: VerifyError | null;
+  /** 失败能否靠改配置解决；false = 只能重试 */
+  actionable: boolean;
+}
+
+/** ai.profile 解析出的一条配置（已换成 ai_models 字段口径）。🔴 含明文密钥 */
+export interface ImportedAiModel {
+  name: string;
+  provider: string;
+  api_url: string;
+  api_key: string | null;
+  model_id: string;
+  /** 来源是 Anthropic 原生协议：本项目按 OpenAI 兼容导入，只开放 /v1/messages 的中转用不了 */
+  unsupported_protocol: boolean;
+}
+
+export interface ImportedAiModels {
+  models: ImportedAiModel[];
+  /** 跳过的条数（设备绑定的 OAuth 档案 / 没有模型名的） */
+  skipped: number;
+  bundle: boolean;
+}
+
+/** 旧版本导出的模型配置换成新口径后的字段 */
+export interface LegacyAiModelFix {
+  provider: string;
+  api_url: string;
+  max_context: number | null;
 }
 
 /** AI 模型连通性测试结果 */

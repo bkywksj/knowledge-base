@@ -1434,7 +1434,11 @@ pub fn run() {
             commands::ai::test_ai_model,
             // P0-1b：Key 不回显后，已保存模型的测试与分享各自走显式入口
             commands::ai::test_saved_ai_model,
-            commands::ai::list_remote_ai_models,
+            commands::ai::list_ai_provider_presets,
+            commands::ai::verify_ai_model_endpoint,
+            commands::ai::parse_ai_profile_text,
+            commands::ai::ai_model_to_ai_profile,
+            commands::ai::fix_legacy_ai_model,
             commands::ai::get_ai_model_api_key,
             commands::ai::list_ai_conversations,
             commands::ai::create_ai_conversation,

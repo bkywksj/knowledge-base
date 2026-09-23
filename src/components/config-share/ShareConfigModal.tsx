@@ -10,7 +10,6 @@ import {
   stringifyAsAiProfile,
   type Envelope,
 } from "@/lib/configShare";
-import type { AiModel } from "@/types";
 
 /**
  * 配置导出弹窗。
@@ -115,8 +114,13 @@ export function ShareConfigModal({
    */
   async function copyAsAiProfile() {
     if (!envelope || envelope.kind !== "ai-model") return;
-    // envelope.data 字段与 AiModel 兼容（缺失 id/timestamps 不影响 stringifyAsAiProfile 用到的字段）
-    const text = stringifyAsAiProfile(envelope.data as unknown as AiModel, true);
+    let text: string;
+    try {
+      text = await stringifyAsAiProfile(envelope.data);
+    } catch (e) {
+      message.error(`生成失败：${e}`);
+      return;
+    }
     if (await writeClipboard(text)) {
       message.success("已复制为 ai.profile 通用协议");
     } else {

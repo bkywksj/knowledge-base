@@ -42,14 +42,14 @@ export const ENCRYPTED_VERSION = "v1-enc" as const;
  * 字段采用 camelCase，`baseURL` 用大写 URL（业内主流命名：Cherry Studio /
  * Chatbox / LobeChat / Continue / Vercel AI SDK / OpenCode 等）。
  *
- * 输入：parseInner 同时识别本家 kbConfig envelope 和外部 ai.profile envelope，
- *       后者会被自动映射为本家 ai-model envelope，复用现有 applyEnvelope 流程。
- * 输出：stringifyAsAiProfile 将本家 AiModel 输出为 ai.profile 文本，
- *       方便粘贴到 tauri-cc 等其他软件。
+ * 🔴 ai.profile 的解析与生成归 **ai-profile crate**（后端 `parse_ai_profile_text` /
+ * `ai_model_to_ai_profile`），这里不再维护 TS 版解析器 —— 此前那份与 crate、sigil、reeve
+ * 各写一份，别名与版本判断各不相同（这里只认 `v === 1`，高版本兼容的配置被挡在外面）。
+ *
+ * 输入：parseEnvelope 先认 ai.profile（交给后端，结果映射为本家 ai-model / bundle envelope，
+ *       复用现有 applyEnvelope 流程），不是再按本家 kbConfig envelope 解析。
+ * 输出：stringifyAsAiProfile 把本家模型配置交给后端生成 ai.profile 文本，方便粘到其他软件。
  */
-export const AI_PROFILE_KIND_SINGLE = "ai.profile";
-export const AI_PROFILE_KIND_BUNDLE = "ai.profile.bundle";
-export const AI_PROFILE_VERSION = 1;
 
 /** 加密后的 envelope 外壳：payload = base64url(salt || iv || ciphertext) */
 export interface EncryptedEnvelope {
@@ -101,9 +101,24 @@ export interface AiModelData {
   api_url: string;
   api_key?: string | null;
   model_id: string;
-  max_context?: number;
+  /** 上下文窗口；null / 缺省 / 0 = 未设置 */
+  max_context?: number | null;
   /** 单次回答 token 上限；null / 缺省 = 用服务商默认 */
   max_tokens?: number | null;
+  /** 限额来源（v1.65 起导出） */
+  limits_source?: "user" | "endpoint" | null;
+  /** 端点上报的输出上限（v1.65 起导出） */
+  max_output?: number | null;
+  /**
+   * 🔴 地址已是「原样使用」口径（v1.65 起导出时带 true）。
+   *
+   * 缺失 = 旧版本导出的配置：地址按旧规则会被自动补 /v1、provider 是旧的厂商 id ——
+   * 导入时要先按旧规则修正（后端 `fix_legacy_ai_model`，与 schema v62 同一套），
+   * 否则裸根地址会 404。新导出的再修正一遍反而会把刻意不带版本段的地址错补 /v1。
+   */
+  api_url_verbatim?: boolean;
+  /** 来自 ai.profile 且是 Anthropic 原生协议（仅导入时用，不导出） */
+  unsupported_protocol?: boolean;
 }
 
 export interface FeatureTogglesData {
@@ -191,8 +206,11 @@ export function exportAiModel(m: AiModel, apiKey: string | null): Envelope {
     api_url: m.api_url,
     api_key: apiKey,
     model_id: m.model_id,
-    max_context: m.max_context,
+    max_context: m.max_context > 0 ? m.max_context : null,
     max_tokens: m.max_tokens,
+    limits_source: m.limits_source,
+    max_output: m.max_output,
+    api_url_verbatim: true,
   });
 }
 
@@ -268,87 +286,6 @@ function parseInner(text: string): ParseResult {
   }
   const o = raw as Record<string, unknown>;
 
-  // ─── 跨软件通用协议：ai.profile（单条） ───
-  // 来源如 tauri-cc 等其他桌面端。识别后自动映射为本家 ai-model envelope，
-  // 落库走原有 applyEnvelope -> aiModelApi.create 路径。
-  if (
-    o.kind === AI_PROFILE_KIND_SINGLE &&
-    o.v === AI_PROFILE_VERSION &&
-    o.data &&
-    typeof o.data === "object"
-  ) {
-    const d = o.data as Record<string, unknown>;
-    // baseURL（标准）/ baseUrl / base_url 都接受，最大化跨家兼容
-    const baseURL = String(d.baseURL ?? d.baseUrl ?? d.base_url ?? "");
-    const name = typeof d.name === "string" ? d.name : "";
-    const provider = typeof d.provider === "string" ? d.provider : "";
-    const apiKey = typeof d.apiKey === "string" ? d.apiKey : "";
-    const model = typeof d.model === "string" ? d.model : "";
-    if (!name || !provider || !model) {
-      return {
-        ok: false,
-        reason: "ai.profile 协议缺少必填字段（name / provider / model）",
-      };
-    }
-    const aiModel: AiModelData = {
-      name,
-      provider,
-      api_url: baseURL,
-      api_key: apiKey || null,
-      model_id: model,
-    };
-    return {
-      ok: true,
-      envelope: {
-        kbConfig: ENVELOPE_VERSION,
-        kind: "ai-model",
-        exportedAt: new Date().toISOString(),
-        data: aiModel,
-      },
-    };
-  }
-
-  // ─── 跨软件通用协议：ai.profile.bundle（多条） ───
-  // 内层 data 为 SyncDataPayload，字段保持 snake_case（base_url / api_key / model）。
-  // 自动跳过 auth_type === "oauth" 的档案（与设备绑定，跨实例无意义）。
-  if (
-    o.kind === AI_PROFILE_KIND_BUNDLE &&
-    o.v === AI_PROFILE_VERSION &&
-    o.data &&
-    typeof o.data === "object"
-  ) {
-    const inner = o.data as Record<string, unknown>;
-    const list = Array.isArray(inner.api_profiles) ? (inner.api_profiles as unknown[]) : [];
-    const aiModels: AiModelData[] = [];
-    for (const p of list) {
-      if (!p || typeof p !== "object") continue;
-      const pp = p as Record<string, unknown>;
-      if (pp.auth_type === "oauth") continue; // OAuth 档案不跨实例
-      const name = typeof pp.name === "string" ? pp.name : "";
-      const provider = typeof pp.provider === "string" ? pp.provider : "";
-      const api_url = typeof pp.base_url === "string" ? pp.base_url : "";
-      const api_key = typeof pp.api_key === "string" ? pp.api_key : null;
-      const model_id = typeof pp.model === "string" ? pp.model : "";
-      if (!name || !provider || !model_id) continue;
-      aiModels.push({ name, provider, api_url, api_key, model_id });
-    }
-    if (aiModels.length === 0) {
-      return {
-        ok: false,
-        reason: "ai.profile.bundle 中未发现可导入的 AI 档案",
-      };
-    }
-    return {
-      ok: true,
-      envelope: {
-        kbConfig: ENVELOPE_VERSION,
-        kind: "bundle",
-        exportedAt: new Date().toISOString(),
-        data: { aiModels },
-      },
-    };
-  }
-
   if (o.kbConfig === ENCRYPTED_VERSION) {
     return { ok: false, encrypted: true, reason: "需要 PIN 解密" };
   }
@@ -376,6 +313,48 @@ function parseInner(text: string): ParseResult {
 }
 
 /**
+ * 认出 ai.profile（单条 / 打包）就交给后端解析，并映射成本家 ai-model / bundle envelope。
+ * 不是 ai.profile 返回 null，交回原流程。
+ *
+ * 来源如 tauri-cc（智码）/ sigil / reeve 等桌面端。后端已把字段换成 ai_models 口径
+ * （服务商按地址反推成预置 key、没给模型名按预置默认补），地址是「原样使用」口径。
+ */
+async function parseAiProfileEnvelope(text: string): Promise<ParseResult | null> {
+  let kind: unknown;
+  try {
+    kind = (JSON.parse(text) as { kind?: unknown } | null)?.kind;
+  } catch {
+    return null;
+  }
+  if (typeof kind !== "string" || !kind.startsWith("ai.profile")) return null;
+  try {
+    const r = await aiModelApi.parseAiProfile(text);
+    const aiModels: AiModelData[] = r.models.map((m) => ({
+      name: m.name,
+      provider: m.provider,
+      api_url: m.api_url,
+      api_key: m.api_key,
+      model_id: m.model_id,
+      api_url_verbatim: true,
+      unsupported_protocol: m.unsupported_protocol || undefined,
+    }));
+    const exportedAt = new Date().toISOString();
+    if (!r.bundle && aiModels.length === 1) {
+      return {
+        ok: true,
+        envelope: { kbConfig: ENVELOPE_VERSION, kind: "ai-model", exportedAt, data: aiModels[0] },
+      };
+    }
+    return {
+      ok: true,
+      envelope: { kbConfig: ENVELOPE_VERSION, kind: "bundle", exportedAt, data: { aiModels } },
+    };
+  } catch (e) {
+    return { ok: false, reason: String(e) };
+  }
+}
+
+/**
  * 严格解析：可同时处理明文 envelope 和加密 envelope。
  * - 明文 → 直接返回 envelope
  * - 加密但未给 pin → 返回 encrypted: true，提示调用方让用户输 PIN
@@ -385,6 +364,9 @@ export async function parseEnvelope(
   text: string,
   pin?: string,
 ): Promise<ParseResult> {
+  // 跨软件通用协议 ai.profile（单条 / 打包）：交给后端 crate 解析
+  const profile = await parseAiProfileEnvelope(text);
+  if (profile) return profile;
   const inner = parseInner(text);
   if (inner.ok) return inner;
   // 不是加密 envelope 就直接传出错误
@@ -424,6 +406,8 @@ export interface ImportSummary {
   asrConfig: boolean;
   featureToggles: boolean;
   errors: string[];
+  /** 导入成功但需要提醒的（如 Anthropic 协议的配置） */
+  warnings: string[];
 }
 
 /** 把 envelope 真正写到后端。返回成功统计 + 失败原因列表 */
@@ -434,6 +418,7 @@ export async function applyEnvelope(env: Envelope): Promise<ImportSummary> {
     asrConfig: false,
     featureToggles: false,
     errors: [],
+    warnings: [],
   };
 
   switch (env.kind) {
@@ -467,18 +452,37 @@ export async function applyEnvelope(env: Envelope): Promise<ImportSummary> {
 
     case "ai-model":
       try {
+        let { provider, api_url } = env.data;
+        let max_context = env.data.max_context ?? null;
+        let limits_source = env.data.limits_source ?? null;
+        // 旧版本导出的：地址按旧规则补齐、厂商 id 换成预置 key、历史默认窗口当作未设置
+        if (!env.data.api_url_verbatim) {
+          const fixed = await aiModelApi.fixLegacy(provider, api_url, max_context);
+          provider = fixed.provider;
+          api_url = fixed.api_url;
+          max_context = fixed.max_context;
+          limits_source = max_context !== null ? "user" : null;
+        }
         const input: AiModelInput = {
           name: env.data.name,
-          provider: env.data.provider,
-          api_url: env.data.api_url,
+          provider,
+          api_url,
           api_key: env.data.api_key ?? null,
           model_id: env.data.model_id,
-          max_context: env.data.max_context,
+          max_context,
           // 老版本导出的包没有这个字段 → undefined = 用服务商默认，与新建同义
           max_tokens: env.data.max_tokens,
+          limits_source,
+          max_output: env.data.max_output ?? null,
         };
         await aiModelApi.create(input);
         summary.aiModels = 1;
+        if (env.data.unsupported_protocol) {
+          summary.warnings.push(
+            `「${env.data.name}」原本是 Anthropic 协议的配置：本软件按 OpenAI 兼容方式使用，` +
+              "官方地址可用，只开放 /v1/messages 的中转站用不了",
+          );
+        }
       } catch (e) {
         summary.errors.push(`AI 模型创建失败：${e}`);
       }
@@ -543,6 +547,7 @@ export async function applyEnvelope(env: Envelope): Promise<ImportSummary> {
           });
           summary.aiModels += sub.aiModels;
           summary.errors.push(...sub.errors);
+          summary.warnings.push(...sub.warnings);
         }
       }
       if (env.data.asrConfig) {
@@ -586,25 +591,18 @@ export const KIND_LABELS: Record<ConfigKind, string> = {
 // ──────────────────────────────────────────────────────────
 
 /**
- * 把本家 AiModel 输出为 `ai.profile` 通用协议文本（明文，camelCase）。
+ * 把本家模型配置输出为 `ai.profile` 通用协议文本（明文，规范写法），由后端 crate 生成。
  *
- * 字段映射：
- *   - api_url   → baseURL（大写 URL，匹配 OpenAI-compatible 客户端主流命名）
- *   - api_key   → apiKey
- *   - model_id  → model
- *   - max_context → 不输出（ai.profile 协议未约定此字段，由各家自行扩展）
+ * 🔴 含明文密钥，只在用户点「复制为 ai.profile」时调用。
+ * 上下文窗口等限额不输出：ai.profile 协议没有约定这些字段。
  */
-export function stringifyAsAiProfile(m: AiModel, pretty = true): string {
-  const env = {
-    kind: AI_PROFILE_KIND_SINGLE,
-    v: AI_PROFILE_VERSION,
-    data: {
-      name: m.name,
-      provider: m.provider,
-      baseURL: m.api_url,
-      apiKey: m.api_key ?? "",
-      model: m.model_id,
-    },
-  };
-  return JSON.stringify(env, null, pretty ? 2 : 0);
+export function stringifyAsAiProfile(
+  m: Pick<AiModelData, "name" | "api_url" | "api_key" | "model_id">,
+): Promise<string> {
+  return aiModelApi.toAiProfile({
+    name: m.name,
+    apiUrl: m.api_url,
+    apiKey: m.api_key ?? null,
+    modelId: m.model_id,
+  });
 }

@@ -581,9 +581,10 @@ pub struct GraphData {
 pub struct AiModel {
     pub id: i64,
     pub name: String,
-    /// 模型提供商: openai / claude / ollama
+    /// 服务商预置 key（ai-profile crate 的 `ProviderPreset.key`，如 `deepseek` / `ollama` /
+    /// `openai_compatible_custom`）。schema v62 起不再是本项目自己的厂商 id。
     pub provider: String,
-    /// API 基础 URL
+    /// 接口地址，**原样使用、不推断版本段**（schema v62 已按旧规则把存量地址补齐）
     pub api_url: String,
     /// API Key（可为空，如 Ollama 本地模型）。
     ///
@@ -601,9 +602,18 @@ pub struct AiModel {
     pub model_id: String,
     /// 是否为默认模型
     pub is_default: bool,
-    /// 模型支持的最大上下文 token 数（用户填，默认 32000）
-    /// 用于在 send_message 拼附加笔记时动态算每篇截断阈值
+    /// 已存的上下文窗口（token）。**0 = 未设置**（schema v62）。
+    ///
+    /// 🔴 对话、预算一律用 `model_service::effective_context_window`（用户 > 端点上报 > 预置），
+    /// 不要直接读这个字段 —— 它为 0 时真实窗口可能在预置里登记着。
     pub max_context: i64,
+    /// `max_context` / `max_output` 的来源：`user` 手填 / `endpoint`「获取」时端点上报；None = 没存。
+    /// `preset` 不落库（存了就冻结成旧值）。
+    #[serde(default)]
+    pub limits_source: Option<String>,
+    /// 端点上报的模型输出上限，给 `max_tokens` 封顶用；None = 不知道
+    #[serde(default)]
+    pub max_output: Option<i64>,
     /// 单次回答的 token 上限。**None = 不传该参数**，用服务商默认值。
     ///
     /// 与 [`Self::max_context`] 是两回事，别混：前者管"输入能塞多少"，
@@ -652,8 +662,16 @@ pub struct AiModelInput {
     /// 新建（create）时没有"原值"可保持，`None` 就是没配。
     pub api_key: Option<String>,
     pub model_id: String,
-    /// 可选：缺省时按 32000 入库（覆盖大多数中端模型）
-    pub max_context: Option<i64>,
+    /// 上下文窗口，**三态**（同 `max_tokens`）：字段缺失 = 保持原值 / `Some(None)` = 清除（未设置）/
+    /// `Some(Some(n))` = 设为 n。新建时缺失与清除等价。
+    #[serde(default, deserialize_with = "crate::models::double_option")]
+    pub max_context: Option<Option<i64>>,
+    /// 限额来源（`user` / `endpoint`），三态同上
+    #[serde(default, deserialize_with = "crate::models::double_option")]
+    pub limits_source: Option<Option<String>>,
+    /// 端点上报的输出上限，三态同上
+    #[serde(default, deserialize_with = "crate::models::double_option")]
+    pub max_output: Option<Option<i64>>,
     /// 单次回答 token 上限。**三态**，与 `api_key` 同理：
     /// 字段缺失 = 保持原值 / `Some(None)` = 清空（回到"不传"）/ `Some(Some(n))` = 设为 n。
     ///

@@ -84,15 +84,24 @@ import {
   type OpenMdMode,
 } from "@/lib/openMdChoice";
 import {
-  DEFAULT_MAX_CONTEXT,
-  DEFAULT_URLS,
-  MODEL_ID_PLACEHOLDERS,
-  MODEL_PRESETS,
-  PROVIDERS,
+  CUSTOM_PROVIDER_KEY,
+  findPreset,
+  groupProviderOptions,
+  modelOptions,
+  modelPlaceholder,
+  presetContextWindow,
+  providerLabel,
+  useAiProviderPresets,
 } from "@/lib/aiProviderPresets";
-import type { Folder } from "@/types";
+import type { Folder, TokenLimits, VerifyOutcome } from "@/types";
 
 const { Title, Text } = Typography;
+
+/** 窗口输入框的值 → 数字；空 / 非正数 / 非数字 = null（未设置） */
+function parseContextWindow(v: unknown): number | null {
+  const n = parseInt(String(v ?? "").trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 
 /**
  * 把回调推迟到浏览器空闲时段。
@@ -228,9 +237,22 @@ function DesktopSettingsPage() {
   // 只在本次 Modal 会话内有效，换服务商 / 重开 Modal 都清掉。
   const [fetchedModels, setFetchedModels] = useState<string[] | null>(null);
   const [fetchingModels, setFetchingModels] = useState(false);
+  /** 服务商预置（ai-profile crate，只含 OpenAI 兼容协议） */
+  const aiPresets = useAiProviderPresets();
+  /**
+   * 上下文窗口框里数字的来源：「获取」自动填 → endpoint，用户手改 → user，null = 没填。
+   * 不放进 Form 字段：它由「谁最后改了那个框」决定。
+   */
+  const [limitsSource, setLimitsSource] = useState<"user" | "endpoint" | null>(null);
+  /** 端点上报的输出上限（随「获取」带回、随保存落库，后端用它给 max_tokens 封顶） */
+  const [endpointMaxOutput, setEndpointMaxOutput] = useState<number | null>(null);
+  /** 最近一次「获取」时端点逐个模型上报的限额；换模型时据此重填，null = 本次还没获取 */
+  const [endpointLimits, setEndpointLimits] = useState<Record<string, TokenLimits> | null>(null);
   const [form] = Form.useForm<AiModelInput>();
   // 表单内 provider 变化 → 动态占位
   const watchedProvider = Form.useWatch("provider", form) || "ollama";
+  const watchedModelId = Form.useWatch("model_id", form) as string | undefined;
+  const watchedPreset = findPreset(aiPresets, watchedProvider);
   /** 行内"测试"按钮 loading 锁：值为正在测试的 model.id；Modal 内的测试按钮锁用 -1 */
   const [testingModelId, setTestingModelId] = useState<number | null>(null);
   // 配置分享 / 导入
@@ -1077,8 +1099,14 @@ function DesktopSettingsPage() {
     setEditingModel(null);
     setClearApiKey(false);
     setFetchedModels(null);
+    setLimitsSource(null);
+    setEndpointMaxOutput(null);
+    setEndpointLimits(null);
     form.resetFields();
-    form.setFieldsValue({ provider: "ollama", api_url: DEFAULT_URLS.ollama });
+    form.setFieldsValue({
+      provider: "ollama",
+      api_url: findPreset(aiPresets, "ollama")?.baseUrl ?? "http://localhost:11434/v1",
+    });
     setModelModalOpen(true);
   }
 
@@ -1093,30 +1121,33 @@ function DesktopSettingsPage() {
       // P0-1b：Key 不回显。留空 = 保持原值（后端三态），用户想换才填新的
       api_key: "",
       model_id: model.model_id,
-      max_context: model.max_context,
+      // 0 = 未设置（schema v62）：回填 undefined，让占位符显示「不填会用什么」
+      max_context: model.max_context > 0 ? model.max_context : undefined,
       // null（未设置）回填成 undefined —— AntD 据此显示 placeholder 而不是 "null"。
       // 不用空串是因为表单类型是 AiModelInput（number|null），空串过不了 tsc；
       // 提交时 `String(values.max_tokens ?? "")` 对 undefined 同样得到 ""，行为一致。
       max_tokens: model.max_tokens ?? undefined,
     });
+    setLimitsSource(model.limits_source);
+    setEndpointMaxOutput(model.max_output);
+    setEndpointLimits(null);
     setModelModalOpen(true);
   }
 
   async function handleModelSave() {
     try {
       const values = await form.validateFields();
-      // Input type="number" 提交的是字符串，规范化为整数；缺省时给 32000 兜底
-      const max_context_num = values.max_context
-        ? parseInt(String(values.max_context), 10)
-        : 32000;
+      // 窗口可留空 = 未设置，对话时回落到端点上报 / 预置值（schema v62 起不再塞默认值）
+      const max_context = parseContextWindow(values.max_context);
       // max_tokens 三态：空串 = 清空（回到"不传、用服务商默认"）；否则取整数
       const rawMaxTokens = String(values.max_tokens ?? "").trim();
       const parsedMaxTokens = rawMaxTokens === "" ? null : parseInt(rawMaxTokens, 10);
       const payload = {
         ...values,
-        max_context: Number.isFinite(max_context_num)
-          ? max_context_num
-          : DEFAULT_MAX_CONTEXT,
+        max_context,
+        // 🔴 来源必须带上：「端点上报」与「手动填的」对后端合并优先级不同
+        limits_source: max_context !== null || endpointMaxOutput !== null ? (limitsSource ?? "user") : null,
+        max_output: endpointMaxOutput,
         max_tokens:
           parsedMaxTokens !== null && Number.isFinite(parsedMaxTokens)
             ? parsedMaxTokens
@@ -1234,14 +1265,9 @@ function DesktopSettingsPage() {
   async function handleTestForm() {
     try {
       const values = await form.validateFields();
-      const max_context_num = values.max_context
-        ? parseInt(String(values.max_context), 10)
-        : 32000;
       const payload: AiModelInput = {
         ...values,
-        max_context: Number.isFinite(max_context_num)
-          ? max_context_num
-          : DEFAULT_MAX_CONTEXT,
+        max_context: parseContextWindow(values.max_context),
       };
       await runModelTest(payload, -1, payload.name || "当前表单");
     } catch (e) {
@@ -1252,10 +1278,11 @@ function DesktopSettingsPage() {
   }
 
   /**
-   * 向服务商实时拉取可用模型列表，填进「模型标识」的候选。
+   * 「获取」：零成本验证地址与密钥（ai-profile），拿回已清洗的模型清单与端点上报的限额。
    *
-   * 内置预置表只是开箱能用，各家上新（尤其 OpenRouter 那几百个）它永远追不上；
+   * 内置预置只是开箱能用，各家上新（尤其 OpenRouter 那几百个）它永远追不上；
    * 而模型标识填错的表现是保存时看着正常、真发消息才 404，很难自查。
+   * 失败走返回值里的结构化原因，按原因给动作（一键改用建议地址、载入可用清单……）。
    */
   async function handleFetchModels() {
     const provider = form.getFieldValue("provider") as string;
@@ -1266,13 +1293,19 @@ function DesktopSettingsPage() {
     }
     setFetchingModels(true);
     try {
-      const list = await aiModelApi.listRemoteModels({
+      const outcome = await aiModelApi.verify({
         provider,
         apiUrl,
         apiKey: form.getFieldValue("api_key") as string | undefined,
+        modelId: form.getFieldValue("model_id") as string | undefined,
         // 编辑已有模型且没重输 Key 时，让后端拿库里的明文去请求
         savedId: editingModel?.id ?? null,
       });
+      if (!outcome.ok) {
+        handleVerifyFailure(outcome);
+        return;
+      }
+      const list = outcome.result?.models ?? [];
       if (list.length === 0) {
         // 端点通了但一个都没有：Ollama 是真没 pull，中转站多半是没实现这个接口
         message.warning(
@@ -1283,21 +1316,95 @@ function DesktopSettingsPage() {
         return;
       }
       setFetchedModels(list);
-      message.success(`拉到 ${list.length} 个模型`);
+      // 端点上报的限额记下来并套到当前模型 —— 这是限额唯一的实时来源，对话时不会为它再请求一次
+      const limitMap = Object.fromEntries(outcome.result?.modelLimits ?? []);
+      setEndpointLimits(limitMap);
+      applyEndpointLimits(limitMap, form.getFieldValue("model_id") as string | undefined);
+      const dropped = outcome.result?.dropped ?? 0;
+      message.success(
+        dropped > 0
+          ? `拉到 ${list.length} 个对话模型（已滤掉 ${dropped} 个向量 / 语音 / 图像等）`
+          : `拉到 ${list.length} 个模型`,
+      );
     } catch (e) {
+      // 到这里是读库 / 解密这类真异常，不是「端点连不上」；不影响手填
       message.error(String(e));
     } finally {
       setFetchingModels(false);
     }
   }
 
+  /** 验证失败 → 给**动作**，不只给一行红字 */
+  function handleVerifyFailure(outcome: VerifyOutcome) {
+    const err = outcome.error;
+    if (!err) {
+      message.warning("服务商返回了空列表，请手动填写模型标识");
+      return;
+    }
+    switch (err.code) {
+      case "not_found":
+        if (err.suggested_url) {
+          const fix = err.suggested_url;
+          Modal.confirm({
+            title: "接口地址不对",
+            content: `按这个地址请求返回 404。推断正确的地址应为：${fix}`,
+            okText: "改用这个地址",
+            cancelText: "不用",
+            onOk: () => {
+              form.setFieldValue("api_url", fix);
+              message.success("已改好，请再点一次「获取」");
+            },
+          });
+        } else {
+          message.warning({ content: `端点不存在：${err.requested_url}。请对照服务商文档核对 API 地址`, duration: 8 });
+        }
+        break;
+      case "model_not_found":
+        setFetchedModels(err.available);
+        message.warning(`端点不认识当前模型，已为你载入它提供的 ${err.available.length} 个可用模型`);
+        break;
+      case "auth_failed":
+        message.warning({ content: `密钥无效或已过期：${err.detail}`, duration: 8 });
+        break;
+      case "unreachable":
+        // 唯一「改配置也没用」的一类：让用户去改地址是误导
+        message.warning({
+          content: err.proxy_hint
+            ? "连不上服务商 —— 国内访问该服务通常需要代理"
+            : "连不上服务商，请检查网络或稍后重试（本机服务请确认已启动）",
+          duration: 8,
+        });
+        break;
+      default:
+        // 🔴 兜底必须有：crate 加错误变体只算小版本，没有兜底会让按钮「点了没反应」
+        message.warning({ content: `获取失败（${err.code}），可直接手填模型标识`, duration: 6 });
+    }
+  }
+
+  /**
+   * 按当前模型套用端点上报的限额。用户手填的（user）一律不动；
+   * 端点值跟着模型走 —— 新模型端点没报，就清掉旧模型的值，别张冠李戴。
+   */
+  function applyEndpointLimits(map: Record<string, TokenLimits> | null, modelId: string | undefined) {
+    if (limitsSource === "user") return;
+    const l = map && modelId ? map[modelId.trim()] : undefined;
+    if (l && (l.contextWindow != null || l.maxOutput != null)) {
+      form.setFieldValue("max_context", l.contextWindow ?? undefined);
+      setEndpointMaxOutput(l.maxOutput);
+      setLimitsSource("endpoint");
+    } else if (limitsSource === "endpoint") {
+      form.setFieldValue("max_context", undefined);
+      setEndpointMaxOutput(null);
+      setLimitsSource(null);
+    }
+  }
+
   function handleProviderChange(provider: string) {
     // 换服务商后旧列表就不作数了，留着会让人以为 A 家的模型能填给 B 家
     setFetchedModels(null);
-    const preset = DEFAULT_URLS[provider];
-    // 「自定义端点」没有预设地址（DEFAULT_URLS.custom = ""）。此时若照常写入，
-    // 会把用户**已经填好的**地址抹掉 —— 而选自定义的人往往正是刚粘完中转站地址。
-    // 所以只在有预设时才覆盖；没预设就保留现值。
+    const preset = findPreset(aiPresets, provider)?.baseUrl;
+    // 「自定义」没有预设地址。此时若照常写入，会把用户**已经填好的**地址抹掉 ——
+    // 而选自定义的人往往正是刚粘完中转站地址。所以只在有预设时才覆盖；没预设就保留现值。
     if (preset) {
       form.setFieldValue("api_url", preset);
     }
@@ -1324,7 +1431,7 @@ function DesktopSettingsPage() {
       dataIndex: "provider",
       key: "provider",
       render: (text: string) => {
-        const label = PROVIDERS.find((p) => p.value === text)?.label || text;
+        const label = providerLabel(aiPresets, text);
         return <Tag>{label}</Tag>;
       },
     },
@@ -3136,7 +3243,14 @@ function DesktopSettingsPage() {
         <Form
           form={form}
           layout="vertical"
-          initialValues={{ provider: "ollama", api_url: DEFAULT_URLS.ollama }}
+          initialValues={{ provider: "ollama", api_url: "http://localhost:11434/v1" }}
+          // 只有用户直接改动才进这里（setFieldValue 不触发）：手改窗口 → 来源变 user；换模型 → 端点值跟着换
+          onValuesChange={(changed: Partial<AiModelInput>) => {
+            if ("max_context" in changed) {
+              setLimitsSource(parseContextWindow(changed.max_context) !== null ? "user" : null);
+            }
+            if ("model_id" in changed) applyEndpointLimits(endpointLimits, changed.model_id);
+          }}
         >
           <Form.Item
             name="name"
@@ -3148,22 +3262,22 @@ function DesktopSettingsPage() {
 
           <Form.Item
             name="provider"
-            label="提供商"
-            extra="除 Ollama 外一律按 OpenAI 兼容协议处理。列表里没有的服务选「自定义端点」，填它的 baseUrl 即可。"
+            label="服务商"
+            extra="除 Ollama 外一律按 OpenAI 兼容协议处理。列表里没有的服务选「其它 OpenAI 兼容」，填它的接口地址即可。"
             rules={[{ required: true }]}
           >
             <Select
               showSearch
-              // 说明放副文本而不是挤进 label 括号里 —— 早先「Claude (经 OpenRouter 等代理)」
-              // 把模型商和网关混成一条，既选不了官方 API，也看不出 OpenRouter 能跑几百个模型
+              // 每项双行：服务商名 + 一句要点。要点是**选择的依据**（Ollama / LM Studio / vLLM 光看名字分不清），
+              // 要先选中才看得到说明，就等于来回试三次。数据来自 ai-profile crate，与 sigil / reeve 同一份
               optionRender={(opt) => {
-                const p = PROVIDERS.find((x) => x.value === opt.value);
+                const hint = (opt.data as { hint?: string | null }).hint;
                 return (
                   <div className="flex flex-col leading-tight py-0.5">
-                    <span>{p?.label ?? opt.label}</span>
-                    {p?.desc && (
-                      <span className="text-xs text-[var(--color-text-tertiary,#999)]">
-                        {p.desc}
+                    <span>{opt.data.label as string}</span>
+                    {hint && (
+                      <span className="text-xs whitespace-normal text-[var(--color-text-tertiary,#999)]">
+                        {hint}
                       </span>
                     )}
                   </div>
@@ -3172,14 +3286,12 @@ function DesktopSettingsPage() {
               filterOption={(input, option) => {
                 const q = input.trim().toLowerCase();
                 if (!q) return true;
-                const p = PROVIDERS.find((x) => x.value === option?.value);
-                return (
-                  String(option?.value ?? "").toLowerCase().includes(q) ||
-                  (p?.label ?? "").toLowerCase().includes(q) ||
-                  (p?.desc ?? "").toLowerCase().includes(q)
-                );
+                return ((option as { searchText?: string } | undefined)?.searchText ?? "").includes(q);
               }}
-              options={PROVIDERS.map((p) => ({ value: p.value, label: p.label }))}
+              // 选中后输入框只显示服务商名，不带副文本
+              optionLabelProp="title"
+              listHeight={320}
+              options={groupProviderOptions(aiPresets)}
               onChange={handleProviderChange}
             />
           </Form.Item>
@@ -3190,15 +3302,15 @@ function DesktopSettingsPage() {
             // 「不含 /chat/completions 后缀」是最高频的填错点，必须一直显眼；
             // 选了自定义端点再补一句怎么找这个地址，否则用户不知道去哪抄
             extra={
-              watchedProvider === "custom" ? (
+              watchedProvider === CUSTOM_PROVIDER_KEY ? (
                 <span>
-                  填服务商文档里的 <b>base_url</b>（通常以 <code>/v1</code> 结尾，
-                  <b>不含</b> <code>/chat/completions</code>）。
+                  照抄服务商文档里的 <b>base_url</b>，<b>含版本段</b>（多数是 <code>/v1</code>），
+                  <b>不含</b> <code>/chat/completions</code> —— 地址原样使用，不会替你补 /v1。
                   <br />
                   中转站 / 自建网关 / 未列出的厂商都填这里，只要它兼容 OpenAI 协议。
                 </span>
               ) : (
-                "支持任意 OpenAI 兼容服务的 base_url（不含 /chat/completions 后缀）"
+                "照抄服务商文档里的 base_url：含 /v1 等版本段、不含 /chat/completions。地址原样使用，不会替你补版本段"
               )
             }
             rules={[{ required: true, message: "请输入 API 地址" }]}
@@ -3206,9 +3318,9 @@ function DesktopSettingsPage() {
             <Input
               placeholder={
                 // 自定义时不给具体厂商地址当占位 —— 那会误导用户以为该填 OpenAI
-                watchedProvider === "custom"
+                watchedProvider === CUSTOM_PROVIDER_KEY
                   ? "https://你的服务地址/v1"
-                  : DEFAULT_URLS[watchedProvider] || "https://api.openai.com/v1"
+                  : watchedPreset?.baseUrl || "https://api.openai.com/v1"
               }
             />
           </Form.Item>
@@ -3262,12 +3374,9 @@ function DesktopSettingsPage() {
                   options={
                     fetchedModels
                       ? fetchedModels.map((m) => ({ value: m }))
-                      : MODEL_PRESETS[watchedProvider] || []
+                      : modelOptions(watchedPreset)
                   }
-                  placeholder={
-                    MODEL_ID_PLACEHOLDERS[watchedProvider] ||
-                    "如: gpt-4o-mini / qwen2.5:7b"
-                  }
+                  placeholder={modelPlaceholder(watchedPreset)}
                   filterOption={(input, option) =>
                     (option?.value as string)
                       ?.toLowerCase()
@@ -3280,7 +3389,7 @@ function DesktopSettingsPage() {
                 onClick={handleFetchModels}
                 loading={fetchingModels}
                 icon={<ListRestart size={14} />}
-                title="向服务商请求当前可用模型列表（Ollama 列本机已 pull 的）"
+                title="用当前地址和密钥向服务商请求可用模型列表（不产生费用）；顺带填入端点上报的上下文窗口"
               >
                 获取
               </Button>
@@ -3289,22 +3398,33 @@ function DesktopSettingsPage() {
 
           <Form.Item
             name="max_context"
-            label="最大上下文 token"
+            label="上下文窗口 token（可选）"
             // 这个值决定 AI 每次能看到多少笔记内容（RAG 检索 + 挂载笔记的预算都按它算），
-            // 填小了 AI 只能读到片段就作答 —— 所以把影响明说出来，别让人以为是个摆设
-            extra="决定 AI 每次能读多少笔记内容：填大 → 检索到的笔记尽量给全文，填小 → 只能给片段。按你模型的真实上限填，本地小模型请调小。"
-            initialValue={DEFAULT_MAX_CONTEXT}
+            // 填小了 AI 只能读到片段就作答 —— 所以把影响和数字的来源都明说出来
+            extra={
+              <span>
+                决定 AI 每次能读多少笔记内容。
+                {limitsSource === "user"
+                  ? "当前是手动设置，优先于端点上报与预置值。"
+                  : limitsSource === "endpoint"
+                    ? "当前是「获取」时端点上报的值。"
+                    : presetContextWindow(watchedPreset, watchedModelId)
+                      ? "留空 = 用占位符里的预置值（可能过时，可手动修改）。"
+                      : "留空且没有预置值时按保守预算处理；点「获取」让端点上报，或按模型真实上限手填。"}
+              </span>
+            }
           >
             <AutoComplete
-              placeholder={String(DEFAULT_MAX_CONTEXT)}
+              placeholder={
+                presetContextWindow(watchedPreset, watchedModelId)?.toLocaleString("en-US") ?? "未知"
+              }
               options={[
                 { value: 8000, label: "8K   （本地 7B 等小模型）" },
-                { value: 32000, label: "32K  （OpenAI 老款）" },
+                { value: 32000, label: "32K" },
                 { value: 64000, label: "64K" },
-                { value: 128000, label: "128K （DeepSeek / GPT-4o / 智谱，默认）" },
-                { value: 200000, label: "200K （Claude）" },
-                { value: 1000000, label: "1M   （GLM-Long / MiniMax-M1）" },
-                { value: 2000000, label: "2M" },
+                { value: 128000, label: "128K" },
+                { value: 200000, label: "200K" },
+                { value: 1000000, label: "1M" },
               ]}
               filterOption={(input, option) => {
                 const q = input.trim().toLowerCase();
@@ -3314,6 +3434,7 @@ function DesktopSettingsPage() {
                   String(option?.label ?? "").toLowerCase().includes(q)
                 );
               }}
+              allowClear
               style={{ width: "100%" }}
             />
           </Form.Item>

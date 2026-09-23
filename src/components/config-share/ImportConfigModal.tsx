@@ -170,6 +170,10 @@ export function ImportConfigModal({
         lines.push(`✓ AI 模型 ${summary.aiModels} 个`);
       if (summary.asrConfig) lines.push("✓ 语音识别配置");
       if (summary.featureToggles) lines.push("✓ 功能开关");
+      // 导入成功但要提醒的（如 Anthropic 协议的配置），不能混进 errors 里当失败
+      if (summary.warnings.length > 0) {
+        message.warning({ content: summary.warnings.join("\n"), duration: 8 });
+      }
       if (summary.errors.length > 0) {
         message.error(
           `部分失败：\n${summary.errors.join("\n")}` +
