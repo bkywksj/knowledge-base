@@ -2980,6 +2980,56 @@ mod tests {
         assert_eq!(get_version(&conn).unwrap(), 51);
     }
 
+    /// 真实数据库**副本**的迁移演练（手动跑，CI 不跑）。
+    ///
+    /// 单测只能证明逻辑，证明不了「用户库里实际存着什么」。发版前拿一份真实库的副本跑一遍，
+    /// 看迁移后的数据是否符合预期：
+    ///
+    /// ```text
+    /// KB_MIGRATE_DB_COPY=<副本路径> cargo test --manifest-path src-tauri/Cargo.toml --lib \
+    ///     migrate_real_db_copy -- --ignored --nocapture
+    /// ```
+    ///
+    /// 🔴 只能指向**副本**：迁移会写库。副本用 SQLite 的只读备份导出（原库 `?mode=ro` + `backup()`），
+    /// 别直接复制正在使用的 app.db —— WAL 里的内容会丢。只打印与迁移相关的列，不打印 api_key。
+    #[test]
+    #[ignore]
+    fn migrate_real_db_copy() {
+        let Ok(path) = std::env::var("KB_MIGRATE_DB_COPY") else {
+            eprintln!("未设置 KB_MIGRATE_DB_COPY，跳过");
+            return;
+        };
+        let conn = Connection::open(&path).unwrap();
+        let before = get_version(&conn).unwrap();
+        migrate(&conn).unwrap();
+        println!("schema: v{before} -> v{}", get_version(&conn).unwrap());
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, provider, api_url, model_id, max_context, max_tokens, \
+                 limits_source, max_output FROM ai_models ORDER BY id",
+            )
+            .unwrap();
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(format!(
+                    "#{} {} | provider={} | api_url={} | model={} | max_context={} | max_tokens={:?} | source={:?} | max_output={:?}",
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, i64>(5)?,
+                    r.get::<_, Option<i64>>(6)?,
+                    r.get::<_, Option<String>>(7)?,
+                    r.get::<_, Option<i64>>(8)?,
+                ))
+            })
+            .unwrap();
+        for row in rows {
+            println!("  {}", row.unwrap());
+        }
+    }
+
     /// v62：地址按旧规则补齐、厂商 id 改用 crate key、历史默认窗口视为未设置。
     #[test]
     fn v62_rewrites_ai_models_for_ai_profile() {

@@ -4555,6 +4555,60 @@ mod note_quota_and_max_tokens_tests {
 mod remote_model_list_tests {
     use super::*;
 
+    /// 真实 Ollama 端到端联调（手动跑，CI 不跑）：按 v62 修正后的地址（`…/v1`），
+    /// 「获取」走 crate 零成本验证，对话两条路（OpenAI 兼容层 / 原生 /api/chat）各真发一句。
+    ///
+    /// ```text
+    /// KB_LIVE_OLLAMA_URL=http://host:11434/v1 KB_LIVE_OLLAMA_MODEL=qwen2.5:7b \
+    ///     cargo test --manifest-path src-tauri/Cargo.toml --lib live_ollama -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore]
+    fn live_ollama_endpoints() {
+        let (Ok(url), Ok(model)) = (std::env::var("KB_LIVE_OLLAMA_URL"), std::env::var("KB_LIVE_OLLAMA_MODEL")) else {
+            eprintln!("未设置 KB_LIVE_OLLAMA_URL / KB_LIVE_OLLAMA_MODEL，跳过");
+            return;
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            // ① 「获取」：crate 零成本验证（本机服务绕开代理）
+            let v = model_service::verify("ollama", &url, None, &model).await.unwrap();
+            assert!(v.ok, "验证失败：{:?}", v.error);
+            let models = v.result.unwrap().models;
+            println!("获取到的模型：{models:?}");
+            assert!(models.iter().any(|m| m == &model), "清单里应有 {model}");
+
+            let client = build_ollama_client();
+            let prompt = json!([{ "role": "user", "content": "只回复两个字：你好" }]);
+
+            // ② OpenAI 兼容层：今日计划等 5 个非流式功能走这条
+            let chat_url = build_openai_chat_url(&url);
+            let r = client
+                .post(&chat_url)
+                .json(&json!({ "model": model, "messages": prompt, "max_tokens": 16, "stream": false }))
+                .send()
+                .await
+                .unwrap();
+            println!("{chat_url} -> {}", r.status());
+            assert!(r.status().is_success());
+            let body: Value = r.json().await.unwrap();
+            println!("  回复：{}", body["choices"][0]["message"]["content"]);
+
+            // ③ 原生 /api/chat：对话主流程走这条，地址由 ollama_native_root 去掉 /v1
+            let native_url = format!("{}/api/chat", ollama_native_root(&url));
+            let r = client
+                .post(&native_url)
+                .json(&json!({ "model": model, "messages": prompt, "stream": false, "options": { "num_predict": 16 } }))
+                .send()
+                .await
+                .unwrap();
+            println!("{native_url} -> {}", r.status());
+            assert!(r.status().is_success());
+            let body: Value = r.json().await.unwrap();
+            println!("  回复：{}", body["message"]["content"]);
+        });
+    }
+
     /// 🔴 base 原样使用、不再推断 `/v1`（旧规则的对照测试在 `legacy_api_url`）。
     #[test]
     fn urls_use_base_verbatim() {
