@@ -160,6 +160,28 @@ mod tests {
         assert!(!ids.contains(&scratch), "临时笔记不属于知识库，实际: {:?}", ids);
     }
 
+    /// 🔴 回归测试：更新时不带 max_context 必须保持原值。
+    /// 此前写成 `unwrap_or(默认值)`，只改名字就会把用户调过的窗口静默重置成 128000。
+    #[test]
+    fn update_without_max_context_keeps_stored_value() {
+        let db = temp_db();
+        let created = db
+            .create_ai_model(&AiModelInput { max_context: Some(8_000), ..input("小窗口模型") })
+            .unwrap();
+        assert_eq!(created.max_context, 8_000);
+
+        let updated = db
+            .update_ai_model(created.id, &AiModelInput { max_context: None, ..input("改了个名字") })
+            .unwrap();
+        assert_eq!(updated.name, "改了个名字");
+        assert_eq!(updated.max_context, 8_000, "没传 max_context，不该被重置");
+
+        let changed = db
+            .update_ai_model(created.id, &AiModelInput { max_context: Some(32_000), ..input("改了个名字") })
+            .unwrap();
+        assert_eq!(changed.max_context, 32_000, "传了就照改");
+    }
+
     /// 回收站里的笔记同样不该参与问答
     #[test]
     fn rag_never_returns_deleted_notes() {
@@ -577,8 +599,9 @@ impl Database {
             .conn
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
-        // 用户没传 max_context 时保持原值，避免覆盖成默认值
-        let max_ctx = input.max_context.unwrap_or(DEFAULT_MAX_CONTEXT).max(1000);
+        // 用户没传 max_context 时保持原值 —— 此前这里写的是 unwrap_or(默认值)，
+        // 与这句注释相反：只改名字、不带 max_context 的更新会把用户调过的窗口静默重置成 128000
+        let max_ctx = input.max_context.map(|v| v.max(1000));
 
         // 两个字段都是三态（api_key 见其注释，max_tokens 同理），
         // 各自独立决定"要不要出现在 SET 里"。
@@ -594,16 +617,18 @@ impl Database {
             "provider = :provider",
             "api_url = :api_url",
             "model_id = :model_id",
-            "max_context = :max_context",
         ];
         let mut params: Vec<(&str, &dyn rusqlite::ToSql)> = vec![
             (":name", &input.name),
             (":provider", &input.provider),
             (":api_url", &input.api_url),
             (":model_id", &input.model_id),
-            (":max_context", &max_ctx),
             (":id", &id),
         ];
+        if let Some(v) = &max_ctx {
+            sets.push("max_context = :max_context");
+            params.push((":max_context", v));
+        }
 
         // v59 起 API Key 加密入库；encrypt_api_key 对空串返回 None → 落 NULL，即"清除"
         let api_key_enc = match &input.api_key {
