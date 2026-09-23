@@ -118,13 +118,6 @@ fn build_ollama_client() -> &'static Client {
     crate::services::http_client::shared_no_proxy()
 }
 
-/// 根据用户配置的 api_url 构造 OpenAI 兼容的 chat/completions 完整 URL。
-///
-/// 兼容三类写法：
-/// - `https://api.openai.com`                 → `.../v1/chat/completions`（补默认 v1）
-/// - `https://api.deepseek.com/v1`            → `.../v1/chat/completions`（已带版本段，只补端点）
-/// - `https://open.bigmodel.cn/api/paas/v4`   → `.../paas/v4/chat/completions`（智谱等非 /v1 版本）
-/// - `https://x.y/v1/chat/completions`        → 原样使用
 /// 该 provider 能不能吃 `response_format: {"type":"json_object"}`。
 ///
 /// # 为什么是白名单而不是黑名单
@@ -140,11 +133,14 @@ fn build_ollama_client() -> &'static Client {
 ///
 /// 名单只放**文档明确写了 JSON 模式**的几家。Anthropic 的 OpenAI 兼容层查不到确切说法
 /// （官方还声明它 "not a long-term or production-ready solution"），故不放 ——
-/// 它正是老黑名单里那个 `claude`。
+/// 它正是老黑名单里那个 `claude`（v62 起归到 `openai_compatible_custom`，同样不在名单里）。
+///
+/// 🔴 名单里是 ai-profile 的预置 key（schema v62 起 `ai_models.provider` 存它），
+/// 不是 v1.64.0 以前的厂商 id —— 还写 `openai` / `kimi` 的话，这两家的 JSON 模式会被静默关掉。
 fn supports_json_response_format(provider: &str) -> bool {
     matches!(
         provider,
-        "openai" | "deepseek" | "zhipu" | "qwen" | "kimi" | "siliconflow" | "minimax"
+        "openai_official" | "deepseek" | "zhipu" | "qwen" | "moonshot" | "siliconflow" | "minimax"
     )
 }
 
@@ -4564,7 +4560,17 @@ mod note_quota_and_max_tokens_tests {
     /// 遇上不支持的服务商就是 400，整个功能当场废掉。
     #[test]
     fn unknown_provider_gets_no_response_format() {
-        for p in ["doubao", "qianfan", "hunyuan", "groq", "together", "custom", "vllm"] {
+        for p in [
+            "volcengine_ark",
+            "qianfan",
+            "groq",
+            "together",
+            "openai_compatible_custom",
+            "vllm",
+            // v1.64.0 以前的旧 id：迁移后不会再出现，出现了也不该发
+            "openai",
+            "kimi",
+        ] {
             let mut body = json!({"model": "x", "response_format": {"type": "json_object"}});
             strip_unsupported_response_format(&mut body, &model_with(None, p));
             assert!(
@@ -4578,7 +4584,7 @@ mod note_quota_and_max_tokens_tests {
     /// 而官方对 response_format 没有明确说法，仍然不发
     #[test]
     fn claude_and_ollama_still_stripped() {
-        for p in ["claude", "ollama"] {
+        for p in ["claude", "ollama", "openai_compatible_custom"] {
             let mut body = json!({"model": "x", "response_format": {"type": "json_object"}});
             strip_unsupported_response_format(&mut body, &model_with(None, p));
             assert!(body.get("response_format").is_none(), "{p} 应摘掉");
@@ -4588,7 +4594,15 @@ mod note_quota_and_max_tokens_tests {
     /// 文档明确支持的几家必须保留 —— 否则这次改动就是纯降级
     #[test]
     fn whitelisted_providers_keep_response_format() {
-        for p in ["openai", "deepseek", "zhipu", "qwen", "kimi", "siliconflow", "minimax"] {
+        for p in [
+            "openai_official",
+            "deepseek",
+            "zhipu",
+            "qwen",
+            "moonshot",
+            "siliconflow",
+            "minimax",
+        ] {
             let mut body = json!({"model": "x", "response_format": {"type": "json_object"}});
             strip_unsupported_response_format(&mut body, &model_with(None, p));
             assert_eq!(
@@ -4608,7 +4622,7 @@ mod note_quota_and_max_tokens_tests {
             "response_format": {"type": "json_object"},
             "max_tokens": 600,
         });
-        strip_unsupported_response_format(&mut body, &model_with(None, "doubao"));
+        strip_unsupported_response_format(&mut body, &model_with(None, "volcengine_ark"));
         assert_eq!(body["max_tokens"], json!(600));
         assert_eq!(body["model"], json!("x"));
         assert!(body.get("messages").is_some());
