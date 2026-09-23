@@ -5,17 +5,16 @@
 //! | ai-profile crate | 本项目（这里 + `services/ai.rs`） |
 //! |---|---|
 //! | 预置（服务商、地址、模型候选、静态限额） | `ai_models` 表的存储、密钥加密 |
-//! | 端点拼接、模型清单清洗、零成本验证 | 对话（Ollama 原生 + OpenAI 兼容 SSE） |
+//! | 端点拼接、模型清单清洗、零成本验证 | 对话（Ollama 原生 / OpenAI 兼容 / Anthropic `/v1/messages`） |
 //! | 限额分层合并、上下文超长识别 | 上下文预算 / RAG 配额 / 历史降档阶梯 |
 //! | ai.profile 解析与生成（单条 + 打包） | `kbConfig` 信封（webdav / 同步 / ASR 等本项目配置） |
 //!
 //! 加服务商、加模型、改默认 model → 去 ai-profile 仓库改，这里只升依赖（技能 `ai-profile-integration`）。
 //!
-//! # 🔴 本项目只说 OpenAI 兼容协议
+//! # 协议
 //!
-//! 对话实现只有 Ollama 原生与 OpenAI `chat/completions` 两种，没有 Anthropic 原生 `/v1/messages`。
-//! 所以暴露给界面的预置**只含 OpenAI 兼容的**；导入到 Anthropic 协议的配置会被标记
-//! `unsupported_protocol`，由界面提醒用户。
+//! 每条配置走哪种协议由它存的预置 key 决定（[`protocol_of`]）：Anthropic 官方 / Claude Code 中转
+//! 走 `/v1/messages`（`services::anthropic` 转换请求与流），其余走 OpenAI 兼容，Ollama 对话另走原生接口。
 
 use std::sync::OnceLock;
 
@@ -33,18 +32,31 @@ pub const LIMITS_SOURCE_ENDPOINT: &str = "endpoint";
 
 // ─────────────────────────── 预置 ───────────────────────────
 
-/// 界面可选的服务商预置：crate 全量里协议为 OpenAI 兼容的那些，顺序保持 crate 的（同组连续）。
+/// 界面可选的服务商预置：crate 全量，顺序保持 crate 的（同组连续）。
+///
+/// 唯一的改动：Anthropic 官方档在 crate 里不带地址（「调用方据此隐藏输入框」），而本项目的
+/// `ai_models.api_url` 是必填列、表单也一直显示地址 —— 补上官方默认地址，与其它云端档一致。
 pub fn presets() -> Vec<ProviderPreset> {
     ai_profile::presets()
         .iter()
-        .filter(|p| p.protocol == Protocol::OpenAiCompatible)
-        .cloned()
+        .map(|p| {
+            let mut p = *p;
+            if p.protocol == Protocol::Anthropic && p.base_url.is_none() && !p.match_hosts.is_empty() {
+                p.base_url = Some(Protocol::Anthropic.default_base_url());
+            }
+            p
+        })
         .collect()
 }
 
 /// 按 key 取预置；key 不认识时返回 None（界面按「自定义」处理）。
 fn preset(key: &str) -> Option<&'static ProviderPreset> {
     ai_profile::preset_by_key(key)
+}
+
+/// 这条配置走哪种协议。key 不认识（旧数据 / 手改过）按 OpenAI 兼容 —— 与接入前的行为一致。
+pub fn protocol_of(provider_key: &str) -> Protocol {
+    preset(provider_key).map_or(Protocol::OpenAiCompatible, |p| p.protocol)
 }
 
 /// 是否本机推理服务（Ollama / LM Studio / vLLM）：请求绕开系统代理 —— Clash 等会劫持本地包。
@@ -90,6 +102,7 @@ fn verifier(local: bool) -> Result<&'static Verifier, AppError> {
 /// 用 `/models` 零成本验证地址与密钥，顺带拿回已清洗的模型清单与端点上报的限额。
 ///
 /// Ollama 也走这里：它的 OpenAI 兼容层同样有 `/v1/models`，与对话用的是同一个地址。
+/// Anthropic 协议的由 crate 按 `x-api-key` 鉴权去验证。
 pub async fn verify(
     provider_key: &str,
     api_url: &str,
@@ -100,7 +113,7 @@ pub async fn verify(
     if base.is_empty() {
         return Err(AppError::InvalidInput("API 地址不能为空".into()));
     }
-    let cfg = ServiceConfig::new(Protocol::OpenAiCompatible, base)
+    let cfg = ServiceConfig::new(protocol_of(provider_key), base)
         .with_api_key(api_key.map(str::trim).unwrap_or(""))
         .with_model(model.trim());
     Ok(match verifier(is_local(provider_key))?.verify(cfg).await {
@@ -188,9 +201,6 @@ pub struct ImportedAiModel {
     pub api_url: String,
     pub api_key: Option<String>,
     pub model_id: String,
-    /// 来源是 Anthropic 原生协议 —— 本项目没有 `/v1/messages` 实现，按 OpenAI 兼容导入，
-    /// 官方地址能用（Anthropic 有 OpenAI 兼容端点），只开放 `/v1/messages` 的中转用不了
-    pub unsupported_protocol: bool,
 }
 
 /// [`parse_ai_profile`] 的结果。
@@ -202,10 +212,10 @@ pub struct ImportedAiModels {
     pub bundle: bool,
 }
 
-/// Anthropic 官方的 OpenAI 兼容地址 —— 来源是 Anthropic 协议却没给地址时用它。
-const ANTHROPIC_OPENAI_COMPAT_URL: &str = "https://api.anthropic.com/v1";
-
 /// 解析 ai.profile（单条或打包）并换成本项目字段。解析失败返回 crate 的中文原因。
+///
+/// 协议照来源保留：Anthropic 协议的反推成 `anthropic_official`（官方地址 / 没给地址）或
+/// `claude_code`（其它地址，即中转），按 `/v1/messages` 对话。
 pub fn parse_ai_profile(text: &str) -> Result<ImportedAiModels, AppError> {
     // 来源没给 model 时先留空，下面按反推出的预置补 —— 每条的服务商不同，不能统一兜一个
     let parsed = ai_profile::parse_profiles(text, "")
@@ -214,17 +224,14 @@ pub fn parse_ai_profile(text: &str) -> Result<ImportedAiModels, AppError> {
     let mut models = Vec::with_capacity(parsed.profiles.len());
     let mut skipped = parsed.skipped;
     for p in parsed.profiles {
-        let unsupported = p.protocol != Protocol::OpenAiCompatible;
-        let base = if p.base_url.is_empty() && unsupported {
-            ANTHROPIC_OPENAI_COMPAT_URL.to_string()
-        } else {
-            p.base_url.clone()
-        };
-        let key =
-            ai_profile::preset::infer_preset_key(Protocol::OpenAiCompatible, Some(base.as_str()));
-        let pre = preset(key);
+        let base = p.base_url.clone();
+        let key = ai_profile::preset::infer_preset_key(
+            p.protocol,
+            Some(base.as_str()).filter(|b| !b.is_empty()),
+        );
+        let pre = presets().into_iter().find(|x| x.key == key);
         let model = if p.model.is_empty() {
-            pre.map(|x| x.model.to_string()).unwrap_or_default()
+            pre.as_ref().map(|x| x.model.to_string()).unwrap_or_default()
         } else {
             p.model.clone()
         };
@@ -234,12 +241,12 @@ pub fn parse_ai_profile(text: &str) -> Result<ImportedAiModels, AppError> {
             continue;
         }
         let api_url = if base.is_empty() {
-            pre.and_then(|x| x.base_url).unwrap_or_default().to_string()
+            pre.as_ref().and_then(|x| x.base_url).unwrap_or_default().to_string()
         } else {
             base
         };
         let name = if p.name.is_empty() {
-            pre.map(|x| x.label.to_string()).unwrap_or_else(|| model.clone())
+            pre.as_ref().map(|x| x.label.to_string()).unwrap_or_else(|| model.clone())
         } else {
             p.name.clone()
         };
@@ -249,7 +256,6 @@ pub fn parse_ai_profile(text: &str) -> Result<ImportedAiModels, AppError> {
             api_url,
             api_key: Some(p.api_key.clone()).filter(|k| !k.is_empty()),
             model_id: model,
-            unsupported_protocol: unsupported,
         });
     }
     if models.is_empty() {
@@ -264,11 +270,11 @@ pub fn parse_ai_profile(text: &str) -> Result<ImportedAiModels, AppError> {
     })
 }
 
-/// 生成 ai.profile 文本（规范写法）。本项目只说 OpenAI 兼容，协议固定。
+/// 生成 ai.profile 文本（规范写法），协议按这条配置的预置 key 写。
 ///
 /// 🔴 产物含明文密钥，由用户点「分享」触发，去向由调用方决定。
-pub fn to_ai_profile(name: &str, api_url: &str, api_key: &str, model_id: &str) -> String {
-    ai_profile::to_profile(name, Protocol::OpenAiCompatible, api_url, api_key, model_id)
+pub fn to_ai_profile(provider: &str, name: &str, api_url: &str, api_key: &str, model_id: &str) -> String {
+    ai_profile::to_profile(name, protocol_of(provider), api_url, api_key, model_id)
 }
 
 // ─────────────────────────── 旧配置导入 ───────────────────────────
@@ -318,12 +324,18 @@ mod tests {
     }
 
     #[test]
-    fn presets_are_openai_compatible_only() {
+    fn presets_cover_both_protocols() {
         let all = presets();
-        assert!(!all.is_empty());
-        assert!(all.iter().all(|p| p.protocol == Protocol::OpenAiCompatible));
+        assert_eq!(all.len(), ai_profile::presets().len(), "与 crate 全量一致（与 Sigil 同一份）");
         assert!(all.iter().any(|p| p.key == "ollama"), "本机 Ollama 必须在");
-        assert!(!all.iter().any(|p| p.key == "anthropic_official"), "本项目说不了 /v1/messages");
+        let official = all.iter().find(|p| p.key == "anthropic_official").unwrap();
+        assert_eq!(official.base_url, Some("https://api.anthropic.com/v1"), "官方档补上默认地址");
+        let relay = all.iter().find(|p| p.key == "claude_code").unwrap();
+        assert_eq!(relay.base_url, None, "中转档地址让用户自己填");
+
+        assert_eq!(protocol_of("claude_code"), Protocol::Anthropic);
+        assert_eq!(protocol_of("deepseek"), Protocol::OpenAiCompatible);
+        assert_eq!(protocol_of("旧数据里的怪 key"), Protocol::OpenAiCompatible);
     }
 
     /// 用户手填 > 端点上报 > 预置，逐字段合并；未设置时回落预置。
@@ -372,20 +384,33 @@ mod tests {
         assert_eq!(r.models[0].provider, "deepseek", "按地址反推出预置 key");
         assert_eq!(r.models[0].api_key.as_deref(), Some("sk-1"));
 
-        // 智码打包：OAuth 跳过；Anthropic 协议标记为不支持但仍导入
+        // 智码打包：OAuth 跳过；Anthropic 协议照协议导入（官方 / 中转分开认）
         let bundle = r#"{"kind":"ai.profile.bundle","v":1,"data":{"api_profiles":[
             {"name":"登录","auth_type":"oauth","model":"x"},
             {"name":"官方 Claude","provider":"anthropic","api_key":"sk-ant","base_url":"","model":"claude-opus-5"},
+            {"name":"中转 Claude","provider":"anthropic","api_key":"sk-x","base_url":"https://relay.example.com/v1","model":"claude-opus-5"},
             {"name":"","provider":"deepseek","api_key":"k","base_url":"https://api.deepseek.com/v1","model":""}
         ]}}"#;
         let r = parse_ai_profile(bundle).unwrap();
         assert!(r.bundle);
         assert_eq!(r.skipped, 1);
-        assert_eq!(r.models.len(), 2);
-        assert!(r.models[0].unsupported_protocol);
-        assert_eq!(r.models[0].api_url, ANTHROPIC_OPENAI_COMPAT_URL);
-        assert!(!r.models[1].model_id.is_empty(), "来源没给模型名，按预置默认补");
-        assert!(!r.models[1].name.is_empty(), "来源没给名字，用服务商名");
+        assert_eq!(r.models.len(), 3);
+        assert_eq!(r.models[0].provider, "anthropic_official");
+        assert_eq!(r.models[0].api_url, "https://api.anthropic.com/v1", "没给地址补官方地址");
+        assert_eq!(r.models[1].provider, "claude_code", "Anthropic 协议 + 非官方地址 = 中转");
+        assert_eq!(r.models[1].api_url, "https://relay.example.com/v1");
+        assert!(!r.models[2].model_id.is_empty(), "来源没给模型名，按预置默认补");
+        assert!(!r.models[2].name.is_empty(), "来源没给名字，用服务商名");
+    }
+
+    /// 导出按这条配置的协议写：Anthropic 档写 anthropic，别的写 OpenAI 兼容
+    #[test]
+    fn export_keeps_protocol() {
+        let back = |text: String| parse_ai_profile(&text).unwrap().models.remove(0).provider;
+        let a = to_ai_profile("claude_code", "中转", "https://relay.example.com/v1", "k", "claude-opus-5");
+        assert_eq!(back(a), "claude_code");
+        let o = to_ai_profile("deepseek", "DS", "https://api.deepseek.com/v1", "k", "deepseek-flash");
+        assert_eq!(back(o), "deepseek");
     }
 
     #[test]

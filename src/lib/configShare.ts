@@ -117,8 +117,6 @@ export interface AiModelData {
    * 否则裸根地址会 404。新导出的再修正一遍反而会把刻意不带版本段的地址错补 /v1。
    */
   api_url_verbatim?: boolean;
-  /** 来自 ai.profile 且是 Anthropic 原生协议（仅导入时用，不导出） */
-  unsupported_protocol?: boolean;
 }
 
 export interface FeatureTogglesData {
@@ -336,7 +334,6 @@ async function parseAiProfileEnvelope(text: string): Promise<ParseResult | null>
       api_key: m.api_key,
       model_id: m.model_id,
       api_url_verbatim: true,
-      unsupported_protocol: m.unsupported_protocol || undefined,
     }));
     const exportedAt = new Date().toISOString();
     if (!r.bundle && aiModels.length === 1) {
@@ -477,12 +474,6 @@ export async function applyEnvelope(env: Envelope): Promise<ImportSummary> {
         };
         await aiModelApi.create(input);
         summary.aiModels = 1;
-        if (env.data.unsupported_protocol) {
-          summary.warnings.push(
-            `「${env.data.name}」原本是 Anthropic 协议的配置：本软件按 OpenAI 兼容方式使用，` +
-              "官方地址可用，只开放 /v1/messages 的中转站用不了",
-          );
-        }
       } catch (e) {
         summary.errors.push(`模型服务创建失败：${e}`);
       }
@@ -597,12 +588,14 @@ export const KIND_LABELS: Record<ConfigKind, string> = {
  * 上下文窗口等限额不输出：ai.profile 协议没有约定这些字段。
  */
 export function stringifyAsAiProfile(
-  m: Pick<AiModelData, "name" | "api_url" | "api_key" | "model_id">,
+  m: Pick<AiModelData, "name" | "provider" | "api_url" | "api_key" | "model_id">,
 ): Promise<string> {
   return aiModelApi.toAiProfile({
     name: m.name,
     apiUrl: m.api_url,
     apiKey: m.api_key ?? null,
     modelId: m.model_id,
+    // 协议跟着预置 key 走：Claude 中转导出后在别的软件里仍是 Anthropic 协议
+    provider: m.provider,
   });
 }

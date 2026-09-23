@@ -552,6 +552,8 @@ export interface AiProviderPreset {
   models: AiPresetModel[];
   /** 本机推理服务（Ollama / LM Studio / vLLM），通常不需要密钥 */
   isLocal: boolean;
+  /** 对话协议：Anthropic 走 /v1/messages，其余走 OpenAI 兼容 /chat/completions */
+  protocol: "anthropic" | "openai_compatible";
 }
 
 /** ai-profile 的 token 限额（线格式） */
@@ -599,8 +601,6 @@ export interface ImportedAiModel {
   api_url: string;
   api_key: string | null;
   model_id: string;
-  /** 来源是 Anthropic 原生协议：本项目按 OpenAI 兼容导入，只开放 /v1/messages 的中转用不了 */
-  unsupported_protocol: boolean;
 }
 
 export interface ImportedAiModels {

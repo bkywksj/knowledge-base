@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod anthropic;
 pub mod app_lock;
 pub mod asr;
 pub mod asset_path;

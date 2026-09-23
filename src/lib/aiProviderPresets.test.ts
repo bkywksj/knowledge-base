@@ -17,6 +17,7 @@ function preset(key: string, group: string, models: string[] = []): AiProviderPr
     model: models[0] ?? "",
     models: models.map((m) => ({ value: m, label: m, contextWindow: m === "big" ? 1000000 : null, maxOutput: null })),
     isLocal: key === "ollama",
+    protocol: key === "claude_code" ? "anthropic" : "openai_compatible",
   };
 }
 

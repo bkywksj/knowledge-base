@@ -14,7 +14,7 @@ import {
 /**
  * 移动端「新增 AI 模型」对话框（MobileAi 列表 chip 区 / MobileAiChat 顶栏 Drawer 共用）。
  *
- * - 服务商清单来自 ai-profile crate（与桌面同一份，只含 OpenAI 兼容协议）
+ * - 服务商清单来自 ai-profile crate（与桌面、Sigil 同一份，含 Anthropic 协议）
  * - 切换服务商 → 自动回填 名称 / API 地址 / 模型 ID（该服务商的默认模型）
  * - 模型 ID：有预设的走 Select（带搜索）；无预设的（本机服务 / 自定义）走 Input
  * - 上下文窗口：可留空，对话时回落到预置值

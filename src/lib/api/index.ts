@@ -752,7 +752,7 @@ export const aiModelApi = {
    * 别拿它去做展示或判断（判断用 `has_api_key`）。
    */
   getApiKey: (id: number) => invoke<string | null>("get_ai_model_api_key", { id }),
-  /** 服务商预置（ai-profile crate，只含本项目能说的 OpenAI 兼容协议）。静态数据，前端缓存一次即可 */
+  /** 服务商预置（ai-profile crate 全量，OpenAI 兼容与 Anthropic 协议都有）。静态数据，前端缓存一次即可 */
   listPresets: () => invoke<AiProviderPreset[]>("list_ai_provider_presets"),
   /**
    * 「获取」：零成本验证地址与密钥，拿回已清洗的模型清单与端点上报的限额。
@@ -778,13 +778,23 @@ export const aiModelApi = {
   /** 解析 ai.profile（单条或打包），已换成 ai_models 字段口径。解析失败抛中文原因 */
   parseAiProfile: (text: string) =>
     invoke<ImportedAiModels>("parse_ai_profile_text", { text }),
-  /** 生成 ai.profile 文本（规范写法）。🔴 含明文密钥，仅供用户点「分享」 */
-  toAiProfile: (args: { name: string; apiUrl: string; apiKey: string | null; modelId: string }) =>
+  /**
+   * 生成 ai.profile 文本（规范写法）。🔴 含明文密钥，仅供用户点「分享」。
+   * `provider` 决定写进去的协议（Anthropic 档写 anthropic），不传按 OpenAI 兼容。
+   */
+  toAiProfile: (args: {
+    name: string;
+    apiUrl: string;
+    apiKey: string | null;
+    modelId: string;
+    provider?: string;
+  }) =>
     invoke<string>("ai_model_to_ai_profile", {
       name: args.name,
       apiUrl: args.apiUrl,
       apiKey: args.apiKey ?? "",
       modelId: args.modelId,
+      provider: args.provider ?? null,
     }),
   /** 旧版本（v1.64.0 及以前）导出的模型配置 → 新口径（地址补齐、厂商 id 换 key、历史默认窗口清空） */
   fixLegacy: (provider: string, apiUrl: string, maxContext: number | null | undefined) =>

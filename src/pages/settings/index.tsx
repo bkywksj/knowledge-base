@@ -237,7 +237,7 @@ function DesktopSettingsPage() {
   // 只在本次 Modal 会话内有效，换服务商 / 重开 Modal 都清掉。
   const [fetchedModels, setFetchedModels] = useState<string[] | null>(null);
   const [fetchingModels, setFetchingModels] = useState(false);
-  /** 服务商预置（ai-profile crate，只含 OpenAI 兼容协议） */
+  /** 服务商预置（ai-profile crate 全量，与 Sigil 同一份） */
   const aiPresets = useAiProviderPresets();
   /**
    * 上下文窗口框里数字的来源：「获取」自动填 → endpoint，用户手改 → user，null = 没填。
@@ -3263,7 +3263,7 @@ function DesktopSettingsPage() {
           <Form.Item
             name="provider"
             label="服务商"
-            extra="除 Ollama 外一律按 OpenAI 兼容协议处理。列表里没有的服务选「其它 OpenAI 兼容」，填它的接口地址即可。"
+            extra="Anthropic 官方与 Claude Code 中转走 /v1/messages，其余按 OpenAI 兼容协议。列表里没有的服务：Claude 类中转选「Claude Code 客户端」，其它选「其它 OpenAI 兼容」，再填它的接口地址。"
             rules={[{ required: true }]}
           >
             <Select

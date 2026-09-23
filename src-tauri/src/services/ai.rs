@@ -12,6 +12,7 @@ use crate::models::{
     PlanFromExcelRequest, PlanFromGoalRequest, PlanFromGoalResponse, PlanTodayRequest,
     PlanTodayResponse, SkillCall, TaskQuery, TaskSuggestion, TextPreview, TurnMeta,
 };
+use crate::services::anthropic;
 use crate::services::citations;
 use crate::services::skills;
 
@@ -202,6 +203,74 @@ fn ollama_native_root(api_url: &str) -> String {
 /// 所以切换后请求地址与以前逐字相同。用户粘贴的完整 `…/chat/completions` 原样用。
 fn build_openai_chat_url(api_url: &str) -> String {
     ai_profile::endpoint::join_chat_endpoint(api_url, "chat/completions")
+}
+
+/// 构造一个对话请求：地址、鉴权头、请求体都按这条配置的协议定。
+///
+/// 各调用方**照旧拼 OpenAI `chat/completions` 结构的 `body`**；Anthropic 协议的在这里转换
+/// （见 `services::anthropic`）。`fallback_max_tokens` 只给 Anthropic 用：它的 `max_tokens` 必填，
+/// body 里没带时用这个值。
+fn chat_request(
+    client: &Client,
+    provider: &str,
+    api_url: &str,
+    api_key: Option<&str>,
+    body: &Value,
+    fallback_max_tokens: i64,
+) -> reqwest::RequestBuilder {
+    if anthropic::is_anthropic(provider) {
+        return anthropic::with_auth(client.post(anthropic::messages_url(api_url)), api_key)
+            .json(&anthropic::to_request_body(body, fallback_max_tokens));
+    }
+    let mut req = client
+        .post(build_openai_chat_url(api_url))
+        .header("Content-Type", "application/json")
+        .json(body);
+    if let Some(key) = api_key.map(str::trim).filter(|k| !k.is_empty()) {
+        req = req.header("Authorization", format!("Bearer {}", key));
+    }
+    req
+}
+
+/// [`chat_request`] 的已存配置版。
+fn model_chat_request(client: &Client, model: &AiModel, body: &Value) -> reqwest::RequestBuilder {
+    chat_request(
+        client,
+        &model.provider,
+        &model.api_url,
+        model.api_key.as_deref(),
+        body,
+        anthropic::default_max_tokens(model),
+    )
+}
+
+/// 流式响应里一行 SSE 的正文增量（按协议解析），没有正文的行返回 `Ok(None)`。
+///
+/// Anthropic 会在 HTTP 200 的流中途发 `error` 事件（如 overloaded），以 `Err(原因)` 返回；
+/// OpenAI 兼容侧没有这种事件。
+fn stream_text_delta(is_anthropic: bool, line: &str) -> Result<Option<String>, String> {
+    if is_anthropic {
+        return match anthropic::parse_stream_line(line) {
+            anthropic::StreamEvent::Text(t) => Ok(Some(t)),
+            anthropic::StreamEvent::Error(e) => Err(e),
+            _ => Ok(None),
+        };
+    }
+    let Some(json_str) = line.strip_prefix("data: ") else {
+        return Ok(None);
+    };
+    Ok(serde_json::from_str::<Value>(json_str)
+        .ok()
+        .and_then(|d| d["choices"][0]["delta"]["content"].as_str().map(str::to_string)))
+}
+
+/// 非流式响应的正文。响应形状不对（不是这个协议的应答）时返回 None。
+fn completion_text(provider: &str, resp: &Value) -> Option<String> {
+    if anthropic::is_anthropic(provider) {
+        anthropic::response_text(resp)
+    } else {
+        resp["choices"][0]["message"]["content"].as_str().map(str::to_string)
+    }
 }
 
 /// 把一个 error 链展开成 `msg ← cause ← cause …`，并对每一层尝试 downcast 成 `std::io::Error`，
@@ -1067,26 +1136,17 @@ impl AiService {
                 .to_string()
         } else {
             let client = crate::services::http_client::shared();
-            let url = build_openai_chat_url(&model.api_url);
-            let mut request = client
-                .post(&url)
+            let body = json!({
+                "model": model.model_id,
+                "messages": messages,
+                "max_tokens": 64,
+                "temperature": 0.85,
+                "top_p": 0.95,
+                "seed": seed,
+                "stream": false
+            });
+            let response = model_chat_request(client, &model, &body)
                 .timeout(timeout)
-                .header("Content-Type", "application/json")
-                .json(&json!({
-                    "model": model.model_id,
-                    "messages": messages,
-                    "max_tokens": 64,
-                    "temperature": 0.85,
-                    "top_p": 0.95,
-                    "seed": seed,
-                    "stream": false
-                }));
-            if let Some(key) = &model.api_key {
-                if !key.trim().is_empty() {
-                    request = request.header("Authorization", format!("Bearer {}", key));
-                }
-            }
-            let response = request
                 .send()
                 .await
                 .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
@@ -1099,10 +1159,7 @@ impl AiService {
                 .json()
                 .await
                 .map_err(|e| AppError::Custom(format!("响应解析失败: {}", e)))?;
-            body["choices"][0]["message"]["content"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string()
+            completion_text(&model.provider, &body).unwrap_or_default()
         };
 
         // 清洗：去首尾空白 / 引号 / 句号；截断到 60 字（保险，模型偶尔不守 25 字约束）
@@ -1178,23 +1235,14 @@ impl AiService {
                 .to_string()
         } else {
             let client = crate::services::http_client::shared();
-            let url = build_openai_chat_url(&model.api_url);
-            let mut request = client
-                .post(&url)
+            let body = json!({
+                "model": model.model_id,
+                "messages": messages,
+                "max_tokens": 800,
+                "stream": false
+            });
+            let response = model_chat_request(client, &model, &body)
                 .timeout(timeout)
-                .header("Content-Type", "application/json")
-                .json(&json!({
-                    "model": model.model_id,
-                    "messages": messages,
-                    "max_tokens": 800,
-                    "stream": false
-                }));
-            if let Some(key) = &model.api_key {
-                if !key.trim().is_empty() {
-                    request = request.header("Authorization", format!("Bearer {}", key));
-                }
-            }
-            let response = request
                 .send()
                 .await
                 .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
@@ -1207,10 +1255,7 @@ impl AiService {
                 .json()
                 .await
                 .map_err(|e| AppError::Custom(format!("响应解析失败: {}", e)))?;
-            body["choices"][0]["message"]["content"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string()
+            completion_text(&model.provider, &body).unwrap_or_default()
         };
 
         // 去掉小模型偶尔输出的伪 <think>/工具调用噪声，再 trim
@@ -1281,28 +1326,26 @@ impl AiService {
             });
         }
 
-        // OpenAI 兼容（含 lmstudio / deepseek / zhipu / claude proxy / minimax / siliconflow / custom）
+        // OpenAI 兼容（含 lmstudio / deepseek / zhipu / minimax / siliconflow / custom）与 Anthropic 协议
         let client = crate::services::http_client::shared();
-        let url = build_openai_chat_url(&input.api_url);
-        let mut request = client
-            .post(&url)
-            .timeout(timeout)
-            .header("Content-Type", "application/json")
-            .json(&json!({
-                "model": input.model_id,
-                "messages": [{ "role": "user", "content": "ping" }],
-                "max_tokens": 5,
-                "stream": false
-            }));
-        if let Some(key) = &input.api_key {
-            if !key.trim().is_empty() {
-                request = request.header("Authorization", format!("Bearer {}", key));
-            }
-        }
-        let response = request
-            .send()
-            .await
-            .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
+        let body = json!({
+            "model": input.model_id,
+            "messages": [{ "role": "user", "content": "ping" }],
+            "max_tokens": 5,
+            "stream": false
+        });
+        let response = chat_request(
+            client,
+            &input.provider,
+            &input.api_url,
+            input.api_key.as_deref(),
+            &body,
+            5,
+        )
+        .timeout(timeout)
+        .send()
+        .await
+        .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
@@ -1312,9 +1355,7 @@ impl AiService {
             .json()
             .await
             .map_err(|e| AppError::Custom(format!("响应解析失败: {}", e)))?;
-        let sample = body["choices"][0]["message"]["content"]
-            .as_str()
-            .map(|s| s.chars().take(40).collect::<String>());
+        let sample = completion_text(&input.provider, &body).map(|s| s.chars().take(40).collect::<String>());
         Ok(AiModelTestResult {
             ok: true,
             latency_ms: started.elapsed().as_millis() as u64,
@@ -1405,7 +1446,7 @@ impl AiService {
         Ok(full_response)
     }
 
-    /// 通用 OpenAI 兼容流式请求（使用 EventEmitter trait）
+    /// 通用流式请求（使用 EventEmitter trait）：OpenAI 兼容与 Anthropic 协议都走这里
     async fn stream_openai_generic(
         emitter: &dyn AiEventEmitter,
         model: &AiModel,
@@ -1413,7 +1454,7 @@ impl AiService {
         mut cancel_rx: watch::Receiver<bool>,
     ) -> Result<String, AppError> {
         let client = crate::services::http_client::shared();
-        let url = build_openai_chat_url(&model.api_url);
+        let is_anthropic = anthropic::is_anthropic(&model.provider);
         let mut body = json!({
             "model": model.model_id,
             "messages": messages,
@@ -1421,16 +1462,7 @@ impl AiService {
         });
         apply_max_tokens(&mut body, model);
 
-        let mut request = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&body);
-        if let Some(key) = &model.api_key {
-            if !key.is_empty() {
-                request = request.header("Authorization", format!("Bearer {}", key));
-            }
-        }
-        let response = request
+        let response = model_chat_request(client, model, &body)
             .send()
             .await
             .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
@@ -1452,12 +1484,15 @@ impl AiService {
                             for line in drain_complete_lines(&mut buffer, &bytes) {
                                 let line = line.trim();
                                 if line.is_empty() || line == "data: [DONE]" { continue; }
-                                if let Some(json_str) = line.strip_prefix("data: ") {
-                                    if let Ok(data) = serde_json::from_str::<Value>(json_str) {
-                                        if let Some(content) = data["choices"][0]["delta"]["content"].as_str() {
-                                            full_response.push_str(content);
-                                            emitter.emit_token(content);
-                                        }
+                                match stream_text_delta(is_anthropic, line) {
+                                    Ok(Some(content)) => {
+                                        full_response.push_str(&content);
+                                        emitter.emit_token(&content);
+                                    }
+                                    Ok(None) => {}
+                                    Err(e) => {
+                                        emitter.emit_error(&e);
+                                        return Err(AppError::Custom(format!("AI 服务中途出错: {}", e)));
                                     }
                                 }
                             }
@@ -1481,13 +1516,9 @@ impl AiService {
             let line = String::from_utf8_lossy(&buffer);
             let line = line.trim();
             if !line.is_empty() && line != "data: [DONE]" {
-                if let Some(json_str) = line.strip_prefix("data: ") {
-                    if let Ok(data) = serde_json::from_str::<Value>(json_str) {
-                        if let Some(content) = data["choices"][0]["delta"]["content"].as_str() {
-                            full_response.push_str(content);
-                            emitter.emit_token(content);
-                        }
-                    }
+                if let Ok(Some(content)) = stream_text_delta(is_anthropic, line) {
+                    full_response.push_str(&content);
+                    emitter.emit_token(&content);
                 }
             }
         }
@@ -1978,7 +2009,7 @@ impl AiService {
         Ok(full_response)
     }
 
-    /// OpenAI 兼容 API 流式请求（也支持 Claude 通过兼容接口）
+    /// 对话（RAG 路径）的流式请求：OpenAI 兼容与 Anthropic 协议都走这里
     async fn stream_openai_compatible(
         app: &AppHandle,
         conversation_id: i64,
@@ -1987,22 +2018,13 @@ impl AiService {
         mut cancel_rx: watch::Receiver<bool>,
     ) -> Result<String, AppError> {
         let client = crate::services::http_client::shared();
-        let url = build_openai_chat_url(&model.api_url);
-
-        let mut request = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&json!({
-                "model": model.model_id,
-                "messages": messages,
-                "stream": true
-            }));
-
-        if let Some(key) = &model.api_key {
-            if !key.is_empty() {
-                request = request.header("Authorization", format!("Bearer {}", key));
-            }
-        }
+        let is_anthropic = anthropic::is_anthropic(&model.provider);
+        let body = json!({
+            "model": model.model_id,
+            "messages": messages,
+            "stream": true
+        });
+        let request = model_chat_request(client, model, &body);
 
         let response = match send_unless_cancelled(request, &mut cancel_rx).await {
             // 还没开口就被停止：返回空文本，由 chat_stream 存成「已停止」卡片
@@ -2033,20 +2055,22 @@ impl AiService {
                 chunk = stream.next() => {
                     match chunk {
                         Some(Ok(bytes)) => {
-                            // SSE 格式：data: {...}\n\n
+                            // SSE 格式：data: {...}\n\n（Anthropic 另有 event: 行，stream_text_delta 会跳过）
                             for line in drain_complete_lines(&mut buffer, &bytes) {
                                 let line = line.trim();
                                 if line.is_empty() || line == "data: [DONE]" {
                                     continue;
                                 }
-                                if let Some(json_str) = line.strip_prefix("data: ") {
-                                    if let Ok(data) = serde_json::from_str::<Value>(json_str) {
-                                        if let Some(content) =
-                                            data["choices"][0]["delta"]["content"].as_str()
-                                        {
-                                            full_response.push_str(content);
-                                            emit_ai_token(app, conversation_id, content);
-                                        }
+                                match stream_text_delta(is_anthropic, line) {
+                                    Ok(Some(content)) => {
+                                        full_response.push_str(&content);
+                                        emit_ai_token(app, conversation_id, &content);
+                                    }
+                                    Ok(None) => {}
+                                    Err(e) => {
+                                        let msg = format!("AI 服务中途出错: {}", e);
+                                        emit_ai_error(app, conversation_id, &msg);
+                                        return Err(AppError::Custom(msg));
                                     }
                                 }
                             }
@@ -2072,15 +2096,9 @@ impl AiService {
             let line = String::from_utf8_lossy(&buffer);
             let line = line.trim();
             if !line.is_empty() && line != "data: [DONE]" {
-                if let Some(json_str) = line.strip_prefix("data: ") {
-                    if let Ok(data) = serde_json::from_str::<Value>(json_str) {
-                        if let Some(content) =
-                            data["choices"][0]["delta"]["content"].as_str()
-                        {
-                            full_response.push_str(content);
-                            emit_ai_token(app, conversation_id, content);
-                        }
-                    }
+                if let Ok(Some(content)) = stream_text_delta(is_anthropic, line) {
+                    full_response.push_str(&content);
+                    emit_ai_token(app, conversation_id, &content);
                 }
             }
         }
@@ -2501,7 +2519,8 @@ impl AiService {
         reasoning_out: &mut String,
     ) -> (Result<String, AppError>, Option<Vec<ToolCallAccum>>) {
         let client = crate::services::http_client::shared();
-        let url = build_openai_chat_url(&model.api_url);
+        // Anthropic 协议同样走这里：请求体在 model_chat_request 里转换，流按行在 handle_stream_line 里分流
+        let is_anthropic = anthropic::is_anthropic(&model.provider);
 
         let mut request_body = json!({
             "model": model.model_id,
@@ -2514,15 +2533,7 @@ impl AiService {
             request_body["tool_choice"] = json!("auto");
         }
 
-        let mut request = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&request_body);
-        if let Some(key) = &model.api_key {
-            if !key.is_empty() {
-                request = request.header("Authorization", format!("Bearer {}", key));
-            }
-        }
+        let request = model_chat_request(client, model, &request_body);
 
         let response = match send_unless_cancelled(request, &mut cancel_rx).await {
             // 还没开口就被停止：chat_stream_with_skills 看到取消信号后存「已停止」卡片
@@ -2566,7 +2577,8 @@ impl AiService {
                                 let line_bytes: Vec<u8> = buffer.drain(..=pos).collect();
                                 let line = String::from_utf8_lossy(&line_bytes);
                                 let line = line.trim_end_matches(&['\r', '\n'][..]);
-                                handle_openai_stream_line(
+                                if let Err(e) = handle_stream_line(
+                                    is_anthropic,
                                     app,
                                     conversation_id,
                                     line,
@@ -2574,7 +2586,11 @@ impl AiService {
                                     &mut reasoning_content,
                                     &mut tool_accum,
                                     &mut finish_reason,
-                                );
+                                ) {
+                                    let msg = format!("AI 服务中途出错: {}", e);
+                                    emit_ai_error(app, conversation_id, &msg);
+                                    return (Err(AppError::Custom(msg)), None);
+                                }
                             }
                         }
                         Some(Err(e)) => {
@@ -2598,7 +2614,8 @@ impl AiService {
         if !buffer.is_empty() {
             let line = String::from_utf8_lossy(&buffer);
             let line = line.trim_end_matches(&['\r', '\n'][..]);
-            handle_openai_stream_line(
+            if let Err(e) = handle_stream_line(
+                is_anthropic,
                 app,
                 conversation_id,
                 line,
@@ -2606,7 +2623,11 @@ impl AiService {
                 &mut reasoning_content,
                 &mut tool_accum,
                 &mut finish_reason,
-            );
+            ) {
+                let msg = format!("AI 服务中途出错: {}", e);
+                emit_ai_error(app, conversation_id, &msg);
+                return (Err(AppError::Custom(msg)), None);
+            }
         }
 
         // P1: content 全空但 reasoning 非空时，把累积的 reasoning 提升为正文
@@ -2872,6 +2893,86 @@ fn handle_openai_stream_line(
     }
 }
 
+/// 按协议把一行流数据交给对应的解析函数。`Err` = 服务端在流中途报了错（只有 Anthropic 会）。
+#[allow(clippy::too_many_arguments)]
+fn handle_stream_line(
+    is_anthropic: bool,
+    app: &AppHandle,
+    conversation_id: i64,
+    line: &str,
+    content: &mut String,
+    reasoning_content: &mut String,
+    tool_accum: &mut std::collections::BTreeMap<u64, ToolCallAccum>,
+    finish_reason: &mut Option<String>,
+) -> Result<(), String> {
+    if is_anthropic {
+        return handle_anthropic_stream_line(
+            app,
+            conversation_id,
+            line,
+            content,
+            reasoning_content,
+            tool_accum,
+            finish_reason,
+        );
+    }
+    handle_openai_stream_line(
+        app,
+        conversation_id,
+        line,
+        content,
+        reasoning_content,
+        tool_accum,
+        finish_reason,
+    );
+    Ok(())
+}
+
+/// Anthropic 版的 [`handle_openai_stream_line`]：累加到**同样的**容器里，
+/// 调用方（工具循环）不用知道对面说的是哪种协议。
+///
+/// 工具调用：`tool_use` 块开始时给 id + name，参数随后以 `input_json_delta` 分片到达 ——
+/// 与 OpenAI 的「按 index 分片」同构，直接复用 `tool_accum`。
+/// 结束原因已在 `anthropic::parse_stream_line` 里换成 OpenAI 的叫法。
+fn handle_anthropic_stream_line(
+    app: &AppHandle,
+    conversation_id: i64,
+    line: &str,
+    content: &mut String,
+    reasoning_content: &mut String,
+    tool_accum: &mut std::collections::BTreeMap<u64, ToolCallAccum>,
+    finish_reason: &mut Option<String>,
+) -> Result<(), String> {
+    use anthropic::StreamEvent;
+    match anthropic::parse_stream_line(line) {
+        StreamEvent::Text(t) => {
+            content.push_str(&t);
+            emit_ai_token(app, conversation_id, &t);
+        }
+        StreamEvent::Thinking(t) => {
+            if !t.is_empty() {
+                reasoning_content.push_str(&t);
+                let _ = app.emit(
+                    "ai:reasoning",
+                    json!({ "conversationId": conversation_id, "content": t }),
+                );
+            }
+        }
+        StreamEvent::ToolStart { index, id, name } => {
+            let entry = tool_accum.entry(index).or_default();
+            entry.id = id;
+            entry.name = name;
+        }
+        StreamEvent::ToolArgs { index, partial_json } => {
+            tool_accum.entry(index).or_default().args_json.push_str(&partial_json);
+        }
+        StreamEvent::Stop(r) => *finish_reason = Some(r),
+        StreamEvent::Error(e) => return Err(e),
+        StreamEvent::Other => {}
+    }
+    Ok(())
+}
+
 /// 流式解析过程中累加的一次工具调用（OpenAI 分片返回格式）
 #[derive(Default, Debug, Clone)]
 struct ToolCallAccum {
@@ -3104,7 +3205,6 @@ impl AiService {
 
         // ─── 发请求 ────────────────────────────
         let client = crate::services::http_client::shared();
-        let url = build_openai_chat_url(&model.api_url);
         let mut req_body = json!({
             "model": model.model_id,
             "messages": messages,
@@ -3116,16 +3216,7 @@ impl AiService {
         // 拿 JSON（见 supports_json_response_format 里"漏发比误发安全"的取舍）
         strip_unsupported_response_format(&mut req_body, &model);
 
-        let mut builder = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&req_body);
-        if let Some(key) = &model.api_key {
-            if !key.is_empty() {
-                builder = builder.header("Authorization", format!("Bearer {}", key));
-            }
-        }
-        let response = builder
+        let response = model_chat_request(client, &model, &req_body)
             .send()
             .await
             .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
@@ -3139,11 +3230,9 @@ impl AiService {
             .json()
             .await
             .map_err(|e| AppError::Custom(format!("解析响应失败: {}", e)))?;
-        let content = resp_json["choices"][0]["message"]["content"]
-            .as_str()
-            .ok_or_else(|| {
-                AppError::Custom("AI 返回格式异常：缺少 choices[0].message.content".to_string())
-            })?;
+        let content_owned = completion_text(&model.provider, &resp_json)
+            .ok_or_else(|| AppError::Custom("AI 返回格式异常：响应里没有正文".to_string()))?;
+        let content = content_owned.as_str();
 
         parse_plan_today_response(content).ok_or_else(|| {
             AppError::Custom(format!(
@@ -3214,7 +3303,6 @@ impl AiService {
         ];
 
         let client = crate::services::http_client::shared();
-        let url = build_openai_chat_url(&model.api_url);
         let mut req_body = json!({
             "model": model.model_id,
             "messages": messages,
@@ -3226,17 +3314,7 @@ impl AiService {
         // 拿 JSON（见 supports_json_response_format 里"漏发比误发安全"的取舍）
         strip_unsupported_response_format(&mut req_body, &model);
 
-        let mut builder = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&req_body);
-        if let Some(key) = &model.api_key {
-            if !key.is_empty() {
-                builder = builder.header("Authorization", format!("Bearer {}", key));
-            }
-        }
-
-        let response = builder
+        let response = model_chat_request(client, &model, &req_body)
             .send()
             .await
             .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
@@ -3250,9 +3328,9 @@ impl AiService {
             .json()
             .await
             .map_err(|e| AppError::Custom(format!("解析响应失败: {}", e)))?;
-        let content = resp_json["choices"][0]["message"]["content"]
-            .as_str()
-            .ok_or_else(|| AppError::Custom("AI 返回格式异常：缺少 content".into()))?;
+        let content_owned = completion_text(&model.provider, &resp_json)
+            .ok_or_else(|| AppError::Custom("AI 返回格式异常：响应里没有正文".into()))?;
+        let content = content_owned.as_str();
 
         parse_task_suggestion_response(content).ok_or_else(|| {
             AppError::Custom(format!(
@@ -3345,7 +3423,6 @@ impl AiService {
         ];
 
         let client = crate::services::http_client::shared();
-        let url = build_openai_chat_url(&model.api_url);
         let mut req_body = serde_json::json!({
             "model": model.model_id,
             "messages": messages,
@@ -3356,16 +3433,7 @@ impl AiService {
         // 拿 JSON（见 supports_json_response_format 里"漏发比误发安全"的取舍）
         strip_unsupported_response_format(&mut req_body, &model);
 
-        let mut builder = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&req_body);
-        if let Some(key) = &model.api_key {
-            if !key.is_empty() {
-                builder = builder.header("Authorization", format!("Bearer {}", key));
-            }
-        }
-        let response = builder
+        let response = model_chat_request(client, &model, &req_body)
             .send()
             .await
             .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
@@ -3379,11 +3447,9 @@ impl AiService {
             .json()
             .await
             .map_err(|e| AppError::Custom(format!("解析响应失败: {}", e)))?;
-        let content = resp_json["choices"][0]["message"]["content"]
-            .as_str()
-            .ok_or_else(|| {
-                AppError::Custom("AI 返回格式异常：缺少 choices[0].message.content".to_string())
-            })?;
+        let content_owned = completion_text(&model.provider, &resp_json)
+            .ok_or_else(|| AppError::Custom("AI 返回格式异常：响应里没有正文".to_string()))?;
+        let content = content_owned.as_str();
 
         parse_draft_note_response(content).ok_or_else(|| {
             AppError::Custom(format!(
@@ -3496,7 +3562,6 @@ impl AiService {
         ];
 
         let client = crate::services::http_client::shared();
-        let url = build_openai_chat_url(&model.api_url);
         let mut req_body = json!({
             "model": model.model_id,
             "messages": messages,
@@ -3508,16 +3573,7 @@ impl AiService {
         // 拿 JSON（见 supports_json_response_format 里"漏发比误发安全"的取舍）
         strip_unsupported_response_format(&mut req_body, &model);
 
-        let mut builder = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&req_body);
-        if let Some(key) = &model.api_key {
-            if !key.is_empty() {
-                builder = builder.header("Authorization", format!("Bearer {}", key));
-            }
-        }
-        let response = builder
+        let response = model_chat_request(client, &model, &req_body)
             .send()
             .await
             .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
@@ -3531,11 +3587,9 @@ impl AiService {
             .json()
             .await
             .map_err(|e| AppError::Custom(format!("解析响应失败: {}", e)))?;
-        let content = resp_json["choices"][0]["message"]["content"]
-            .as_str()
-            .ok_or_else(|| {
-                AppError::Custom("AI 返回格式异常：缺少 choices[0].message.content".to_string())
-            })?;
+        let content_owned = completion_text(&model.provider, &resp_json)
+            .ok_or_else(|| AppError::Custom("AI 返回格式异常：响应里没有正文".to_string()))?;
+        let content = content_owned.as_str();
 
         let mut parsed = parse_plan_from_goal_response(content).ok_or_else(|| {
             AppError::Custom(format!(
@@ -3676,7 +3730,6 @@ impl AiService {
         ];
 
         let client = crate::services::http_client::shared();
-        let url = build_openai_chat_url(&model.api_url);
         let mut req_body = json!({
             "model": model.model_id,
             "messages": messages,
@@ -3688,16 +3741,7 @@ impl AiService {
         // 拿 JSON（见 supports_json_response_format 里"漏发比误发安全"的取舍）
         strip_unsupported_response_format(&mut req_body, &model);
 
-        let mut builder = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&req_body);
-        if let Some(key) = &model.api_key {
-            if !key.is_empty() {
-                builder = builder.header("Authorization", format!("Bearer {}", key));
-            }
-        }
-        let response = builder
+        let response = model_chat_request(client, &model, &req_body)
             .send()
             .await
             .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
@@ -3711,11 +3755,9 @@ impl AiService {
             .json()
             .await
             .map_err(|e| AppError::Custom(format!("解析响应失败: {}", e)))?;
-        let content = resp_json["choices"][0]["message"]["content"]
-            .as_str()
-            .ok_or_else(|| {
-                AppError::Custom("AI 返回格式异常：缺少 choices[0].message.content".to_string())
-            })?;
+        let content_owned = completion_text(&model.provider, &resp_json)
+            .ok_or_else(|| AppError::Custom("AI 返回格式异常：响应里没有正文".to_string()))?;
+        let content = content_owned.as_str();
 
         let mut parsed = parse_plan_from_goal_response(content).ok_or_else(|| {
             AppError::Custom(format!(
@@ -4809,6 +4851,103 @@ mod remote_model_list_tests {
             assert!(r.status().is_success());
             let body: Value = r.json().await.unwrap();
             println!("  回复：{}", body["message"]["content"]);
+        });
+    }
+
+    /// 真实 Anthropic 协议端到端联调（手动跑，CI 不跑）：从 dev 库取一条 `claude_code` 配置，
+    /// 把「获取」、非流式、流式 + 工具调用两轮往返各真跑一遍。
+    ///
+    /// 密钥在进程内按本机密钥解密，**不打印**。只需要 DeepSeek 的密钥也能测：它提供
+    /// Anthropic 兼容端点 `https://api.deepseek.com/anthropic`。
+    ///
+    /// ```text
+    /// KB_LIVE_ANTHROPIC_DB=%APPDATA%/com.agilefr.kb-dev/dev-app.db KB_LIVE_ANTHROPIC_NAME=临时-Anthropic协议测试 \
+    ///     cargo test --manifest-path src-tauri/Cargo.toml --lib live_anthropic -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore]
+    fn live_anthropic_protocol() {
+        let (Ok(db), Ok(name)) = (std::env::var("KB_LIVE_ANTHROPIC_DB"), std::env::var("KB_LIVE_ANTHROPIC_NAME")) else {
+            eprintln!("未设置 KB_LIVE_ANTHROPIC_DB / KB_LIVE_ANTHROPIC_NAME，跳过");
+            return;
+        };
+        let conn = rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let (provider, url, stored_key, model): (String, String, String, String) = conn
+            .query_row(
+                "SELECT provider, api_url, api_key, model_id FROM ai_models WHERE name = ?1",
+                [&name],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert!(anthropic::is_anthropic(&provider), "{provider} 不是 Anthropic 协议的预置");
+        let key = crate::crypto::decrypt_field(&stored_key).expect("本机解不开这条密钥");
+        let client = crate::services::http_client::shared();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            // ① 「获取」：crate 按 Anthropic 协议零成本验证
+            let v = model_service::verify(&provider, &url, Some(&key), &model).await.unwrap();
+            println!("① 获取: ok={} error={:?}", v.ok, v.error);
+
+            // ② 非流式：5 个规划类功能 / 连通性测试走这条
+            let body = json!({ "model": model, "messages": [{ "role": "user", "content": "只回复两个字：你好" }], "max_tokens": 16 });
+            let r = chat_request(client, &provider, &url, Some(&key), &body, 16).send().await.unwrap();
+            let status = r.status();
+            let text = r.text().await.unwrap();
+            assert!(status.is_success(), "② 非流式 {status}: {text}");
+            let reply = completion_text(&provider, &serde_json::from_str(&text).unwrap());
+            println!("② 非流式回复：{reply:?}");
+            assert!(reply.is_some_and(|s| !s.is_empty()));
+
+            // ③ 流式 + 工具：第一轮应要求调 search_notes
+            let tools = json!([{ "type": "function", "function": {
+                "name": "search_notes",
+                "description": "搜索用户的笔记",
+                "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] }
+            }}]);
+            let mut messages = vec![
+                json!({ "role": "system", "content": "回答前必须先调用 search_notes 搜索笔记。" }),
+                json!({ "role": "user", "content": "我的笔记里关于周报的内容有哪些？" }),
+            ];
+            let round = |messages: Vec<Value>| {
+                let body = json!({ "model": model, "messages": messages, "stream": true, "tools": tools.clone(), "tool_choice": "auto" });
+                chat_request(client, &provider, &url, Some(&key), &body, 1024)
+            };
+            let collect = |text: String| {
+                let mut out = (String::new(), Vec::<(String, String, String)>::new(), None::<String>);
+                for line in text.lines() {
+                    match anthropic::parse_stream_line(line) {
+                        anthropic::StreamEvent::Text(t) => out.0.push_str(&t),
+                        anthropic::StreamEvent::ToolStart { id, name, .. } => out.1.push((id, name, String::new())),
+                        anthropic::StreamEvent::ToolArgs { partial_json, .. } => {
+                            out.1.last_mut().unwrap().2.push_str(&partial_json)
+                        }
+                        anthropic::StreamEvent::Stop(r) => out.2 = Some(r),
+                        anthropic::StreamEvent::Error(e) => panic!("流中途出错：{e}"),
+                        _ => {}
+                    }
+                }
+                out
+            };
+            let r = round(messages.clone()).send().await.unwrap();
+            assert!(r.status().is_success(), "③ 第一轮 {}", r.status());
+            let (said, calls, stop) = collect(r.text().await.unwrap());
+            println!("③ 第一轮：说「{said}」 调用 {calls:?} 结束原因 {stop:?}");
+            assert_eq!(stop.as_deref(), Some("tool_calls"), "第一轮应以调工具结束");
+            assert!(!calls.is_empty());
+
+            // 按 OpenAI 结构回填（与 chat_stream_with_skills 一致），交给转换层变成 tool_use / tool_result
+            messages.push(json!({ "role": "assistant", "content": said, "tool_calls": calls.iter().map(|(id, n, a)| json!({
+                "id": id, "type": "function", "function": { "name": n, "arguments": a }
+            })).collect::<Vec<_>>() }));
+            for (id, _, _) in &calls {
+                messages.push(json!({ "role": "tool", "tool_call_id": id, "content": "[{\"title\":\"9 月第 3 周周报\",\"snippet\":\"完成了同步 V1 的 12 个 bug\"}]" }));
+            }
+            let r = round(messages).send().await.unwrap();
+            let status = r.status();
+            let (answer, calls2, stop2) = collect(r.text().await.unwrap());
+            println!("③ 第二轮 {status}：{answer}\n   结束原因 {stop2:?} 追加调用 {calls2:?}");
+            assert!(status.is_success());
+            assert!(answer.contains("周报") || !calls2.is_empty(), "第二轮应基于工具结果作答");
         });
     }
 

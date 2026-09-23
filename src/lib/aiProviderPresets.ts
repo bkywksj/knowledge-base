@@ -6,12 +6,13 @@
  *
  * 此前这里是 24 家、5 张平行表的本地副本：加一家要同时改 5 处，模型候选停在旧代，
  * 与 sigil / reeve 的清单各自漂移。接入 crate 后删掉，统一由后端
- * `list_ai_provider_presets` 暴露（只含本项目能说的 OpenAI 兼容协议）。
+ * `list_ai_provider_presets` 暴露（crate 全量，与 Sigil 同一份）。
  *
- * # 本项目的两种对话协议
+ * # 本项目的三种对话协议
  *
- * `services/ai.rs`：`ollama` 走原生 `/api/chat`，其余一律 OpenAI 兼容 `chat/completions`。
- * 没有 Anthropic 原生 `/v1/messages`，所以 crate 里 Anthropic 协议的预置不出现在下拉里。
+ * `services/ai.rs`：`ollama` 走原生 `/api/chat`；Anthropic 官方 / Claude Code 中转走
+ * `/v1/messages`（`services/anthropic.rs` 转换）；其余走 OpenAI 兼容 `chat/completions`。
+ * 协议由预置 key 决定，存量配置不用改。
  */
 import { useEffect, useState } from "react";
 import { aiModelApi } from "@/lib/api";

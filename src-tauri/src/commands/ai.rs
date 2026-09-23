@@ -126,7 +126,7 @@ pub async fn test_ai_model(input: AiModelInput) -> Result<AiModelTestResult, Str
         .map_err(|e| e.to_string())
 }
 
-/// 服务商预置（ai-profile crate，只含本项目能说的 OpenAI 兼容协议）。静态数据，不含任何密钥。
+/// 服务商预置（ai-profile crate 全量，OpenAI 兼容与 Anthropic 协议都有）。静态数据，不含任何密钥。
 #[tauri::command]
 pub fn list_ai_provider_presets() -> Vec<ai_profile::ProviderPreset> {
     model_service::presets()
@@ -173,14 +173,23 @@ pub fn parse_ai_profile_text(text: String) -> Result<model_service::ImportedAiMo
 }
 
 /// 生成 ai.profile 文本。密钥由调用方传入（分享流程已经显式取过一次明文）。
+///
+/// `provider` 决定写进去的协议（Anthropic 档写 anthropic）；不传按 OpenAI 兼容。
 #[tauri::command]
 pub fn ai_model_to_ai_profile(
     name: String,
     api_url: String,
     api_key: String,
     model_id: String,
+    provider: Option<String>,
 ) -> String {
-    model_service::to_ai_profile(&name, &api_url, &api_key, &model_id)
+    model_service::to_ai_profile(
+        provider.as_deref().unwrap_or(ai_profile::preset::CUSTOM_PRESET_KEY),
+        &name,
+        &api_url,
+        &api_key,
+        &model_id,
+    )
 }
 
 /// 旧版本（v1.64.0 及以前）导出的模型配置 → 新口径。只给没有 `api_url_verbatim` 标记的导入用。
