@@ -1117,7 +1117,7 @@ function DesktopAiChatPage() {
                 >
                   {activeConv?.title || "对话"}
                 </span>
-                <Tooltip title="切换当前会话使用的 AI 模型">
+                <Tooltip title="切换当前会话使用的模型服务">
                   <Select
                     size="small"
                     value={activeConv?.model_id}

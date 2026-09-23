@@ -167,7 +167,7 @@ export function ImportConfigModal({
       if (summary.syncBackends > 0)
         lines.push(`✓ 同步源 ${summary.syncBackends} 个`);
       if (summary.aiModels > 0)
-        lines.push(`✓ AI 模型 ${summary.aiModels} 个`);
+        lines.push(`✓ 模型服务 ${summary.aiModels} 个`);
       if (summary.asrConfig) lines.push("✓ 语音识别配置");
       if (summary.featureToggles) lines.push("✓ 功能开关");
       // 导入成功但要提醒的（如 Anthropic 协议的配置），不能混进 errors 里当失败

@@ -2629,7 +2629,7 @@ impl AiService {
                 "length" => {
                     // 这句在 v61 之前是**死指路** —— 设置里根本没有 max_tokens 这一项。
                     // 现在有了（设置 → AI 模型 → 编辑 → 单次回答上限 token），所以指明位置。
-                    let tip = "\n\n> ⚠️ 回答达到长度上限被截断。到「设置 → AI 模型 → 编辑该模型 → 单次回答上限 token」调大即可（留空为服务商默认）。";
+                    let tip = "\n\n> ⚠️ 回答达到长度上限被截断。到「设置 → 模型服务 → 编辑 → 单次回答上限 token」调大即可（留空为服务商默认）。";
                     content.push_str(tip);
                     emit_ai_token(app, conversation_id, tip);
                     log::warn!(

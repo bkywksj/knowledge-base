@@ -362,7 +362,7 @@ export function MobileAiChat() {
         <div className="flex flex-col gap-2">
           {allModels.length === 0 && (
             <div className="rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-              手机端还没有配置 AI 模型
+              手机端还没有配置模型服务
               <br />
               <span className="text-xs text-slate-400">
                 （手机数据库与桌面独立，需要单独配置）
@@ -401,7 +401,7 @@ export function MobileAiChat() {
             onClick={openAddModel}
             className="mt-2 flex items-center justify-center gap-1 rounded-xl border border-dashed border-orange-300 bg-orange-50 px-4 py-3 text-sm font-semibold text-orange-700 active:bg-orange-100"
           >
-            <Plus size={16} /> 新增 AI 模型（DeepSeek 等）
+            <Plus size={16} /> 新建模型服务（DeepSeek 等）
           </button>
         </div>
       </Drawer>

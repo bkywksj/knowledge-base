@@ -484,7 +484,7 @@ export async function applyEnvelope(env: Envelope): Promise<ImportSummary> {
           );
         }
       } catch (e) {
-        summary.errors.push(`AI 模型创建失败：${e}`);
+        summary.errors.push(`模型服务创建失败：${e}`);
       }
       break;
 
@@ -580,7 +580,7 @@ export async function applyEnvelope(env: Envelope): Promise<ImportSummary> {
 export const KIND_LABELS: Record<ConfigKind, string> = {
   "webdav-backend": "WebDAV 同步",
   "sync-backend": "同步源",
-  "ai-model": "AI 模型",
+  "ai-model": "模型服务",
   "asr-config": "语音识别（ASR）",
   "feature-toggles": "功能开关",
   "bundle": "完整配置包",

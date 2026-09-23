@@ -87,7 +87,7 @@ export function MobileAiModelModal({
 
   return (
     <Modal
-      title="新增 AI 模型"
+      title="新建模型服务"
       open={open}
       onOk={submit}
       onCancel={onClose}

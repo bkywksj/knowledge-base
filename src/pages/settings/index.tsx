@@ -159,7 +159,7 @@ const SETTINGS_NAV_ITEMS: { id: string; label: string }[] = [
   { id: "settings-task-reminder", label: "待办提醒" },
   { id: "settings-import", label: "导入笔记" },
   { id: "settings-export", label: "导出 Markdown" },
-  { id: "settings-ai-models", label: "AI 模型" },
+  { id: "settings-ai-models", label: "模型服务" },
   { id: "settings-asr", label: "语音识别" },
   { id: "settings-templates", label: "模板管理" },
   { id: "settings-data-dir", label: "数据目录" },
@@ -1188,7 +1188,7 @@ function DesktopSettingsPage() {
   async function handleSetDefault(id: number) {
     try {
       await aiModelApi.setDefault(id);
-      message.success("已设为默认模型");
+      message.success("已设为默认模型服务");
       loadModels();
     } catch (e) {
       message.error(`设置失败: ${e}`);
@@ -1470,7 +1470,7 @@ function DesktopSettingsPage() {
             }
             disabled={record.is_default}
             onClick={() => handleSetDefault(record.id)}
-            title={record.is_default ? "当前默认模型" : "设为默认"}
+            title={record.is_default ? "当前默认的模型服务" : "设为默认"}
           />
           <Button
             type="text"
@@ -1507,7 +1507,7 @@ function DesktopSettingsPage() {
       <div className="anchor-page-content" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <div>
           <Title level={3}>设置</Title>
-          <Text type="secondary">应用配置与 AI 模型管理</Text>
+          <Text type="secondary">应用配置与模型服务管理</Text>
         </div>
 
       <Card id="settings-update" title="软件更新">
@@ -2876,14 +2876,14 @@ function DesktopSettingsPage() {
 
       <Card
         id="settings-ai-models"
-        title="AI 模型配置"
+        title="模型服务"
         extra={
           <Space size={4}>
             <Button
               size="small"
               icon={<Download size={14} />}
               onClick={() => setImportOpen(true)}
-              title="从 JSON / 二维码导入模型"
+              title="从 JSON / 二维码 / ai.profile 导入模型服务"
             >
               导入
             </Button>
@@ -2893,7 +2893,7 @@ function DesktopSettingsPage() {
               icon={<PlusOutlined />}
               onClick={openAddModel}
             >
-              添加模型
+              新建模型服务
             </Button>
           </Space>
         }
@@ -3209,7 +3209,7 @@ function DesktopSettingsPage() {
        * 全展开会顶到屏幕外。固定 body 最大高度 + 内部滚动 → 在小屏（笔记本 13"）也能看全。
        * extra 字号统一缩小 (12px) 进一步压缩纵向占用，见 Modal styles.body 内的 .ant-form-item-extra。 */}
       <Modal
-        title={editingModel ? "编辑 AI 模型" : "添加 AI 模型"}
+        title={editingModel ? "编辑模型服务" : "新建模型服务"}
         open={modelModalOpen}
         onCancel={() => setModelModalOpen(false)}
         destroyOnHidden

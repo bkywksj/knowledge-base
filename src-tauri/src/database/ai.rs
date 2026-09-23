@@ -610,7 +610,7 @@ impl Database {
         );
         let fallback: AiModel = conn
             .query_row(&sql_fallback, [], row_to_ai_model)
-            .map_err(|_| AppError::NotFound("尚未配置任何 AI 模型，请到设置页添加".into()))?;
+            .map_err(|_| AppError::NotFound("尚未配置任何模型服务，请到「设置 → 模型服务」添加".into()))?;
         let _ = conn.execute(
             "UPDATE ai_models SET is_default = 1 WHERE id = ?1",
             [fallback.id],

@@ -291,7 +291,7 @@ export function MobileAi() {
           <div>
             <h1 className="text-2xl font-bold text-slate-900">AI 助手</h1>
             <div className="mt-0.5 text-xs text-slate-400">
-              {defaultModel ? defaultModel.name : "未配置模型"} ·{" "}
+              {defaultModel ? defaultModel.name : "未配置模型服务"} ·{" "}
               {conversations.length} 个对话
             </div>
           </div>
@@ -299,7 +299,7 @@ export function MobileAi() {
             <button
               onClick={async () => {
                 if (!defaultModel) {
-                  message.warning("请先配置一个 AI 模型");
+                  message.warning("请先配置一个模型服务");
                   return;
                 }
                 // Key 明文不随列表返回（P0-1b），分享时按 id 单独取
@@ -336,7 +336,7 @@ export function MobileAi() {
         <div className="mt-3 flex gap-2 overflow-x-auto -mx-4 px-4 pb-1 scrollbar-none">
           {models.length === 0 ? (
             <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1.5 text-sm text-slate-400">
-              请到 设置 → AI 模型 添加
+              请到 设置 → 模型服务 添加
             </span>
           ) : (
             models.map((m) => (
@@ -356,7 +356,7 @@ export function MobileAi() {
           )}
           <button
             onClick={() => setAddModelOpen(true)}
-            aria-label="新增模型"
+            aria-label="新建模型服务"
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"
           >
             <Plus size={14} />

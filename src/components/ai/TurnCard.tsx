@@ -316,7 +316,7 @@ function OutcomeNotice({
             </Button>
           )}
           <Button size="small" type="text" icon={<Settings size={12} />} onClick={onOpenModelSettings}>
-            检查模型设置
+            去改模型服务
           </Button>
         </div>
       </div>

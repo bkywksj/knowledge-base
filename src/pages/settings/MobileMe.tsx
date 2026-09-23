@@ -400,7 +400,7 @@ export function MobileMe() {
         />
         <Row
           icon={<Sparkles size={20} className="text-[#FA8C16]" />}
-          label="AI 模型管理"
+          label="模型服务"
           right={
             <span className="text-xs text-slate-400">
               {counts.modelCount} 个

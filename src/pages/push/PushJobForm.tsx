@@ -180,10 +180,10 @@ export default function PushJobForm({ open, editing, onClose, onSaved }: Props) 
           />
         </Form.Item>
 
-        <Form.Item name="model_id" label="AI 模型" tooltip="留空使用默认模型">
+        <Form.Item name="model_id" label="模型服务" tooltip="留空使用默认的模型服务">
           <Select
             allowClear
-            placeholder="默认模型"
+            placeholder="默认模型服务"
             options={models.map((m) => ({
               label: `${m.name}（${m.provider}）`,
               value: m.id,
