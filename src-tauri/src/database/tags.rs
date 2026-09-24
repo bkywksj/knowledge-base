@@ -26,6 +26,53 @@ fn bump_note_updated_at(conn: &rusqlite::Connection, note_id: i64) -> Result<(),
     Ok(())
 }
 
+/// 🔴 标签名在整个库内**全局唯一**（表上 `name UNIQUE`），不是「同一父级内唯一」。
+///
+/// 这是有意保留的约束：跨设备同步（`sync_note_tags`）与按标签筛选（dataview）都**只按名字**
+/// 识别标签，同步协议里没有层级路径。允许「工作/周报」「学习/周报」并存，同步会把笔记挂到
+/// 任意一个「周报」上且不报错 —— 所以宁可在写入前拦下，给出能看懂的提示，而不是让它撞约束
+/// 报一句 `UNIQUE constraint failed: tags.name`。
+///
+/// 名字已被 `except_id` 以外的标签占用时，返回占用者的完整路径（如 `工作/周报`）。
+fn tag_name_taken(
+    conn: &rusqlite::Connection,
+    name: &str,
+    except_id: Option<i64>,
+) -> Result<Option<String>, AppError> {
+    let hit: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM tags WHERE name = ?1 AND id IS NOT ?2",
+            params![name, except_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(mut id) = hit else {
+        return Ok(None);
+    };
+    // 沿 parent_id 往上拼路径；限深防御存量里的环
+    let mut segs: Vec<String> = Vec::new();
+    for _ in 0..32 {
+        let (seg, parent): (String, Option<i64>) = conn.query_row(
+            "SELECT name, parent_id FROM tags WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        segs.push(seg);
+        match parent {
+            Some(pid) => id = pid,
+            None => break,
+        }
+    }
+    segs.reverse();
+    Ok(Some(segs.join("/")))
+}
+
+fn name_taken_error(name: &str, taken_at: &str) -> AppError {
+    AppError::InvalidInput(format!(
+        "标签「{name}」已存在（位于「{taken_at}」）。标签名在整个知识库内不能重复 —— 跨设备同步按名字识别标签"
+    ))
+}
+
 impl Database {
     // ─── 标签 DAO ─────────────────────────────────
 
@@ -44,6 +91,9 @@ impl Database {
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
 
+        if let Some(at) = tag_name_taken(&conn, name, None)? {
+            return Err(name_taken_error(name, &at));
+        }
         conn.execute(
             "INSERT INTO tags (name, color, parent_id, sort_order)
              VALUES (?1, ?2, ?3,
@@ -221,6 +271,9 @@ impl Database {
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
 
+        if let Some(at) = tag_name_taken(&conn, name, Some(id))? {
+            return Err(name_taken_error(name, &at));
+        }
         let affected =
             conn.execute("UPDATE tags SET name = ?1 WHERE id = ?2", params![name, id])?;
 
@@ -303,6 +356,9 @@ impl Database {
             parent = Some(match existing {
                 Some(id) => id,
                 None => {
+                    if let Some(at) = tag_name_taken(&conn, seg, None)? {
+                        return Err(name_taken_error(seg, &at));
+                    }
                     conn.execute(
                         "INSERT INTO tags (name, color, parent_id) VALUES (?1, NULL, ?2)",
                         params![seg, parent],
@@ -839,15 +895,25 @@ mod sync_tag_tests {
         assert_eq!(listed.len(), 2);
     }
 
+    /// 🔴 标签名全局唯一（同步按名字识别标签，见 `tag_name_taken`）：
+    /// 别的分支下已有同名标签时给出可读的提示，而不是撞 UNIQUE 约束报原始 SQL 错误。
     #[test]
-    fn tag_path_segments_independent_namespace() {
+    fn tag_name_is_globally_unique_with_readable_error() {
         let db = fresh();
-        // 两个不同层级下都有"周报"标签，互不冲突（按 name + parent_id 唯一）
-        let a = db.get_or_create_tag_path("工作/周报").unwrap();
-        let b = db.get_or_create_tag_path("学习/周报").unwrap();
-        assert_ne!(a, b);
-        let listed = db.list_tags().unwrap();
-        assert_eq!(listed.len(), 4); // 工作 / 学习 / 工作下周报 / 学习下周报
+        db.get_or_create_tag_path("工作/周报").unwrap();
+
+        let err = db.get_or_create_tag_path("学习/周报").unwrap_err().to_string();
+        assert!(err.contains("周报") && err.contains("工作/周报"), "{err}");
+        assert!(!err.contains("UNIQUE"), "{err}");
+
+        let err = db.create_tag("周报", None, None).unwrap_err().to_string();
+        assert!(err.contains("工作/周报"), "{err}");
+
+        let other = db.create_tag("日报", None, None).unwrap();
+        let err = db.rename_tag(other.id, "周报").unwrap_err().to_string();
+        assert!(err.contains("工作/周报"), "{err}");
+        // 改成自己原来的名字不算冲突
+        db.rename_tag(other.id, "日报").unwrap();
     }
 
     #[test]
