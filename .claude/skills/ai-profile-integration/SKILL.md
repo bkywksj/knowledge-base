@@ -54,7 +54,7 @@ ai.profile 解析（只认 `v === 1`）、`services/ai.rs` 的 `build_openai_api
 
 | 能力 | 文件 |
 |---|---|
-| 依赖声明（按提交号引用，`chat` + `client`，rustls） | `src-tauri/Cargo.toml` |
+| 依赖声明（crates.io 版本，`chat` + `client`，rustls） | `src-tauri/Cargo.toml` |
 | 与 crate 的接缝（预置 / 验证 / 限额 / ai.profile / 旧配置修正） | `src-tauri/src/services/model_service.rs` |
 | Commands | `commands/ai.rs`：`list_ai_provider_presets` / `verify_ai_model_endpoint` / `parse_ai_profile_text` / `ai_model_to_ai_profile` / `fix_legacy_ai_model` |
 | 端点拼接 | `services/ai.rs` 的 `build_openai_chat_url`（转发 crate）/ `ollama_native_root`；`services/anthropic.rs` 的 `messages_url` |
@@ -110,7 +110,7 @@ crate 裁剪按 Anthropic 结构配对 tool —— 硬接会拆坏配对。
 
 ## 升级 ai-profile
 
-1. 改 `src-tauri/Cargo.toml` 的 `rev`
+1. 改 `src-tauri/Cargo.toml` 的 `version`；同一小版本内的补丁用 `cargo update -p ai-profile`
 2. 测试（项目根目录，不要 cd）：
    ```bash
    cargo test --manifest-path src-tauri/Cargo.toml --workspace

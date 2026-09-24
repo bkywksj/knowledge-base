@@ -238,9 +238,9 @@ claude --worktree feature-x
 ## 🔴 模型服务归 ai-profile crate 管
 
 AI 模型配置的服务商预置、模型清单、端点拼接、「获取」验证、限额分层、ai.profile 导入导出，
-由同级公共库 `E:/my/桌面软件tauri/ai-profile` 提供，本项目按 git 提交号引用（`src-tauri/Cargo.toml`）。
+由同级公共库 `E:/my/桌面软件tauri/ai-profile` 提供，本项目按 crates.io 版本号引用（`src-tauri/Cargo.toml`）。
 
-- **加模型 / 加服务商 / 改默认 model / 改地址 → 去 ai-profile 仓库改**，本项目只升 `rev`
+- **加模型 / 加服务商 / 改默认 model / 改地址 → 去 ai-profile 仓库改**，本项目只升版本号
 - **不要在本项目里写预置清单、模型列表、端点拼接规则、ai.profile 解析器** —— 那正是接入时删掉的副本
 - `ai_models.provider` 存的是 crate 预置 key（schema v62 起），地址**原样使用、不推断 /v1**
 - 生效的上下文窗口用 `model_service::effective_context_window`，别直接读 `max_context`（0 = 未设置）
