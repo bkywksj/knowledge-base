@@ -20,6 +20,9 @@ fn clamp_limit(limit: Option<i64>) -> i64 {
 
 impl super::Database {
     /// 最近修改的笔记（排除已删/隐藏/日记，逻辑同主列表）
+    ///
+    /// 🔴 `updated_at` 只精确到秒：同一秒内改过的几条会并列，并列行的相对顺序 SQL 不保证。
+    /// 各处排序都补 `id DESC` 作次级键（自增 id = 写入先后），否则「最新在前」只对跨秒的成立。
     pub fn dataview_recent_notes(&self, limit: Option<i64>) -> Result<Vec<DataviewRow>, AppError> {
         let conn = self
             .conn
@@ -29,7 +32,7 @@ impl super::Database {
             "SELECT id, title, updated_at
              FROM notes
              WHERE is_deleted = 0 AND is_hidden = 0 AND is_scratch = 0 AND is_daily = 0
-             ORDER BY updated_at DESC
+             ORDER BY updated_at DESC, id DESC
              LIMIT ?1",
         )?;
         let rows = stmt
@@ -64,7 +67,7 @@ impl super::Database {
              INNER JOIN tags t ON nt.tag_id = t.id
              WHERE n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0 AND n.is_daily = 0
                AND t.name = ?1
-             ORDER BY n.updated_at DESC
+             ORDER BY n.updated_at DESC, n.id DESC
              LIMIT ?2",
         )?;
         let rows = stmt
@@ -106,7 +109,7 @@ impl super::Database {
              FROM notes
              WHERE is_deleted = 0 AND is_hidden = 0 AND is_scratch = 0 AND is_daily = 0
                AND folder_id IN ({})
-             ORDER BY updated_at DESC
+             ORDER BY updated_at DESC, id DESC
              LIMIT ?",
             placeholders
         );
@@ -186,7 +189,7 @@ impl super::Database {
             "SELECT id, title, due_date, status, updated_at
              FROM tasks
              WHERE project_id = ?1 AND parent_task_id IS NULL
-             ORDER BY status ASC, (due_date IS NULL) ASC, due_date ASC, updated_at DESC
+             ORDER BY status ASC, (due_date IS NULL) ASC, due_date ASC, updated_at DESC, id DESC
              LIMIT ?2",
         )?;
         let rows = stmt
