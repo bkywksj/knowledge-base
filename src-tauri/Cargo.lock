@@ -86,9 +86,12 @@ dependencies = [
 
 [[package]]
 name = "ai-profile"
-version = "0.1.0"
-source = "git+https://github.com/bkywksj/ai-profile?rev=2a32261#2a32261aaed2bd80b59fa7e77b40a874cb3c9756"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3beb5e373a58a59d9222330ca59074b0c01708f71dedf2be96d0f3b9867808b"
 dependencies = [
+ "base64 0.22.1",
+ "log",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
