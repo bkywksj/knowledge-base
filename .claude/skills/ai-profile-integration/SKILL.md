@@ -110,7 +110,7 @@ crate 裁剪按 Anthropic 结构配对 tool —— 硬接会拆坏配对。
 
 ## 升级 ai-profile
 
-1. 改 `src-tauri/Cargo.toml` 的 `version`；同一小版本内的补丁用 `cargo update -p ai-profile`
+1. 改 `src-tauri/Cargo.toml` 的 `version`（🔴 补丁版本也要改：只跑 `cargo update` 的话，锁在旧版本的环境不会自动升级，用到新接口时直接编译失败），再 `cargo update -p ai-profile`，确认 `Cargo.lock` 只动了这一个包；提交时按路径只 add 这几个依赖文件（工作区里可能有别的会话的改动）。完整流程见 ai-profile 仓库技能 `downstream-sync`
 2. 测试（项目根目录，不要 cd）：
    ```bash
    cargo test --manifest-path src-tauri/Cargo.toml --workspace

@@ -21,21 +21,34 @@ description: |
 |---|---|
 | 加模型 / 加服务商 / 改默认 model / 改地址 / 改静态限额 | **ai-profile 仓库**（`E:/my/桌面软件tauri/ai-profile`，技能 `preset-maintenance`），本项目只升依赖 |
 | ai.profile 解析规则、端点拼接、模型清洗、验证错误、超长识别 | **ai-profile 仓库** |
-| `ai_models` 存储、密钥加密、对话（Ollama 原生 + OpenAI 兼容 SSE）、RAG / 附件预算、历史降档阶梯、`kbConfig` 信封、界面 | 本项目 |
+| `ai_models` 存储、密钥加密、对话（Ollama 原生 / OpenAI 兼容 / Anthropic `/v1/messages`）、RAG / 附件预算、历史降档阶梯、`kbConfig` 信封、界面 | 本项目 |
 
 **不要在本项目里写预置清单、模型列表、端点拼接规则、ai.profile 解析器。**
 接入时删掉的副本：前端 `aiProviderPresets.ts` 里 24 家 / 5 张平行表、`configShare.ts` 的 TS 版
 ai.profile 解析（只认 `v === 1`）、`services/ai.rs` 的 `build_openai_api_url`（自动补 `/v1`）与
 `list_remote_models`。
 
-## 本项目只说 OpenAI 兼容协议
+## 三种对话协议（2026-09-23 起支持 Anthropic）
 
-对话只有 Ollama 原生 `/api/chat` 与 OpenAI `chat/completions` 两种，**没有 Anthropic 原生 `/v1/messages`**。
+协议由配置存的预置 key 决定：`model_service::protocol_of(provider)`（查 crate；不认识的 key 按 OpenAI 兼容）。
 
-- 预置只暴露 crate 里 `protocol == OpenAiCompatible` 的（`model_service::presets`）
-- 导入 Anthropic 协议的 ai.profile：按 OpenAI 兼容导入（官方地址有兼容端点能用），
-  标记 `unsupported_protocol`，导入后提醒用户「只开放 /v1/messages 的中转用不了」
-- 以后要加 Anthropic 原生对话，是在 `services/ai.rs` 里加一条对话实现，不是改 crate
+| 协议 | 预置 | 实现 |
+|---|---|---|
+| Ollama 原生 `/api/chat` | `ollama` | `stream_ollama*`（5 个非流式功能走它的 OpenAI 兼容层 `…/v1`） |
+| Anthropic `/v1/messages` | `anthropic_official` / `claude_code` | `services/anthropic.rs` 转换 |
+| OpenAI 兼容 `chat/completions` | 其余全部 | `services/ai.rs` |
+
+- 预置暴露 crate **全量**（与 Sigil 同一份）；官方档 crate 不带地址，`presets()` 补 `https://api.anthropic.com/v1`
+- 🔴 **11 处发对话请求的地方都照旧拼 OpenAI 结构的请求体**，统一经 `chat_request` / `model_chat_request`
+  发送（按协议换地址 / 鉴权头 / 请求体），响应经 `completion_text`、流经 `stream_text_delta` /
+  `handle_stream_line` 解析。**新增对话请求别手拼 `Authorization: Bearer`**，否则 Anthropic 配置直接 401
+- Anthropic 的取舍（照 Sigil，都是实测踩出来的）：只发 `x-api-key` + `anthropic-version`（仿 Claude Code 头
+  会让中转路由到空账号池 503）；历史只回传 text / tool_use，不回传 thinking；`max_tokens` 必填，
+  没设时 8192 且不超过已知输出上限；丢 `temperature` / `top_p` / `seed` / `response_format`
+- ai.profile 导入照来源协议：Anthropic + 官方地址 / 无地址 → `anthropic_official`，其它地址 → `claude_code`；
+  导出按 provider 写协议（`ai_model_to_ai_profile` 的 `provider` 参数）
+- 真实端点联调：`live_anthropic_protocol`（`#[ignore]`，读 dev 库里的一条 `claude_code` 配置；
+  DeepSeek 的 `https://api.deepseek.com/anthropic` 可用来测，它没有 `/models`，「获取」会 404，对话正常）
 
 ## 接入点
 
@@ -44,7 +57,8 @@ ai.profile 解析（只认 `v === 1`）、`services/ai.rs` 的 `build_openai_api
 | 依赖声明（crates.io 版本，`chat` + `client`，rustls） | `src-tauri/Cargo.toml` |
 | 与 crate 的接缝（预置 / 验证 / 限额 / ai.profile / 旧配置修正） | `src-tauri/src/services/model_service.rs` |
 | Commands | `commands/ai.rs`：`list_ai_provider_presets` / `verify_ai_model_endpoint` / `parse_ai_profile_text` / `ai_model_to_ai_profile` / `fix_legacy_ai_model` |
-| 端点拼接 | `services/ai.rs` 的 `build_openai_chat_url`（转发 crate）/ `ollama_native_root` |
+| 端点拼接 | `services/ai.rs` 的 `build_openai_chat_url`（转发 crate）/ `ollama_native_root`；`services/anthropic.rs` 的 `messages_url` |
+| 协议分流 | `services/ai.rs` 的 `chat_request` / `completion_text` / `stream_text_delta` / `handle_stream_line`；`services/anthropic.rs` |
 | 前端适配层 | `src/lib/aiProviderPresets.ts`（`useAiProviderPresets` 等，**只做形状适配**） |
 | 表单 | `src/pages/settings/index.tsx`、`src/components/ai/MobileAiModelModal.tsx` |
 | 分享 / 导入 | `src/lib/configShare.ts`（`kbConfig` 信封归本项目；ai.profile 交给后端） |
@@ -96,7 +110,7 @@ crate 裁剪按 Anthropic 结构配对 tool —— 硬接会拆坏配对。
 
 ## 升级 ai-profile
 
-1. 改 `src-tauri/Cargo.toml` 的 `version`；同一小版本内的补丁用 `cargo update -p ai-profile`
+1. 改 `src-tauri/Cargo.toml` 的 `version`（🔴 补丁版本也要改：只跑 `cargo update` 的话，锁在旧版本的环境不会自动升级，用到新接口时直接编译失败），再 `cargo update -p ai-profile`，确认 `Cargo.lock` 只动了这一个包；提交时按路径只 add 这几个依赖文件（工作区里可能有别的会话的改动）。完整流程见 ai-profile 仓库技能 `downstream-sync`
 2. 测试（项目根目录，不要 cd）：
    ```bash
    cargo test --manifest-path src-tauri/Cargo.toml --workspace
