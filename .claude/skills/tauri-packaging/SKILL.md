@@ -353,7 +353,7 @@ src-tauri/tauri.android.conf.json: "version": "0.1.0"
   - `debug`：SDK debug keystore 自签名 → APK（侧载，仅 workflow_dispatch 选 debug 时）
   - `release`（tag 触发 / workflow_dispatch 选 release）：从 Secrets 还原 `kb-release.jks` + `key.properties` → `tauri android build --apk --aab` 正式签名 → 产物起稳定名 `Knowledge.Base_<移动版本>_android-arm64.apk`（+ `.aab`，移动版本读 `tauri.android.conf.json`）→ tag 触发时附到本仓库 GitHub Release 草稿（tag = `mobile-v<移动版本>`）；同时设 `TAURI_SIGNING_PRIVATE_KEY`
   - ⚠️ 被 tag 的那个 commit 消息**不能含 `[skip ci]`**，否则 tag push 也会被跳过
-  - 6 个 Secrets（`ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` / `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）在主 `bkywksj/knowledge-base` + 备用 `allebamala/knowledge-base` 两个仓库都已配
+  - 6 个 Secrets（`ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` / `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）在主 `bkywksj/knowledge-base` 已配（切备用 CI 仓时需在新仓补配）
   - **App 内"检查更新"闭环**：`release-publish` 技能「移动端（Android）独立发布」流程把 release APK 放进 `releases/mobile-v<版本>/` + 生成 `update-mobile.json`（指向 release 仓 raw / R2 上的 APK），App 的 `check_mobile_update`（`src-tauri/src/commands/mobile_update.rs`）读它拿直链。
 - **iOS**：CI 尚未接（需 Apple Developer 账号 + macOS runner，T-M020 待办）。
 

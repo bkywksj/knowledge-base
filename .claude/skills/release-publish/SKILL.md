@@ -147,9 +147,8 @@ cup_watch 首发在这上面烧了约 10 轮反复误判。**事实固定如下�
 | 名称 | 仓库地址 | Git Remote | Token 文件 | 用途 |
 |------|---------|------------|-----------|------|
 | **GitHub 主仓库** | `https://github.com/bkywksj/knowledge-base` | `github` | 已存 git credential（默认凭证）| CI 构建（主） |
-| **GitHub 备用 1** | `git@github.com:allebamala/knowledge-base.git`（SSH） | `github2` | `~/.gh_token_allebamala` + 本机 SSH key 已绑 | bkywksj 额度耗尽时切换 |
-| **GitHub 备用 2** | `https://github.com/elginbolds-cell/knowledge-base.git`（HTTPS + token URL） | `github3` | `~/.gh_token_elginbolds` | bkywksj + allebamala 都耗尽时切换 |
-| **GitHub 备用 3+** | 按需新建，如 `https://github.com/shdidnjfreezing-del/knowledge-base`（`github12`，v1.31.0 用） | `github5` / `github7` / `github12` … | **Sigil 凭据**（`mcp__sigil__list_credentials(kind=github_token)` 查真实 name → account） | 前面都耗尽时切换 |
+| **GitHub 备用 1** | `https://github.com/elginbolds-cell/knowledge-base.git`（HTTPS + token URL） | `github3` | `~/.gh_token_elginbolds` | bkywksj 额度耗尽时切换 |
+| **GitHub 备用 2+** | 按需新建，如 `https://github.com/shdidnjfreezing-del/knowledge-base`（`github12`，v1.31.0 用） | `github5` / `github7` / `github12` … | **Sigil 凭据**（`mcp__sigil__list_credentials(kind=github_token)` 查真实 name → account） | 前面都耗尽时切换 |
 
 > 🔴 **新 CI 仓一次性开通（4 步，全走 Sigil，凭据不落地）**：
 > ```
@@ -164,7 +163,7 @@ cup_watch 首发在这上面烧了约 10 轮反复误判。**事实固定如下�
 > 4. git remote add <githubN> <https url> → mcp__sigil__git_push(credential_name=<githubN>, …)
 >    tag 用 mcp__sigil__workspace_register + workspace_push_tag（git_push 只推分支不推 tag）
 > ```
-> **别名对照**：Sigil 凭据 `github1`=bkywksj（remote `github`）、`github2`=allebamala、`github3`=elginbolds、
+> **别名对照**：Sigil 凭据 `github1`=bkywksj（remote `github`）、`github3`=elginbolds、
 > `github12`=shdidnjfreezing-del。**不要凭印象猜**，用 `list_credentials` 查。
 
 > **发布前必须用 AskUserQuestion 询问**：本次用哪个 GitHub 仓库跑 CI？
@@ -173,9 +172,9 @@ cup_watch 首发在这上面烧了约 10 轮反复误判。**事实固定如下�
 >
 > **github3 推送注意**：elginbolds-cell 账号的凭证**不要**存进 git credential（会覆盖 github.com 默认凭证 bkywksj，导致推 release 仓库时认证错乱）。github3 的 remote URL 已内嵌 token，正常 `git push github3 ...` 即可。
 >
-> **github3 Actions Secrets**：首次切到 github3 前，必须在 `elginbolds-cell/knowledge-base` 仓库的 Settings → Secrets and variables → Actions 手动配齐 `TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（空）、`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`（与 github / github2 一致）。未配齐 CI 会失败。
+> **github3 Actions Secrets**：首次切到 github3 前，必须在 `elginbolds-cell/knowledge-base` 仓库的 Settings → Secrets and variables → Actions 手动配齐 `TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（空）、`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`（与 github 一致）。未配齐 CI 会失败。
 >
-> **API 调用切换**：CI 监控 / 产物下载脚本里的 owner/repo 路径需要跟着改：`bkywksj/knowledge-base` → `allebamala/knowledge-base` → `elginbolds-cell/knowledge-base`；token 也要跟着切到对应的 `~/.gh_token*` 文件。
+> **API 调用切换**：CI 监控 / 产物下载脚本里的 owner/repo 路径需要跟着改：`bkywksj/knowledge-base` → `elginbolds-cell/knowledge-base` → …；token 也要跟着切到对应的 `~/.gh_token*` 文件。
 
 ---
 
@@ -286,7 +285,7 @@ gh variable set RELEASE_WINDOWS --repo <owner/repo> -b skip
 
 > 🔴 **每次发版都显式设一次（幂等）**，即使这次要 `build` 也要显式设 —— 否则上次的 `skip`
 > 残留会让这次悄悄漏建 Windows，直到步骤 7 清点产物才发现。
-> 🔴 **变量是"每个 CI 仓各自一份"**：切到备用 CI 仓（github2/github3/…）时要在**新仓**重新设，
+> 🔴 **变量是"每个 CI 仓各自一份"**：切到备用 CI 仓（github3/github5/…）时要在**新仓**重新设，
 > 新建的 CI 仓默认没有该变量（＝含 Windows）。
 >
 > 本机是否属于"本地构建档"由 `.claude/signing.local.json` 是否存在判定；存在时按
@@ -947,8 +946,8 @@ curl -I "https://pub-9d9e6c0cb6934fb0a0c505e3c64f39b2.r2.dev/knowledge-base/vX.Y
 |------|------|
 | M1 本地自检 + 询问版本号/说明 | `npx tsc --noEmit`；问新移动版本号（读 `src-tauri/tauri.android.conf.json` 的 `version`）+ 更新说明 |
 | M2 改版本号 | Edit `src-tauri/tauri.android.conf.json` 的 `"version": "x.y.z"`（**只改这一处**，桌面三处不动） |
-| M3 提交 + 推 | `git add src-tauri/tauri.android.conf.json && git commit -m "release(mobile): vx.y.z ..."`（⚠️ commit message **不能含 `[skip ci]`**，否则 tag push 也会被跳过）；`git push origin master && git push github master && git push github2 master` |
-| M4 打 tag 触发 CI | `git tag mobile-vx.y.z && git push <CI 远端> mobile-vx.y.z`（CI 远端 = `github` 或配额耗尽时 `github2`）→ 触发 `android.yml` release 路径（正式签名 APK + AAB） |
+| M3 提交 + 推 | `git add src-tauri/tauri.android.conf.json && git commit -m "release(mobile): vx.y.z ..."`（⚠️ commit message **不能含 `[skip ci]`**，否则 tag push 也会被跳过）；`git push origin master && git push github master`（切备用 CI 时再推对应 remote） |
+| M4 打 tag 触发 CI | `git tag mobile-vx.y.z && git push <CI 远端> mobile-vx.y.z`（CI 远端 = `github` 或配额耗尽时的备用 remote，如 `github3`）→ 触发 `android.yml` release 路径（正式签名 APK + AAB） |
 | M5 ScheduleWakeup 轮询 CI | 同桌面步骤 6，盯 `Android Build` run（`head_branch=mobile-vx.y.z`），~20–30 分钟 |
 | M6 下载产物 | CI 完成后产物在 GitHub Release 草稿（tag = `mobile-vx.y.z`）+ Actions Artifact（名 `knowledge-base-android-release-vx.y.z`）。从 Release assets 或 Artifact zip 取 `Knowledge.Base_x.y.z_android-arm64.apk` + `.aab`，下到 `releases/mobile-vx.y.z/`（release 仓）。校验 APK 是 release 体积（~20–120MB，不是 ~345MB 的 debug） |
 | M7 上传 R2 | `~/bin/rclone.exe copy "releases/mobile-vx.y.z/Knowledge.Base_x.y.z_android-arm64.apk" r2:downloads/knowledge-base/mobile-vx.y.z/`；`.aab` 同样 |

@@ -20,7 +20,7 @@
 #       同时出 APK（侧载 / 配合 App 内"检查更新"）和 AAB（传 Google Play）
 #       —— tag 触发、或 workflow_dispatch 选 release 时走这条
 #
-# release 构建需要的 GitHub Secrets（主 bkywksj 仓库 + 备用 allebamala 仓库都已配）：
+# release 构建需要的 GitHub Secrets（主 bkywksj 仓库已配；切备用 CI 仓时需在新仓补配）：
 #   - ANDROID_KEYSTORE_BASE64        base64(kb-release.jks 文件内容)
 #   - ANDROID_KEYSTORE_PASSWORD      keystore 密码
 #   - ANDROID_KEY_ALIAS              key alias（kb）
