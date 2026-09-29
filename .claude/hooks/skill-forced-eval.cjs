@@ -49,6 +49,14 @@ if (isSlashCommand) {
   process.exit(0);
 }
 
+// 智码编排系统投进来的输入不是用户提问：子会话跑完的回执（[AGENT-EVENT]）、CLI 的后台任务完成通知。
+// 总控一次编排要收几十上百条，每条都塞一份技能清单纯属浪费（本机 25 个总控会话里这份注入占写进上下文的 8%，
+// 近一半跟在回执和通知后面）。长回执会被 CLI 包进 <pasted_content id="…">，先剥掉外壳再认。
+const unwrapped = prompt.replace(/^(?:<pasted_content[^>]*>\s*)+/, '');
+if (unwrapped.startsWith('[AGENT-EVENT]') || unwrapped.startsWith('<task-notification>')) {
+  process.exit(0);
+}
+
 const instructions = `## 强制技能激活流程（必须执行）
 
 ### 步骤 1 - 评估（必须在响应中明确展示）
