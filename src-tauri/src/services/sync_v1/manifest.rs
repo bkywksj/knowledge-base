@@ -154,9 +154,21 @@ pub fn compute_local_manifest(
     // T-S012：把"最近 30 天内软删"的笔记一起拉进来，以 tombstone=1 标志推到其他端。
     // T-S014：读 is_encrypted + encrypted_blob 列，加密笔记的 content_hash 改用 blob 的 hex 算 hash。
     //
-    // `WHERE stable_uuid IS NOT NULL` 是防御性约束（v36 backfill 已覆盖全部存量，
-    // 但 ALTER TABLE 没加 NOT NULL 约束）—— 极端异常路径下 NULL 行会被排除 manifest，
-    // 不会被同步出去（自动隔离损坏数据）。
+    // `WHERE stable_uuid IS NOT NULL`：NULL 行没有跨端标识，无法进 manifest，只能跳过。
+    // 🔴 但"正常路径不会出现 NULL"并不成立：v36 backfill 只跑一次，之后任何漏写 stable_uuid 的
+    // INSERT（v64 之前的 kb-core / MCP 就是）都会产出 NULL 行，且被这里静默排除、永远不同步。
+    // 跳过本身无法避免，所以至少留一条 warn，别让"某些笔记不同步"再无迹可查。
+    match conn.query_row(
+        "SELECT COUNT(*) FROM notes WHERE stable_uuid IS NULL AND is_deleted = 0",
+        [],
+        |r| r.get::<_, i64>(0),
+    ) {
+        Ok(n) if n > 0 => log::warn!(
+            "[sync_v1] {} 条笔记缺少 stable_uuid，已被排除在同步之外（重启应用会由迁移补齐；若持续出现说明有写入路径漏写该列）",
+            n
+        ),
+        _ => {}
+    }
     let mut stmt = conn.prepare(
         "SELECT id, stable_uuid, title, content_hash, updated_at, folder_id, is_deleted, deleted_at,
                 is_encrypted, encrypted_blob, is_daily, daily_date, is_hidden, note_type
@@ -430,6 +442,13 @@ fn build_task_category_entries(db: &Database) -> Result<Vec<TaskCategoryManifest
 /// 子任务通过 parent_task_uuid 引用父任务（拉端先按主任务建好 id 映射，再处理子任务）。
 fn build_task_entries(db: &Database) -> Result<Vec<TaskManifestEntry>, AppError> {
     let rows = db.list_tasks_for_sync()?;
+    let missing_uuid = rows.iter().filter(|t| t.stable_uuid.is_none()).count();
+    if missing_uuid > 0 {
+        log::warn!(
+            "[sync_v1] {} 个任务缺少 stable_uuid，已被排除在同步之外（重启应用会由迁移补齐；若持续出现说明有写入路径漏写该列）",
+            missing_uuid
+        );
+    }
     // 建 (local_id → stable_uuid) 映射，给 parent_task_uuid / project_uuid / category_uuid 查值
     let task_uuid_by_id: HashMap<i64, String> = rows
         .iter()
@@ -1369,6 +1388,38 @@ mod tests {
         let content_sha = crate::services::hash::sha256_hex("正文");
         let expected_hash = content_hash(&entry.title, &content_sha);
         assert_eq!(entry.content_hash, expected_hash);
+    }
+
+    /// 缺 stable_uuid 的笔记 / 任务（kb-core v64 之前的产物）只能被跳过：
+    /// 不进 manifest，但也绝不能让整次 manifest 计算失败（告警查询不得影响同步）。
+    #[test]
+    fn compute_local_manifest_skips_rows_without_stable_uuid() {
+        use crate::models::NoteInput;
+        let db = Database::init(":memory:").expect("init :memory: 应成功");
+        db.create_note(&NoteInput {
+            title: "正常笔记".into(),
+            content: "正文".into(),
+            folder_id: None,
+        })
+        .unwrap();
+        {
+            let conn = db.conn_lock().unwrap();
+            conn.execute(
+                "INSERT INTO notes (title, content, title_normalized, content_hash)
+                 VALUES ('MCP 旧笔记', '正文', 'mcp 旧笔记', 'h')",
+                [],
+            )
+            .unwrap();
+            conn.execute("INSERT INTO tasks (title) VALUES ('MCP 旧任务')", []).unwrap();
+        }
+
+        let m = compute_local_manifest(&db, "t", "h").expect("NULL 行不能让 manifest 计算失败");
+        assert_eq!(m.entries.len(), 1, "只有带 stable_uuid 的笔记进 manifest");
+        assert_eq!(m.entries[0].title, "正常笔记");
+        assert!(
+            build_task_entries(&db).expect("NULL 任务不能让任务 manifest 失败").is_empty(),
+            "缺 stable_uuid 的任务应被跳过"
+        );
     }
 
     /// T-S014：upsert_encrypted_note_with_uuid 端到端：远端 UUID + blob → 本地加密笔记
