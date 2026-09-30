@@ -1963,6 +1963,9 @@ fn collect_descendant_folder_ids(
 
 /// 创建笔记。同步维护 title_normalized + content_hash（FTS5 / word_count 由触发器自动）
 /// 与主应用 database/notes.rs::create_note 保持字段一致性
+///
+/// 🔴 必须写 `stable_uuid`：同步 manifest 用 `WHERE stable_uuid IS NOT NULL` 过滤，
+/// NULL 行会被静默排除、永远推不出去。该列可空且只有 v36 迁移回填过一次，这里漏写就是永久不同步。
 fn create_note(
     conn: &Connection,
     title: &str,
@@ -1971,10 +1974,11 @@ fn create_note(
 ) -> Result<i64, rusqlite::Error> {
     let normalized = normalize_title(title);
     let hash = sha256_hex(content);
+    let stable_uuid = uuid::Uuid::new_v4().to_string();
     conn.execute(
-        "INSERT INTO notes (title, content, folder_id, title_normalized, content_hash)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![title, content, folder_id, normalized, hash],
+        "INSERT INTO notes (title, content, folder_id, title_normalized, content_hash, stable_uuid)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![title, content, folder_id, normalized, hash, stable_uuid],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -2154,6 +2158,8 @@ fn remove_tag_from_note(
 }
 
 /// 创建任务（主任务，parent_task_id=NULL）。返回新 id。
+///
+/// 🔴 同 `create_note`：`tasks.stable_uuid` 为 NULL 的行不会进同步 manifest。
 fn create_task(
     conn: &Connection,
     title: &str,
@@ -2162,10 +2168,11 @@ fn create_task(
     important: bool,
     due_date: Option<&str>,
 ) -> Result<i64, rusqlite::Error> {
+    let stable_uuid = uuid::Uuid::new_v4().to_string();
     conn.execute(
-        "INSERT INTO tasks (title, description, priority, important, status, due_date)
-         VALUES (?1, ?2, ?3, ?4, 0, ?5)",
-        params![title, description, priority, important as i32, due_date],
+        "INSERT INTO tasks (title, description, priority, important, status, due_date, stable_uuid)
+         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6)",
+        params![title, description, priority, important as i32, due_date, stable_uuid],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -2367,5 +2374,76 @@ mod tests {
             serde_json::from_str(r#"{"ids":[1,"2",3,"4"]}"#).unwrap();
         assert_eq!(a.ids, vec![1, 2, 3, 4]);
         assert_eq!(a.folder_id, None);
+    }
+
+    /// 最小化的 notes / tasks 表：只含 create_note / create_task 会写的列，
+    /// 外加与真实库一致的 stable_uuid 部分唯一索引（v36 / v43）。
+    fn stable_uuid_test_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                folder_id INTEGER,
+                title_normalized TEXT,
+                content_hash TEXT,
+                stable_uuid TEXT
+            );
+            CREATE UNIQUE INDEX idx_notes_stable_uuid ON notes(stable_uuid) WHERE stable_uuid IS NOT NULL;
+            CREATE TABLE tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT,
+                priority INTEGER,
+                important INTEGER,
+                status INTEGER,
+                due_date TEXT,
+                stable_uuid TEXT
+            );
+            CREATE UNIQUE INDEX idx_tasks_stable_uuid ON tasks(stable_uuid) WHERE stable_uuid IS NOT NULL;",
+        )
+        .unwrap();
+        conn
+    }
+
+    /// 回归：MCP 建的笔记缺 stable_uuid → 同步 manifest（WHERE stable_uuid IS NOT NULL）
+    /// 静默跳过 → 该笔记永远不同步。
+    #[test]
+    fn create_note_fills_valid_unique_stable_uuid() {
+        let conn = stable_uuid_test_conn();
+        let a = create_note(&conn, "笔记 A", "正文 A", None).unwrap();
+        let b = create_note(&conn, "笔记 B", "正文 B", Some(3)).unwrap();
+
+        let get = |id: i64| -> Option<String> {
+            conn.query_row("SELECT stable_uuid FROM notes WHERE id = ?1", [id], |r| r.get(0))
+                .unwrap()
+        };
+        let ua = get(a).expect("MCP 创建的笔记必须带 stable_uuid");
+        let ub = get(b).expect("MCP 创建的笔记必须带 stable_uuid");
+        assert_eq!(ua.len(), 36, "应为标准 UUID 文本，实际: {ua}");
+        assert_eq!(ua.matches('-').count(), 4, "应为标准 UUID 文本，实际: {ua}");
+        assert_ne!(ua, ub, "两条笔记的 stable_uuid 不能相同");
+
+        let null_rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM notes WHERE stable_uuid IS NULL", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(null_rows, 0);
+    }
+
+    #[test]
+    fn create_task_fills_valid_unique_stable_uuid() {
+        let conn = stable_uuid_test_conn();
+        let a = create_task(&conn, "任务 A", None, 1, false, None).unwrap();
+        let b = create_task(&conn, "任务 B", Some("描述"), 2, true, Some("2026-10-01")).unwrap();
+
+        let get = |id: i64| -> Option<String> {
+            conn.query_row("SELECT stable_uuid FROM tasks WHERE id = ?1", [id], |r| r.get(0))
+                .unwrap()
+        };
+        let ua = get(a).expect("MCP 创建的任务必须带 stable_uuid");
+        let ub = get(b).expect("MCP 创建的任务必须带 stable_uuid");
+        assert_eq!(ua.len(), 36);
+        assert_ne!(ua, ub);
     }
 }

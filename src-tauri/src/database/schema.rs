@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 63;
+pub const SCHEMA_VERSION: i32 = 64;
 
 /// `ai_models.max_context` 的历史默认值。v51 把旧默认 32000 统一抬到它，此后新建也默认填它 ——
 /// 所以存量里的 128000 分不清是用户填的还是默认值，v62 一律当作「未设置」。
@@ -99,6 +99,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             60 => migrate_v60_to_v61(conn)?,
             61 => migrate_v61_to_v62(conn)?,
             62 => migrate_v62_to_v63(conn)?,
+            63 => migrate_v63_to_v64(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2417,6 +2418,45 @@ fn migrate_v62_to_v63(conn: &Connection) -> Result<(), AppError> {
     Ok(())
 }
 
+/// v63 -> v64：给 MCP 建的笔记 / 任务补 `stable_uuid`。
+///
+/// # 为什么需要
+/// kb-core（MCP / kb-mcp CLI 共用的写库实现）的 `create_note` / `create_task` 直接拼 INSERT，
+/// 一直没写 `stable_uuid`。该列可空、只有 v36 / v43 迁移回填过一次，此后经 MCP 新建的行都是 NULL。
+/// 同步 manifest 用 `WHERE stable_uuid IS NOT NULL` 过滤，于是这些笔记 / 任务被**静默**排除，
+/// 永远不会推到其他端，冲突处理也无从谈起。kb-core 的 INSERT 已修，这里补存量。
+///
+/// # 为什么直接 UPDATE 是安全的
+/// notes 上的触发器都限定了列（`UPDATE OF title, content, search_text` 等），只改 `stable_uuid`
+/// 不会触发，也不会碰 `updated_at` —— 回填不会让笔记看起来"刚被修改过"而扰乱同步的新旧判断。
+///
+/// 幂等：只处理 `stable_uuid IS NULL` 的行，重跑无副作用；软删行也一并补齐（tombstone 推送要用）。
+fn migrate_v63_to_v64(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v63 -> v64 (回填 notes / tasks 缺失的 stable_uuid)");
+
+    let tx = conn.unchecked_transaction()?;
+    // 表名只来自这里的字面量，不会有外部输入拼进 SQL
+    for table in ["notes", "tasks"] {
+        let ids: Vec<i64> = {
+            let mut stmt =
+                tx.prepare(&format!("SELECT id FROM {table} WHERE stable_uuid IS NULL"))?;
+            let rows = stmt.query_map([], |r| r.get::<_, i64>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        if !ids.is_empty() {
+            log::info!("[v64] 回填 {} 行 {}.stable_uuid", ids.len(), table);
+        }
+        let mut update = tx.prepare(&format!("UPDATE {table} SET stable_uuid = ?1 WHERE id = ?2"))?;
+        for id in ids {
+            update.execute(rusqlite::params![uuid::Uuid::new_v4().to_string(), id])?;
+        }
+    }
+    tx.commit()?;
+
+    set_version(conn, 64)?;
+    Ok(())
+}
+
 /// v61 -> v62：模型服务改由 ai-profile crate 提供。
 ///
 /// 三件事，都是「把旧语义写进数据」，让切换到 crate 后行为不变：
@@ -2857,6 +2897,89 @@ mod tests {
         }
         // 失败也不能顺手把版本号改掉
         assert_eq!(get_version(&conn).unwrap(), SCHEMA_VERSION + 1);
+    }
+
+    /// v64：补齐 MCP 建的笔记 / 任务缺失的 stable_uuid。
+    ///
+    /// 锁四件事：NULL 行被补上 UUID（含软删行）、已有 UUID 不被覆盖、
+    /// 回填不改 `updated_at`（否则同步会把这些笔记当成"刚被修改"）、重跑幂等。
+    #[test]
+    fn v64_backfills_missing_stable_uuid_without_touching_updated_at() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        assert_eq!(get_version(&conn).unwrap(), SCHEMA_VERSION);
+
+        // 复现 kb-core 旧版 INSERT：不写 stable_uuid
+        conn.execute_batch(
+            "INSERT INTO notes (title, content, title_normalized, content_hash, updated_at)
+               VALUES ('MCP 笔记', '正文', 'mcp 笔记', 'h1', '2020-01-01 00:00:00');
+             INSERT INTO notes (title, content, title_normalized, content_hash, updated_at, is_deleted, deleted_at)
+               VALUES ('MCP 软删笔记', '正文', 'mcp 软删笔记', 'h2', '2020-01-02 00:00:00', 1, '2020-01-03 00:00:00');
+             INSERT INTO notes (title, content, title_normalized, content_hash, stable_uuid)
+               VALUES ('正常笔记', '正文', '正常笔记', 'h3', 'keep-me-untouched');
+             INSERT INTO tasks (title) VALUES ('MCP 任务');",
+        )
+        .unwrap();
+        let null_notes: i64 = conn
+            .query_row("SELECT COUNT(*) FROM notes WHERE stable_uuid IS NULL", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(null_notes, 2, "前置：应有 2 条缺 UUID 的笔记");
+
+        // 回拨到 v63 再迁移，模拟用户从 1.64.0 升级
+        set_version(&conn, 63).unwrap();
+        migrate(&conn).unwrap();
+        assert_eq!(get_version(&conn).unwrap(), SCHEMA_VERSION);
+
+        for (table, label) in [("notes", "笔记"), ("tasks", "任务")] {
+            let n: i64 = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE stable_uuid IS NULL"),
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 0, "{label}回填后不应再有 NULL stable_uuid");
+        }
+
+        let (uuid, updated_at): (String, String) = conn
+            .query_row(
+                "SELECT stable_uuid, updated_at FROM notes WHERE title = 'MCP 笔记'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(uuid.len(), 36, "应为标准 UUID，实际: {uuid}");
+        assert_eq!(updated_at, "2020-01-01 00:00:00", "回填不能改 updated_at");
+
+        let deleted_uuid: Option<String> = conn
+            .query_row(
+                "SELECT stable_uuid FROM notes WHERE title = 'MCP 软删笔记'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(deleted_uuid.is_some(), "软删行也要补（tombstone 推送要用）");
+
+        let kept: String = conn
+            .query_row(
+                "SELECT stable_uuid FROM notes WHERE title = '正常笔记'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, "keep-me-untouched", "已有 UUID 不能被覆盖");
+
+        // 幂等：再回拨重跑，UUID 不变
+        set_version(&conn, 63).unwrap();
+        migrate(&conn).unwrap();
+        let again: String = conn
+            .query_row(
+                "SELECT stable_uuid FROM notes WHERE title = 'MCP 笔记'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(again, uuid, "重跑迁移不能重新生成已补的 UUID");
     }
 
     /// v53 的核心契约：白板的搜索**摘要**必须是画布文字，不能是 Excalidraw JSON。

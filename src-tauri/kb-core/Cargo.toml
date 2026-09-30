@@ -26,3 +26,5 @@ sha2 = "0.10"
 anyhow = "1"
 # create_note_from_template 自动生成「模板名 · YYYY-MM-DD」标题用
 chrono = "0.4"
+# 新建笔记 / 任务时生成 stable_uuid（多端同步的稳定标识，缺了就进不了同步 manifest）
+uuid = { version = "1", features = ["v4"] }
