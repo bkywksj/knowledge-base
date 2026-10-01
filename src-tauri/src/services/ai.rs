@@ -5456,7 +5456,7 @@ mod sse_stream_tests {
         ] {
             let (r, rec, _) = tool_stream(protocol, sse(&[body])).await;
             // Result 的 Err 臂里根本没有工具调用；这里再确认走的是失败臂且带着已说的话
-            let f = r.err().expect("断流必须是失败");
+            let f = r.expect_err("断流必须是失败");
             assert!(f.error.to_string().contains("中断"), "{protocol:?}");
             assert_eq!(f.partial, "我先搜", "{protocol:?}");
             assert_eq!(rec.errors().len(), 1);
