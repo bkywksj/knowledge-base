@@ -492,6 +492,10 @@ fn save_turn(
 ///
 /// 以前失败会把用户那条提问一起删掉、只弹 toast —— 用户既看不到自己问了什么，
 /// 也没法对着那张卡片点「重试」。存库本身再失败时只记日志，不能盖掉真正的错误。
+///
+/// `partial`：失败前已经流给用户看的半截正文。**留在卡片里**（卡片不论状态都渲染正文，下面挂错误条），
+/// 否则一个说到 90% 的长回答会被一张只有错误提示的卡片替换，刷新后找不回。
+/// 它不会污染上下文：`end_reason = "error"` 的卡片被 [`usable_in_history`] 排除，不发给模型。
 fn fail_turn(
     db: &Database,
     conversation_id: i64,
@@ -499,6 +503,7 @@ fn fail_turn(
     round_texts: Vec<String>,
     started: std::time::Instant,
     err: String,
+    partial: &str,
 ) -> AppError {
     let meta = TurnMeta {
         end_reason: "error".into(),
@@ -507,7 +512,7 @@ fn fail_turn(
         round_texts,
         reasoning: String::new(),
     };
-    if let Err(e) = save_turn(db, conversation_id, "", None, skill_calls, &meta) {
+    if let Err(e) = save_turn(db, conversation_id, partial.trim(), None, skill_calls, &meta) {
         log::warn!("[ai] 保存失败卡片出错（conversation {}）: {}", conversation_id, e);
     }
     AppError::Custom(err)
@@ -671,15 +676,31 @@ fn openai_finish_reason(outcome: &StreamOutcome) -> Option<String> {
         .map(|r| anthropic::finish_reason(r.as_str()).to_string())
 }
 
+/// 流式失败：错误本身 + 失败前已经流给前端的正文。
+///
+/// 用户在界面上亲眼看到过这段话，失败时要能存进错误卡片留给他（见 [`fail_turn`]）；
+/// 请求都没发成功的失败 `partial` 为空，经 `From<AppError>` 直接转换。
+struct StreamFailure {
+    error: AppError,
+    partial: String,
+}
+
+impl From<AppError> for StreamFailure {
+    fn from(error: AppError) -> Self {
+        Self { error, partial: String::new() }
+    }
+}
+
 /// 纯文本的 SSE 流（写作助手 / RAG 对话）：边读边推 token，收尾返回完整正文。
 ///
-/// 取消时返回已生成的那一截（`Ok`），由调用方决定怎么存；失败先发错误事件再返回 `Err`。
+/// 取消时返回已生成的那一截（`Ok`），由调用方决定怎么存；失败先发错误事件再返回 `Err`，
+/// 失败前已收到的正文放在 [`StreamFailure::partial`]。
 async fn consume_text_stream(
     emitter: &dyn AiEventEmitter,
     response: reqwest::Response,
     protocol: Protocol,
     cancel_rx: &mut watch::Receiver<bool>,
-) -> Result<String, AppError> {
+) -> Result<String, StreamFailure> {
     let read = read_sse_stream(response, protocol, cancel_rx, |ev| {
         if let DecodedEvent::TextDelta { text, .. } = ev {
             emitter.emit_token(text);
@@ -690,7 +711,7 @@ async fn consume_text_stream(
         SseEnd::Complete | SseEnd::Cancelled => Ok(read.outcome.text()),
         SseEnd::Failed(msg) => {
             emitter.emit_error(&msg);
-            Err(AppError::Custom(msg))
+            Err(StreamFailure { error: AppError::Custom(msg), partial: read.outcome.text() })
         }
     }
 }
@@ -702,6 +723,7 @@ async fn consume_text_stream(
 /// - 🔴 只有 `Complete` 才交出工具调用；取消 / 断流 / 流内错误一律丢弃、不执行
 ///   （半截 JSON 参数不能当 `{}` 去执行）
 /// - 取消时 `ai:done` 由调用方把「已停止」卡片存库后再发
+/// - 失败时已收到的正文放在 [`StreamFailure::partial`]
 ///
 /// `reasoning_out`：本轮思考过程追加到这里（跨轮累积，存进 TurnMeta）。
 /// 正文为空、思考被提升成正文时不追加，免得卡片上同一段话显示两遍。
@@ -711,7 +733,7 @@ async fn consume_tool_stream(
     protocol: Protocol,
     cancel_rx: &mut watch::Receiver<bool>,
     reasoning_out: &mut String,
-) -> (Result<String, AppError>, Option<Vec<ToolCallAccum>>) {
+) -> Result<(String, Vec<ToolCallAccum>), StreamFailure> {
     let mut content = String::new();
     // reasoning 模型（deepseek-r1 / qwq / o1）：思考过程独立发 ai:reasoning，
     // 正文全空时再兜底拼到正文
@@ -744,11 +766,11 @@ async fn consume_tool_stream(
     match &read.end {
         SseEnd::Cancelled => {
             reasoning_out.push_str(&reasoning_content);
-            return (Ok(content), Some(Vec::new()));
+            return Ok((content, Vec::new()));
         }
         SseEnd::Failed(msg) => {
             emitter.emit_error(msg);
-            return (Err(AppError::Custom(msg.clone())), None);
+            return Err(StreamFailure { error: AppError::Custom(msg.clone()), partial: content });
         }
         SseEnd::Complete => {}
     }
@@ -781,7 +803,7 @@ async fn consume_tool_stream(
             _ => {
                 let msg = format!("AI 异常终止 (finish_reason={})", reason);
                 emitter.emit_error(&msg);
-                return (Err(AppError::Custom(msg)), None);
+                return Err(StreamFailure { error: AppError::Custom(msg), partial: content });
             }
         }
     }
@@ -792,7 +814,7 @@ async fn consume_tool_stream(
         .filter(|t| !t.name.trim().is_empty())
         .collect();
 
-    (Ok(content), Some(tool_calls))
+    Ok((content, tool_calls))
 }
 
 /// 从用户首条消息生成会话标题：去首尾空白、压缩换行、截断至 24 个字符。
@@ -1720,7 +1742,7 @@ impl AiService {
             return Err(AppError::Custom(format_openai_api_error(status, &body)));
         }
 
-        // 取消：已生成的那一截照常返回
+        // 取消：已生成的那一截照常返回。写作助手的结果不入库，失败时的半截正文用不上
         consume_text_stream(
             emitter,
             response,
@@ -1728,6 +1750,7 @@ impl AiService {
             &mut cancel_rx,
         )
         .await
+        .map_err(|f| f.error)
     }
 
     /// 撤回会话里从 `from_message_id` 起（含）的所有消息（重新生成 / 编辑重发）
@@ -1906,10 +1929,12 @@ impl AiService {
                 max_hist
             );
 
-            let result = match model.provider.as_str() {
+            let result: Result<String, StreamFailure> = match model.provider.as_str() {
+                // Ollama 原生路径不在 ai-profile 解码范围，保持原样（失败时不带半截正文）
                 "ollama" => {
                     Self::stream_ollama(&app, conversation_id, &model, &messages, cancel_rx.clone())
                         .await
+                        .map_err(StreamFailure::from)
                 }
                 // T-012: 默认走 OpenAI 兼容协议（OpenAI / Claude 代理 / DeepSeek / 智谱 /
                 // Minimax / SiliconFlow / LM Studio / 用户自定义 baseUrl）
@@ -1984,8 +2009,8 @@ impl AiService {
                     let _ = app.emit("ai:done", conversation_id);
                     return Ok(());
                 }
-                Err(ref e) => {
-                    let err_str = e.to_string();
+                Err(failure) => {
+                    let err_str = failure.error.to_string();
                     // 仅在上下文超长 / 消息格式错误时重试（减少历史）。
                     // 超长由 format_openai_api_error 用 ai-profile 识别后打上固定标题；
                     // 此前只认 context_length_exceeded 一个串，Gemini / Kimi / 通义等的超长写法都漏了
@@ -1997,11 +2022,21 @@ impl AiService {
                             max_hist,
                             err_str
                         );
-                        last_error = Some(e.to_string());
+                        last_error = Some(err_str);
                         continue;
                     }
-                    // 其他错误不重试：提问留着，错误存成这一轮的卡片
-                    return Err(fail_turn(db, conversation_id, &[], Vec::new(), started, err_str));
+                    // 其他错误不重试：提问留着，错误存成这一轮的卡片；
+                    // 断流前已经流给用户看的半截正文一并留在卡片里（末尾没写完的 refs 标记剥掉）
+                    let partial = citations::strip_citation_marker(&failure.partial);
+                    return Err(fail_turn(
+                        db,
+                        conversation_id,
+                        &[],
+                        Vec::new(),
+                        started,
+                        err_str,
+                        &partial,
+                    ));
                 }
             }
         }
@@ -2014,6 +2049,7 @@ impl AiService {
             Vec::new(),
             started,
             last_error.unwrap_or_else(|| "AI 请求失败".to_string()),
+            "",
         ))
     }
 
@@ -2221,7 +2257,7 @@ impl AiService {
         model: &AiModel,
         messages: &[Value],
         mut cancel_rx: watch::Receiver<bool>,
-    ) -> Result<String, AppError> {
+    ) -> Result<String, StreamFailure> {
         let client = crate::services::http_client::shared();
         let body = json!({
             "model": model.model_id,
@@ -2237,7 +2273,7 @@ impl AiService {
             Some(Err(e)) => {
                 let msg = format!("API 请求失败: {}", e);
                 emit_ai_error(app, conversation_id, &msg);
-                return Err(AppError::Custom(msg));
+                return Err(AppError::Custom(msg).into());
             }
         };
 
@@ -2246,7 +2282,7 @@ impl AiService {
             let body = response.text().await.unwrap_or_default();
             let msg = format_openai_api_error(status, &body);
             emit_ai_error(app, conversation_id, &msg);
-            return Err(AppError::Custom(msg));
+            return Err(AppError::Custom(msg).into());
         }
 
         // 取消：同 stream_ollama，ai:done 由调用方存库后再发
@@ -2451,8 +2487,9 @@ impl AiService {
             };
 
             let tools_arg: &[Value] = if allow_tools { &tool_schemas } else { &[] };
-            let (content, tool_calls) = if is_ollama {
-                Self::stream_ollama_with_tools(
+            let round_result: Result<(String, Vec<ToolCallAccum>), StreamFailure> = if is_ollama {
+                // Ollama 原生路径不在 ai-profile 解码范围，保持原样
+                let (content, tool_calls) = Self::stream_ollama_with_tools(
                     &app,
                     conversation_id,
                     &model,
@@ -2460,7 +2497,10 @@ impl AiService {
                     tools_arg,
                     cancel_rx.clone(),
                 )
-                .await
+                .await;
+                content
+                    .map(|c| (c, tool_calls.unwrap_or_default()))
+                    .map_err(StreamFailure::from)
             } else {
                 Self::stream_openai_with_tools(
                     &app,
@@ -2474,18 +2514,20 @@ impl AiService {
                 .await
             };
 
-            let (content, mut tool_calls) = match content {
-                Ok(c) => (c, tool_calls.unwrap_or_default()),
-                Err(e) => {
-                    log::warn!("[skills] round={} 失败: {}", round, e);
-                    // 提问和已经跑完的工具都留着，错误存成这一轮的卡片
+            let (content, mut tool_calls) = match round_result {
+                Ok(r) => r,
+                Err(failure) => {
+                    log::warn!("[skills] round={} 失败: {}", round, failure.error);
+                    // 提问和已经跑完的工具都留着，错误存成这一轮的卡片；
+                    // 这一轮断流前已经流给用户看的半截正文也留着（这一轮没跑的工具调用已被丢弃）
                     return Err(fail_turn(
                         db,
                         conversation_id,
                         &all_skill_calls,
                         round_texts,
                         started,
-                        e.to_string(),
+                        failure.error.to_string(),
+                        strip_pseudo_tool_calls(&failure.partial).trim(),
                     ));
                 }
             };
@@ -2670,7 +2712,7 @@ impl AiService {
         tools: &[Value],
         mut cancel_rx: watch::Receiver<bool>,
         reasoning_out: &mut String,
-    ) -> (Result<String, AppError>, Option<Vec<ToolCallAccum>>) {
+    ) -> Result<(String, Vec<ToolCallAccum>), StreamFailure> {
         let client = crate::services::http_client::shared();
         // Anthropic 协议同样走这里：请求体在 model_chat_request 里转换，流由 ai-profile 的解码器按协议解
 
@@ -2689,12 +2731,12 @@ impl AiService {
 
         let response = match send_unless_cancelled(request, &mut cancel_rx).await {
             // 还没开口就被停止：chat_stream_with_skills 看到取消信号后存「已停止」卡片
-            None => return (Ok(String::new()), Some(Vec::new())),
+            None => return Ok((String::new(), Vec::new())),
             Some(Ok(r)) => r,
             Some(Err(e)) => {
                 let msg = format!("API 请求失败: {}", e);
                 emit_ai_error(app, conversation_id, &msg);
-                return (Err(AppError::Custom(msg)), None);
+                return Err(AppError::Custom(msg).into());
             }
         };
         if !response.status().is_success() {
@@ -2702,7 +2744,7 @@ impl AiService {
             let body = response.text().await.unwrap_or_default();
             let msg = format_openai_api_error(status, &body);
             emit_ai_error(app, conversation_id, &msg);
-            return (Err(AppError::Custom(msg)), None);
+            return Err(AppError::Custom(msg).into());
         }
 
         consume_tool_stream(
