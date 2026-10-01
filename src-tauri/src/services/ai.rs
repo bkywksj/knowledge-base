@@ -1,3 +1,5 @@
+use ai_profile::stream::{StreamDecoder, StreamEnd, StreamEvent as DecodedEvent, StreamOutcome};
+use ai_profile::Protocol;
 use futures::StreamExt;
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -20,6 +22,8 @@ use crate::services::skills;
 trait AiEventEmitter: Send + Sync {
     fn emit_token(&self, content: &str);
     fn emit_error(&self, error: &str);
+    /// 推理模型的思考增量。只有对话有「思考过程」可展示，写作助手忽略
+    fn emit_reasoning(&self, _content: &str) {}
 }
 
 /// 写作辅助事件发射器（ai-write: 前缀）
@@ -36,18 +40,24 @@ impl AiEventEmitter for WriteAssistEmitter {
     }
 }
 
-/// 聊天事件发射器（ai: 前缀）
-#[allow(dead_code)]
-struct ChatEmitter {
-    app: AppHandle,
+/// 对话事件发射器（`ai:` 前缀）。payload 都带会话 ID，理由同 [`emit_ai_token`]（多会话串台）
+struct ConversationEmitter<'a> {
+    app: &'a AppHandle,
+    conversation_id: i64,
 }
 
-impl AiEventEmitter for ChatEmitter {
+impl AiEventEmitter for ConversationEmitter<'_> {
     fn emit_token(&self, content: &str) {
-        let _ = self.app.emit("ai:token", content);
+        emit_ai_token(self.app, self.conversation_id, content);
     }
     fn emit_error(&self, error: &str) {
-        let _ = self.app.emit("ai:error", error);
+        emit_ai_error(self.app, self.conversation_id, error);
+    }
+    fn emit_reasoning(&self, content: &str) {
+        let _ = self.app.emit(
+            "ai:reasoning",
+            json!({ "conversationId": self.conversation_id, "content": content }),
+        );
     }
 }
 
@@ -242,26 +252,6 @@ fn model_chat_request(client: &Client, model: &AiModel, body: &Value) -> reqwest
         body,
         anthropic::default_max_tokens(model),
     )
-}
-
-/// 流式响应里一行 SSE 的正文增量（按协议解析），没有正文的行返回 `Ok(None)`。
-///
-/// Anthropic 会在 HTTP 200 的流中途发 `error` 事件（如 overloaded），以 `Err(原因)` 返回；
-/// OpenAI 兼容侧没有这种事件。
-fn stream_text_delta(is_anthropic: bool, line: &str) -> Result<Option<String>, String> {
-    if is_anthropic {
-        return match anthropic::parse_stream_line(line) {
-            anthropic::StreamEvent::Text(t) => Ok(Some(t)),
-            anthropic::StreamEvent::Error(e) => Err(e),
-            _ => Ok(None),
-        };
-    }
-    let Some(json_str) = line.strip_prefix("data: ") else {
-        return Ok(None);
-    };
-    Ok(serde_json::from_str::<Value>(json_str)
-        .ok()
-        .and_then(|d| d["choices"][0]["delta"]["content"].as_str().map(str::to_string)))
 }
 
 /// 非流式响应的正文。响应形状不对（不是这个协议的应答）时返回 None。
@@ -534,7 +524,8 @@ fn fail_turn(
 /// （已去掉行尾 `\r`/`\n`）；不完整的尾巴留在 `buffer` 里等下个 chunk。流结束后若 `buffer`
 /// 仍非空，调用方需自行 flush 这段残留（见各流式函数末尾）。
 ///
-/// 与本文件 `stream_openai_with_tools` 里已有的 Vec<u8> 缓冲逻辑同源，抽出复用并便于单测。
+/// 现在只服务 Ollama 原生接口（`/api/chat` 的 NDJSON，不是 SSE，不在 ai-profile 的解码范围）；
+/// OpenAI 兼容 / Anthropic 的 SSE 一律走 [`read_sse_stream`]。
 fn drain_complete_lines(buffer: &mut Vec<u8>, chunk: &[u8]) -> Vec<String> {
     buffer.extend_from_slice(chunk);
     let mut lines = Vec::new();
@@ -544,6 +535,264 @@ fn drain_complete_lines(buffer: &mut Vec<u8>, chunk: &[u8]) -> Vec<String> {
         lines.push(line.trim_end_matches(&['\r', '\n'][..]).to_string());
     }
     lines
+}
+
+/// 等到「停止」信号；Sender 被 drop 不算取消（永远挂起，让读流自己跑完）。
+///
+/// 先看当前值再等变化：信号在进入前就已经置位、或发出后 Sender 立刻被 drop 时也能识别。
+/// 同 [`send_unless_cancelled`] 的口径。
+async fn wait_cancelled(cancel_rx: &mut watch::Receiver<bool>) {
+    if *cancel_rx.borrow() {
+        return;
+    }
+    while cancel_rx.changed().await.is_ok() {
+        if *cancel_rx.borrow() {
+            return;
+        }
+    }
+    std::future::pending::<()>().await
+}
+
+/// 一次读流是怎么收场的。正文在 [`SseRead::outcome`] 里，三种结局都有。
+#[derive(Debug, PartialEq)]
+enum SseEnd {
+    /// 有结束标记，内容完整
+    Complete,
+    /// 用户点了「停止」：已收到的文字照常交给调用方，没收完的工具调用已被丢弃
+    Cancelled,
+    /// 读流失败，附面向用户的原因（网络读取错误 / 流内错误 / 断流 / 不是事件流）。
+    /// 🔴 此时 `outcome` 里没有任何工具调用，调用方不得执行
+    Failed(String),
+}
+
+struct SseRead {
+    end: SseEnd,
+    /// 解码器的收尾结果。只有 `end == Complete` 时才含工具调用；其余情形只有文字块
+    outcome: StreamOutcome,
+}
+
+/// 报错里的地址去掉 query：有的网关把 key 放在 `?key=` 里
+fn url_without_query(url: &reqwest::Url) -> String {
+    let mut u = url.clone();
+    u.set_query(None);
+    u.to_string()
+}
+
+/// 读完一个 2xx 的 SSE 响应：字节交给 `ai_profile::stream` 解码，事件交给 `on_event`。
+///
+/// OpenAI 兼容与 Anthropic 共用。SSE 怎么解（`\r\n`、`: keep-alive` 注释行、多字节字被切在两包之间、
+/// 工具调用缺 index / id 晚到、只以 `[DONE]` 收尾、流内 `error`……）全在 crate 里，这里只留应用才有的事：
+/// HTTP 读取、取消接线、收尾翻译成用户看得懂的失败原因。
+///
+/// - **取消**：每收一段就查；取消即返回，字节流随之 drop = 关掉 TCP，服务端随之停止生成
+/// - **流内错误**：立刻停止读取（不空转读完整个流）
+/// - **断流**（没有结束标记就 EOF）：失败。以前当正常结束，半截回复被当成完整回复存进历史
+/// - **2xx 却不是事件流**：网关回网页、或忽略 `stream: true` 整段回 JSON —— 失败，而不是空回复
+async fn read_sse_stream<F>(
+    response: reqwest::Response,
+    protocol: Protocol,
+    cancel_rx: &mut watch::Receiver<bool>,
+    mut on_event: F,
+) -> SseRead
+where
+    F: FnMut(&DecodedEvent) + Send,
+{
+    let url = url_without_query(response.url());
+    let mut decoder = StreamDecoder::new(protocol);
+    let mut stream = response.bytes_stream();
+
+    loop {
+        let next = tokio::select! {
+            c = stream.next() => c,
+            _ = wait_cancelled(cancel_rx) => {
+                return SseRead { end: SseEnd::Cancelled, outcome: decoder.abort() };
+            }
+        };
+        let Some(chunk) = next else { break };
+        let bytes = match chunk {
+            Ok(b) => b,
+            Err(e) => {
+                return SseRead {
+                    end: SseEnd::Failed(format!("流读取错误: {e}")),
+                    outcome: decoder.abort(),
+                };
+            }
+        };
+        let mut stream_error = false;
+        for ev in decoder.push(&bytes) {
+            stream_error |= matches!(ev, DecodedEvent::Error { .. });
+            on_event(&ev);
+        }
+        if stream_error {
+            break;
+        }
+    }
+    // 出错时尽早断开连接，不等函数返回
+    drop(stream);
+
+    let (tail, outcome) = decoder.finish();
+    for ev in &tail {
+        on_event(ev);
+    }
+    let end = match &outcome.end {
+        StreamEnd::Complete => SseEnd::Complete,
+        StreamEnd::Failed { message } => SseEnd::Failed(format!("AI 服务中途出错: {message}")),
+        StreamEnd::Truncated => {
+            log::warn!(
+                "[ai] 流在结束标记前断开（跳过 {} 个解析失败的帧）",
+                outcome.skipped_frames
+            );
+            SseEnd::Failed("AI 服务的响应在结束前中断（连接断开或服务端中途停止），回复不完整".into())
+        }
+        StreamEnd::NotEventStream { body } => {
+            if ai_profile::stream::looks_like_html(body) {
+                SseEnd::Failed(format!(
+                    "接口返回的是网页而不是模型响应，请检查「模型服务」里的 API 地址路径是否正确（请求地址：{url}）"
+                ))
+            } else {
+                SseEnd::Failed(format!(
+                    "接口没有返回事件流（请求地址：{url}），响应开头：{}",
+                    body.chars().take(200).collect::<String>()
+                ))
+            }
+        }
+        // StreamEnd 是 non_exhaustive：新增的结局一律按出错
+        other => SseEnd::Failed(format!("流式响应异常结束: {other:?}")),
+    };
+    SseRead { end, outcome }
+}
+
+/// 解码器的 [`StopReason`](ai_profile::stream::StopReason) → 本项目内部用的 OpenAI 词表
+/// （`stop` / `tool_calls` / `length`），复用 [`anthropic::finish_reason`] 的换算，现有收尾判断语义不变。
+fn openai_finish_reason(outcome: &StreamOutcome) -> Option<String> {
+    outcome
+        .stop_reason
+        .as_ref()
+        .map(|r| anthropic::finish_reason(r.as_str()).to_string())
+}
+
+/// 纯文本的 SSE 流（写作助手 / RAG 对话）：边读边推 token，收尾返回完整正文。
+///
+/// 取消时返回已生成的那一截（`Ok`），由调用方决定怎么存；失败先发错误事件再返回 `Err`。
+async fn consume_text_stream(
+    emitter: &dyn AiEventEmitter,
+    response: reqwest::Response,
+    protocol: Protocol,
+    cancel_rx: &mut watch::Receiver<bool>,
+) -> Result<String, AppError> {
+    let read = read_sse_stream(response, protocol, cancel_rx, |ev| {
+        if let DecodedEvent::TextDelta { text, .. } = ev {
+            emitter.emit_token(text);
+        }
+    })
+    .await;
+    match read.end {
+        SseEnd::Complete | SseEnd::Cancelled => Ok(read.outcome.text()),
+        SseEnd::Failed(msg) => {
+            emitter.emit_error(&msg);
+            Err(AppError::Custom(msg))
+        }
+    }
+}
+
+/// 带工具调用的 SSE 流（智能模式）：返回 `(正文, 工具调用)`。
+///
+/// - 工具调用按 `ToolUseStart` / `ToolUseDelta` 逐块累积，**保留模型给的原始参数字符串**
+///   （下游 `dispatch_with_mcp` 与回填给模型的 `arguments` 都吃字符串）
+/// - 🔴 只有 `Complete` 才交出工具调用；取消 / 断流 / 流内错误一律丢弃、不执行
+///   （半截 JSON 参数不能当 `{}` 去执行）
+/// - 取消时 `ai:done` 由调用方把「已停止」卡片存库后再发
+///
+/// `reasoning_out`：本轮思考过程追加到这里（跨轮累积，存进 TurnMeta）。
+/// 正文为空、思考被提升成正文时不追加，免得卡片上同一段话显示两遍。
+async fn consume_tool_stream(
+    emitter: &dyn AiEventEmitter,
+    response: reqwest::Response,
+    protocol: Protocol,
+    cancel_rx: &mut watch::Receiver<bool>,
+    reasoning_out: &mut String,
+) -> (Result<String, AppError>, Option<Vec<ToolCallAccum>>) {
+    let mut content = String::new();
+    // reasoning 模型（deepseek-r1 / qwq / o1）：思考过程独立发 ai:reasoning，
+    // 正文全空时再兜底拼到正文
+    let mut reasoning_content = String::new();
+    // BTreeMap 按块号有序，保证 dispatch 时工具顺序稳定
+    let mut tool_accum: std::collections::BTreeMap<usize, ToolCallAccum> =
+        std::collections::BTreeMap::new();
+
+    let read = read_sse_stream(response, protocol, cancel_rx, |ev| match ev {
+        DecodedEvent::TextDelta { text, .. } => {
+            content.push_str(text);
+            emitter.emit_token(text);
+        }
+        DecodedEvent::ReasoningDelta { text } if !text.is_empty() => {
+            reasoning_content.push_str(text);
+            emitter.emit_reasoning(text);
+        }
+        DecodedEvent::ToolUseStart { block_index, id, name } => {
+            let entry = tool_accum.entry(*block_index).or_default();
+            entry.id = id.clone();
+            entry.name = name.clone();
+        }
+        DecodedEvent::ToolUseDelta { block_index, partial_json } => {
+            tool_accum.entry(*block_index).or_default().args_json.push_str(partial_json);
+        }
+        _ => {}
+    })
+    .await;
+
+    match &read.end {
+        SseEnd::Cancelled => {
+            reasoning_out.push_str(&reasoning_content);
+            return (Ok(content), Some(Vec::new()));
+        }
+        SseEnd::Failed(msg) => {
+            emitter.emit_error(msg);
+            return (Err(AppError::Custom(msg.clone())), None);
+        }
+        SseEnd::Complete => {}
+    }
+
+    // content 全空但 reasoning 非空时，把累积的 reasoning 提升为正文
+    // （前端流式过程中已经收到 ai:reasoning，这里只补一次 ai:token 让 UI 文本不为空）
+    if content.trim().is_empty() && !reasoning_content.trim().is_empty() {
+        content.push_str(&reasoning_content);
+        emitter.emit_token(&reasoning_content);
+    } else {
+        reasoning_out.push_str(&reasoning_content);
+    }
+
+    // finish_reason 异常处理：
+    // - length：模型生成达 max_tokens 上限，**已有部分内容**，不当致命错误。
+    //   追加一行提示让用户知道被截断，返回 Ok 保留已渲染的内容（前面 emit_token
+    //   已经流式发过）；用户可视情况调大 max_tokens 或缩短上下文重试。
+    // - content_filter / refusal 等非 stop|tool_calls：当致命错误抛出（红色 toast）。
+    if let Some(reason) = openai_finish_reason(&read.outcome) {
+        match reason.as_str() {
+            "stop" | "tool_calls" => {}
+            "length" => {
+                // 这句在 v61 之前是**死指路** —— 设置里根本没有 max_tokens 这一项。
+                // 现在有了（设置 → AI 模型 → 编辑 → 单次回答上限 token），所以指明位置。
+                let tip = "\n\n> ⚠️ 回答达到长度上限被截断。到「设置 → 模型服务 → 编辑 → 单次回答上限 token」调大即可（留空为服务商默认）。";
+                content.push_str(tip);
+                emitter.emit_token(tip);
+                log::warn!("[ai] 输出截断 (finish_reason=length)");
+            }
+            _ => {
+                let msg = format!("AI 异常终止 (finish_reason={})", reason);
+                emitter.emit_error(&msg);
+                return (Err(AppError::Custom(msg)), None);
+            }
+        }
+    }
+
+    // 收尾：id 在外层 chat_stream_with_skills 已做兜底合成，这里只丢 name 为空的
+    let tool_calls: Vec<ToolCallAccum> = tool_accum
+        .into_values()
+        .filter(|t| !t.name.trim().is_empty())
+        .collect();
+
+    (Ok(content), Some(tool_calls))
 }
 
 /// 从用户首条消息生成会话标题：去首尾空白、压缩换行、截断至 24 个字符。
@@ -1454,7 +1703,6 @@ impl AiService {
         mut cancel_rx: watch::Receiver<bool>,
     ) -> Result<String, AppError> {
         let client = crate::services::http_client::shared();
-        let is_anthropic = anthropic::is_anthropic(&model.provider);
         let mut body = json!({
             "model": model.model_id,
             "messages": messages,
@@ -1472,57 +1720,14 @@ impl AiService {
             return Err(AppError::Custom(format_openai_api_error(status, &body)));
         }
 
-        let mut stream = response.bytes_stream();
-        let mut full_response = String::new();
-        // P1：按 \n 字节切完整行再解码，避免多字节字被 chunk 边界切成 U+FFFD。
-        let mut buffer: Vec<u8> = Vec::new();
-        loop {
-            tokio::select! {
-                chunk = stream.next() => {
-                    match chunk {
-                        Some(Ok(bytes)) => {
-                            for line in drain_complete_lines(&mut buffer, &bytes) {
-                                let line = line.trim();
-                                if line.is_empty() || line == "data: [DONE]" { continue; }
-                                match stream_text_delta(is_anthropic, line) {
-                                    Ok(Some(content)) => {
-                                        full_response.push_str(&content);
-                                        emitter.emit_token(&content);
-                                    }
-                                    Ok(None) => {}
-                                    Err(e) => {
-                                        emitter.emit_error(&e);
-                                        return Err(AppError::Custom(format!("AI 服务中途出错: {}", e)));
-                                    }
-                                }
-                            }
-                        }
-                        Some(Err(e)) => {
-                            emitter.emit_error(&e.to_string());
-                            return Err(AppError::Custom(format!("流读取错误: {}", e)));
-                        }
-                        None => break,
-                    }
-                }
-                _ = cancel_rx.changed() => {
-                    if *cancel_rx.borrow() {
-                        return Ok(full_response);
-                    }
-                }
-            }
-        }
-        // P1：flush 末尾无 \n 的残留 SSE 行
-        if !buffer.is_empty() {
-            let line = String::from_utf8_lossy(&buffer);
-            let line = line.trim();
-            if !line.is_empty() && line != "data: [DONE]" {
-                if let Ok(Some(content)) = stream_text_delta(is_anthropic, line) {
-                    full_response.push_str(&content);
-                    emitter.emit_token(&content);
-                }
-            }
-        }
-        Ok(full_response)
+        // 取消：已生成的那一截照常返回
+        consume_text_stream(
+            emitter,
+            response,
+            model_service::protocol_of(&model.provider),
+            &mut cancel_rx,
+        )
+        .await
     }
 
     /// 撤回会话里从 `from_message_id` 起（含）的所有消息（重新生成 / 编辑重发）
@@ -2018,7 +2223,6 @@ impl AiService {
         mut cancel_rx: watch::Receiver<bool>,
     ) -> Result<String, AppError> {
         let client = crate::services::http_client::shared();
-        let is_anthropic = anthropic::is_anthropic(&model.provider);
         let body = json!({
             "model": model.model_id,
             "messages": messages,
@@ -2045,65 +2249,14 @@ impl AiService {
             return Err(AppError::Custom(msg));
         }
 
-        let mut stream = response.bytes_stream();
-        let mut full_response = String::new();
-        // P1：按 \n 字节切完整行再解码，避免多字节字被 chunk 边界切成 U+FFFD。
-        let mut buffer: Vec<u8> = Vec::new();
-
-        loop {
-            tokio::select! {
-                chunk = stream.next() => {
-                    match chunk {
-                        Some(Ok(bytes)) => {
-                            // SSE 格式：data: {...}\n\n（Anthropic 另有 event: 行，stream_text_delta 会跳过）
-                            for line in drain_complete_lines(&mut buffer, &bytes) {
-                                let line = line.trim();
-                                if line.is_empty() || line == "data: [DONE]" {
-                                    continue;
-                                }
-                                match stream_text_delta(is_anthropic, line) {
-                                    Ok(Some(content)) => {
-                                        full_response.push_str(&content);
-                                        emit_ai_token(app, conversation_id, &content);
-                                    }
-                                    Ok(None) => {}
-                                    Err(e) => {
-                                        let msg = format!("AI 服务中途出错: {}", e);
-                                        emit_ai_error(app, conversation_id, &msg);
-                                        return Err(AppError::Custom(msg));
-                                    }
-                                }
-                            }
-                        }
-                        Some(Err(e)) => {
-                            emit_ai_error(app, conversation_id, &e.to_string());
-                            return Err(AppError::Custom(format!("流读取错误: {}", e)));
-                        }
-                        None => break,
-                    }
-                }
-                _ = cancel_rx.changed() => {
-                    if *cancel_rx.borrow() {
-                        // 同 stream_ollama：ai:done 由调用方存库后再发
-                        return Ok(full_response);
-                    }
-                }
-            }
-        }
-
-        // P1：flush 末尾无 \n 的残留 SSE 行（兜底）
-        if !buffer.is_empty() {
-            let line = String::from_utf8_lossy(&buffer);
-            let line = line.trim();
-            if !line.is_empty() && line != "data: [DONE]" {
-                if let Ok(Some(content)) = stream_text_delta(is_anthropic, line) {
-                    full_response.push_str(&content);
-                    emit_ai_token(app, conversation_id, &content);
-                }
-            }
-        }
-
-        Ok(full_response)
+        // 取消：同 stream_ollama，ai:done 由调用方存库后再发
+        consume_text_stream(
+            &ConversationEmitter { app, conversation_id },
+            response,
+            model_service::protocol_of(&model.provider),
+            &mut cancel_rx,
+        )
+        .await
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -2519,8 +2672,7 @@ impl AiService {
         reasoning_out: &mut String,
     ) -> (Result<String, AppError>, Option<Vec<ToolCallAccum>>) {
         let client = crate::services::http_client::shared();
-        // Anthropic 协议同样走这里：请求体在 model_chat_request 里转换，流按行在 handle_stream_line 里分流
-        let is_anthropic = anthropic::is_anthropic(&model.provider);
+        // Anthropic 协议同样走这里：请求体在 model_chat_request 里转换，流由 ai-profile 的解码器按协议解
 
         let mut request_body = json!({
             "model": model.model_id,
@@ -2553,126 +2705,14 @@ impl AiService {
             return (Err(AppError::Custom(msg)), None);
         }
 
-        let mut stream = response.bytes_stream();
-        let mut content = String::new();
-        // P1: reasoning 模型（deepseek-r1 / qwq / o1）正文走 reasoning_content；
-        // 流过程中独立发 ai:reasoning 事件，content 全空时再兜底拼到正文
-        let mut reasoning_content = String::new();
-        // BTreeMap 按 index 有序，保证 dispatch 时工具顺序稳定
-        let mut tool_accum: std::collections::BTreeMap<u64, ToolCallAccum> =
-            std::collections::BTreeMap::new();
-        // P1: UTF-8 多字节字符可能跨 chunk 切分，String::from_utf8_lossy 在边界插入
-        // U+FFFD 替换字符并损坏 SSE 解析；改用 Vec<u8> 累积，按 \n 字节切再解码
-        let mut buffer: Vec<u8> = Vec::new();
-        // P0: finish_reason 用来判断是否异常终止（length / content_filter）
-        let mut finish_reason: Option<String> = None;
-
-        loop {
-            tokio::select! {
-                chunk = stream.next() => {
-                    match chunk {
-                        Some(Ok(bytes)) => {
-                            buffer.extend_from_slice(&bytes);
-                            while let Some(pos) = buffer.iter().position(|b| *b == b'\n') {
-                                let line_bytes: Vec<u8> = buffer.drain(..=pos).collect();
-                                let line = String::from_utf8_lossy(&line_bytes);
-                                let line = line.trim_end_matches(&['\r', '\n'][..]);
-                                if let Err(e) = handle_stream_line(
-                                    is_anthropic,
-                                    app,
-                                    conversation_id,
-                                    line,
-                                    &mut content,
-                                    &mut reasoning_content,
-                                    &mut tool_accum,
-                                    &mut finish_reason,
-                                ) {
-                                    let msg = format!("AI 服务中途出错: {}", e);
-                                    emit_ai_error(app, conversation_id, &msg);
-                                    return (Err(AppError::Custom(msg)), None);
-                                }
-                            }
-                        }
-                        Some(Err(e)) => {
-                            emit_ai_error(app, conversation_id, &e.to_string());
-                            return (Err(AppError::Custom(format!("流读取错误: {}", e))), None);
-                        }
-                        None => break,
-                    }
-                }
-                _ = cancel_rx.changed() => {
-                    if *cancel_rx.borrow() {
-                        // ai:done 由 chat_stream_with_skills 把「已停止」卡片存库后再发
-                        reasoning_out.push_str(&reasoning_content);
-                        return (Ok(content), Some(Vec::new()));
-                    }
-                }
-            }
-        }
-
-        // P0: 流末尾未以 \n 结尾的 leftover 也要 flush，否则丢失最后一行 SSE
-        if !buffer.is_empty() {
-            let line = String::from_utf8_lossy(&buffer);
-            let line = line.trim_end_matches(&['\r', '\n'][..]);
-            if let Err(e) = handle_stream_line(
-                is_anthropic,
-                app,
-                conversation_id,
-                line,
-                &mut content,
-                &mut reasoning_content,
-                &mut tool_accum,
-                &mut finish_reason,
-            ) {
-                let msg = format!("AI 服务中途出错: {}", e);
-                emit_ai_error(app, conversation_id, &msg);
-                return (Err(AppError::Custom(msg)), None);
-            }
-        }
-
-        // P1: content 全空但 reasoning 非空时，把累积的 reasoning 提升为正文
-        // （前端流式过程中已经收到 ai:reasoning，这里只补一次 ai:token 让 UI 文本不为空）
-        if content.trim().is_empty() && !reasoning_content.trim().is_empty() {
-            content.push_str(&reasoning_content);
-            emit_ai_token(app, conversation_id, &reasoning_content);
-        } else {
-            reasoning_out.push_str(&reasoning_content);
-        }
-
-        // finish_reason 异常处理：
-        // - length：模型生成达 max_tokens 上限，**已有部分内容**，不当致命错误。
-        //   追加一行提示让用户知道被截断，返回 Ok 保留已渲染的内容（前面 emit_ai_token
-        //   已经流式发过）；用户可视情况调大 max_tokens 或缩短上下文重试。
-        // - content_filter / 其他非 stop|tool_calls：当致命错误抛出（红色 toast）。
-        if let Some(reason) = &finish_reason {
-            match reason.as_str() {
-                "stop" | "tool_calls" => {}
-                "length" => {
-                    // 这句在 v61 之前是**死指路** —— 设置里根本没有 max_tokens 这一项。
-                    // 现在有了（设置 → AI 模型 → 编辑 → 单次回答上限 token），所以指明位置。
-                    let tip = "\n\n> ⚠️ 回答达到长度上限被截断。到「设置 → 模型服务 → 编辑 → 单次回答上限 token」调大即可（留空为服务商默认）。";
-                    content.push_str(tip);
-                    emit_ai_token(app, conversation_id, tip);
-                    log::warn!(
-                        "[ai] conversation {} 输出截断 (finish_reason=length)",
-                        conversation_id
-                    );
-                }
-                _ => {
-                    let msg = format!("AI 异常终止 (finish_reason={})", reason);
-                    emit_ai_error(app, conversation_id, &msg);
-                    return (Err(AppError::Custom(msg)), None);
-                }
-            }
-        }
-
-        // 收尾：id 在外层 chat_stream_with_skills 已做兜底合成，这里只丢 name 为空的
-        let tool_calls: Vec<ToolCallAccum> = tool_accum
-            .into_values()
-            .filter(|t| !t.name.trim().is_empty())
-            .collect();
-
-        (Ok(content), Some(tool_calls))
+        consume_tool_stream(
+            &ConversationEmitter { app, conversation_id },
+            response,
+            model_service::protocol_of(&model.provider),
+            &mut cancel_rx,
+            reasoning_out,
+        )
+        .await
     }
 
     /// Ollama `/api/chat` 流式请求 + tool_calls 支持
@@ -2826,151 +2866,6 @@ impl AiService {
         );
         (Ok(content), Some(tool_calls_final))
     }
-}
-
-/// 解析单行 OpenAI SSE 流数据，累加内容并更新 tool_calls 状态。
-///
-/// 抽出 free function 是因为 stream_openai_with_tools 主循环 + 末尾 leftover flush
-/// 两处都要调用，避免重复。
-fn handle_openai_stream_line(
-    app: &AppHandle,
-    conversation_id: i64,
-    line: &str,
-    content: &mut String,
-    reasoning_content: &mut String,
-    tool_accum: &mut std::collections::BTreeMap<u64, ToolCallAccum>,
-    finish_reason: &mut Option<String>,
-) {
-    if line.is_empty() || line == "data: [DONE]" {
-        return;
-    }
-    let Some(json_str) = line.strip_prefix("data: ") else {
-        return;
-    };
-    let data: Value = match serde_json::from_str(json_str) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-
-    let choice = &data["choices"][0];
-    if let Some(reason) = choice["finish_reason"].as_str() {
-        *finish_reason = Some(reason.to_string());
-    }
-
-    let delta = &choice["delta"];
-    if let Some(c) = delta["content"].as_str() {
-        content.push_str(c);
-        emit_ai_token(app, conversation_id, c);
-    }
-    // reasoning 模型（deepseek-r1 / qwq / o1）的"思考过程"，独立事件让前端可选展示
-    if let Some(r) = delta["reasoning_content"].as_str() {
-        if !r.is_empty() {
-            reasoning_content.push_str(r);
-            // 带会话 ID，理由同 emit_ai_token（多会话串台）
-            let _ = app.emit(
-                "ai:reasoning",
-                json!({ "conversationId": conversation_id, "content": r }),
-            );
-        }
-    }
-    // tool_calls 分片
-    if let Some(tcs) = delta["tool_calls"].as_array() {
-        for tc in tcs {
-            let idx = tc["index"].as_u64().unwrap_or(0);
-            let entry = tool_accum.entry(idx).or_insert_with(ToolCallAccum::default);
-            if let Some(id) = tc["id"].as_str() {
-                if !id.is_empty() {
-                    entry.id = id.to_string();
-                }
-            }
-            if let Some(name) = tc["function"]["name"].as_str() {
-                entry.name.push_str(name);
-            }
-            if let Some(args) = tc["function"]["arguments"].as_str() {
-                entry.args_json.push_str(args);
-            }
-        }
-    }
-}
-
-/// 按协议把一行流数据交给对应的解析函数。`Err` = 服务端在流中途报了错（只有 Anthropic 会）。
-#[allow(clippy::too_many_arguments)]
-fn handle_stream_line(
-    is_anthropic: bool,
-    app: &AppHandle,
-    conversation_id: i64,
-    line: &str,
-    content: &mut String,
-    reasoning_content: &mut String,
-    tool_accum: &mut std::collections::BTreeMap<u64, ToolCallAccum>,
-    finish_reason: &mut Option<String>,
-) -> Result<(), String> {
-    if is_anthropic {
-        return handle_anthropic_stream_line(
-            app,
-            conversation_id,
-            line,
-            content,
-            reasoning_content,
-            tool_accum,
-            finish_reason,
-        );
-    }
-    handle_openai_stream_line(
-        app,
-        conversation_id,
-        line,
-        content,
-        reasoning_content,
-        tool_accum,
-        finish_reason,
-    );
-    Ok(())
-}
-
-/// Anthropic 版的 [`handle_openai_stream_line`]：累加到**同样的**容器里，
-/// 调用方（工具循环）不用知道对面说的是哪种协议。
-///
-/// 工具调用：`tool_use` 块开始时给 id + name，参数随后以 `input_json_delta` 分片到达 ——
-/// 与 OpenAI 的「按 index 分片」同构，直接复用 `tool_accum`。
-/// 结束原因已在 `anthropic::parse_stream_line` 里换成 OpenAI 的叫法。
-fn handle_anthropic_stream_line(
-    app: &AppHandle,
-    conversation_id: i64,
-    line: &str,
-    content: &mut String,
-    reasoning_content: &mut String,
-    tool_accum: &mut std::collections::BTreeMap<u64, ToolCallAccum>,
-    finish_reason: &mut Option<String>,
-) -> Result<(), String> {
-    use anthropic::StreamEvent;
-    match anthropic::parse_stream_line(line) {
-        StreamEvent::Text(t) => {
-            content.push_str(&t);
-            emit_ai_token(app, conversation_id, &t);
-        }
-        StreamEvent::Thinking(t) => {
-            if !t.is_empty() {
-                reasoning_content.push_str(&t);
-                let _ = app.emit(
-                    "ai:reasoning",
-                    json!({ "conversationId": conversation_id, "content": t }),
-                );
-            }
-        }
-        StreamEvent::ToolStart { index, id, name } => {
-            let entry = tool_accum.entry(index).or_default();
-            entry.id = id;
-            entry.name = name;
-        }
-        StreamEvent::ToolArgs { index, partial_json } => {
-            tool_accum.entry(index).or_default().args_json.push_str(&partial_json);
-        }
-        StreamEvent::Stop(r) => *finish_reason = Some(r),
-        StreamEvent::Error(e) => return Err(e),
-        StreamEvent::Other => {}
-    }
-    Ok(())
 }
 
 /// 流式解析过程中累加的一次工具调用（OpenAI 分片返回格式）
@@ -4913,20 +4808,25 @@ mod remote_model_list_tests {
                 chat_request(client, &provider, &url, Some(&key), &body, 1024)
             };
             let collect = |text: String| {
-                let mut out = (String::new(), Vec::<(String, String, String)>::new(), None::<String>);
-                for line in text.lines() {
-                    match anthropic::parse_stream_line(line) {
-                        anthropic::StreamEvent::Text(t) => out.0.push_str(&t),
-                        anthropic::StreamEvent::ToolStart { id, name, .. } => out.1.push((id, name, String::new())),
-                        anthropic::StreamEvent::ToolArgs { partial_json, .. } => {
-                            out.1.last_mut().unwrap().2.push_str(&partial_json)
-                        }
-                        anthropic::StreamEvent::Stop(r) => out.2 = Some(r),
-                        anthropic::StreamEvent::Error(e) => panic!("流中途出错：{e}"),
-                        _ => {}
-                    }
-                }
-                out
+                let mut dec = StreamDecoder::new(Protocol::Anthropic);
+                dec.push(text.as_bytes());
+                let (_, outcome) = dec.finish();
+                assert_eq!(outcome.end, StreamEnd::Complete, "流没有正常结束：{:?}", outcome.end);
+                let calls = outcome
+                    .content
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|b| b["type"] == "tool_use")
+                    .map(|b| {
+                        (
+                            b["id"].as_str().unwrap_or_default().to_string(),
+                            b["name"].as_str().unwrap_or_default().to_string(),
+                            b["input"].to_string(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                (outcome.text(), calls, openai_finish_reason(&outcome))
             };
             let r = round(messages.clone()).send().await.unwrap();
             assert!(r.status().is_success(), "③ 第一轮 {}", r.status());

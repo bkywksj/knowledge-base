@@ -5,7 +5,8 @@
 //! 发对话请求的地方有 11 处（对话、智能模式、写作助手、规划今日……），各自拼的都是
 //! OpenAI `chat/completions` 结构的请求体。给每处再写一套 Anthropic 版，以后改一处
 //! 忘一处是必然的。所以各处**照旧拼 OpenAI 结构**，发送前按模型协议在这里统一转换；
-//! 响应和流也在这里统一解析回调用方熟悉的形状。
+//! 非流式响应也在这里解析回调用方熟悉的形状。流式 SSE 不在这里：两个协议都由
+//! `ai_profile::stream` 解码（见 `services/ai.rs` 的 `read_sse_stream`）。
 //!
 //! # 与 Sigil 对齐的两个取舍（都是实测踩出来的）
 //!
@@ -233,65 +234,9 @@ pub fn response_text(resp: &Value) -> Option<String> {
     )
 }
 
-/// 流里一行 SSE 解析出的事件。`event:` 行、`ping`、块起止等无关事件都归 [`StreamEvent::Other`]。
-#[derive(Debug, Clone, PartialEq)]
-pub enum StreamEvent {
-    Text(String),
-    Thinking(String),
-    /// 一个工具调用开始（参数随后以 [`StreamEvent::ToolArgs`] 分片到达）
-    ToolStart { index: u64, id: String, name: String },
-    ToolArgs { index: u64, partial_json: String },
-    /// 结束原因，已换成 OpenAI 的叫法（见 [`finish_reason`]）
-    Stop(String),
-    Error(String),
-    Other,
-}
-
-/// 解析一行 SSE。Anthropic 每个事件是 `event: xxx` + `data: {...}` 两行，
-/// `data` 里自带 `type`，所以只看 `data` 行就够了。
-pub fn parse_stream_line(line: &str) -> StreamEvent {
-    let Some(json_str) = line.strip_prefix("data:").map(str::trim_start) else {
-        return StreamEvent::Other;
-    };
-    let Ok(v) = serde_json::from_str::<Value>(json_str) else {
-        return StreamEvent::Other;
-    };
-    match v["type"].as_str().unwrap_or("") {
-        "content_block_start" if v["content_block"]["type"] == "tool_use" => StreamEvent::ToolStart {
-            index: v["index"].as_u64().unwrap_or(0),
-            id: v["content_block"]["id"].as_str().unwrap_or("").to_string(),
-            name: v["content_block"]["name"].as_str().unwrap_or("").to_string(),
-        },
-        "content_block_delta" => {
-            let d = &v["delta"];
-            match d["type"].as_str().unwrap_or("") {
-                "text_delta" => StreamEvent::Text(d["text"].as_str().unwrap_or("").to_string()),
-                "thinking_delta" => {
-                    StreamEvent::Thinking(d["thinking"].as_str().unwrap_or("").to_string())
-                }
-                "input_json_delta" => StreamEvent::ToolArgs {
-                    index: v["index"].as_u64().unwrap_or(0),
-                    partial_json: d["partial_json"].as_str().unwrap_or("").to_string(),
-                },
-                _ => StreamEvent::Other,
-            }
-        }
-        "message_delta" => match v["delta"]["stop_reason"].as_str() {
-            Some(r) => StreamEvent::Stop(finish_reason(r).to_string()),
-            None => StreamEvent::Other,
-        },
-        // 流中途的错误（如 overloaded_error）：HTTP 已经是 200，只能从事件里认出来
-        "error" => StreamEvent::Error(
-            v["error"]["message"]
-                .as_str()
-                .map(str::to_string)
-                .unwrap_or_else(|| v["error"].to_string()),
-        ),
-        _ => StreamEvent::Other,
-    }
-}
-
 /// Anthropic 的 `stop_reason` → OpenAI 的 `finish_reason`，让调用方共用一套收尾判断。
+///
+/// 流式的 SSE 解析归 `ai_profile::stream`，它给的 `StopReason::as_str()` 就是 Anthropic 词表，经这里换算。
 pub fn finish_reason(stop_reason: &str) -> &str {
     match stop_reason {
         "end_turn" | "stop_sequence" | "pause_turn" => "stop",
@@ -376,33 +321,6 @@ mod tests {
         let tool = body["tools"][0].as_object().unwrap();
         assert_eq!(tool.len(), 2, "只剩 name + input_schema（没有 description 就不出现）");
         assert_eq!(body["tool_choice"], json!({"type": "auto"}));
-    }
-
-    #[test]
-    fn parses_stream_events() {
-        assert_eq!(
-            parse_stream_line(r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"你好"}}"#),
-            StreamEvent::Text("你好".into())
-        );
-        assert_eq!(
-            parse_stream_line(r#"data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"search_notes","input":{}}}"#),
-            StreamEvent::ToolStart { index: 1, id: "t1".into(), name: "search_notes".into() }
-        );
-        assert_eq!(
-            parse_stream_line(r#"data:{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"q"}}"#),
-            StreamEvent::ToolArgs { index: 1, partial_json: "{\"q".into() },
-            "data: 后没空格也要认"
-        );
-        assert_eq!(
-            parse_stream_line(r#"data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{}}"#),
-            StreamEvent::Stop("tool_calls".into())
-        );
-        assert_eq!(
-            parse_stream_line(r#"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#),
-            StreamEvent::Error("Overloaded".into())
-        );
-        assert_eq!(parse_stream_line("event: ping"), StreamEvent::Other);
-        assert_eq!(parse_stream_line(r#"data: {"type":"ping"}"#), StreamEvent::Other);
     }
 
     #[test]
