@@ -40,8 +40,8 @@ ai.profile 解析（只认 `v === 1`）、`services/ai.rs` 的 `build_openai_api
 
 - 预置暴露 crate **全量**（与 Sigil 同一份）；官方档 crate 不带地址，`presets()` 补 `https://api.anthropic.com/v1`
 - 🔴 **11 处发对话请求的地方都照旧拼 OpenAI 结构的请求体**，统一经 `chat_request` / `model_chat_request`
-  发送（按协议换地址 / 鉴权头 / 请求体），响应经 `completion_text`、流经 `stream_text_delta` /
-  `handle_stream_line` 解析。**新增对话请求别手拼 `Authorization: Bearer`**，否则 Anthropic 配置直接 401
+  发送（按协议换地址 / 鉴权头 / 请求体），响应经 `completion_text`、流经 `read_sse_stream`
+  （ai-profile 的 `stream` 解码器）解析。**新增对话请求别手拼 `Authorization: Bearer`**，否则 Anthropic 配置直接 401
 - Anthropic 的取舍（照 Sigil，都是实测踩出来的）：只发 `x-api-key` + `anthropic-version`（仿 Claude Code 头
   会让中转路由到空账号池 503）；历史只回传 text / tool_use，不回传 thinking；`max_tokens` 必填，
   没设时 8192 且不超过已知输出上限；丢 `temperature` / `top_p` / `seed` / `response_format`
@@ -58,7 +58,7 @@ ai.profile 解析（只认 `v === 1`）、`services/ai.rs` 的 `build_openai_api
 | 与 crate 的接缝（预置 / 验证 / 限额 / ai.profile / 旧配置修正） | `src-tauri/src/services/model_service.rs` |
 | Commands | `commands/ai.rs`：`list_ai_provider_presets` / `verify_ai_model_endpoint` / `parse_ai_profile_text` / `ai_model_to_ai_profile` / `fix_legacy_ai_model` |
 | 端点拼接 | `services/ai.rs` 的 `build_openai_chat_url`（转发 crate）/ `ollama_native_root`；`services/anthropic.rs` 的 `messages_url` |
-| 协议分流 | `services/ai.rs` 的 `chat_request` / `completion_text` / `stream_text_delta` / `handle_stream_line`；`services/anthropic.rs` |
+| 协议分流 | `services/ai.rs` 的 `chat_request` / `completion_text` / `read_sse_stream`（流）；`services/anthropic.rs`（请求体转换） |
 | 前端适配层 | `src/lib/aiProviderPresets.ts`（`useAiProviderPresets` 等，**只做形状适配**） |
 | 表单 | `src/pages/settings/index.tsx`、`src/components/ai/MobileAiModelModal.tsx` |
 | 分享 / 导入 | `src/lib/configShare.ts`（`kbConfig` 信封归本项目；ai.profile 交给后端） |
@@ -107,6 +107,51 @@ schema v62 起是 `deepseek` / `moonshot` / `openai_official` / `ollama` / `open
 
 `chat_stream_with_skills` **不接** crate 的 `trim_history`：本项目的消息是 OpenAI 结构（`tool_calls`），
 crate 裁剪按 Anthropic 结构配对 tool —— 硬接会拆坏配对。
+
+## 流式（ai-profile 0.1.4 起）
+
+OpenAI 兼容 / Anthropic 的 SSE 怎么解**全在 crate 的 `stream` 模块**，本项目不再有自己的 SSE 解析器。
+**不要在本项目里写**：SSE 帧切分、`\r\n` / 心跳行处理、工具调用按 `index` 拼装、补 `call_<流id>_<块号>`、
+`[DONE]` / `finish_reason` 换算、断流判定、「2xx 却回网页」判断 —— 这些是网关怪癖，随服务商变化。
+发现某家网关解不对，**去 ai-profile 仓库修**。已删掉的副本：`stream_text_delta`、`handle_*_stream_line`、
+`anthropic::parse_stream_line` / `StreamEvent`。
+
+| 在 crate | 留在本项目（`services/ai.rs`） |
+|---|---|
+| 字节 → 统一事件、块号约定、收尾判定（`Complete` / `Truncated` / `Failed` / `NotEventStream`） | 请求体构造与鉴权（`chat_request`）、共享 HTTP 客户端 |
+| `looks_like_html`、`StopReason` | 取消接线（`wait_cancelled`，每收一段 `select!`）、事件推给前端（`AiEventEmitter`） |
+| 多字节字符跨包不丢字 | 工具调用累积（保留原始参数字符串）、`StopReason` → OpenAI 词表（`openai_finish_reason`）、落库 |
+
+入口只有一个：`read_sse_stream`。`consume_text_stream`（写作助手 / RAG 对话）和 `consume_tool_stream`
+（智能模式）包在它外面，**新增 SSE 站点调这两个，别再自己写读流循环**。
+
+### 🔴 例外：Ollama 原生接口不走 crate
+
+`/api/chat` 是 **NDJSON，不是 SSE**，不在 crate 范围，`stream_ollama*` 一带原样保留，
+并继续用 `drain_complete_lines` 切行（别因为「SSE 已迁移」就把它删了）。Ollama 的 OpenAI 兼容端点
+`/v1/chat/completions` 在本项目只给 5 个非流式功能用，对话 / 写作的流式一律走原生。
+`stream_ollama_with_tools` 实际是死路径（`chat_stream_with_skills` 对 ollama 早返回走 RAG）。
+
+### 行为约定（改动时别无意改回去）
+
+- **停止**：取消即返回（`SseEnd::Cancelled`，`Ok`），丢掉字节流 = 关 TCP；已收到的文字照常存成「已停止」卡片，
+  没收完的工具调用由解码器丢掉
+- **断流**（没有结束标记就 EOF）/ **流内错误** / **网络读取错误**：`SseEnd::Failed`，**报错**
+  （以前断流当正常结束，半截回复被存成完整回复）。流内错误是终态，不再读完整个流
+- **失败时已流给用户看的半截正文留在错误卡片里**（`StreamFailure.partial` → `fail_turn(partial)`）：
+  卡片不论状态都渲染正文，`end_reason = "error"` 的卡片被 `usable_in_history` 排除出模型上下文，
+  所以半截话既不丢也不污染历史。Ollama 原生路径不带 partial（保持原样）；写作助手结果不入库，用不上
+- **2xx 却不是事件流**（回网页，或网关忽略 `stream: true` 整段回 JSON）：报错而不是空回复。
+  `looks_like_html` 命中提示检查 API 地址路径，否则带响应开头 200 字。本项目没有「回落非流式」的逻辑
+- **`StreamEnd` 是 `non_exhaustive`**：`read_sse_stream` 的兜底分支按出错处理，新增结局别让它静默当成功
+- 🔴 **工具循环：取消 / 断流 / 流内错误时不执行任何工具调用**。`consume_tool_stream` 只有 `Complete` 才交出
+  工具调用；半截 JSON 参数不能当 `{}` 去执行。工具按 `ToolUseStart` / `ToolUseDelta` 逐块累积，
+  **保留模型给的原始参数字符串**（`dispatch_with_mcp` 与回填给模型的 `arguments` 都吃字符串；
+  用 `outcome.content` 会把畸形 JSON 改写成 `{}`）
+- 结束原因：crate 的 `StopReason` 是 Anthropic 词表，经 `anthropic::finish_reason` 换成本项目内部的 OpenAI 词表
+  （`stop` / `tool_calls` / `length`），`length` 追加截断提示、`content_filter` / `refusal` 报错的既有判断不变
+- 测试走本机假服务端的端到端路径（`sse_stream_tests`，客户端要 `.no_proxy()`，否则本机 HTTP 代理会让
+  127.0.0.1 随机 `os error 10053`），不测解码内部 —— 解码细节归 crate 的测试
 
 ## 升级 ai-profile
 
