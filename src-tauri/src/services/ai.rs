@@ -5073,3 +5073,539 @@ mod truncate_tests {
         assert_eq!(db.list_ai_messages(b).unwrap().len(), 1);
     }
 }
+
+/// 流式 SSE 端到端测试：本机假服务端按脚本吐字节，走真实的 reqwest → `read_sse_stream` →
+/// `consume_text_stream` / `consume_tool_stream`。覆盖：两个协议各一条正常流（含 `\r\n` 与
+/// `: keep-alive`）、中文字被切在两个包之间、带工具调用的流（参数分片拼对）、断流（含断在工具参数
+/// 中途）、流内错误、整段 JSON / 网页响应、取消。
+///
+/// ⚠️ 本机配了 HTTP 代理时，访问 127.0.0.1 的客户端必须 `.no_proxy()`，否则随机 os error 10053。
+#[cfg(test)]
+mod sse_stream_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+
+    const OA: Protocol = Protocol::OpenAiCompatible;
+    const AN: Protocol = Protocol::Anthropic;
+
+    /// 录制发给前端的事件；收到第一个 token 时通知（给取消测试用）
+    #[derive(Default)]
+    struct Rec {
+        tokens: Mutex<Vec<String>>,
+        reasoning: Mutex<Vec<String>>,
+        errors: Mutex<Vec<String>>,
+        first_token: tokio::sync::Notify,
+    }
+
+    impl AiEventEmitter for Rec {
+        fn emit_token(&self, content: &str) {
+            self.tokens.lock().unwrap().push(content.to_string());
+            self.first_token.notify_one();
+        }
+        fn emit_error(&self, error: &str) {
+            self.errors.lock().unwrap().push(error.to_string());
+        }
+        fn emit_reasoning(&self, content: &str) {
+            self.reasoning.lock().unwrap().push(content.to_string());
+        }
+    }
+
+    impl Rec {
+        fn tokens(&self) -> String {
+            self.tokens.lock().unwrap().concat()
+        }
+        fn errors(&self) -> Vec<String> {
+            self.errors.lock().unwrap().clone()
+        }
+    }
+
+    // ── OpenAI 兼容帧 ──
+    fn oa(delta: Value, finish: Option<&str>) -> String {
+        format!(
+            "data: {}\n\n",
+            json!({ "choices": [{ "delta": delta, "finish_reason": finish }] })
+        )
+    }
+    fn oa_text(s: &str) -> String {
+        oa(json!({ "content": s }), None)
+    }
+    fn oa_tool(idx: u64, id: &str, name: &str, args: &str) -> String {
+        oa(
+            json!({ "tool_calls": [{ "index": idx, "id": id, "type": "function",
+                "function": { "name": name, "arguments": args } }] }),
+            None,
+        )
+    }
+    fn oa_args(idx: u64, args: &str) -> String {
+        oa(json!({ "tool_calls": [{ "index": idx, "function": { "arguments": args } }] }), None)
+    }
+    fn oa_finish(reason: &str) -> String {
+        oa(json!({}), Some(reason))
+    }
+    const OA_DONE: &str = "data: [DONE]\n\n";
+
+    // ── Anthropic 帧 ──
+    fn an(event: &str, data: Value) -> String {
+        format!("event: {event}\ndata: {data}\n\n")
+    }
+    fn an_text(idx: u64, s: &str) -> String {
+        an(
+            "content_block_delta",
+            json!({ "type": "content_block_delta", "index": idx,
+                "delta": { "type": "text_delta", "text": s } }),
+        )
+    }
+    fn an_tool(idx: u64, id: &str, name: &str) -> String {
+        an(
+            "content_block_start",
+            json!({ "type": "content_block_start", "index": idx,
+                "content_block": { "type": "tool_use", "id": id, "name": name, "input": {} } }),
+        )
+    }
+    fn an_args(idx: u64, partial: &str) -> String {
+        an(
+            "content_block_delta",
+            json!({ "type": "content_block_delta", "index": idx,
+                "delta": { "type": "input_json_delta", "partial_json": partial } }),
+        )
+    }
+    fn an_stop(reason: &str) -> String {
+        an(
+            "message_delta",
+            json!({ "type": "message_delta", "delta": { "stop_reason": reason }, "usage": { "output_tokens": 7 } }),
+        ) + &an("message_stop", json!({ "type": "message_stop" }))
+    }
+
+    /// 假服务端：读完请求后，把 `chunks` 一块一块写出去（块间留间隔，让客户端分开读到），
+    /// 然后关闭连接（= 干净 EOF，没有结束标记就是「断流」）。`hold` 为真时写完不关，用来测取消。
+    async fn serve(content_type: &'static str, chunks: Vec<Vec<u8>>, hold: bool) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            sock.set_nodelay(true).ok();
+            read_request(&mut sock).await;
+            let head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: {content_type}\r\nconnection: close\r\n\r\n"
+            );
+            let _ = sock.write_all(head.as_bytes()).await;
+            for c in chunks {
+                if sock.write_all(&c).await.is_err() {
+                    return;
+                }
+                let _ = sock.flush().await;
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
+            if hold {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+            }
+        });
+        format!("http://{addr}/v1/chat/completions?key=secret")
+    }
+
+    async fn read_request(sock: &mut TcpStream) {
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 4096];
+        loop {
+            let n = sock.read(&mut tmp).await.unwrap_or(0);
+            if n == 0 {
+                return;
+            }
+            buf.extend_from_slice(&tmp[..n]);
+            if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&buf[..pos]).to_lowercase();
+                let len = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("content-length:"))
+                    .and_then(|v| v.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                let mut remaining = len.saturating_sub(buf.len() - (pos + 4));
+                while remaining > 0 {
+                    let n = sock.read(&mut tmp).await.unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    remaining = remaining.saturating_sub(n);
+                }
+                return;
+            }
+        }
+    }
+
+    async fn request(url: String) -> reqwest::Response {
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .post(url)
+            .body("{}")
+            .send()
+            .await
+            .unwrap()
+    }
+
+    fn sse(frames: &[String]) -> Vec<Vec<u8>> {
+        frames.iter().map(|f| f.clone().into_bytes()).collect()
+    }
+
+    async fn text_stream(
+        protocol: Protocol,
+        chunks: Vec<Vec<u8>>,
+    ) -> (Result<String, StreamFailure>, Arc<Rec>) {
+        let rec = Arc::new(Rec::default());
+        let url = serve("text/event-stream", chunks, false).await;
+        let (_tx, mut rx) = watch::channel(false);
+        let r = consume_text_stream(rec.as_ref(), request(url).await, protocol, &mut rx).await;
+        (r, rec)
+    }
+
+    async fn tool_stream(
+        protocol: Protocol,
+        chunks: Vec<Vec<u8>>,
+    ) -> (Result<(String, Vec<ToolCallAccum>), StreamFailure>, Arc<Rec>, String) {
+        let rec = Arc::new(Rec::default());
+        let url = serve("text/event-stream", chunks, false).await;
+        let (_tx, mut rx) = watch::channel(false);
+        let mut reasoning = String::new();
+        let r = consume_tool_stream(rec.as_ref(), request(url).await, protocol, &mut rx, &mut reasoning).await;
+        (r, rec, reasoning)
+    }
+
+    fn failure_msg(r: &Result<impl std::fmt::Debug, StreamFailure>) -> String {
+        match r {
+            Err(f) => f.error.to_string(),
+            Ok(v) => panic!("应当失败，实际得到 {v:?}"),
+        }
+    }
+
+    // ───────────── 正常流 ─────────────
+
+    /// OpenAI 兼容：`\r\n` 行尾 + `: keep-alive` 注释行 + `[DONE]` 收尾
+    #[tokio::test]
+    async fn openai_normal_stream_with_crlf_and_keepalive() {
+        let body = [
+            ": keep-alive\n\n".to_string(),
+            oa_text("你好"),
+            ": keep-alive\n\n".to_string(),
+            oa_text("，世界"),
+            oa_finish("stop"),
+            OA_DONE.to_string(),
+        ]
+        .concat()
+        .replace('\n', "\r\n");
+        let (r, rec) = text_stream(OA, vec![body.into_bytes()]).await;
+        assert_eq!(r.ok().unwrap(), "你好，世界");
+        assert_eq!(rec.tokens(), "你好，世界");
+        assert!(rec.errors().is_empty());
+    }
+
+    /// Anthropic：`event:` 行 + message_stop 收尾
+    #[tokio::test]
+    async fn anthropic_normal_stream() {
+        let body = [an_text(0, "你好"), an_text(0, "，世界"), an_stop("end_turn")].concat();
+        let (r, rec) = text_stream(AN, vec![body.into_bytes()]).await;
+        assert_eq!(r.ok().unwrap(), "你好，世界");
+        assert_eq!(rec.tokens(), "你好，世界");
+    }
+
+    /// 一个 3 字节的中文字被切在两个包之间：不能出现 U+FFFD。
+    /// 反证用例：把 `read_sse_stream` 改成先逐包 `from_utf8_lossy` 再喂解码器，这条会变红
+    #[tokio::test]
+    async fn chinese_char_split_across_packets_is_not_garbled() {
+        for (protocol, frame) in [(OA, oa_text("你好世界")), (AN, an_text(0, "你好世界"))] {
+            let bytes = frame.into_bytes();
+            let cut = String::from_utf8_lossy(&bytes).find('好').unwrap() + 1; // 「好」的第 1 个字节之后
+            let tail = if protocol == OA { OA_DONE.to_string() } else { an_stop("end_turn") };
+            let chunks = vec![bytes[..cut].to_vec(), bytes[cut..].to_vec(), tail.into_bytes()];
+            let (r, rec) = text_stream(protocol, chunks).await;
+            let text = r.ok().unwrap();
+            assert_eq!(text, "你好世界", "{protocol:?}");
+            assert!(!text.contains('\u{FFFD}') && !rec.tokens().contains('\u{FFFD}'), "{protocol:?}");
+        }
+    }
+
+    // ───────────── 工具调用 ─────────────
+
+    /// OpenAI：参数分片拼对、保留原始参数字符串；两个工具按块号有序
+    #[tokio::test]
+    async fn openai_tool_calls_args_are_assembled_verbatim() {
+        let body = [
+            oa_text("我先搜"),
+            oa_tool(0, "c1", "search_notes", ""),
+            oa_args(0, "{\"qu"),
+            oa_args(0, "ery\":\"周报\"}"),
+            oa_tool(1, "c2", "list_tags", "{}"),
+            oa_finish("tool_calls"),
+            OA_DONE.to_string(),
+        ]
+        .concat();
+        let (r, rec, _) = tool_stream(OA, sse(&[body])).await;
+        let (content, calls) = r.ok().unwrap();
+        assert_eq!(content, "我先搜");
+        assert_eq!(rec.tokens(), "我先搜");
+        assert_eq!(calls.len(), 2);
+        assert_eq!((calls[0].id.as_str(), calls[0].name.as_str()), ("c1", "search_notes"));
+        assert_eq!(calls[0].args_json, "{\"query\":\"周报\"}", "必须是模型给的原始字符串");
+        assert_eq!((calls[1].id.as_str(), calls[1].name.as_str(), calls[1].args_json.as_str()), ("c2", "list_tags", "{}"));
+    }
+
+    /// 网关不给 tool_call id：crate 补 `call_<流id>_<块号>`，不是空串
+    #[tokio::test]
+    async fn openai_tool_call_without_id_gets_synthesized_id() {
+        let body = [
+            oa(json!({ "tool_calls": [{ "index": 0, "function": { "name": "list_tags", "arguments": "{}" } }] }), None),
+            oa_finish("tool_calls"),
+            OA_DONE.to_string(),
+        ]
+        .concat();
+        let (r, _, _) = tool_stream(OA, sse(&[body])).await;
+        let (_, calls) = r.ok().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].id.starts_with("call_"), "id = {:?}", calls[0].id);
+    }
+
+    /// Anthropic：tool_use 块 + input_json_delta 分片
+    #[tokio::test]
+    async fn anthropic_tool_use_args_are_assembled_verbatim() {
+        let body = [
+            an_text(0, "我先搜"),
+            an_tool(1, "toolu_1", "search_notes"),
+            an_args(1, "{\"query\":"),
+            an_args(1, "\"周报\"}"),
+            an_stop("tool_use"),
+        ]
+        .concat();
+        let (r, _, _) = tool_stream(AN, sse(&[body])).await;
+        let (content, calls) = r.ok().unwrap();
+        assert_eq!(content, "我先搜");
+        assert_eq!(calls.len(), 1);
+        assert_eq!((calls[0].id.as_str(), calls[0].name.as_str()), ("toolu_1", "search_notes"));
+        assert_eq!(calls[0].args_json, "{\"query\":\"周报\"}");
+    }
+
+    /// 结束原因换算：length 追加截断提示（已有行为）并保留工具调用判断；content_filter / refusal 报错
+    #[tokio::test]
+    async fn finish_reasons_map_to_existing_behaviour() {
+        let (r, rec, _) = tool_stream(OA, sse(&[[oa_text("半"), oa_finish("length"), OA_DONE.to_string()].concat()])).await;
+        let (content, _) = r.ok().unwrap();
+        assert!(content.starts_with('半') && content.contains("回答达到长度上限"), "{content}");
+        assert!(rec.tokens().contains("回答达到长度上限"));
+
+        let (r, _, _) = tool_stream(AN, sse(&[[an_text(0, "半"), an_stop("max_tokens")].concat()])).await;
+        assert!(r.ok().unwrap().0.contains("回答达到长度上限"), "Anthropic max_tokens 也要换成 length");
+
+        let (r, rec, _) = tool_stream(OA, sse(&[[oa_text("x"), oa_finish("content_filter"), OA_DONE.to_string()].concat()])).await;
+        assert!(failure_msg(&r).contains("content_filter"));
+        assert_eq!(r.err().unwrap().partial, "x");
+        assert_eq!(rec.errors().len(), 1);
+
+        let (r, _, _) = tool_stream(AN, sse(&[[an_text(0, "x"), an_stop("refusal")].concat()])).await;
+        assert!(failure_msg(&r).contains("refusal"));
+    }
+
+    /// 推理模型：思考走 ai:reasoning；正文为空时思考被提升为正文，且不重复记入 reasoning_out
+    #[tokio::test]
+    async fn reasoning_is_forwarded_and_promoted_when_content_empty() {
+        let body = [
+            oa(json!({ "reasoning_content": "想" }), None),
+            oa(json!({ "reasoning_content": "一想" }), None),
+            oa_finish("stop"),
+            OA_DONE.to_string(),
+        ]
+        .concat();
+        let (r, rec, reasoning) = tool_stream(OA, sse(&[body])).await;
+        let (content, _) = r.ok().unwrap();
+        assert_eq!(content, "想一想");
+        assert_eq!(rec.reasoning.lock().unwrap().concat(), "想一想");
+        assert_eq!(reasoning, "", "已提升成正文，不能在卡片上显示两遍");
+
+        let body = [oa(json!({ "reasoning_content": "想" }), None), oa_text("答"), oa_finish("stop"), OA_DONE.to_string()].concat();
+        let (r, _, reasoning) = tool_stream(OA, sse(&[body])).await;
+        assert_eq!(r.ok().unwrap().0, "答");
+        assert_eq!(reasoning, "想");
+    }
+
+    // ───────────── 断流 / 流内错误 ─────────────
+
+    /// 🔴 流在结束标记前断掉：失败而不是正常结束，半截正文随错误带回。
+    /// 反证用例：把 `read_sse_stream` 里 `StreamEnd::Truncated` 改成 `SseEnd::Complete`，这条会变红
+    #[tokio::test]
+    async fn truncated_stream_is_a_failure_with_partial_text() {
+        for (protocol, body) in [
+            (OA, [oa_text("说了"), oa_text("一半")].concat()),
+            (AN, [an_text(0, "说了"), an_text(0, "一半")].concat()),
+        ] {
+            let (r, rec) = text_stream(protocol, sse(&[body])).await;
+            let msg = failure_msg(&r);
+            assert!(msg.contains("中断"), "{protocol:?}: {msg}");
+            assert_eq!(r.err().unwrap().partial, "说了一半", "{protocol:?}");
+            assert_eq!(rec.errors().len(), 1, "必须发 ai:error，前端才会收尾");
+            assert_eq!(rec.tokens(), "说了一半", "已经流出去的 token 不撤回");
+        }
+    }
+
+    /// 🔴 断在工具参数中途：失败，不交出任何工具调用（半截 JSON 不能当 `{}` 去执行）
+    #[tokio::test]
+    async fn truncated_in_tool_args_yields_no_tool_calls() {
+        for (protocol, body) in [
+            (OA, [oa_text("我先搜"), oa_tool(0, "c1", "search_notes", ""), oa_args(0, "{\"query\":\"周")].concat()),
+            (AN, [an_text(0, "我先搜"), an_tool(1, "t1", "search_notes"), an_args(1, "{\"query\":\"周")].concat()),
+        ] {
+            let (r, rec, _) = tool_stream(protocol, sse(&[body])).await;
+            // Result 的 Err 臂里根本没有工具调用；这里再确认走的是失败臂且带着已说的话
+            let f = r.err().expect("断流必须是失败");
+            assert!(f.error.to_string().contains("中断"), "{protocol:?}");
+            assert_eq!(f.partial, "我先搜", "{protocol:?}");
+            assert_eq!(rec.errors().len(), 1);
+        }
+    }
+
+    /// 流内错误（HTTP 200 里夹的 error）：立刻失败，带原因与已收到的正文
+    #[tokio::test]
+    async fn in_stream_error_fails_with_reason() {
+        let oa_err = [oa_text("前半"), "data: {\"error\":{\"message\":\"overloaded\"}}\n\n".to_string()].concat();
+        let an_err = [
+            an_text(0, "前半"),
+            an("error", json!({ "type": "error", "error": { "type": "overloaded_error", "message": "Overloaded" } })),
+        ]
+        .concat();
+        for (protocol, body, reason) in [(OA, oa_err, "overloaded"), (AN, an_err, "Overloaded")] {
+            let (r, rec) = text_stream(protocol, sse(&[body])).await;
+            let msg = failure_msg(&r);
+            assert!(msg.contains("中途出错") && msg.contains(reason), "{protocol:?}: {msg}");
+            assert_eq!(r.err().unwrap().partial, "前半");
+            assert_eq!(rec.errors().len(), 1);
+        }
+    }
+
+    // ───────────── 不是事件流 ─────────────
+
+    /// 网关忽略 stream:true 整段回 JSON：报错并带响应开头，不是空回复
+    #[tokio::test]
+    async fn whole_json_response_is_an_error_not_an_empty_reply() {
+        let json_body = json!({ "choices": [{ "message": { "content": "整段回复" } }] }).to_string();
+        let url = serve("application/json", vec![json_body.into_bytes()], false).await;
+        let rec = Rec::default();
+        let (_tx, mut rx) = watch::channel(false);
+        let r = consume_text_stream(&rec, request(url).await, OA, &mut rx).await;
+        let msg = failure_msg(&r);
+        assert!(msg.contains("没有返回事件流") && msg.contains("整段回复"), "{msg}");
+        assert!(!msg.contains("key=secret"), "报错里的地址要去掉 query：{msg}");
+        assert_eq!(rec.errors().len(), 1);
+    }
+
+    /// 地址路径不对、网站回了首页：提示检查 API 地址
+    #[tokio::test]
+    async fn html_response_hints_wrong_api_path() {
+        let url = serve("text/html", vec![b"<!DOCTYPE html><html><body>welcome</body></html>".to_vec()], false).await;
+        let rec = Rec::default();
+        let (_tx, mut rx) = watch::channel(false);
+        let r = consume_text_stream(&rec, request(url).await, OA, &mut rx).await;
+        let msg = failure_msg(&r);
+        assert!(msg.contains("网页") && msg.contains("API 地址"), "{msg}");
+    }
+
+    // ───────────── 取消 ─────────────
+
+    /// 点停止：已生成的文字照常返回（Ok），不报错；服务端还没收尾也立刻生效
+    #[tokio::test]
+    async fn cancel_returns_partial_text_without_error() {
+        let url = serve("text/event-stream", sse(&[oa_text("写到"), oa_text("一半")]), true).await;
+        let rec = Arc::new(Rec::default());
+        let (tx, mut rx) = watch::channel(false);
+        let canceller = {
+            let rec = rec.clone();
+            tokio::spawn(async move {
+                rec.first_token.notified().await;
+                tokio::time::sleep(Duration::from_millis(80)).await; // 等两个 token 都到
+                let _ = tx.send(true);
+            })
+        };
+        let started = std::time::Instant::now();
+        let r = consume_text_stream(rec.as_ref(), request(url).await, OA, &mut rx).await;
+        canceller.await.unwrap();
+        assert_eq!(r.ok().unwrap(), "写到一半");
+        assert!(rec.errors().is_empty(), "取消不是错误");
+        assert!(started.elapsed() < Duration::from_secs(5), "取消没有及时生效");
+    }
+
+    /// 取消时一个工具调用写到一半：不交出工具调用
+    #[tokio::test]
+    async fn cancel_mid_tool_call_drops_tool_calls() {
+        let body = [oa_text("我先搜"), oa_tool(0, "c1", "search_notes", ""), oa_args(0, "{\"query\":\"周")].concat();
+        let url = serve("text/event-stream", sse(&[body]), true).await;
+        let rec = Arc::new(Rec::default());
+        let (tx, mut rx) = watch::channel(false);
+        let canceller = {
+            let rec = rec.clone();
+            tokio::spawn(async move {
+                rec.first_token.notified().await;
+                tokio::time::sleep(Duration::from_millis(80)).await;
+                let _ = tx.send(true);
+            })
+        };
+        let mut reasoning = String::new();
+        let r = consume_tool_stream(rec.as_ref(), request(url).await, OA, &mut rx, &mut reasoning).await;
+        canceller.await.unwrap();
+        let (content, calls) = r.ok().unwrap();
+        assert_eq!(content, "我先搜");
+        assert!(calls.is_empty(), "半截工具调用不能执行：{calls:?}");
+    }
+}
+
+/// 失败卡片保留半截正文（方案 B）：卡片里有字，但不进模型上下文
+#[cfg(all(test, desktop))]
+mod fail_turn_partial_tests {
+    use super::*;
+
+    #[test]
+    fn failed_turn_keeps_partial_text_but_stays_out_of_history() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "kb_aifail_{}_{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::SeqCst)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Database::init(dir.join("t.db").to_str().unwrap()).expect("init db");
+        let model = db
+            .create_ai_model(&AiModelInput {
+                name: "m".into(),
+                provider: "openai_compatible_custom".into(),
+                api_url: "http://localhost".into(),
+                api_key: None,
+                model_id: "m".into(),
+                max_context: None,
+                max_tokens: None,
+                limits_source: None,
+                max_output: None,
+            })
+            .unwrap();
+        let cid = db.create_ai_conversation("t", model.id, None).unwrap().id;
+        db.add_ai_message(cid, "user", "问", None).unwrap();
+
+        let err = fail_turn(
+            &db,
+            cid,
+            &[],
+            Vec::new(),
+            std::time::Instant::now(),
+            "AI 服务的响应在结束前中断".into(),
+            "  说到一半的话 ",
+        );
+        assert!(err.to_string().contains("中断"));
+
+        let msgs = db.list_ai_messages(cid).unwrap();
+        let card = msgs.last().unwrap();
+        assert_eq!(card.role, "assistant");
+        assert_eq!(card.content, "说到一半的话", "半截正文留在卡片里（已 trim）");
+        let meta: TurnMeta = serde_json::from_str(card.turn_meta.as_deref().unwrap()).unwrap();
+        assert_eq!(meta.end_reason, "error");
+        assert!(!usable_in_history(card), "失败卡片不能进模型上下文，否则半截话污染历史");
+        assert!(usable_in_history(&msgs[0]), "提问照常保留");
+    }
+}
