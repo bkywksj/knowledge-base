@@ -375,6 +375,8 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
   // 注册 / 注销伪选区 Plugin（生命周期跟随组件 mount）
   useEffect(() => {
     const plugin = createFakeSelectionPlugin(FAKE_SELECTION_KEY);
+    // 先摘同 key 的残留再注册：保证幂等，state 里万一已有旧实例也不会抛 keyed plugin 重复
+    editor.unregisterPlugin(FAKE_SELECTION_KEY);
     editor.registerPlugin(plugin);
     return () => {
       editor.unregisterPlugin(FAKE_SELECTION_KEY);

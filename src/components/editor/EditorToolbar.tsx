@@ -249,6 +249,8 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
   // 伪选区 plugin：生命周期跟随工具栏挂载，供字体下拉打开时标出选区
   useEffect(() => {
     const plugin = createFakeSelectionPlugin(TOOLBAR_FAKE_SELECTION_KEY);
+    // 先摘同 key 的残留再注册：保证幂等，state 里万一已有旧实例也不会抛 keyed plugin 重复
+    editor.unregisterPlugin(TOOLBAR_FAKE_SELECTION_KEY);
     editor.registerPlugin(plugin);
     return () => {
       editor.unregisterPlugin(TOOLBAR_FAKE_SELECTION_KEY);

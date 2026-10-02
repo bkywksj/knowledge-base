@@ -246,6 +246,7 @@ import {
 import { EditorToolbar } from "./EditorToolbar";
 import { TableBubbleMenu } from "./TableBubbleMenu";
 import { AiWriteMenu } from "./AiWriteMenu";
+import { alignSnapshotPlugins } from "./alignSnapshotPlugins";
 import {
   WikiLinkDecoration,
   type WikiLinkRange,
@@ -2364,7 +2365,11 @@ export function TiptapEditor({
         if (cached && cached.markdown === content) {
           noteStateCacheRef.current.delete(noteId);
           // updateState 不经 dispatchTransaction，不触发 onUpdate，无需 isExternalUpdate 保护
-          editor.view.updateState(cached.state);
+          // 插件集合必须对齐当前存活的那套：快照里可能带着已随阅读模式卸载的伪选区插件，
+          // 原样还原会让它「复活」，之后切回编辑模式重复注册同 key 插件直接抛错
+          editor.view.updateState(
+            alignSnapshotPlugins(cached.state, editor.state.plugins),
+          );
           lastEmittedRef.current = content;
           return;
         }
