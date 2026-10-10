@@ -1,6 +1,6 @@
 use crate::database::Database;
 use crate::error::AppError;
-use crate::models::{Note, PageResult, Tag};
+use crate::models::{Note, NoteTagBrief, PageResult, Tag};
 
 /// 标签服务
 pub struct TagService;
@@ -77,6 +77,20 @@ impl TagService {
     /// 获取笔记的所有标签
     pub fn get_note_tags(db: &Database, note_id: i64) -> Result<Vec<Tag>, AppError> {
         db.get_note_tags(note_id)
+    }
+
+    /// 批量取一组笔记的标签（笔记列表「标签」列）。
+    ///
+    /// 列表一页最多 100 条，这里放宽到 1000 只是防御：id 内联进 SQL，
+    /// 不该让一次调用拼出过长的语句。
+    pub fn get_tags_for_notes(
+        db: &Database,
+        note_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, Vec<NoteTagBrief>>, AppError> {
+        if note_ids.len() > 1000 {
+            return Err(AppError::Custom("一次最多查询 1000 条笔记的标签".into()));
+        }
+        db.get_tags_for_notes(note_ids)
     }
 
     /// 获取标签下的笔记列表（分页）

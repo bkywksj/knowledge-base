@@ -1416,6 +1416,7 @@ pub fn run() {
             commands::tags::add_tag_to_note,
             commands::tags::remove_tag_from_note,
             commands::tags::get_note_tags,
+            commands::tags::get_tags_for_notes,
             commands::tags::list_notes_by_tag,
             // 链接模块
             commands::links::sync_note_links,

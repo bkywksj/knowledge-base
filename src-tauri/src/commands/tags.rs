@@ -1,4 +1,6 @@
-use crate::models::{Note, PageResult, Tag};
+use std::collections::HashMap;
+
+use crate::models::{Note, NoteTagBrief, PageResult, Tag};
 use crate::services::tag::TagService;
 use crate::state::AppState;
 
@@ -88,6 +90,17 @@ pub fn remove_tag_from_note(
 #[tauri::command]
 pub fn get_note_tags(state: tauri::State<'_, AppState>, note_id: i64) -> Result<Vec<Tag>, String> {
     TagService::get_note_tags(&state.db, note_id).map_err(|e| e.to_string())
+}
+
+/// 批量获取一组笔记各自的标签（笔记列表「标签」列用）
+///
+/// 返回 `{ 笔记id: [标签...] }`，没有标签的笔记不在表里（JSON 里整数键会变成字符串）。
+#[tauri::command]
+pub fn get_tags_for_notes(
+    state: tauri::State<'_, AppState>,
+    note_ids: Vec<i64>,
+) -> Result<HashMap<i64, Vec<NoteTagBrief>>, String> {
+    TagService::get_tags_for_notes(&state.db, &note_ids).map_err(|e| e.to_string())
 }
 
 /// 获取标签下的笔记列表（分页）

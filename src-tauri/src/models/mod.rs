@@ -211,6 +211,16 @@ pub struct Tag {
     pub parent_id: Option<i64>,
 }
 
+/// 笔记列表「标签」列用的轻量标签。
+///
+/// 不带 `note_count`：那要对每个标签做一次聚合，而列表只需要名字和颜色。
+#[derive(Debug, Clone, Serialize)]
+pub struct NoteTagBrief {
+    pub id: i64,
+    pub name: String,
+    pub color: Option<String>,
+}
+
 /// 创建/更新标签的入参
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]

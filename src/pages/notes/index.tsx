@@ -21,6 +21,7 @@ import {
   Divider,
   Pagination,
   Dropdown,
+  Checkbox,
   theme as antdTheme,
 } from "antd";
 import {
@@ -45,6 +46,7 @@ import {
   ClipboardCopy,
   GitCompare,
   Hash,
+  Columns3,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ColumnsType } from "antd/es/table";
@@ -82,8 +84,15 @@ import { createBlankAndOpen } from "@/lib/noteCreator";
 import { targetFromFolderParam } from "@/lib/newNoteTarget";
 import { startAiChatWithNotes } from "@/lib/aiAttach";
 import { NoteComparePicker } from "@/components/editor/NoteComparePicker";
+import { ResizableTitle } from "@/components/notes/ResizableTitle";
+import {
+  DEFAULT_NOTES_COLUMN_WIDTHS,
+  NOTES_COLUMN_KEYS,
+  NOTES_COLUMN_LABELS,
+  type NotesColumnKey,
+} from "@/lib/notesListColumns";
 // AntD 已有 Tag 组件同名，这里给类型起个别名避免冲突
-import type { Note, PageResult, Folder, Tag as NoteTag } from "@/types";
+import type { Note, NoteTagBrief, PageResult, Folder, Tag as NoteTag } from "@/types";
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -619,6 +628,31 @@ function DesktopNoteListPage() {
   const [batchMoveOpen, setBatchMoveOpen] = useState(false);
   /** 「对比」入口：选 1 篇 → second=null（弹选择器选第二篇）；选 2 篇 → second 已填（直接对比）；null = 未打开 */
   const [compareNotes, setCompareNotes] = useState<{ first: number; second: number | null } | null>(null);
+
+  // ─── 列表视图的列偏好（显隐 / 列宽）与「标签」列数据 ───────────
+  const colPrefs = useAppStore((s) => s.notesListColumnPrefs);
+  const tagsRefreshTick = useAppStore((s) => s.tagsRefreshTick);
+  /** 拖动过程中的临时列宽：只在本组件内实时更新，松手才写进 store 落盘 */
+  const [liveWidths, setLiveWidths] = useState<Partial<Record<NotesColumnKey, number>>>({});
+  const [noteTags, setNoteTags] = useState<Record<number, NoteTagBrief[]>>({});
+  const showTagsColumn = !colPrefs.hidden.includes("tags");
+
+  // 当前页的标签：一次 IPC 取完整页。标签列被隐藏时不取，省一次查询
+  useEffect(() => {
+    if (viewMode !== "list" || !showTagsColumn || data.items.length === 0) return;
+    let cancelled = false;
+    tagApi
+      .getForNotes(data.items.map((n) => n.id))
+      .then((m) => {
+        if (!cancelled) setNoteTags(m);
+      })
+      .catch(() => {
+        // 标签列只是辅助信息，取失败不打断列表
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [data.items, viewMode, showTagsColumn, tagsRefreshTick]);
 
   const folderId = searchParams.get("folder");
   /** 当前页面上下文 → 新建笔记落点（与侧边栏、Ctrl+N 共用同一判定） */
@@ -1214,8 +1248,27 @@ function DesktopNoteListPage() {
     ];
   }, [noteCtx, navigate, handleTogglePin, handleSoftDelete, handleCopyContent]);
 
-  const columns: ColumnsType<Note> = useMemo(
-    () => [
+  const allColumns: ColumnsType<Note> = useMemo(
+    () => {
+      /** 某列当前生效的宽度：拖动中的临时值 > 用户保存的 > 默认 */
+      const colWidth = (k: NotesColumnKey) =>
+        liveWidths[k] ?? colPrefs.widths[k] ?? DEFAULT_NOTES_COLUMN_WIDTHS[k];
+      /** 给可拖宽的列接上表头把手（交给 ResizableTitle 处理鼠标） */
+      const resizeProps = (k: NotesColumnKey) => ({
+        onHeaderCell: () =>
+          ({
+            width: colWidth(k),
+            onResize: (w: number) => setLiveWidths((p) => ({ ...p, [k]: w })),
+            onResizeEnd: (w: number) => {
+              useAppStore.getState().setNotesListColumnWidth(k, w);
+              setLiveWidths((p) => {
+                const { [k]: _done, ...rest } = p;
+                return rest;
+              });
+            },
+          }) as unknown as React.HTMLAttributes<HTMLElement>,
+      });
+      return [
       {
         // 绝对序号：跨页连续（(page-1)*pageSize + 行内索引 + 1），翻页不重置
         title: "#",
@@ -1267,10 +1320,40 @@ function DesktopNoteListPage() {
         },
       },
       {
+        title: "标签",
+        key: "tags",
+        width: colWidth("tags"),
+        ...resizeProps("tags"),
+        render: (_: unknown, record: Note) => {
+          const tags = noteTags[record.id];
+          if (!tags || tags.length === 0) {
+            return <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
+          }
+          // 列放不下时多出的标签被切掉，鼠标悬停（title）看全部
+          return (
+            <div
+              title={tags.map((t) => t.name).join("、")}
+              style={{ display: "flex", flexWrap: "nowrap", gap: 4, overflow: "hidden" }}
+            >
+              {tags.map((t) => (
+                <Tag
+                  key={t.id}
+                  color={t.color || undefined}
+                  style={{ margin: 0, flexShrink: 0, fontSize: 11, lineHeight: "16px", padding: "0 4px" }}
+                >
+                  {t.name}
+                </Tag>
+              ))}
+            </div>
+          );
+        },
+      },
+      {
         title: "目录",
         dataIndex: "folder_id",
         key: "folder",
-        width: 120,
+        width: colWidth("folder"),
+        ...resizeProps("folder"),
         ellipsis: true,
         render: (fid: number | null, record: Note) => (
           <FolderChangeCell
@@ -1287,7 +1370,8 @@ function DesktopNoteListPage() {
         title: "字数",
         dataIndex: "word_count",
         key: "word_count",
-        width: 70,
+        width: colWidth("word_count"),
+        ...resizeProps("word_count"),
         render: (val: number) => (
           <Text type="secondary" style={{ fontSize: 12 }}>
             {val}
@@ -1298,7 +1382,8 @@ function DesktopNoteListPage() {
         title: "更新时间",
         dataIndex: "updated_at",
         key: "updated_at",
-        width: 110,
+        width: colWidth("updated_at"),
+        ...resizeProps("updated_at"),
         render: (val: string) => (
           <Text type="secondary" style={{ fontSize: 12 }}>
             {relativeTime(val)}
@@ -1353,8 +1438,15 @@ function DesktopNoteListPage() {
           </Space>
         ),
       },
-    ],
-    [navigate, token.colorWarning, token.colorTextTertiary, handleDelete, handleExport, handleExportWordSingle, handleExportHtmlSingle, folderMap, folders, loadNotes, data.page, data.page_size],
+      ];
+    },
+    [navigate, token.colorWarning, token.colorTextTertiary, handleDelete, handleExport, handleExportWordSingle, handleExportHtmlSingle, folderMap, folders, loadNotes, data.page, data.page_size, noteTags, liveWidths, colPrefs.widths],
+  );
+
+  // 按用户的显隐偏好过滤。标题 / 操作列的 key 不在可隐藏列表里，永远保留
+  const columns = useMemo(
+    () => allColumns.filter((c) => !colPrefs.hidden.includes(String(c.key) as NotesColumnKey)),
+    [allColumns, colPrefs.hidden],
   );
 
   // 时间线分组（缓存）
@@ -1628,6 +1720,41 @@ function DesktopNoteListPage() {
             className="flex-shrink-0 flex items-center justify-end gap-2 px-3 py-2"
             style={{ borderBottom: `1px solid ${token.colorBorderSecondary}` }}
           >
+            {/* 列设置：勾选要显示的列。点击空白处关闭；拖动表头右缘可调列宽 */}
+            <Popover
+              trigger="click"
+              placement="bottomRight"
+              content={
+                <div className="flex flex-col gap-1.5" style={{ minWidth: 120 }}>
+                  {NOTES_COLUMN_KEYS.map((k) => (
+                    <Checkbox
+                      key={k}
+                      checked={!colPrefs.hidden.includes(k)}
+                      onChange={(e) =>
+                        useAppStore
+                          .getState()
+                          .setNotesListColumnHidden(k, !e.target.checked)
+                      }
+                    >
+                      {NOTES_COLUMN_LABELS[k]}
+                    </Checkbox>
+                  ))}
+                  <Divider style={{ margin: "4px 0" }} />
+                  <Button
+                    size="small"
+                    type="link"
+                    style={{ padding: 0, alignSelf: "flex-start" }}
+                    onClick={() => useAppStore.getState().resetNotesListColumns()}
+                  >
+                    恢复默认
+                  </Button>
+                </div>
+              }
+            >
+              <Button size="small" type="text" icon={<Columns3 size={14} />}>
+                列
+              </Button>
+            </Popover>
             <span style={{ fontSize: 12, color: token.colorTextSecondary }}>
               排序
             </span>
@@ -1669,7 +1796,10 @@ function DesktopNoteListPage() {
                       setSelectedIds(keys.map((k) => Number(k))),
                     columnWidth: 40,
                   }}
-                  components={{ body: { row: SortableTableRow } }}
+                  components={{
+                    header: { cell: ResizableTitle },
+                    body: { row: SortableTableRow },
+                  }}
                   onRow={(record) => {
                     // 右键菜单指向哪一行必须看得见：菜单弹在行外时，用户无从判断
                     // 即将操作的是哪篇笔记。与侧栏笔记树 / 任务列表同款 contextActive 观感。

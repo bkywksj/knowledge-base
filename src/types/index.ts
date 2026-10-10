@@ -283,6 +283,13 @@ export interface Tag {
   parent_id: number | null;
 }
 
+/** 笔记列表「标签」列用的轻量标签（不含 note_count），与 Rust `NoteTagBrief` 对齐 */
+export interface NoteTagBrief {
+  id: number;
+  name: string;
+  color: string | null;
+}
+
 /** 创建/更新标签入参 */
 export interface TagInput {
   name: string;

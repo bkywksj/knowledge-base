@@ -13,6 +13,13 @@ import {
 } from "@/lib/api";
 import type { HeadingNumberFormat } from "@/lib/headingNumber";
 import {
+  DEFAULT_NOTES_COLUMN_PREFS,
+  clampColumnWidth,
+  sanitizeNotesColumnPrefs,
+  type NotesColumnKey,
+  type NotesColumnPrefs,
+} from "@/lib/notesListColumns";
+import {
   IMPORT_JOB_LINGER_MS,
   finishImportJobIn,
   newImportJob,
@@ -490,6 +497,8 @@ interface AppStore {
    * 跳转到具体笔记（/notes/:id）时会被自动关闭，避免目标笔记被隐藏。
    */
   notesShowOnlyFolders: boolean;
+  /** 笔记列表（列表视图）的列偏好：哪些列被隐藏、用户拖出来的列宽 */
+  notesListColumnPrefs: NotesColumnPrefs;
   /**
    * "全局新建笔记"时套用的默认文件夹 id；null = 没设默认（新建到根目录）。
    * 由后端 app_config 持久化，应用启动时拉一次到 store。
@@ -765,6 +774,12 @@ interface AppStore {
   setNotesUncategorizedExpanded: (expanded: boolean) => void;
   /** 设置 NotesPanel "只显示文件夹"开关 */
   setNotesShowOnlyFolders: (only: boolean) => void;
+  /** 显示 / 隐藏笔记列表的某一列 */
+  setNotesListColumnHidden: (key: NotesColumnKey, hidden: boolean) => void;
+  /** 记录用户拖出来的列宽（自动夹到合法范围） */
+  setNotesListColumnWidth: (key: NotesColumnKey, width: number) => void;
+  /** 恢复笔记列表的默认列（全部显示、默认宽度） */
+  resetNotesListColumns: () => void;
   /** 标记 NotesPanel 已完成首次"全部折叠"初始化（一次性） */
   markNotesFoldersInitialCollapseDone: () => void;
   /** 设置"每次启动默认收起所有文件夹"开关 */
@@ -944,6 +959,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   notesCollapsedFolderKeys: [],
   notesUncategorizedExpanded: false,
   notesShowOnlyFolders: false,
+  notesListColumnPrefs: DEFAULT_NOTES_COLUMN_PREFS,
   notesFoldersInitialCollapseDone: false,
   notesCollapseFoldersOnStartup: true,
   notesStartupCollapseApplied: false,
@@ -1360,6 +1376,26 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setNotesUncategorizedExpanded: (expanded) =>
     set({ notesUncategorizedExpanded: expanded }),
   setNotesShowOnlyFolders: (only) => set({ notesShowOnlyFolders: only }),
+  setNotesListColumnHidden: (key, hidden) =>
+    set((s) => {
+      const cur = s.notesListColumnPrefs.hidden;
+      const has = cur.includes(key);
+      if (hidden === has) return s;
+      return {
+        notesListColumnPrefs: {
+          ...s.notesListColumnPrefs,
+          hidden: hidden ? [...cur, key] : cur.filter((k) => k !== key),
+        },
+      };
+    }),
+  setNotesListColumnWidth: (key, width) =>
+    set((s) => ({
+      notesListColumnPrefs: {
+        ...s.notesListColumnPrefs,
+        widths: { ...s.notesListColumnPrefs.widths, [key]: clampColumnWidth(width) },
+      },
+    })),
+  resetNotesListColumns: () => set({ notesListColumnPrefs: DEFAULT_NOTES_COLUMN_PREFS }),
   markNotesFoldersInitialCollapseDone: () =>
     set({ notesFoldersInitialCollapseDone: true }),
   setNotesCollapseFoldersOnStartup: (on) =>
@@ -1919,6 +1955,10 @@ export async function loadThemeFromStore() {
     if (typeof nsof === "boolean") {
       useAppStore.getState().setNotesShowOnlyFolders(nsof);
     }
+    const nlcp = await store.get<unknown>("notesListColumnPrefs");
+    if (nlcp != null) {
+      useAppStore.setState({ notesListColumnPrefs: sanitizeNotesColumnPrefs(nlcp) });
+    }
     const nficd = await store.get<boolean>("notesFoldersInitialCollapseDone");
     if (typeof nficd === "boolean") {
       useAppStore.setState({ notesFoldersInitialCollapseDone: nficd });
@@ -2044,6 +2084,7 @@ function collectPersistPayload(state: AppStore): Record<string, unknown> {
     notesCollapsedFolderKeys: state.notesCollapsedFolderKeys,
     notesUncategorizedExpanded: state.notesUncategorizedExpanded,
     notesShowOnlyFolders: state.notesShowOnlyFolders,
+    notesListColumnPrefs: state.notesListColumnPrefs,
     notesFoldersInitialCollapseDone: state.notesFoldersInitialCollapseDone,
     notesCollapseFoldersOnStartup: state.notesCollapseFoldersOnStartup,
     notesHeadingFolded: state.notesHeadingFolded,

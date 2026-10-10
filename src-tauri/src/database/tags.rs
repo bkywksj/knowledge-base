@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use rusqlite::{params, OptionalExtension};
 
 use crate::error::AppError;
-use crate::models::{Note, Tag};
+use crate::models::{Note, NoteTagBrief, Tag};
 
 use super::Database;
 
@@ -604,6 +606,56 @@ impl Database {
         Ok(tags)
     }
 
+    /// 批量取一组笔记各自的标签（笔记列表「标签」列用）。
+    ///
+    /// 一条 SQL 取完，而不是前端对每行调一次 [`Self::get_note_tags`]：一页最多 100 条，
+    /// 逐条调就是 100 次 IPC 加 100 次聚合查询。没有标签的笔记不会出现在返回表里。
+    /// 笔记 id 是整数，直接内联进 IN 列表（无注入风险），也避开绑定参数个数的上限。
+    pub fn get_tags_for_notes(
+        &self,
+        note_ids: &[i64],
+    ) -> Result<HashMap<i64, Vec<NoteTagBrief>>, AppError> {
+        if note_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let list = note_ids
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let sql = format!(
+            "SELECT nt.note_id, t.id, t.name, t.color
+             FROM note_tags nt
+             INNER JOIN tags t ON t.id = nt.tag_id
+             WHERE nt.note_id IN ({})
+             ORDER BY t.name",
+            list
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                NoteTagBrief {
+                    id: row.get(1)?,
+                    name: row.get(2)?,
+                    color: row.get(3)?,
+                },
+            ))
+        })?;
+
+        let mut map: HashMap<i64, Vec<NoteTagBrief>> = HashMap::new();
+        for row in rows {
+            let (note_id, tag) = row?;
+            map.entry(note_id).or_default().push(tag);
+        }
+        Ok(map)
+    }
+
     /// 获取标签下的笔记列表（分页）
     pub fn list_notes_by_tag(
         &self,
@@ -663,6 +715,64 @@ impl Database {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok((notes, total))
+    }
+}
+
+#[cfg(test)]
+mod batch_tags_tests {
+    //! get_tags_for_notes：笔记列表「标签」列的批量取数
+
+    use crate::database::Database;
+    use crate::models::NoteInput;
+
+    fn note(db: &Database, title: &str) -> i64 {
+        db.create_note(&NoteInput {
+            title: title.into(),
+            content: "x".into(),
+            folder_id: None,
+        })
+        .unwrap()
+        .id
+    }
+
+    #[test]
+    fn groups_tags_by_note_and_sorts_by_name() {
+        let db = Database::init(":memory:").unwrap();
+        let (n1, n2, n3) = (note(&db, "a"), note(&db, "b"), note(&db, "c"));
+        let work = db.create_tag("工作", Some("#ff0000"), None).unwrap().id;
+        let idea = db.create_tag("灵感", None, None).unwrap().id;
+        let todo = db.create_tag("待整理", None, None).unwrap().id;
+        db.add_tag_to_note(n1, idea).unwrap();
+        db.add_tag_to_note(n1, work).unwrap();
+        db.add_tag_to_note(n2, todo).unwrap();
+
+        let map = db.get_tags_for_notes(&[n1, n2, n3]).unwrap();
+
+        let n1_names: Vec<&str> = map[&n1].iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(n1_names, vec!["工作", "灵感"], "同一笔记的标签按名称排序");
+        assert_eq!(map[&n1][0].color.as_deref(), Some("#ff0000"));
+        assert_eq!(map[&n1][1].color, None);
+        assert_eq!(map[&n2].len(), 1);
+        assert!(!map.contains_key(&n3), "没有标签的笔记不该出现在返回表里");
+    }
+
+    #[test]
+    fn only_returns_requested_notes() {
+        let db = Database::init(":memory:").unwrap();
+        let (n1, n2) = (note(&db, "a"), note(&db, "b"));
+        let t = db.create_tag("工作", None, None).unwrap().id;
+        db.add_tag_to_note(n1, t).unwrap();
+        db.add_tag_to_note(n2, t).unwrap();
+
+        let map = db.get_tags_for_notes(&[n1]).unwrap();
+        assert_eq!(map.len(), 1);
+        assert!(map.contains_key(&n1));
+    }
+
+    #[test]
+    fn empty_input_returns_empty_map() {
+        let db = Database::init(":memory:").unwrap();
+        assert!(db.get_tags_for_notes(&[]).unwrap().is_empty());
     }
 }
 

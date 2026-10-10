@@ -2903,3 +2903,29 @@ body,
 .kb-link-status-row:hover {
   background: var(--ant-color-fill-tertiary, rgba(0, 0, 0, 0.06));
 }
+
+/* 笔记列表表头的列宽拖动把手：8px 热区贴在表头右缘内侧，平时只露一条淡线，悬停变主色。
+   必须放在表头内部、不能往外溢出：带 ellipsis 的列表头是 overflow:hidden，溢出的部分会被裁掉点不到 */
+.kb-col-resize-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 2;
+}
+.kb-col-resize-handle::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 25%;
+  bottom: 25%;
+  width: 1px;
+  background: var(--ant-color-border-secondary, rgba(0, 0, 0, 0.12));
+}
+.kb-col-resize-handle:hover::after {
+  width: 3px;
+  border-radius: 2px;
+  background: var(--ant-color-primary, #1677ff);
+}

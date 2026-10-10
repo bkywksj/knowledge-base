@@ -63,6 +63,7 @@ import type {
   DailyConvertResult,
   PdfImportResult,
   ExcelImportResult,
+  NoteTagBrief,
   DocConverter,
   ConverterDiagnostic,
   SyncScope,
@@ -732,6 +733,13 @@ export const tagApi = {
     invoke<void>("remove_tag_from_note", { noteId, tagId }),
   getNoteTags: (noteId: number) =>
     invoke<Tag[]>("get_note_tags", { noteId }),
+  /**
+   * 批量取一组笔记各自的标签（笔记列表「标签」列用），一次 IPC 取完整页。
+   * 返回 `{ 笔记id: [标签...] }`，没有标签的笔记不在表里；JSON 的键是字符串，
+   * 但用数字 id 去索引照样取得到。
+   */
+  getForNotes: (noteIds: number[]) =>
+    invoke<Record<number, NoteTagBrief[]>>("get_tags_for_notes", { noteIds }),
   listNotesByTag: (tagId: number, page?: number, pageSize?: number) =>
     invoke<PageResult<Note>>("list_notes_by_tag", { tagId, page, pageSize }),
 };
