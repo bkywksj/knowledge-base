@@ -90,6 +90,7 @@ import {
   importWordFlow,
 } from "@/lib/noteCreator";
 import { beginTrackedImportJob } from "@/lib/importJob";
+import { folderKeysFromDepth, maxFolderDepth } from "@/lib/folderDepth";
 import { ImportPreviewModal } from "@/components/ImportPreviewModal";
 import { TagColorPicker } from "@/components/TagColorPicker";
 import { Palette } from "lucide-react";
@@ -397,6 +398,7 @@ export function NotesPanel() {
   // 用户每次操作 → setNotesFolderCollapsed → 自动 persist → 跨视图/重启保留。
   const collapsedFolderKeys = useAppStore((s) => s.notesCollapsedFolderKeys);
   const allFolderKeys = useMemo(() => collectAllKeys(folders), [folders]);
+  const folderMaxDepth = useMemo(() => maxFolderDepth(folders), [folders]);
   const expandedKeys = useMemo<React.Key[]>(() => {
     const collapsed = new Set(collapsedFolderKeys);
     const folderExpanded: React.Key[] = allFolderKeys.filter(
@@ -2440,6 +2442,50 @@ export function NotesPanel() {
           style={{ width: 24, height: 24, padding: 0 }}
           title="折叠/展开全部"
         />
+        {/* 按层级展开：点主按钮是一键折叠/展开全部（习惯不变），这里补「只露出前 N 级目录」。
+            层数按实际树深度生成，最多列到 8 级，免得菜单拉得过长。 */}
+        <Dropdown
+          trigger={["click"]}
+          menu={{
+            items: [
+              {
+                key: "expand-all",
+                label: "全部展开",
+                onClick: () => useAppStore.getState().clearNotesCollapsedFolders(),
+              },
+              {
+                key: "collapse-all",
+                label: "全部折叠",
+                onClick: () =>
+                  useAppStore.getState().setNotesAllFoldersCollapsed(allFolderKeys),
+              },
+              ...(folderMaxDepth >= 2
+                ? [
+                    { type: "divider" as const },
+                    ...Array.from(
+                      { length: Math.min(folderMaxDepth, 8) - 1 },
+                      (_, i) => i + 2,
+                    ).map((n) => ({
+                      key: `level-${n}`,
+                      label: `显示 ${n} 级目录`,
+                      onClick: () =>
+                        useAppStore
+                          .getState()
+                          .setNotesAllFoldersCollapsed(folderKeysFromDepth(folders, n)),
+                    })),
+                  ]
+                : []),
+            ],
+          }}
+        >
+          <Button
+            type="text"
+            size="small"
+            icon={<ChevronDown size={10} />}
+            style={{ width: 14, height: 24, padding: 0 }}
+            title="按层级展开 / 折叠"
+          />
+        </Dropdown>
       </div>
 
       {/* 新建笔记 + 打开 md */}
