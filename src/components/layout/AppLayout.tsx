@@ -289,7 +289,13 @@ export function AppLayout() {
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
 
+    // 同一路径 3 秒内只处理一次：macOS 冷启动时 pending 与 open-md-file 事件可能同时到达
+    let lastOpen: { path: string; at: number } | null = null;
+
     async function openByPath(path: string) {
+      const now = Date.now();
+      if (lastOpen && lastOpen.path === path && now - lastOpen.at < 3000) return;
+      lastOpen = { path, at: now };
       try {
         // 先问以什么方式打开（已记住偏好则直接返回，不弹窗）
         const fileName = path.split(/[\\/]/).pop() || path;
@@ -319,7 +325,10 @@ export function AppLayout() {
 
     // 监听"第二实例带来的 md 路径"
     listen<string>("open-md-file", (ev) => {
-      if (ev.payload) openByPath(ev.payload);
+      if (!ev.payload) return;
+      // 后端（macOS Opened）会同时把路径存进 pending，这里顺手清掉，避免 WebView 重载后重复打开
+      invoke("take_pending_open_md_path").catch(() => {});
+      openByPath(ev.payload);
     }).then((fn) => {
       unlisten = fn;
     });

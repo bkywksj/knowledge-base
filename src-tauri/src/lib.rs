@@ -1708,7 +1708,42 @@ pub fn run() {
                 close_watchdog::arm(window.app_handle().clone());
             }
         })
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!())
+        .map(|app| {
+            app.run(|handle, event| {
+                // macOS 双击 / "打开方式" 关联文件走 Apple Event（application:openURLs:），
+                // 既不进 argv、也不会触发 single-instance，所以 argv 那条路在 Mac 上永远拿不到路径，
+                // 表现为只启动应用停在默认页。必须在这里接 RunEvent::Opened。
+                #[cfg(target_os = "macos")]
+                if let tauri::RunEvent::Opened { urls } = &event {
+                    let paths = extract_md_paths_from_args(
+                        urls.iter()
+                            .filter_map(|u| u.to_file_path().ok())
+                            .map(|p| p.to_string_lossy().into_owned()),
+                    );
+                    if let Some(first) = paths.first() {
+                        log::info!("[launch] macOS Opened 事件带入 md: {}", first);
+                        // 冷启动：Opened 先于前端 mount，靠 pending 让前端挂载后取走；
+                        // 热启动：前端已在监听，靠事件即时打开（前端收到事件时会顺手清掉 pending）。
+                        if let Some(state) = handle.try_state::<AppState>() {
+                            if let Ok(mut guard) = state.pending_open_md_path.lock() {
+                                *guard = Some(first.clone());
+                            }
+                        }
+                        for p in &paths {
+                            let _ = handle.emit("open-md-file", p.clone());
+                        }
+                        if let Some(win) = handle.get_webview_window("main") {
+                            let _ = win.unminimize();
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
+                let _ = (handle, event);
+            });
+        });
 
     // 不再用 .expect() 把启动 / 运行错误升级成"无日志的静默 panic"——那正是线上
     // "窗口闪一下就消失、却查不到任何原因"的根因之一。改为：记录崩溃日志 + 弹原生对话框，
