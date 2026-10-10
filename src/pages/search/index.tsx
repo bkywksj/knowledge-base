@@ -10,6 +10,7 @@ import {
   TreeSelect,
   Select,
   DatePicker,
+  Checkbox,
   theme as antdTheme,
 } from "antd";
 import {
@@ -59,6 +60,16 @@ function collectSubtreeIds(folders: Folder[], targetIds: number[]): number[] {
   return [...out];
 }
 
+/**
+ * RangePicker 给出的 [起, 止] 日期串 → 后端要的时间范围（任一端为空返回 null = 不筛选）。
+ *
+ * 后端比的是 notes 表的 `YYYY-MM-DD HH:MM:SS`，补上时分秒才能让"选到今天"
+ * 含当天全部笔记，而不是卡在 00:00:00。
+ */
+function toDayRange(strs: [string, string]): [string, string] | null {
+  return strs[0] && strs[1] ? [`${strs[0]} 00:00:00`, `${strs[1]} 23:59:59`] : null;
+}
+
 function DesktopSearchPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -79,6 +90,10 @@ function DesktopSearchPage() {
   const [pickedTags, setPickedTags] = useState<number[]>([]);
   const [pickedTypes, setPickedTypes] = useState<NoteType[]>([]);
   const [dateRange, setDateRange] = useState<[string, string] | null>(null);
+  const [createdRange, setCreatedRange] = useState<[string, string] | null>(null);
+  const [titleOnly, setTitleOnly] = useState(false);
+  // RangePicker 是非受控的：清空筛选时靠换 key 重挂载，才能把选择器上残留的日期也清掉
+  const [pickerResetKey, setPickerResetKey] = useState(0);
 
   // 展开筛选面板时才拉数据 —— 大多数搜索用不上筛选，没必要每次进页面都拉两张表
   useEffect(() => {
@@ -105,20 +120,31 @@ function DesktopSearchPage() {
       f.updatedAfter = dateRange[0];
       f.updatedBefore = dateRange[1];
     }
+    if (createdRange) {
+      f.createdAfter = createdRange[0];
+      f.createdBefore = createdRange[1];
+    }
+    // 只在勾选时才传：不勾 = 省略字段，保持与旧版请求完全一致
+    if (titleOnly) f.titleOnly = true;
     return Object.keys(f).length > 0 ? f : undefined;
-  }, [pickedFolders, pickedTags, pickedTypes, dateRange, folders]);
+  }, [pickedFolders, pickedTags, pickedTypes, dateRange, createdRange, titleOnly, folders]);
 
   const activeFilterCount =
     (pickedFolders.length > 0 ? 1 : 0) +
     (pickedTags.length > 0 ? 1 : 0) +
     (pickedTypes.length > 0 ? 1 : 0) +
-    (dateRange ? 1 : 0);
+    (dateRange ? 1 : 0) +
+    (createdRange ? 1 : 0) +
+    (titleOnly ? 1 : 0);
 
   function clearFilters() {
     setPickedFolders([]);
     setPickedTags([]);
     setPickedTypes([]);
     setDateRange(null);
+    setCreatedRange(null);
+    setTitleOnly(false);
+    setPickerResetKey((k) => k + 1);
   }
 
   // 筛选变化后立即用当前关键词重搜（用户改了条件却要再敲一次回车是很别扭的）
@@ -318,19 +344,25 @@ function DesktopSearchPage() {
             allowClear
           />
           <DatePicker.RangePicker
+            key={`updated-${pickerResetKey}`}
             size="small"
             style={{ minWidth: 220 }}
-            onChange={(_, strs) => {
-              // 后端比的是 notes.updated_at（`YYYY-MM-DD HH:MM:SS`），
-              // 补上时分秒让"选到今天"能含当天全部改动，而不是卡在 00:00:00
-              setDateRange(
-                strs[0] && strs[1]
-                  ? [`${strs[0]} 00:00:00`, `${strs[1]} 23:59:59`]
-                  : null,
-              );
-            }}
+            onChange={(_, strs) => setDateRange(toDayRange(strs))}
             placeholder={["修改时间从", "至"]}
           />
+          <DatePicker.RangePicker
+            key={`created-${pickerResetKey}`}
+            size="small"
+            style={{ minWidth: 220 }}
+            onChange={(_, strs) => setCreatedRange(toDayRange(strs))}
+            placeholder={["创建时间从", "至"]}
+          />
+          <Checkbox
+            checked={titleOnly}
+            onChange={(e) => setTitleOnly(e.target.checked)}
+          >
+            仅搜标题
+          </Checkbox>
           {activeFilterCount > 0 && (
             <Button
               size="small"

@@ -447,6 +447,12 @@ pub struct SearchFilters {
     pub updated_before: Option<String>,
     /// 限定笔记类型（markdown / whiteboard）
     pub note_types: Option<Vec<String>>,
+    /// 创建时间下界（ISO8601 字符串，含）
+    pub created_after: Option<String>,
+    /// 创建时间上界（ISO8601 字符串，含）
+    pub created_before: Option<String>,
+    /// 仅在标题里搜（不看正文）。`None` / `false` = 标题与正文都搜（原行为）
+    pub title_only: Option<bool>,
 }
 
 impl SearchFilters {

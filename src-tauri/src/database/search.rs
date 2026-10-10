@@ -61,6 +61,17 @@ fn build_filter_clause(
         idx += 1;
     }
 
+    if let Some(after) = &filters.created_after {
+        sql.push_str(&format!(" AND n.created_at >= ?{}", idx));
+        binds.push(after.clone());
+        idx += 1;
+    }
+    if let Some(before) = &filters.created_before {
+        sql.push_str(&format!(" AND n.created_at <= ?{}", idx));
+        binds.push(before.clone());
+        idx += 1;
+    }
+
     if let Some(types) = &filters.note_types {
         if !types.is_empty() {
             let placeholders: Vec<String> = types
@@ -162,8 +173,15 @@ impl Database {
         let mut stmt = conn.prepare(&sql)?;
 
         // ?1 / ?2 固定，其后依次绑筛选参数
+        // 仅标题：用 FTS5 列过滤把匹配限定在 title 列。
+        // sanitize_fts_query 已剔除 `:` `{` `}` `(` `)`，用户输入拼不出新的列过滤或括号
+        let match_expr = if filters.title_only == Some(true) {
+            format!("title : ({})", fts_query)
+        } else {
+            fts_query.to_string()
+        };
         let mut binds: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
-            Box::new(fts_query.to_string()),
+            Box::new(match_expr),
             Box::new(limit as i64),
         ];
         binds.extend(
@@ -230,6 +248,9 @@ impl Database {
         // 与 FTS 路径（fts_body 生成列，见 schema v53）保持同一口径。
         const BODY: &str = "COALESCE(n.search_text, n.content)";
 
+        // 仅标题时只看 title：条件里去掉正文那一半，其余加权累加逻辑完全不变
+        let title_only = filters.title_only == Some(true);
+
         // 每组生成一个"加权累加 >= 及格线"的条件，组间 AND
         let where_clauses: Vec<String> = group_meta
             .iter()
@@ -237,11 +258,19 @@ impl Database {
                 let score: String = (0..*count)
                     .map(|i| {
                         let ph = start + i + 1;
-                        format!(
-                            "(CASE WHEN n.title LIKE ?{ph} OR {BODY} LIKE ?{ph} THEN {w} ELSE 0 END)",
-                            ph = ph,
-                            w = weights[i],
-                        )
+                        if title_only {
+                            format!(
+                                "(CASE WHEN n.title LIKE ?{ph} THEN {w} ELSE 0 END)",
+                                ph = ph,
+                                w = weights[i],
+                            )
+                        } else {
+                            format!(
+                                "(CASE WHEN n.title LIKE ?{ph} OR {BODY} LIKE ?{ph} THEN {w} ELSE 0 END)",
+                                ph = ph,
+                                w = weights[i],
+                            )
+                        }
                     })
                     .collect::<Vec<_>>()
                     .join(" + ");
@@ -627,6 +656,159 @@ mod tests {
     }
 
     /// 多标签是 AND：选了两个标签，笔记要**同时**含有才算命中
+    #[test]
+    fn filters_by_created_range() {
+        let db = temp_db();
+        let old = add(&db, "本地仓库说明旧", "旧笔记");
+        let new = add(&db, "本地仓库说明新", "新笔记");
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE notes SET created_at = '2020-01-01 00:00:00' WHERE id = ?1",
+                [old],
+            )
+            .unwrap();
+        }
+
+        let after = SearchFilters {
+            created_after: Some("2021-01-01 00:00:00".into()),
+            ..Default::default()
+        };
+        let ids: Vec<i64> = db
+            .search_notes_filtered("本地说明", 20, &after)
+            .unwrap()
+            .iter()
+            .map(|r| r.id)
+            .collect();
+        assert!(ids.contains(&new));
+        assert!(!ids.contains(&old), "创建时间早于下界不该返回: {:?}", ids);
+
+        let before = SearchFilters {
+            created_before: Some("2021-01-01 00:00:00".into()),
+            ..Default::default()
+        };
+        let ids: Vec<i64> = db
+            .search_notes_filtered("本地说明", 20, &before)
+            .unwrap()
+            .iter()
+            .map(|r| r.id)
+            .collect();
+        assert!(ids.contains(&old));
+        assert!(!ids.contains(&new), "创建时间晚于上界不该返回: {:?}", ids);
+    }
+
+    /// 创建时间与修改时间是两个独立维度：改过的老笔记创建时间不变
+    #[test]
+    fn created_and_updated_ranges_are_independent() {
+        let db = temp_db();
+        let id = add(&db, "本地仓库说明", "内容");
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE notes SET created_at = '2020-01-01 00:00:00' WHERE id = ?1",
+                [id],
+            )
+            .unwrap();
+        }
+        // 创建在 2020，但刚被修改过：按"修改时间 >= 2021"能搜到，按"创建时间 >= 2021"搜不到
+        let by_updated = SearchFilters {
+            updated_after: Some("2021-01-01 00:00:00".into()),
+            ..Default::default()
+        };
+        let by_created = SearchFilters {
+            created_after: Some("2021-01-01 00:00:00".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            db.search_notes_filtered("本地说明", 20, &by_updated).unwrap().len(),
+            1
+        );
+        assert!(db
+            .search_notes_filtered("本地说明", 20, &by_created)
+            .unwrap()
+            .is_empty());
+    }
+
+    /// FTS 通路：英文词，正文命中的笔记在「仅标题」下必须被排除
+    #[test]
+    fn title_only_limits_fts_path_to_title() {
+        let db = temp_db();
+        let in_title = add(&db, "Docker 部署手册", "和主题无关的正文");
+        let in_body = add(&db, "杂记", "docker 部署 流程");
+
+        let all: Vec<i64> = db
+            .search_notes("docker 部署", 20)
+            .unwrap()
+            .iter()
+            .map(|r| r.id)
+            .collect();
+        assert!(
+            all.contains(&in_title) && all.contains(&in_body),
+            "不限定时标题命中和正文命中都该返回: {:?}",
+            all
+        );
+
+        let filters = SearchFilters {
+            title_only: Some(true),
+            ..Default::default()
+        };
+        let ids: Vec<i64> = db
+            .search_notes_filtered("docker 部署", 20, &filters)
+            .unwrap()
+            .iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(ids, vec![in_title], "仅标题时不该返回只有正文命中的笔记");
+    }
+
+    /// LIKE 兜底通路：不连续的中文查询走 n-gram，同样要被「仅标题」限定
+    #[test]
+    fn title_only_limits_like_path_to_title() {
+        let db = temp_db();
+        let in_title = add(&db, "本地仓库说明", "无关正文");
+        let in_body = add(&db, "杂项", "介绍本地仓库说明的内容");
+
+        let all: Vec<i64> = db
+            .search_notes("本地说明", 20)
+            .unwrap()
+            .iter()
+            .map(|r| r.id)
+            .collect();
+        assert!(
+            all.contains(&in_title) && all.contains(&in_body),
+            "不限定时应两条都召回: {:?}",
+            all
+        );
+
+        let filters = SearchFilters {
+            title_only: Some(true),
+            ..Default::default()
+        };
+        let ids: Vec<i64> = db
+            .search_notes_filtered("本地说明", 20, &filters)
+            .unwrap()
+            .iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(ids, vec![in_title], "仅标题时不该返回只有正文命中的笔记");
+    }
+
+    /// `title_only = Some(false)` 与不传等价（前端只在勾选时传 true，但 false 也不该出岔子）
+    #[test]
+    fn title_only_false_is_same_as_default() {
+        let db = temp_db();
+        add(&db, "Docker 部署手册", "和主题无关的正文");
+        add(&db, "杂记", "docker 部署 流程");
+        let off = SearchFilters {
+            title_only: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(
+            db.search_notes_filtered("docker 部署", 20, &off).unwrap().len(),
+            db.search_notes("docker 部署", 20).unwrap().len()
+        );
+    }
+
     #[test]
     fn multi_tag_filter_is_and() {
         let db = temp_db();

@@ -377,6 +377,12 @@ export interface SearchFilters {
   updatedBefore?: string;
   /** 限定笔记类型 */
   noteTypes?: NoteType[];
+  /** 创建时间下界（含），格式与 notes.created_at 一致 */
+  createdAfter?: string;
+  /** 创建时间上界（含） */
+  createdBefore?: string;
+  /** 仅在标题里搜（不看正文）。不勾选时请省略，不要传 false */
+  titleOnly?: boolean;
 }
 
 // ─── 回收站 ───────────────────────────────────
