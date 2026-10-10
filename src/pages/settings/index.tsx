@@ -357,6 +357,14 @@ function DesktopSettingsPage() {
     }
   }
 
+  async function handleAutoCheckToggle(next: boolean) {
+    try {
+      await updater?.setAutoCheckEnabled(next);
+    } catch (e) {
+      message.error(`保存失败: ${e}`);
+    }
+  }
+
   async function loadFolders() {
     try {
       const list = await folderApi.list();
@@ -1531,6 +1539,23 @@ function DesktopSettingsPage() {
             官网 https://kb.ruoyi.plus/
           </Button>
         </Space>
+        <div
+          className="flex items-center justify-between py-1 mt-2"
+          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+        >
+          <div>
+            <div>自动检查更新</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              开启后启动时及每 30 分钟检查一次，发现新版本会在后台预先下载，点「重启以更新」才会安装。
+              关闭后不会自动联网检查，也不会自动下载，仍可手动点「检查更新」。
+            </Text>
+          </div>
+          <Switch
+            checked={updater?.autoCheck ?? true}
+            disabled={!updater}
+            onChange={handleAutoCheckToggle}
+          />
+        </div>
       </Card>
 
       <Card

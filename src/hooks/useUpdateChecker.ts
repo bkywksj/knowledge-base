@@ -1,8 +1,23 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { updaterApi } from "@/lib/api";
+import { configApi, updaterApi } from "@/lib/api";
 import { flushSettingsToDisk } from "@/store";
+
+/** app_config 键："0" = 关闭自动检查 + 后台下载；缺省 / 其它值 = 开启。 */
+const AUTO_CHECK_KEY = "update.auto_check";
+
+/**
+ * 每次自动 tick 现读配置而不是缓存：设置页可能在子窗口里改，主窗口的定时器
+ * 要能立刻感知；读失败（键不存在）按默认开启处理。
+ */
+async function readAutoCheck(): Promise<boolean> {
+  try {
+    return (await configApi.get(AUTO_CHECK_KEY)) !== "0";
+  } catch {
+    return true;
+  }
+}
 
 /**
  * 更新生命周期状态机。
@@ -32,6 +47,7 @@ interface Options {
   /**
    * 是否启用自动检查 + 后台下载。默认 true。
    * 多窗口场景下只让主窗口启用，避免每个子窗口都重复后台下载同一个更新包。
+   * 同时还要用户没在设置页关掉「自动检查更新」（app_config `update.auto_check`）。
    */
   enabled?: boolean;
 }
@@ -58,6 +74,7 @@ export function useUpdateChecker(options: Options = {}) {
   const [totalSize, setTotalSize] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [autoCheck, setAutoCheck] = useState(true);
 
   // Update 实例保活：download() 的字节绑在它身上，install() 要用同一个。
   const updateRef = useRef<Update | null>(null);
@@ -166,15 +183,35 @@ export function useUpdateChecker(options: Options = {}) {
     [setPhase, startDownload]
   );
 
+  /** 自动检查入口：用户关了开关就整个跳过（不检查、不下载）。 */
+  const autoTick = useCallback(async () => {
+    if (!(await readAutoCheck())) return;
+    await runCheck(false);
+  }, [runCheck]);
+
   useEffect(() => {
     if (!enabled) return;
-    const t = setTimeout(() => void runCheck(false), initialDelay);
-    const id = setInterval(() => void runCheck(false), interval);
+    const t = setTimeout(() => void autoTick(), initialDelay);
+    const id = setInterval(() => void autoTick(), interval);
     return () => {
       clearTimeout(t);
       clearInterval(id);
     };
-  }, [enabled, runCheck, initialDelay, interval]);
+  }, [enabled, autoTick, initialDelay, interval]);
+
+  useEffect(() => {
+    void readAutoCheck().then(setAutoCheck);
+  }, []);
+
+  /** 设置页开关：持久化后更新状态；从关到开时立刻检查一次，不用等下个周期。 */
+  const setAutoCheckEnabled = useCallback(
+    async (next: boolean) => {
+      await configApi.set(AUTO_CHECK_KEY, next ? "1" : "0");
+      setAutoCheck(next);
+      if (next && enabled) void runCheck(false);
+    },
+    [enabled, runCheck]
+  );
 
   const openModal = useCallback(() => {
     if (updateRef.current) setModalOpen(true);
@@ -202,6 +239,8 @@ export function useUpdateChecker(options: Options = {}) {
     totalSize,
     error,
     modalOpen,
+    autoCheck,
+    setAutoCheckEnabled,
     openModal,
     closeModal,
     checkManually,
