@@ -2929,3 +2929,45 @@ body,
   border-radius: 2px;
   background: var(--ant-color-primary, #1677ff);
 }
+
+/* ─── 侧栏目录树层级连线（设置里开启，加在 .sidebar-folder-tree 上的 .kb-tree-guides） ───
+   rc-tree 在每个节点前放 N 个 .ant-tree-indent-unit（N = 节点深度），第 j 个对应第 j 层祖先。
+   缩进单位被压到 10px、箭头槽位 16px（箭头中心在 8px），所以竖线画在每个 unit 的 left:8px，
+   正好落在对应祖先的箭头正下方，贯穿该祖先的所有子孙行。 */
+.sidebar-folder-tree.kb-tree-guides .ant-tree-indent {
+  align-self: stretch;
+  display: flex;
+}
+.sidebar-folder-tree.kb-tree-guides .ant-tree-indent-unit {
+  position: relative;
+}
+.sidebar-folder-tree.kb-tree-guides .ant-tree-indent-unit::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: 8px;
+  border-left: 1px dotted var(--ant-color-text-quaternary, rgba(128, 128, 128, 0.55));
+}
+/* 到本节点的短横线：从父层竖线连到箭头左缘（笔记叶子没有箭头，连得长一点）。
+   只给有缩进的节点画（根级没有父线可连）；用 :not(:empty) 而不是 :has()，老 WebView 也认。
+   上面 .sidebar-folder-tree 的规则把 switcher 的 ::before 整个藏了，这里用更高的特异性请出来并重置。 */
+.sidebar-folder-tree.kb-tree-guides .ant-tree-indent:not(:empty) ~ .ant-tree-switcher::before {
+  display: block !important;
+  content: "";
+  position: absolute;
+  inset: auto;
+  left: -2px;
+  top: 50%;
+  bottom: auto;
+  width: 6px;
+  height: 0;
+  margin: 0;
+  transform: none;
+  background: none;
+  border: 0;
+  border-top: 1px dotted var(--ant-color-text-quaternary, rgba(128, 128, 128, 0.55));
+}
+.sidebar-folder-tree.kb-tree-guides .ant-tree-indent:not(:empty) ~ .ant-tree-switcher-noop::before {
+  width: 14px;
+}

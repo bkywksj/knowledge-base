@@ -600,6 +600,9 @@ function DesktopSettingsPage() {
   // 笔记侧边栏：每次启动默认收起所有文件夹
   const collapseFoldersOnStartup = useAppStore((s) => s.notesCollapseFoldersOnStartup);
   const setCollapseFoldersOnStartup = useAppStore((s) => s.setNotesCollapseFoldersOnStartup);
+  // 笔记侧边栏：目录树层级连线
+  const treeGuideLines = useAppStore((s) => s.notesTreeGuideLines);
+  const setTreeGuideLines = useAppStore((s) => s.setNotesTreeGuideLines);
 
   // 笔记自动保存偏好
   const autoSaveEnabled = useAppStore((s) => s.autoSaveEnabled);
@@ -1672,6 +1675,19 @@ function DesktopSettingsPage() {
           <Switch
             checked={collapseFoldersOnStartup}
             onChange={(on) => setCollapseFoldersOnStartup(on)}
+          />
+        </div>
+        <div className="flex items-center justify-between py-1">
+          <div>
+            <div>笔记文件夹显示层级连线</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              开启后，笔记侧边栏的文件夹树会像 Windows 资源管理器那样画出点线连接各层级，
+              嵌套较深时更容易看清谁属于谁。默认关闭。
+            </Text>
+          </div>
+          <Switch
+            checked={treeGuideLines}
+            onChange={(on) => setTreeGuideLines(on)}
           />
         </div>
       </Card>

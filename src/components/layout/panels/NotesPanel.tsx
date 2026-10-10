@@ -399,6 +399,7 @@ export function NotesPanel() {
   const collapsedFolderKeys = useAppStore((s) => s.notesCollapsedFolderKeys);
   const allFolderKeys = useMemo(() => collectAllKeys(folders), [folders]);
   const folderMaxDepth = useMemo(() => maxFolderDepth(folders), [folders]);
+  const treeGuideLines = useAppStore((s) => s.notesTreeGuideLines);
   const expandedKeys = useMemo<React.Key[]>(() => {
     const collapsed = new Set(collapsedFolderKeys);
     const folderExpanded: React.Key[] = allFolderKeys.filter(
@@ -2769,7 +2770,7 @@ export function NotesPanel() {
               </div>
             ) : treeData.length > 0 ? (
               <Tree
-                className="sidebar-folder-tree"
+                className={`sidebar-folder-tree${treeGuideLines ? " kb-tree-guides" : ""}`}
                 treeData={treeData}
                 blockNode
                 // Q-004：节点 > 阈值 + 容器已测得高度 → 启用 antd Tree 的 virtual scroll（默认 itemHeight=28）

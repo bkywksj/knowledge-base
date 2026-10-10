@@ -530,6 +530,8 @@ interface AppStore {
    * 关闭时：回到"跨重启记住上次展开/折叠状态"的行为。
    */
   notesCollapseFoldersOnStartup: boolean;
+  /** 笔记侧栏目录树是否画层级连线（点线参考线，类似 Windows 资源管理器） */
+  notesTreeGuideLines: boolean;
   /**
    * 会话级标志（不持久化、不参与 loadFromStore）：本次应用启动是否已执行过"启动收起"。
    * 应用重启（页面重载）后随 store 重建自动归 false，从而每次启动都收起一次。
@@ -784,6 +786,7 @@ interface AppStore {
   markNotesFoldersInitialCollapseDone: () => void;
   /** 设置"每次启动默认收起所有文件夹"开关 */
   setNotesCollapseFoldersOnStartup: (on: boolean) => void;
+  setNotesTreeGuideLines: (on: boolean) => void;
   /** 标记本次会话已执行过"启动收起"（会话级，一次性） */
   markNotesStartupCollapseApplied: () => void;
   /** 启动时从 app_config 拉默认文件夹 / 标签到 store（失败静默） */
@@ -962,6 +965,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   notesListColumnPrefs: DEFAULT_NOTES_COLUMN_PREFS,
   notesFoldersInitialCollapseDone: false,
   notesCollapseFoldersOnStartup: true,
+  notesTreeGuideLines: false,
   notesStartupCollapseApplied: false,
   defaultFolderId: null,
   defaultTagIds: [],
@@ -1400,6 +1404,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ notesFoldersInitialCollapseDone: true }),
   setNotesCollapseFoldersOnStartup: (on) =>
     set({ notesCollapseFoldersOnStartup: on }),
+  setNotesTreeGuideLines: (on) => set({ notesTreeGuideLines: on }),
   markNotesStartupCollapseApplied: () =>
     set({ notesStartupCollapseApplied: true }),
   loadNoteDefaults: async () => {
@@ -1955,6 +1960,10 @@ export async function loadThemeFromStore() {
     if (typeof nsof === "boolean") {
       useAppStore.getState().setNotesShowOnlyFolders(nsof);
     }
+    const ntgl = await store.get<boolean>("notesTreeGuideLines");
+    if (typeof ntgl === "boolean") {
+      useAppStore.setState({ notesTreeGuideLines: ntgl });
+    }
     const nlcp = await store.get<unknown>("notesListColumnPrefs");
     if (nlcp != null) {
       useAppStore.setState({ notesListColumnPrefs: sanitizeNotesColumnPrefs(nlcp) });
@@ -2087,6 +2096,7 @@ function collectPersistPayload(state: AppStore): Record<string, unknown> {
     notesListColumnPrefs: state.notesListColumnPrefs,
     notesFoldersInitialCollapseDone: state.notesFoldersInitialCollapseDone,
     notesCollapseFoldersOnStartup: state.notesCollapseFoldersOnStartup,
+    notesTreeGuideLines: state.notesTreeGuideLines,
     notesHeadingFolded: state.notesHeadingFolded,
     themeOverridesEnabled: state.themeOverridesEnabled,
     customAccent: state.customAccent,
