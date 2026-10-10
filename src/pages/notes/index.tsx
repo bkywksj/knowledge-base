@@ -47,6 +47,7 @@ import {
   GitCompare,
   Hash,
   Columns3,
+  Plus,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ColumnsType } from "antd/es/table";
@@ -85,6 +86,7 @@ import { targetFromFolderParam } from "@/lib/newNoteTarget";
 import { startAiChatWithNotes } from "@/lib/aiAttach";
 import { NoteComparePicker } from "@/components/editor/NoteComparePicker";
 import { ResizableTitle } from "@/components/notes/ResizableTitle";
+import { matchTagByName } from "@/lib/tagQuickCreate";
 import {
   DEFAULT_NOTES_COLUMN_WIDTHS,
   NOTES_COLUMN_KEYS,
@@ -359,6 +361,33 @@ function BatchTagButton({
     );
   }
 
+  // 输入框里的名字：库里已有同名 → 选中它；没有 → 可直接新建（免得跳去标签页）
+  const match = useMemo(() => matchTagByName(allTags, filter), [allTags, filter]);
+
+  async function createAndPick() {
+    if (!match.canCreate) return;
+    try {
+      const tag = await tagApi.create(match.name);
+      setAllTags((prev) => [...prev, tag]);
+      setPicked((prev) => [...prev, tag.id]);
+      setFilter("");
+      // 通知标签页 / 编辑器等其他消费者刷新标签列表
+      useAppStore.getState().bumpTagsRefresh();
+    } catch (e) {
+      message.error(String(e));
+    }
+  }
+
+  function handleEnter() {
+    if (match.canCreate) {
+      void createAndPick();
+    } else if (match.exact) {
+      const id = match.exact.id;
+      setPicked((prev) => (prev.includes(id) ? prev : [...prev, id]));
+      setFilter("");
+    }
+  }
+
   async function confirm() {
     if (picked.length === 0) {
       message.info("请选择要添加的标签");
@@ -379,9 +408,10 @@ function BatchTagButton({
         <div style={{ width: 260 }}>
           <Input
             size="small"
-            placeholder="筛选标签..."
+            placeholder="筛选标签，没有就输入新名字回车新建"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
+            onPressEnter={handleEnter}
             allowClear
             style={{ marginBottom: 6 }}
           />
@@ -395,18 +425,37 @@ function BatchTagButton({
               padding: "2px 0",
             }}
           >
-            {filtered.length === 0 ? (
-              <div
+            {match.canCreate && (
+              <Tag
+                onClick={() => void createAndPick()}
                 style={{
-                  textAlign: "center",
-                  padding: "12px 8px",
-                  fontSize: 12,
-                  opacity: 0.6,
-                  width: "100%",
+                  cursor: "pointer",
+                  padding: "2px 10px",
+                  fontSize: 13,
+                  borderStyle: "dashed",
                 }}
               >
-                {allTags.length === 0 ? "还没有标签" : "无匹配"}
-              </div>
+                <Plus
+                  size={12}
+                  style={{ display: "inline-block", verticalAlign: "-2px", marginRight: 2 }}
+                />
+                新建标签「{match.name}」
+              </Tag>
+            )}
+            {filtered.length === 0 ? (
+              match.canCreate ? null : (
+                <div
+                  style={{
+                    textAlign: "center",
+                    padding: "12px 8px",
+                    fontSize: 12,
+                    opacity: 0.6,
+                    width: "100%",
+                  }}
+                >
+                  {allTags.length === 0 ? "还没有标签，输入名称后回车即可新建" : "无匹配"}
+                </div>
+              )
             ) : (
               filtered.map((tag) => {
                 const active = picked.includes(tag.id);
