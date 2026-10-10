@@ -53,6 +53,14 @@ impl SourceFileService {
             "pdf" => "pdf",
             "docx" => "docx",
             "doc" => "doc",
+            // 表格类：Excel 导入把原文件留在 sources/，扩展名即 file_type
+            "xlsx" => "xlsx",
+            "xls" => "xls",
+            "xlsm" => "xlsm",
+            "xlsb" => "xlsb",
+            "ods" => "ods",
+            "csv" => "csv",
+            "tsv" => "tsv",
             other => {
                 return Err(AppError::Custom(format!("不支持的文件类型: {}", other)));
             }

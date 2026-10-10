@@ -13,7 +13,10 @@ import { useAppStore } from "@/store";
 import type { ImportProgress } from "@/types";
 
 /** 后端逐文件进度事件名。两条通路各用各的，避免两个导入同时跑时数字互相打架 */
-export type ImportProgressEvent = "import:progress" | "pdf:import-progress";
+export type ImportProgressEvent =
+  | "import:progress"
+  | "pdf:import-progress"
+  | "excel:import-progress";
 
 export interface ImportJobHandle {
   /** 报告进度。`current` 是"正在处理第几个"（1 起） */

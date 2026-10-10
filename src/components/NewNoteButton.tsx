@@ -23,6 +23,7 @@ import type { ScannedFile } from "@/types";
 import {
   createBlankAndOpen,
   createWhiteboardAndOpen,
+  importExcelFlow,
   importPdfsFlow,
   importTextFlow,
   importWordFlow,
@@ -160,6 +161,12 @@ export function NewNoteButton({
       label: "导入 Word…",
       icon: <FileTypeIcon type="docx" size={14} />,
       onClick: () => importWordFlow(folderId, navigate),
+    },
+    {
+      key: "import-excel",
+      label: "导入 Excel / CSV…",
+      icon: <FileTypeIcon type="xlsx" size={14} />,
+      onClick: () => importExcelFlow(folderId, navigate),
     },
   ];
 

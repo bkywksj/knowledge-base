@@ -199,6 +199,16 @@ export interface PdfImportResult {
   error: string | null;
 }
 
+/** Excel / ODS / CSV 导入单个文件的结果（与 Rust `ExcelImportResult` 对齐） */
+export interface ExcelImportResult {
+  sourcePath: string;
+  noteId: number | null;
+  title: string | null;
+  error: string | null;
+  /** 因行数超限被截断的工作表名；正文不全，完整数据在源文件里 */
+  truncatedSheets: string[];
+}
+
 /** .doc 转换器探测结果（serde kebab-case） */
 export type DocConverter = "libre-office" | "windows-com" | "none";
 

@@ -62,6 +62,7 @@ import type {
   DailyConvertOptions,
   DailyConvertResult,
   PdfImportResult,
+  ExcelImportResult,
   DocConverter,
   ConverterDiagnostic,
   SyncScope,
@@ -209,6 +210,13 @@ export const pdfApi = {
   /** 获取笔记关联 PDF 的绝对路径（无则返回 null） */
   getAbsolutePath: (noteId: number) =>
     invoke<string | null>("get_pdf_absolute_path", { noteId }),
+};
+
+/** Excel / ODS / CSV 导入 API（仅桌面端；移动端未注册该 command） */
+export const excelApi = {
+  /** 批量导入表格文件为笔记（一个文件一篇），返回每条结果（含错误与被截断的工作表） */
+  importFiles: (paths: string[], folderId?: number | null) =>
+    invoke<ExcelImportResult[]>("import_excel_files", { paths, folderId }),
 };
 
 /** 通用源文件 API（Word / 任意附件） */

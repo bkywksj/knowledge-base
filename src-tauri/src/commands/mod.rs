@@ -7,6 +7,8 @@ pub mod config;
 pub mod daily;
 // Excel 二维数据集（仅桌面端，模块内已 #![cfg(desktop)]）
 pub mod dataset;
+// Excel 导入为笔记（仅桌面端，模块内已 #![cfg(desktop)]）
+pub mod excel_import;
 pub mod dataview;
 pub mod data_dir;
 pub mod export;

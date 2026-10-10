@@ -32,6 +32,14 @@ function configFor(type: string | null | undefined): IconConfig {
       return { label: "M↓", color: "#08979C", bg: "#E6FFFB" };
     case "txt":
       return { label: "TXT", color: "#595959", bg: "#F5F5F5" };
+    case "xlsx":
+    case "xls":
+    case "xlsm":
+    case "xlsb":
+    case "ods":
+    case "csv":
+    case "tsv":
+      return { label: "X", color: "#237804", bg: "#F6FFED" };
     default:
       return { label: "T", color: "#8C8C8C", bg: "#FAFAFA" };
   }

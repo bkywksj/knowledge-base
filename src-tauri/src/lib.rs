@@ -1551,6 +1551,9 @@ pub fn run() {
             commands::template::delete_template,
             commands::template::create_note_from_template,
             commands::template::render_template_content,
+            // Excel / ODS / CSV 导入为笔记（仅桌面端，依赖 calamine）
+            #[cfg(desktop)]
+            commands::excel_import::import_excel_files,
             // PDF 模块
             commands::pdf::import_pdfs,
             commands::pdf::get_pdf_absolute_path,

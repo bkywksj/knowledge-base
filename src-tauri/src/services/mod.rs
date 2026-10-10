@@ -25,6 +25,9 @@ pub mod emergency_window;
 // （T-M013 移动端导入改单文件模式后再决定是否引入）
 #[cfg(desktop)]
 pub mod excel_parser;
+// Excel 导入为笔记：解析 + 渲染 + 落盘源文件，依赖 excel_parser，仅桌面端
+#[cfg(desktop)]
+pub mod excel_import;
 pub mod export;
 pub mod export_html;
 pub mod export_merge;

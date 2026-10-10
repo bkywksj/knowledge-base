@@ -7,7 +7,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Copy } from "lucide-react";
 import type { NavigateFunction } from "react-router-dom";
 
-import { noteApi, importApi, pdfApi, ocrApi, sourceFileApi, tagApi, folderApi, whiteboardApi } from "./api";
+import { noteApi, importApi, pdfApi, excelApi, ocrApi, sourceFileApi, tagApi, folderApi, whiteboardApi } from "./api";
 import { importWordFiles } from "./wordImport";
 import { beginImportJob, beginTrackedImportJob } from "./importJob";
 import { useAppStore } from "@/store";
@@ -360,6 +360,58 @@ function showImportFailModal(
       </>
     ),
   });
+}
+
+/**
+ * Excel / ODS / CSV 导入流程（仅桌面端）：一个文件一篇笔记，每个工作表一张表。
+ *
+ * 行数很多的工作表正文只放前部分行（后端限行并在正文里写明总行数），
+ * 完整数据留在源文件里，编辑器顶部的「XLSX」按钮可一键打开。
+ */
+export async function importExcelFlow(
+  folderId: number | null,
+  navigate?: NavigateFunction,
+): Promise<void> {
+  const picked = await openDialog({
+    multiple: true,
+    filters: [
+      {
+        name: "Excel / 表格",
+        extensions: ["xlsx", "xls", "xlsm", "xlsb", "ods", "csv", "tsv"],
+      },
+    ],
+  });
+  if (!picked) return;
+  const paths = Array.isArray(picked) ? picked : [picked];
+  if (paths.length === 0) return;
+  const job = await beginTrackedImportJob("Excel", paths.length, "excel:import-progress");
+  try {
+    const results = await excelApi.importFiles(paths, folderId);
+    const ok = results.filter((r) => r.noteId !== null);
+    const fail = results.filter((r) => r.noteId === null);
+    job.finish(ok.length, fail.length);
+
+    if (ok.length > 0) message.success(`成功导入 ${ok.length} 个表格文件`);
+    const truncated = ok.filter((r) => r.truncatedSheets.length > 0);
+    if (truncated.length > 0) {
+      message.warning(
+        truncated.length === 1
+          ? `「${truncated[0].title}」的 ${truncated[0].truncatedSheets.join("、")} 行数较多，正文只放了前部分行，完整数据请用编辑器顶部的源文件按钮打开`
+          : `${truncated.length} 个文件有工作表因行数较多被截断，正文只放了前部分行，完整数据请用编辑器顶部的源文件按钮打开`,
+        6,
+      );
+    }
+    if (fail.length > 0) {
+      showImportFailModal(fail, `${fail.length} 个表格文件导入失败`);
+    }
+
+    useAppStore.getState().bumpNotesRefresh();
+    const ids = ok.map((r) => r.noteId).filter((v): v is number => v != null);
+    navigateAfterImport(navigate, ids, []);
+  } catch (e) {
+    job.cancel();
+    message.error(`导入失败: ${e}`);
+  }
 }
 
 /** Word 导入流程：.doc 需本机装 LibreOffice / Office / WPS */

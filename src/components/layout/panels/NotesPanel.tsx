@@ -84,6 +84,7 @@ import {
 } from "@/lib/newNoteTarget";
 import {
   createBlankAndOpen,
+  importExcelFlow,
   importPdfsFlow,
   importTextFlow,
   importWordFlow,
@@ -1727,6 +1728,15 @@ export function NotesPanel() {
         label: "导入 Word…",
         onClick: () => {
           void importWordFlow(folderId);
+          close();
+        },
+      },
+      {
+        key: "import-excel",
+        icon: <FileTypeIcon type="xlsx" size={14} />,
+        label: "导入 Excel / CSV…",
+        onClick: () => {
+          void importExcelFlow(folderId);
           close();
         },
       },
