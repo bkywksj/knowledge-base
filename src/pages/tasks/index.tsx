@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Input,
@@ -269,6 +269,16 @@ function DesktopTasksPage() {
   }, []);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState("");
+  /** 传给后端的关键词：输入框即时显示 keyword，停顿 250ms 才去查，避免每敲一个字就整表重拉 */
+  const [searchKeyword, setSearchKeyword] = useState("");
+  useEffect(() => {
+    const t = window.setTimeout(() => setSearchKeyword(keyword.trim()), 250);
+    return () => window.clearTimeout(t);
+  }, [keyword]);
+  /** 是否已经加载过一次：之后的刷新都静默进行，保留旧列表，不再整块换成 Spin（闪烁 + 丢滚动位置） */
+  const loadedOnceRef = useRef(false);
+  /** 请求序号：防抖后仍可能有多个请求在飞，只采用最后一次发出的结果，防止旧结果覆盖新结果 */
+  const loadSeqRef = useRef(0);
   /** 日期区间筛选（前端过滤，不重拉后端）：[开始, 结束]，任一端可为 null 表示不限 */
   const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -373,7 +383,8 @@ function DesktopTasksPage() {
   }, [searchParams]);
 
   const loadTasks = useCallback(async () => {
-    setLoading(true);
+    const seq = ++loadSeqRef.current;
+    if (!loadedOnceRef.current) setLoading(true);
     try {
       // 数据范围策略：
       //   · 日历视图：拉全部（含已完成），让用户回顾历史完成情况；CalendarView 内部把
@@ -399,19 +410,28 @@ function DesktopTasksPage() {
         : {};
       const list = await taskApi.list({
         status: statusArg,
-        keyword: keyword.trim() || undefined,
+        keyword: searchKeyword || undefined,
         ...categoryQuery,
       });
+      if (seq !== loadSeqRef.current) return;
       // overdue / today / urgent 这些维度后端暂未支持参数，前端二次过滤
       setTasks(applySmartFilter(list, filter, viewMode));
-      // 每次重拉任务列表时，顺带刷新侧边栏紧急任务数
-      useAppStore.getState().refreshTaskStats();
+      // 侧边栏统计不在这里刷：搜索关键词变化不影响统计，刷新放到「写操作后」与筛选变化的 effect
     } catch (e) {
-      message.error(`加载任务失败: ${e}`);
+      if (seq === loadSeqRef.current) message.error(`加载任务失败: ${e}`);
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) {
+        loadedOnceRef.current = true;
+        setLoading(false);
+      }
     }
-  }, [viewMode, filter, keyword, categoryParam, message]);
+  }, [viewMode, filter, searchKeyword, categoryParam, message]);
+
+  /** 写操作之后用：重拉列表 + 刷新侧边栏统计（数量 / 紧急数可能变了） */
+  const reloadAfterWrite = useCallback(() => {
+    void loadTasks();
+    useAppStore.getState().refreshTaskStats();
+  }, [loadTasks]);
 
   // 订阅全局 tasksListRefreshTick：提醒弹窗 / 紧急窗 / 后台 reminder 推进循环
   // 任务等场景修改任务后会 bump tick，让本页自动重拉，无需关页再开
@@ -420,6 +440,11 @@ function DesktopTasksPage() {
   useEffect(() => {
     loadTasks();
   }, [loadTasks, tasksListRefreshTick]);
+
+  // 进页 / 切筛选 / 外部改了任务时刷新统计；仅关键词变化不触发
+  useEffect(() => {
+    useAppStore.getState().refreshTaskStats();
+  }, [viewMode, filter, categoryParam, tasksListRefreshTick]);
 
   /** 日期筛选是否生效（两端全空 = 未启用） */
   const dateActive = !!(dateRange?.[0] || dateRange?.[1]);
@@ -476,10 +501,22 @@ function DesktopTasksPage() {
         // 循环任务：完成本次并推进到下一次；若想结束整条循环，在提醒 Modal 或编辑页里操作
         await taskApi.completeOccurrence(task.id);
       } else {
-        await taskApi.toggleStatus(task.id);
+        // 普通任务乐观更新：先在本地翻转勾选状态，不等整表重拉，勾选手感即时；失败再回滚
+        const prevStatus = task.status;
+        const prevCompletedAt = task.completed_at;
+        const nextStatus: TaskStatus = task.status === 0 ? 1 : 0;
+        patchTask(task.id, {
+          status: nextStatus,
+          completed_at: nextStatus === 1 ? dayjs().format("YYYY-MM-DD HH:mm:ss") : null,
+        });
+        try {
+          await taskApi.toggleStatus(task.id);
+        } catch (e) {
+          patchTask(task.id, { status: prevStatus, completed_at: prevCompletedAt });
+          throw e;
+        }
       }
-      await loadTasks();
-      useAppStore.getState().refreshTaskStats();
+      reloadAfterWrite();
     } catch (e) {
       message.error(`操作失败: ${e}`);
     }
@@ -699,7 +736,7 @@ function DesktopTasksPage() {
       ) : viewMode === "kanban" ? (
         <KanbanView
           tasks={visibleTasks}
-          onRefresh={loadTasks}
+          onRefresh={reloadAfterWrite}
           onEdit={setEditing}
           onNew={(p) => {
             setPresetPriority(p);
@@ -710,7 +747,7 @@ function DesktopTasksPage() {
       ) : viewMode === "quadrant" ? (
         <QuadrantView
           tasks={visibleTasks}
-          onRefresh={loadTasks}
+          onRefresh={reloadAfterWrite}
           onEdit={setEditing}
           onNew={(preset) => {
             setPresetPriority(preset.priority);
@@ -721,7 +758,7 @@ function DesktopTasksPage() {
       ) : viewMode === "calendar" ? (
         <CalendarView
           tasks={tasks}
-          onRefresh={loadTasks}
+          onRefresh={reloadAfterWrite}
           onEdit={setEditing}
           categoryMap={categoryMap}
           onNewOnDate={(ymd) => {
@@ -734,7 +771,7 @@ function DesktopTasksPage() {
       ) : viewMode === "gantt" ? (
         <GanttView
           tasks={tasks}
-          onRefresh={loadTasks}
+          onRefresh={reloadAfterWrite}
           onEdit={setEditing}
         />
       ) : visibleTasks.length === 0 ? (
@@ -786,7 +823,7 @@ function DesktopTasksPage() {
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
               categoryMap={categoryMap}
-              onUpdated={loadTasks}
+              onUpdated={reloadAfterWrite}
               onPatchTask={patchTask}
             />
           )}
@@ -807,7 +844,7 @@ function DesktopTasksPage() {
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
               categoryMap={categoryMap}
-              onUpdated={loadTasks}
+              onUpdated={reloadAfterWrite}
               onPatchTask={patchTask}
             />
           )}
@@ -828,7 +865,7 @@ function DesktopTasksPage() {
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
               categoryMap={categoryMap}
-              onUpdated={loadTasks}
+              onUpdated={reloadAfterWrite}
               onPatchTask={patchTask}
             />
           )}
@@ -848,7 +885,7 @@ function DesktopTasksPage() {
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
               categoryMap={categoryMap}
-              onUpdated={loadTasks}
+              onUpdated={reloadAfterWrite}
               onPatchTask={patchTask}
             />
           )}
@@ -895,7 +932,7 @@ function DesktopTasksPage() {
                   selectedIds={selectedIds}
                   onToggleSelect={toggleSelect}
                   categoryMap={categoryMap}
-                  onUpdated={loadTasks}
+                  onUpdated={reloadAfterWrite}
                   onPatchTask={patchTask}
                 />
               )
@@ -917,7 +954,7 @@ function DesktopTasksPage() {
                   selectedIds={selectedIds}
                   onToggleSelect={toggleSelect}
                   categoryMap={categoryMap}
-                  onUpdated={loadTasks}
+                  onUpdated={reloadAfterWrite}
                   onPatchTask={patchTask}
                 />
               )}
@@ -999,7 +1036,7 @@ function DesktopTasksPage() {
           setCreateOpen(false);
           setPresetImportant(undefined);
           setPresetDueDate(undefined);
-          loadTasks();
+          reloadAfterWrite();
         }}
       />
       <CreateTaskModal
@@ -1008,7 +1045,7 @@ function DesktopTasksPage() {
         onClose={() => setEditing(null)}
         onSaved={() => {
           setEditing(null);
-          loadTasks();
+          reloadAfterWrite();
         }}
         // 子任务变更：复用 patchTask 局部更新（避免全量 reload 闪烁）
         onSubtaskChanged={(done, total) => {
@@ -1036,7 +1073,7 @@ function DesktopTasksPage() {
       <ProjectManageModal
         open={projectManageOpen}
         onClose={() => setProjectManageOpen(false)}
-        onChanged={() => loadTasks()}
+        onChanged={reloadAfterWrite}
       />
     </div>
   );

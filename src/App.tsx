@@ -110,11 +110,45 @@ function App() {
     if (!IS_MAIN_WINDOW) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    listen("db:external-changed", () => {
+    // trailing 节流：AI 连续调写工具时事件会在一两秒内连发多次，每次都全量重拉
+    // 笔记 / 文件夹 / 标签 / 任务会让界面反复刷新、滚动跳动。合并成静默期结束后的一次刷新。
+    let timer: number | undefined;
+    const flush = () => {
+      timer = undefined;
       const s = useAppStore.getState();
       s.bumpNotesRefresh();
       s.bumpFoldersRefresh();
       s.bumpTagsRefresh();
+      s.bumpTasksListRefresh();
+      void s.refreshTaskStats();
+    };
+    listen("db:external-changed", () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(flush, 600);
+    }).then((fn) => {
+      if (cancelled) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
+    });
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      unlisten?.();
+    };
+  }, []);
+
+  // 紧急窗口（独立 webview）改完任务后通过 Tauri 事件通知主窗刷新列表/角标。
+  // Zustand store 是 per-webview 的，子窗口 set state 主窗拿不到，所以必须走事件桥。
+  useEffect(() => {
+    if (!IS_MAIN_WINDOW) return;
+    // 同上方两个监听的取消标志：严格模式 / 快速 remount 时 cleanup 早于 listen resolve，
+    // 不加标志第一次注册的监听永远解不掉，事件触发两次 → 任务列表重复重拉
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listen("tasks:list-refresh", () => {
+      const s = useAppStore.getState();
       s.bumpTasksListRefresh();
       void s.refreshTaskStats();
     }).then((fn) => {
@@ -126,23 +160,6 @@ function App() {
     });
     return () => {
       cancelled = true;
-      unlisten?.();
-    };
-  }, []);
-
-  // 紧急窗口（独立 webview）改完任务后通过 Tauri 事件通知主窗刷新列表/角标。
-  // Zustand store 是 per-webview 的，子窗口 set state 主窗拿不到，所以必须走事件桥。
-  useEffect(() => {
-    if (!IS_MAIN_WINDOW) return;
-    let unlisten: (() => void) | undefined;
-    listen("tasks:list-refresh", () => {
-      const s = useAppStore.getState();
-      s.bumpTasksListRefresh();
-      void s.refreshTaskStats();
-    }).then((fn) => {
-      unlisten = fn;
-    });
-    return () => {
       unlisten?.();
     };
   }, []);

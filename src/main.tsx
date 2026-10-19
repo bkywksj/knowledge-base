@@ -156,17 +156,17 @@ function showFatalDomFallback(e: unknown) {
     "</div></div>";
 }
 
-loadThemeFromStore()
+// 首屏前必须等完的三件事彼此无依赖（各读各的 store 键 / 后端状态，且都自行吞错），
+// 并行发出，省掉两次串行 IPC 往返：
+//   · 主题：首帧就用对的配色，避免闪色
+//   · 应用启动锁（仅主窗）：已开启则首帧即进入锁屏，避免笔记内容在锁屏出现前闪现一下；失败开放
+//   · 首页卡片的「隐藏（眼睛）」偏好：必须在 renderApp() 前读完，本该遮住的笔记/待办才不会先明文闪一帧
+Promise.all([
+  loadThemeFromStore(),
+  IS_MAIN_WINDOW ? useAppStore.getState().initAppLock() : Promise.resolve(),
+  loadHomeWidgetPrefs(),
+])
   .then(async () => {
-    // 应用启动锁：仅主窗在渲染前查询后端锁状态，已开启则首帧即进入锁屏，
-    // 避免笔记内容在锁屏出现前闪现一下。失败开放（不锁），不阻塞启动。
-    if (IS_MAIN_WINDOW) {
-      await useAppStore.getState().initAppLock();
-    }
-    // 首页卡片的「隐藏（眼睛）」偏好。
-    // 这里必须 await（而不是像下面几行那样 void 掉）：renderApp() 挂在 .finally 上，
-    // 等读完再渲染，本该遮住的笔记/待办才不会先明文闪一帧 —— 那一帧正是这个开关要防的。
-    await loadHomeWidgetPrefs();
     // 启动后台拉一次系统信息（数据目录 / 版本等），不阻塞首屏
     useAppStore.getState().loadInstanceInfo();
     // 拉一次"全局新建笔记"的默认文件夹 / 标签偏好，便于第一次按 Ctrl+N 就能用

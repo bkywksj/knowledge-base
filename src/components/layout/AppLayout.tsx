@@ -10,6 +10,7 @@ import { importApi } from "@/lib/api";
 import { showExternalMdIntroOnce } from "@/lib/externalMdIntro";
 import { resolveOpenMdMode } from "@/lib/openMdChoice";
 import { useAppStore } from "@/store";
+import { useShallow } from "zustand/react/shallow";
 import {
   SIDE_PANEL_MIN_WIDTH,
   SIDE_PANEL_MAX_WIDTH,
@@ -119,6 +120,8 @@ function useHistoryNav() {
 }
 
 export function AppLayout() {
+  // 只订阅布局真正用到的字段（useShallow 浅比较）：原先 useAppStore() 订阅整个 store，
+  // taskStatsTick / 各种 refresh tick 每变一次都会让整个布局（侧栏 + 标签页 + 内容区）重渲染
   const {
     themeCategory,
     lightTheme, darkTheme,
@@ -132,7 +135,28 @@ export function AppLayout() {
     autoHideActivityBar,
     focusModeKeepTabs,
     activityBarShowLabels,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((s) => ({
+      themeCategory: s.themeCategory,
+      lightTheme: s.lightTheme,
+      darkTheme: s.darkTheme,
+      setLightTheme: s.setLightTheme,
+      setDarkTheme: s.setDarkTheme,
+      setThemeCategory: s.setThemeCategory,
+      focusMode: s.focusMode,
+      setFocusMode: s.setFocusMode,
+      alwaysOnTop: s.alwaysOnTop,
+      setAlwaysOnTop: s.setAlwaysOnTop,
+      activeView: s.activeView,
+      sidePanelWidth: s.sidePanelWidth,
+      setSidePanelWidth: s.setSidePanelWidth,
+      sidePanelVisible: s.sidePanelVisible,
+      toggleSidePanel: s.toggleSidePanel,
+      autoHideActivityBar: s.autoHideActivityBar,
+      focusModeKeepTabs: s.focusModeKeepTabs,
+      activityBarShowLabels: s.activityBarShowLabels,
+    })),
+  );
   /** 活动栏当前实际宽度：纯图标模式 48，带文字 64。布局各处统一取这个值。 */
   const ACTIVITY_BAR_WIDTH = activityBarWidth(activityBarShowLabels);
   const activeTheme = themeCategory === "light" ? lightTheme : darkTheme;
