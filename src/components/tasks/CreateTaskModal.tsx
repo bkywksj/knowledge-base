@@ -129,6 +129,10 @@ export function CreateTaskModal({
     source: RecognizeSource;
     picked: number;
     aiNote: string | null;
+    /** 被识别的原文（「应用 AI 结果」时判断是不是同一段，决定子任务去重） */
+    text: string;
+    /** AI 返回时用户已改过表单：结果先挂在这里，等用户点「应用」，不自动覆盖 */
+    pendingAi?: RecognizedTask | null;
   } | null>(null);
   const [recognizeMode, setRecognizeMode] = useState<TaskRecognizeMode>("auto");
   const [continuous, setContinuous] = useState(false);
@@ -172,7 +176,29 @@ export function CreateTaskModal({
   const [draftSubInput, setDraftSubInput] = useState("");
   /** 新建态的附件同理：先暂存 File，主任务落库后再上传 */
   const [draftAttachments, setDraftAttachments] = useState<DraftAttachment[]>([]);
+  /** 附件条还在读取外链 / 本地图片：此时保存会漏掉这些图，所以保存按钮先禁用 */
+  const [attachmentsBusy, setAttachmentsBusy] = useState(false);
+  /** 关弹窗 / 卸载时要释放草稿的 blob: 预览地址，effect 里拿最新值用 */
+  const draftAttachmentsRef = useRef<DraftAttachment[]>([]);
+  draftAttachmentsRef.current = draftAttachments;
   const attachmentsRef = useRef<TaskAttachmentsHandle>(null);
+
+  /** 释放草稿预览 blob 并清空（关弹窗、重新打开、卸载都会走） */
+  const discardDraftAttachments = useCallback(() => {
+    draftAttachmentsRef.current.forEach(
+      (d) => d.previewUrl && URL.revokeObjectURL(d.previewUrl),
+    );
+    draftAttachmentsRef.current = [];
+    setDraftAttachments([]);
+  }, []);
+  useEffect(() => {
+    if (open) return;
+    discardDraftAttachments();
+    // 关弹窗时 AI 识别可能还在跑：作废它，免得结果回来写进下一次打开的表单
+    resetRecognition();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, discardDraftAttachments]);
+  useEffect(() => () => discardDraftAttachments(), [discardDraftAttachments]);
   /** 回车追加草稿子任务后，保持焦点在输入框（连续录入体验） */
   const draftSubInputRef = useRef<InputRef>(null);
 
@@ -314,9 +340,8 @@ export function CreateTaskModal({
     setNoteQuery("");
     setNoteOptions([]);
     setDraftSubtasks([]);
-    setDraftAttachments([]);
-    setRecognized(null);
-    preRecognizeRef.current = null;
+    discardDraftAttachments();
+    resetRecognition();
     setDraftSubInput("");
     setProjectCreating(false);
     setNewProjectName("");
@@ -453,6 +478,11 @@ export function CreateTaskModal({
       message.warning("请填写任务标题");
       return;
     }
+    // 按钮已禁用，这里兜住标题框回车保存的入口
+    if (attachmentsBusy) {
+      message.info("图片还在读取，稍等片刻再保存");
+      return;
+    }
     setSaving(true);
     try {
       const dueStr = dueDate ? dueDate.format("YYYY-MM-DD HH:mm:ss") : null;
@@ -507,8 +537,10 @@ export function CreateTaskModal({
           ...repeatPayload.create,
         });
         if (draftAttachments.length > 0) {
-          const failedAtt = await flushDraftAttachments(newTaskId, draftAttachments);
-          setDraftAttachments([]);
+          const flushed = draftAttachments;
+          const failedAtt = await flushDraftAttachments(newTaskId, flushed);
+          // 只移除已上传的那批：上传期间用户若又粘了图（连续新建场景），留给下一条
+          setDraftAttachments((prev) => prev.filter((d) => !flushed.includes(d)));
           if (failedAtt > 0) message.warning(`${failedAtt} 个附件上传失败`);
         }
         // 草稿子任务：主任务落库后顺序创建，失败也不阻断主任务（仅 warn）
@@ -543,6 +575,8 @@ export function CreateTaskModal({
         setLinks([]);
         setDraftSubtasks([]);
         setDraftSubInput("");
+        // 上一条的识别卡片 / 撤销快照不能带到下一条，否则撤销会把上一条的内容还原回来
+        resetRecognition();
         onSaved();
       } else {
         onSaved();
@@ -554,8 +588,8 @@ export function CreateTaskModal({
     }
   }
 
-  /** 识别前的表单快照：撤销时整体还原；连续识别（本地 → AI）始终以第一次识别前为基准 */
-  const preRecognizeRef = useRef<{
+  type DraftSub = { title: string; due?: string };
+  type FormSnapshot = {
     title: string;
     dueDate: Dayjs | null;
     startDate: Dayjs | null;
@@ -563,8 +597,92 @@ export function CreateTaskModal({
     remindBefore: number | null;
     important: boolean;
     priority: TaskPriority;
-    draftSubtasks: { title: string; due?: string }[];
+    draftSubtasks: DraftSub[];
+  };
+
+  /**
+   * 当前表单的实时值。AI 识别是异步的，回来时闭包里的 state 早就旧了，
+   * 要判断「用户在等 AI 期间有没有改过表单」只能读这里。渲染时同步赋值，保证总是最新。
+   */
+  const formRef = useRef<FormSnapshot>(null as unknown as FormSnapshot);
+  formRef.current = {
+    title,
+    dueDate,
+    startDate,
+    dateMode,
+    remindBefore,
+    important,
+    priority,
+    draftSubtasks,
+  };
+
+  /** 最近一次识别前的表单快照：撤销时整体还原（只回到最近一次识别前） */
+  const preRecognizeRef = useRef<FormSnapshot | null>(null);
+  /**
+   * 最近一次识别实际写进表单的值：与 formRef 比较即可知道用户之后有没有手动改过。
+   * `added` 是这次识别新加的草稿子任务对象（按引用识别），重新识别同一段文字时据此去重。
+   */
+  const appliedRef = useRef<{
+    title: string;
+    due: string | null;
+    start: string | null;
+    subtasks: DraftSub[] | null;
+    added: DraftSub[];
+    text: string;
   } | null>(null);
+  /**
+   * 识别请求序号：每次新识别 / 撤销 / 收起 / 关弹窗 / 连续新建都会 +1。
+   * AI 返回时序号对不上就说明这次结果已经过期，直接丢弃，避免慢请求覆盖用户后来的操作。
+   */
+  const recognizeSeqRef = useRef(0);
+
+  const fmtDay = (d: Dayjs | null) => (d ? d.format("YYYY-MM-DD HH:mm") : null);
+
+  /** 用户在最近一次识别回填之后是否改过标题 / 时间 / 子任务 */
+  function formChangedSinceApplied(): boolean {
+    const a = appliedRef.current;
+    if (!a) return false;
+    const cur = formRef.current;
+    if (cur.title !== a.title) return true;
+    if (fmtDay(cur.dueDate) !== a.due) return true;
+    if (fmtDay(cur.startDate) !== a.start) return true;
+    if (a.subtasks) {
+      if (cur.draftSubtasks.length !== a.subtasks.length) return true;
+      if (cur.draftSubtasks.some((s, i) => s !== a.subtasks![i])) return true;
+    }
+    return false;
+  }
+
+  /** 作废进行中的识别并清掉卡片 / 快照（不改表单内容） */
+  function resetRecognition() {
+    recognizeSeqRef.current++;
+    setAiRecognizing(false);
+    setRecognized(null);
+    preRecognizeRef.current = null;
+    appliedRef.current = null;
+  }
+
+  /**
+   * 开始一次新识别，返回作为回填基准的快照：
+   * - 上次识别后表单没动过 → 沿用上次的快照（本次只是替换上次的识别结果，撤销仍回到最初）
+   * - 动过 → 以当前表单为基准重拍，用户在两次识别之间的手动修改不会被吞掉；
+   *   若识别的是同一段文字，先剔除上次识别加进来的子任务，避免重复
+   */
+  function beginRecognition(text: string): FormSnapshot {
+    const prevBase = preRecognizeRef.current;
+    const applied = appliedRef.current;
+    if (prevBase && applied && !formChangedSinceApplied()) return prevBase;
+    const cur = formRef.current;
+    const base: FormSnapshot = {
+      ...cur,
+      draftSubtasks:
+        applied && applied.text === text
+          ? cur.draftSubtasks.filter((s) => !applied.added.includes(s))
+          : cur.draftSubtasks,
+    };
+    preRecognizeRef.current = base;
+    return base;
+  }
 
   function dueToDayjs(d: DueTime): Dayjs {
     // 原文没写几点就用设置里的默认时间，与手动选日期一致
@@ -587,40 +705,42 @@ export function CreateTaskModal({
   }
 
   /** 把识别结果回填表单：只填识别出的项；子任务只在新建时加（编辑时子任务是真实数据） */
-  function applyRecognition(r: RecognizedTask, source: RecognizeSource, aiNote: string | null = null) {
-    if (!preRecognizeRef.current) {
-      preRecognizeRef.current = {
-        title,
-        dueDate,
-        startDate,
-        dateMode,
-        remindBefore,
-        important,
-        priority,
-        draftSubtasks,
-      };
-    }
-    const base = preRecognizeRef.current;
-    setTitle(r.title ? normalizeTaskTitle(r.title) : base.title);
-    if (r.due) applyDue(r.due, r.start);
-    else {
-      setDueDate(base.dueDate);
-      setStartDate(base.startDate);
-      setDateMode(base.dateMode);
-    }
+  function applyRecognition(
+    r: RecognizedTask,
+    source: RecognizeSource,
+    base: FormSnapshot,
+    text: string,
+    aiNote: string | null = null,
+  ) {
+    const nextTitle = r.title ? normalizeTaskTitle(r.title) : base.title;
+    const nextDue = r.due ? dueToDayjs(r.due) : base.dueDate;
+    const nextStart = r.due ? (r.start ? dayjs(r.start) : base.startDate) : base.startDate;
+    setTitle(nextTitle);
+    setDueDate(nextDue);
+    setStartDate(nextStart);
+    setDateMode(r.due && r.start ? "range" : base.dateMode);
     setRemindBefore(r.due && r.remindBefore != null ? r.remindBefore : base.remindBefore);
     setImportant(r.important || base.important);
     setPriority(r.urgent ? 0 : base.priority);
+    let subtasks: DraftSub[] | null = null;
+    let added: DraftSub[] = [];
     if (!isEdit) {
-      setDraftSubtasks([
-        ...base.draftSubtasks,
-        ...r.subtasks.map((st) => ({
-          title: st.title,
-          due: st.due ? dueToDayjs(st.due).format("YYYY-MM-DD HH:mm:ss") : undefined,
-        })),
-      ]);
+      added = r.subtasks.map((st) => ({
+        title: st.title,
+        due: st.due ? dueToDayjs(st.due).format("YYYY-MM-DD HH:mm:ss") : undefined,
+      }));
+      subtasks = [...base.draftSubtasks, ...added];
+      setDraftSubtasks(subtasks);
     }
-    setRecognized({ r, source, picked: 0, aiNote });
+    appliedRef.current = {
+      title: nextTitle,
+      due: fmtDay(nextDue),
+      start: fmtDay(nextStart),
+      subtasks,
+      added,
+      text,
+    };
+    setRecognized({ r, source, picked: 0, aiNote, text, pendingAi: null });
   }
 
   function undoRecognition() {
@@ -635,20 +755,24 @@ export function CreateTaskModal({
       setPriority(base.priority);
       setDraftSubtasks(base.draftSubtasks);
     }
-    preRecognizeRef.current = null;
-    setRecognized(null);
+    resetRecognition();
   }
 
-  /** AI 结构化结果 → 与本地同形，好共用卡片；本地的日期候选保留，方便用户在两者间切换 */
+  /**
+   * AI 结构化结果 → 与本地同形，好共用卡片；本地的日期候选保留，方便用户在两者间切换。
+   * AI 没给出的字段（没识别出时间、没拆子任务等）沿用本地规则结果，
+   * 不能因为 AI 漏了一项就把本地已回填的值退回到识别前。
+   */
   function fromAi(ai: AiRecognizedTask, local: RecognizedTask, text: string): RecognizedTask {
     const toDue = (s?: string | null): DueTime | null =>
       s ? { date: s.slice(0, 10), time: s.length > 10 ? s.slice(11, 16) : null } : null;
-    const due = toDue(ai.dueDate);
-    const start = ai.startDate ? ai.startDate.slice(0, 10) : null;
-    const aiCandidate = due
+    const aiDue = toDue(ai.dueDate);
+    const due = aiDue ?? local.due;
+    const start = aiDue ? (ai.startDate ? ai.startDate.slice(0, 10) : null) : local.start;
+    const aiCandidate = aiDue
       ? [
           {
-            ...due,
+            ...aiDue,
             start: start ?? undefined,
             role: start ? ("range" as const) : ("deadline" as const),
             past: false,
@@ -657,22 +781,32 @@ export function CreateTaskModal({
           },
         ]
       : [];
+    const aiSubtasks = (ai.subtasks ?? []).map((st) => ({ title: st.title, due: toDue(st.dueDate) }));
     return {
-      title: ai.title?.trim() ?? "",
+      title: ai.title?.trim() || local.title,
       due,
       start,
-      remindBefore: ai.remindBefore ?? null,
-      important: !!ai.important,
+      remindBefore: aiDue ? (ai.remindBefore ?? local.remindBefore) : local.remindBefore,
+      important: !!ai.important || local.important,
       // AI 常把「务必按时」当成紧急：只有原文写了紧急类词语，或截止就在两天内，才采纳 priority=0
       urgent:
-        ai.priority === 0 &&
-        (/紧急|加急|特急|立即|马上|尽快|火速/.test(text) ||
-          (!!due && dayjs(due.date).diff(dayjs().startOf("day"), "day") <= 2)),
-      location: ai.location ?? null,
-      subtasks: (ai.subtasks ?? []).map((st) => ({ title: st.title, due: toDue(st.dueDate) })),
+        local.urgent ||
+        (ai.priority === 0 &&
+          (/紧急|加急|特急|立即|马上|尽快|火速/.test(text) ||
+            (!!due && dayjs(due.date).diff(dayjs().startOf("day"), "day") <= 2))),
+      location: ai.location ?? local.location,
+      subtasks: aiSubtasks.length > 0 ? aiSubtasks : local.subtasks,
       candidates: [...aiCandidate, ...local.candidates],
       confident: true,
     };
+  }
+
+  /** 应用挂起的 AI 结果（AI 返回时用户已改过表单，由用户点按钮决定） */
+  function applyPendingAi() {
+    const cur = recognized;
+    if (!cur?.pendingAi) return;
+    recognizeSeqRef.current++;
+    applyRecognition(cur.pendingAi, "ai", beginRecognition(cur.text), cur.text);
   }
 
   /**
@@ -680,15 +814,26 @@ export function CreateTaskModal({
    * auto 模式下 AI 失败（没配模型 / 网络）不打扰用户，保留本地结果并在卡片上轻提示。
    */
   async function runRecognize(text: string, forceAi = false) {
+    const seq = ++recognizeSeqRef.current;
+    const base = beginRecognition(text);
     const local = recognizeTask(text);
-    applyRecognition(local, "local");
+    applyRecognition(local, "local", base, text);
     const useAi = forceAi || recognizeMode === "ai" || (recognizeMode === "auto" && !local.confident);
     if (!useAi) return;
     setAiRecognizing(true);
     try {
       const ai = await aiPlanApi.recognizeTask(text);
-      applyRecognition(fromAi(ai, local, text), "ai");
+      // 期间又识别了一次 / 撤销 / 收起 / 关了弹窗：这份结果已过期
+      if (seq !== recognizeSeqRef.current) return;
+      const merged = fromAi(ai, local, text);
+      if (formChangedSinceApplied()) {
+        // 用户在等 AI 时已经动手改了：不覆盖，挂到卡片下方让用户自己决定
+        setRecognized((prev) => (prev ? { ...prev, pendingAi: merged } : prev));
+      } else {
+        applyRecognition(merged, "ai", base, text);
+      }
     } catch (e) {
+      if (seq !== recognizeSeqRef.current) return;
       if (forceAi || recognizeMode === "ai") {
         message.error(`AI 识别失败：${e}（需先在设置里配置模型服务）`);
       }
@@ -696,7 +841,7 @@ export function CreateTaskModal({
         prev ? { ...prev, aiNote: "AI 暂不可用，已使用本地规则结果" } : prev,
       );
     } finally {
-      setAiRecognizing(false);
+      if (seq === recognizeSeqRef.current) setAiRecognizing(false);
     }
   }
 
@@ -740,7 +885,14 @@ export function CreateTaskModal({
           </Checkbox>
           <Space>
             <Button onClick={onClose}>取消</Button>
-            <Button type="primary" loading={saving} onClick={handleSave}>
+            <Button
+              type="primary"
+              loading={saving}
+              // 附件条还在读外链 / 本地图片时先等它读完，否则这些图不会随任务保存
+              disabled={attachmentsBusy}
+              title={attachmentsBusy ? "图片读取中…" : undefined}
+              onClick={handleSave}
+            >
               保存
             </Button>
           </Space>
@@ -760,15 +912,30 @@ export function CreateTaskModal({
               setRecognized({ ...recognized, picked: i });
             }}
             onUndo={undoRecognition}
-            onClose={() => {
-              setRecognized(null);
-              preRecognizeRef.current = null;
-            }}
-            onAiRetry={() => void runRecognize(description, true)}
+            // 收起 = 认可当前内容：作废还在跑的 AI，免得它回来又改表单
+            onClose={resetRecognition}
+            // 用卡片对应的那段原文重识别（标题框粘贴时描述里可能还有别的内容）
+            onAiRetry={() => void runRecognize(recognized.text, true)}
             aiLoading={aiRecognizing}
             aiNote={recognized.aiNote}
             subtasksApplied={!isEdit}
           />
+        )}
+        {recognized?.pendingAi && (
+          <div
+            className="-mt-2 flex items-center gap-2 text-xs"
+            style={{ color: token.colorTextSecondary }}
+          >
+            <span>AI 结果已返回，因你修改过表单未自动覆盖</span>
+            <Button
+              type="link"
+              size="small"
+              style={{ fontSize: 12, padding: 0, height: 20 }}
+              onClick={applyPendingAi}
+            >
+              应用 AI 结果
+            </Button>
+          </div>
         )}
         {/* 标题 */}
         <div>
@@ -882,6 +1049,7 @@ export function CreateTaskModal({
               taskId={editing?.id ?? null}
               drafts={draftAttachments}
               onDraftsChange={setDraftAttachments}
+              onBusyChange={setAttachmentsBusy}
             />
           </div>
         </div>

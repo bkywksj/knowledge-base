@@ -176,6 +176,12 @@ function findDates(text: string, today: Date): DateHit[] {
   for (const m of text.matchAll(
     /(下下|下|本|这)?(?:周|星期|礼拜)([一二三四五六日天1-7])/g,
   )) {
+    // 「每周3次」「每周三次课」「一周三天」是频次 / 时长，不是星期几：
+    // 前面是「每」，或者后面紧跟量词，就跳过
+    const before = text[m.index! - 1] ?? "";
+    const after = text[m.index! + m[0].length] ?? "";
+    if ((!m[1] && before === "每") || /[次天个小遍回趟节]/.test(after))
+      continue;
     const target = WEEKDAY[m[2]];
     const cur = today.getDay() === 0 ? 7 : today.getDay();
     let off = target - cur;
@@ -422,13 +428,14 @@ function timeOnly(
 
 // ─── 编号清单 → 子任务 ─────────────────────────────────
 
+// 编号后的标点不能紧跟数字：「1.5万元」「1.2.3」是小数 / 版本号，不是第 1 项
 const ITEM_RE =
-  /^\s*(?:\d{1,2}\s*[.、．)）]|[（(]\s*\d{1,2}\s*[)）]|[①②③④⑤⑥⑦⑧⑨⑩]|[一二三四五六七八九十][、.．])\s*(.+)$/;
+  /^\s*(?:\d{1,2}\s*[.、．)）](?!\d)|[（(]\s*\d{1,2}\s*[)）]|[①②③④⑤⑥⑦⑧⑨⑩]|[一二三四五六七八九十][、.．])\s*(.+)$/;
 
 function splitItems(text: string): { items: string[]; listStart: number } {
   // 同一行里的「：1. xxx；2. xxx」也拆开（冒号后紧跟第一项是很常见的写法）
   const norm = text.replace(
-    /[；;。：:]\s*(?=(?:\d{1,2}\s*[.、．)）]|[（(]\s*\d{1,2}\s*[)）]|[①②③④⑤⑥⑦⑧⑨⑩]))/g,
+    /[；;。：:]\s*(?=(?:\d{1,2}\s*[.、．)）](?!\d)|[（(]\s*\d{1,2}\s*[)）]|[①②③④⑤⑥⑦⑧⑨⑩]))/g,
     "\n",
   );
   const items: string[] = [];

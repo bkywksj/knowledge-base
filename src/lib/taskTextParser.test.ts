@@ -100,6 +100,17 @@ describe("recognizeTask：清单拆子任务", () => {
   it("只有一项不算清单", () => {
     expect(rec("1. 明天交周报").subtasks).toEqual([]);
   });
+
+  it("小数 / 版本号不当编号拆子任务", () => {
+    expect(
+      rec("10月28日前提交预算表，费用：1.5万元；预算：2.8万元").subtasks,
+    ).toEqual([]);
+    expect(
+      rec("请于10月25日前升级客户端，版本：1.2.3；补丁：2.0.1").subtasks,
+    ).toEqual([]);
+    // 真正的编号清单不受影响
+    expect(rec("要求：1. 按部门汇总；2. 附上分析").subtasks).toHaveLength(2);
+  });
 });
 
 describe("recognizeTask：其它", () => {
@@ -113,6 +124,15 @@ describe("recognizeTask：其它", () => {
       date: "2026-11-03",
       time: "14:30",
     });
+  });
+
+  it("频次 / 时长里的「周三」不是星期三", () => {
+    expect(rec("健身计划每周3次").due).toBeNull();
+    expect(rec("每周三次课，坚持到期末").due).toBeNull();
+    expect(rec("一周三天在家办公").due).toBeNull();
+    // 正常的星期仍能识别
+    expect(rec("周三交周报").due?.date).toBe("2026-10-21");
+    expect(rec("每周三例会改到下周五").due?.date).toBe("2026-10-30");
   });
 
   it("只有时间没有日期：今天，已过则明天", () => {

@@ -209,6 +209,15 @@ export async function flushDraftAttachments(
   return failed;
 }
 
+/**
+ * 草稿更新器：与 React 的 setState 同形，父组件直接传 `setDrafts` 即可。
+ * 必须支持函数式更新 —— 外链 / 本地路径要 await 后端读字节，期间用户可能又粘贴、
+ * 又删除；await 回来再用闭包里的旧 `drafts` 拼数组，会把这期间的增删全部覆盖掉。
+ */
+export type DraftsUpdater = (
+  next: DraftAttachment[] | ((prev: DraftAttachment[]) => DraftAttachment[]),
+) => void;
+
 interface Props {
   taskId: number | null;
   /** false = 只读（详情页）：不显示「＋」和删除按钮，没有附件时整块不渲染 */
@@ -216,7 +225,9 @@ interface Props {
   /** 子任务行用小号缩略图 */
   size?: "default" | "small";
   drafts?: DraftAttachment[];
-  onDraftsChange?: (drafts: DraftAttachment[]) => void;
+  onDraftsChange?: DraftsUpdater;
+  /** 正在读取 / 上传附件（父组件据此禁用保存，避免下载中的图片被漏掉） */
+  onBusyChange?: (busy: boolean) => void;
   /** 实时模式下附件数变化（父组件刷新列表角标用） */
   onCountChange?: (count: number) => void;
   ref?: Ref<TaskAttachmentsHandle>;
@@ -231,6 +242,7 @@ export default function TaskAttachments({
   size = "default",
   drafts = [],
   onDraftsChange,
+  onBusyChange,
   onCountChange,
   ref,
 }: Props) {
@@ -239,11 +251,38 @@ export default function TaskAttachments({
   const openFilePreview = useAttachmentPreviewStore((s) => s.open);
   const [items, setItems] = useState<TaskAttachment[]>([]);
   const [loading, setLoading] = useState(false);
-  const [busy, setBusy] = useState(false);
+  // 计数而不是布尔：连续粘贴会有多个读取同时在跑，先完成的那个不能把 busy 提前清掉
+  const [busyCount, setBusyCount] = useState(0);
+  const busy = busyCount > 0;
+  const beginBusy = useCallback(() => setBusyCount((c) => c + 1), []);
+  const endBusy = useCallback(
+    () => setBusyCount((c) => Math.max(0, c - 1)),
+    [],
+  );
   const [dragOver, setDragOver] = useState(false);
+  // 弹窗关掉（组件卸载）后才回来的下载结果直接丢弃，否则会混进下一次新建的草稿里
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const live = taskId != null;
   const tile = size === "small" ? 44 : 64;
+
+  useEffect(() => {
+    onBusyChange?.(busy);
+    // onBusyChange 是父组件内联回调，只在 busy 变化时通知
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy]);
+  useEffect(
+    () => () => onBusyChange?.(false),
+    // 卸载时复位父组件的 busy，避免下次打开保存按钮一直禁用
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   const reload = useCallback(async () => {
     if (taskId == null) return;
@@ -287,11 +326,11 @@ export default function TaskAttachments({
             ? URL.createObjectURL(file)
             : undefined,
         }));
-        onDraftsChange?.([...drafts, ...next]);
+        onDraftsChange?.((prev) => [...prev, ...next]);
         return;
       }
 
-      setBusy(true);
+      beginBusy();
       try {
         for (const [idx, file] of ok.entries()) {
           try {
@@ -305,11 +344,11 @@ export default function TaskAttachments({
           }
         }
       } finally {
-        setBusy(false);
+        endBusy();
         await reload();
       }
     },
-    [live, taskId, drafts, onDraftsChange, message, reload],
+    [live, taskId, onDraftsChange, message, reload, beginBusy, endBusy],
   );
 
   /**
@@ -320,8 +359,8 @@ export default function TaskAttachments({
     async (urls: string[], paths: string[]) => {
       if (urls.length === 0 && paths.length === 0) return;
       if (!live) {
-        const stamp = Date.now();
-        setBusy(true);
+        const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        beginBusy();
         try {
           const inlined = await inlineRemoteDrafts([
             ...urls.map((url, i) => ({
@@ -335,13 +374,20 @@ export default function TaskAttachments({
               path,
             })),
           ]);
-          onDraftsChange?.([...drafts, ...inlined]);
+          if (!mountedRef.current) {
+            inlined.forEach(
+              (d) => d.previewUrl && URL.revokeObjectURL(d.previewUrl),
+            );
+            return;
+          }
+          // 函数式更新：await 期间用户可能又粘贴 / 删除过，基于最新草稿追加
+          onDraftsChange?.((prev) => [...prev, ...inlined]);
         } finally {
-          setBusy(false);
+          endBusy();
         }
         return;
       }
-      setBusy(true);
+      beginBusy();
       let failed = 0;
       try {
         for (const url of urls) {
@@ -351,13 +397,13 @@ export default function TaskAttachments({
           await taskAttachmentApi.addFromPath(taskId, p).catch(() => failed++);
         }
       } finally {
-        setBusy(false);
+        endBusy();
         if (failed > 0)
           message.warning(`${failed} 张图片没取到（可能已失效或被防盗链拦截）`);
         await reload();
       }
     },
-    [live, taskId, drafts, onDraftsChange, message, reload],
+    [live, taskId, onDraftsChange, message, reload, beginBusy, endBusy],
   );
 
   const handlePaste = useCallback(
@@ -369,34 +415,13 @@ export default function TaskAttachments({
       if (!opts?.keepText || plan.text.trim() === "") e.preventDefault();
       if (plan.skipped > 0)
         message.info(`图片较多，只收了前 ${MAX_HTML_IMAGES} 张`);
-      // addFiles 和 addRemote 都基于同一份 drafts 闭包，草稿模式下串行调用会互相覆盖 ——
-      // 有文件就先收文件，外链 / 路径留到下一次渲染拿到新 drafts 再收
-      if (
-        !live &&
-        plan.files.length > 0 &&
-        plan.urls.length + plan.paths.length > 0
-      ) {
-        void addFiles(plan.files);
-        pendingRemote.current = { urls: plan.urls, paths: plan.paths };
-        return true;
-      }
+      // 草稿都走函数式更新，文件和外链同时收也不会互相覆盖
       void addFiles(plan.files);
       void addRemote(plan.urls, plan.paths);
       return true;
     },
-    [live, addFiles, addRemote, message],
+    [addFiles, addRemote, message],
   );
-
-  // 见 handlePaste：草稿模式里文件和外链同时出现时，外链在 drafts 更新后补收
-  const pendingRemote = useRef<{ urls: string[]; paths: string[] } | null>(
-    null,
-  );
-  useEffect(() => {
-    const p = pendingRemote.current;
-    if (!p) return;
-    pendingRemote.current = null;
-    void addRemote(p.urls, p.paths);
-  }, [drafts, addRemote]);
 
   useImperativeHandle(ref, () => ({ addFiles, handlePaste }), [
     addFiles,
@@ -416,7 +441,7 @@ export default function TaskAttachments({
     const selected = await open({ multiple: true });
     if (!selected) return;
     const paths = Array.isArray(selected) ? selected : [selected];
-    setBusy(true);
+    beginBusy();
     try {
       for (const p of paths) {
         try {
@@ -426,7 +451,7 @@ export default function TaskAttachments({
         }
       }
     } finally {
-      setBusy(false);
+      endBusy();
       await reload();
     }
   }
@@ -443,7 +468,7 @@ export default function TaskAttachments({
   function removeDraft(key: string) {
     const d = drafts.find((x) => x.key === key);
     if (d?.previewUrl) URL.revokeObjectURL(d.previewUrl);
-    onDraftsChange?.(drafts.filter((x) => x.key !== key));
+    onDraftsChange?.((prev) => prev.filter((x) => x.key !== key));
   }
 
   async function moveItem(fromId: number, toId: number) {
@@ -641,6 +666,18 @@ export default function TaskAttachments({
             </button>
           )}
         </div>
+        {/* sync_v1 增量同步还没纳入 task_attachments，先说清楚，免得换台设备以为图丢了。
+            只在有附件时出现、用最弱的字色，不抢描述的视线；子任务小号条不显示（主任务处已说明） */}
+        {count > 0 && size !== "small" && (
+          <div
+            className="mt-1 text-[11px]"
+            style={{
+              color: "var(--ant-color-text-quaternary, rgba(0,0,0,0.25))",
+            }}
+          >
+            附件暂不参与多端同步（整包备份会包含）
+          </div>
+        )}
       </Spin>
     </div>
   );

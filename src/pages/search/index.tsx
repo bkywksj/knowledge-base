@@ -76,6 +76,47 @@ function toDayRange(strs: [string, string]): [string, string] | null {
   return strs[0] && strs[1] ? [`${strs[0]} 00:00:00`, `${strs[1]} 23:59:59`] : null;
 }
 
+/**
+ * 组装成后端要的 filters。
+ *
+ * 🔴 没勾的维度必须**省略字段**而不是传 `[]` —— 后端 fail-closed，
+ * 空数组表示"勾了但没选中"会直接返回零结果（见 types/SearchFilters 注释）。
+ * 抽成纯函数：外部跳转时要按 URL 里的新条件立刻搜，不能等 state 更新后再读 useMemo。
+ */
+function buildSearchFilters(
+  s: {
+    folders: number[];
+    tags: number[];
+    types: NoteType[];
+    dateRange: [string, string] | null;
+    createdRange: [string, string] | null;
+    titleOnly: boolean;
+  },
+  folderTree: Folder[],
+): SearchFilters | undefined {
+  const f: SearchFilters = {};
+  if (s.folders.length > 0) {
+    // 选了「工作」应当含其下所有子文件夹，否则用户会觉得"明明在这个目录里却搜不到"。
+    // 🔴 从 URL 恢复时文件夹树可能还没拉到：此时子树展开会得到 []，后端 fail-closed 直接零结果。
+    //    先用选中的 id 本身，树到了 filtersKey 变化会自动按子树重搜。
+    f.folderIds =
+      folderTree.length > 0 ? collectSubtreeIds(folderTree, s.folders) : s.folders;
+  }
+  if (s.tags.length > 0) f.tagIds = s.tags;
+  if (s.types.length > 0) f.noteTypes = s.types;
+  if (s.dateRange) {
+    f.updatedAfter = s.dateRange[0];
+    f.updatedBefore = s.dateRange[1];
+  }
+  if (s.createdRange) {
+    f.createdAfter = s.createdRange[0];
+    f.createdBefore = s.createdRange[1];
+  }
+  // 只在勾选时才传：不勾 = 省略字段，保持与旧版请求完全一致
+  if (s.titleOnly) f.titleOnly = true;
+  return Object.keys(f).length > 0 ? f : undefined;
+}
+
 function DesktopSearchPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -89,6 +130,13 @@ function DesktopSearchPage() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  /** 本页最后一次写进 URL 的 q：区分「自己写回」和「外部跳转」（见读 URL 的 effect） */
+  const lastWrittenQRef = useRef(initialUrl.q);
+  /** 外部跳转那一轮跳过写回 URL */
+  const skipNextUrlWriteRef = useRef(false);
+  const searchSeqRef = useRef(0);
+  /** 最近一次发起搜索的关键词 + 条件，防止条件 state 追上来后重复搜 */
+  const lastSearchRef = useRef<{ q: string; filtersKey: string } | null>(null);
 
   // ─── 筛选（P1-2）────────────────────────────────
   // 带着筛选条件回来时直接展开面板，让用户看到条件还在
@@ -115,35 +163,22 @@ function DesktopSearchPage() {
     tagApi.list().then(setTags).catch(() => {});
   }, [showFilters, folders.length, tags.length]);
 
-  /**
-   * 组装成后端要的 filters。
-   *
-   * 🔴 没勾的维度必须**省略字段**而不是传 `[]` —— 后端 fail-closed，
-   * 空数组表示"勾了但没选中"会直接返回零结果（见 types/SearchFilters 注释）。
-   */
-  const filters = useMemo<SearchFilters | undefined>(() => {
-    const f: SearchFilters = {};
-    if (pickedFolders.length > 0) {
-      // 选了「工作」应当含其下所有子文件夹，否则用户会觉得"明明在这个目录里却搜不到"。
-      // 🔴 从 URL 恢复时文件夹树可能还没拉到：此时子树展开会得到 []，后端 fail-closed 直接零结果。
-      //    先用选中的 id 本身，树到了 filtersKey 变化会自动按子树重搜。
-      f.folderIds =
-        folders.length > 0 ? collectSubtreeIds(folders, pickedFolders) : pickedFolders;
-    }
-    if (pickedTags.length > 0) f.tagIds = pickedTags;
-    if (pickedTypes.length > 0) f.noteTypes = pickedTypes;
-    if (dateRange) {
-      f.updatedAfter = dateRange[0];
-      f.updatedBefore = dateRange[1];
-    }
-    if (createdRange) {
-      f.createdAfter = createdRange[0];
-      f.createdBefore = createdRange[1];
-    }
-    // 只在勾选时才传：不勾 = 省略字段，保持与旧版请求完全一致
-    if (titleOnly) f.titleOnly = true;
-    return Object.keys(f).length > 0 ? f : undefined;
-  }, [pickedFolders, pickedTags, pickedTypes, dateRange, createdRange, titleOnly, folders]);
+  /** 组装成后端要的 filters（规则见 buildSearchFilters） */
+  const filters = useMemo<SearchFilters | undefined>(
+    () =>
+      buildSearchFilters(
+        {
+          folders: pickedFolders,
+          tags: pickedTags,
+          types: pickedTypes,
+          dateRange,
+          createdRange,
+          titleOnly,
+        },
+        folders,
+      ),
+    [pickedFolders, pickedTags, pickedTypes, dateRange, createdRange, titleOnly, folders],
+  );
 
   const activeFilterCount =
     (pickedFolders.length > 0 ? 1 : 0) +
@@ -167,6 +202,9 @@ function DesktopSearchPage() {
   const filtersKey = JSON.stringify(filters ?? {});
   useEffect(() => {
     if (!searched || !query.trim()) return;
+    // 外部跳转时已经按新条件搜过了，条件 state 随后才更新到这里，别再搜一遍
+    const last = lastSearchRef.current;
+    if (last && last.q === query.trim() && last.filtersKey === filtersKey) return;
     doSearch(query.trim());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtersKey]);
@@ -185,12 +223,45 @@ function DesktopSearchPage() {
 
   // URL ?q= 驱动搜索：外部（SearchPanel 点历史 / 首页搜索框直达）改变 URL 时
   // 同步输入框并触发重搜；用户在输入框 typing 走下方本地 debounce，不走这里
+  //
+  // 🔴 读 URL 和写 URL 两个 effect 在同一次提交里都会跑：外部跳转那一轮 query 还是旧值，
+  //    写回 effect 若照常执行会把旧 q 写回去，下一轮读 effect 又把旧 q 当成"外部跳转"，
+  //    关键词就在新旧之间来回切、反复搜。所以用 lastWrittenQRef 记住本页最后写进 URL 的 q：
+  //    与它相同 = 自己写的，忽略；不同才是外部跳转，并让写回 effect 跳过这一轮。
   const urlQ = (searchParams.get("q") ?? "").trim();
   useEffect(() => {
-    // 与输入框一致说明是本页自己写回 URL 的（见下方同步），不是外部跳转，别重复搜
-    if (!urlQ || urlQ === query.trim()) return;
+    if (!urlQ || urlQ === lastWrittenQRef.current) return;
+    lastWrittenQRef.current = urlQ;
+    skipNextUrlWriteRef.current = true;
+    if (timerRef.current) clearTimeout(timerRef.current);
+    // 外部跳转（侧栏历史 / 首页搜索框 / 后退）按 URL 里的条件来：只带 q 就等于清空筛选。
+    // 否则沿用旧筛选，用户看不出结果被过滤了，会以为搜不到
+    const next = parseSearchUrl(searchParams);
+    const nextDate = next.updated ? toDayRange(next.updated) : null;
+    const nextCreated = next.created ? toDayRange(next.created) : null;
     setQuery(urlQ);
-    doSearch(urlQ);
+    setPickedFolders(next.folders);
+    setPickedTags(next.tags);
+    setPickedTypes(next.types);
+    setDateRange(nextDate);
+    setCreatedRange(nextCreated);
+    setTitleOnly(next.titleOnly);
+    setPickerResetKey((k) => k + 1);
+    if (hasActiveFilters(next)) setShowFilters(true);
+    doSearch(
+      urlQ,
+      buildSearchFilters(
+        {
+          folders: next.folders,
+          tags: next.tags,
+          types: next.types,
+          dateRange: nextDate,
+          createdRange: nextCreated,
+          titleOnly: next.titleOnly,
+        },
+        folders,
+      ),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlQ]);
 
@@ -202,6 +273,12 @@ function DesktopSearchPage() {
 
   // 条件变化 → 写回 URL（replace，不往历史栈里塞记录，后退仍是回到上一页）
   useEffect(() => {
+    // 外部跳转那一轮的 state 还是旧的，写回会把新 URL 覆盖掉（见上方读 URL 的 effect）
+    if (skipNextUrlWriteRef.current) {
+      skipNextUrlWriteRef.current = false;
+      return;
+    }
+    lastWrittenQRef.current = query.trim();
     const day = (r: [string, string] | null): [string, string] | null =>
       r ? [r[0].slice(0, 10), r[1].slice(0, 10)] : null;
     const next = writeSearchUrl(searchParams, {
@@ -229,11 +306,14 @@ function DesktopSearchPage() {
   ]);
 
   /** 并发拉笔记 + 待办；任意一边失败不阻塞另一边 */
-  async function doSearch(keyword: string) {
+  async function doSearch(keyword: string, f: SearchFilters | undefined = filters) {
+    // 请求序号：连续输入 / 改条件会有多个请求同时在跑，慢的旧结果回来不能盖掉新结果
+    const seq = ++searchSeqRef.current;
+    lastSearchRef.current = { q: keyword, filtersKey: JSON.stringify(f ?? {}) };
     setLoading(true);
     setSearched(true);
     const [notes, tasks] = await Promise.all([
-      searchApi.search(keyword, undefined, filters).catch((e) => {
+      searchApi.search(keyword, undefined, f).catch((e) => {
         console.error("笔记搜索失败:", e);
         return [] as SearchResult[];
       }),
@@ -242,6 +322,7 @@ function DesktopSearchPage() {
         return [] as TaskSearchHit[];
       }),
     ]);
+    if (seq !== searchSeqRef.current) return;
     setResults(notes);
     setTaskResults(tasks);
     // 历史只在拿到任一结果时才记（避免空查询污染）
@@ -255,6 +336,10 @@ function DesktopSearchPage() {
     setQuery(value);
     if (timerRef.current) clearTimeout(timerRef.current);
     if (!value.trim()) {
+      // 作废还在跑的请求，免得清空后旧结果又冒出来
+      searchSeqRef.current++;
+      lastSearchRef.current = null;
+      setLoading(false);
       setResults([]);
       setTaskResults([]);
       setSearched(false);
