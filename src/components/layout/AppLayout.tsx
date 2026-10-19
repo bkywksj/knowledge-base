@@ -119,6 +119,25 @@ function useHistoryNav() {
   };
 }
 
+/**
+ * 手动检查更新 + 统一的结果提示（托盘「检查更新…」与右上角版本号共用）。
+ * 有更新时 checkManually 内部已自动打开 UpdateModal，这里只收掉 loading 提示。
+ */
+async function checkUpdateWithFeedback(
+  checkManually: () => Promise<{ hasUpdate: boolean; error?: string }>
+) {
+  const key = "manual-check-update";
+  message.loading({ content: "正在检查更新…", key, duration: 0 });
+  const r = await checkManually();
+  if (r.error) {
+    message.error({ content: `检查更新失败：${r.error}`, key });
+  } else if (!r.hasUpdate) {
+    message.success({ content: "已是最新版本", key });
+  } else {
+    message.destroy(key);
+  }
+}
+
 export function AppLayout() {
   // 只订阅布局真正用到的字段（useShallow 浅比较）：原先 useAppStore() 订阅整个 store，
   // taskStatsTick / 各种 refresh tick 每变一次都会让整个布局（侧栏 + 标签页 + 内容区）重渲染
@@ -409,19 +428,9 @@ export function AppLayout() {
       useAppStore.getState().bumpNotesRefresh();
     }).then((fn) => unlisteners.push(fn));
 
-    listen("tray:check-update", async () => {
-      const key = "tray-check-update";
-      message.loading({ content: "正在检查更新…", key, duration: 0 });
-      const r = await checkManually();
-      if (r.error) {
-        message.error({ content: `检查更新失败：${r.error}`, key });
-      } else if (!r.hasUpdate) {
-        message.success({ content: "已是最新版本", key });
-      } else {
-        // 有更新：checkManually 内部已自动打开 UpdateModal
-        message.destroy(key);
-      }
-    }).then((fn) => unlisteners.push(fn));
+    listen("tray:check-update", () => checkUpdateWithFeedback(checkManually)).then((fn) =>
+      unlisteners.push(fn)
+    );
 
     // 托盘 CheckMenuItem 切换"窗口置顶"后回传：skipEmit 避免再回流到 Rust
     listen<boolean>("rust:always-on-top-changed", (e) => {
@@ -748,6 +757,7 @@ export function AppLayout() {
               phase={updatePhase}
               progress={updateProgress}
               onClick={openModal}
+              onCheck={() => void checkUpdateWithFeedback(checkManually)}
             />
             <Tooltip title="快速记一笔 (Ctrl+Alt+N) — 追加到今天的日记">
               <Button

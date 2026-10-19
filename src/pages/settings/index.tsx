@@ -1545,9 +1545,9 @@ function DesktopSettingsPage() {
           style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
         >
           <div>
-            <div>自动检查更新</div>
+            <div>自动更新</div>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              开启后启动时及每 30 分钟检查一次，发现新版本会在后台预先下载，点「重启以更新」才会安装。
+              开启后启动时及每 30 分钟检查一次，发现新版本会在后台预先下载，点「重启以更新」才会安装。也可随时点右上角版本号手动检查。
               关闭后不会自动联网检查，也不会自动下载，仍可手动点「检查更新」。
             </Text>
           </div>

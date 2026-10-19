@@ -47,7 +47,7 @@ interface Options {
   /**
    * 是否启用自动检查 + 后台下载。默认 true。
    * 多窗口场景下只让主窗口启用，避免每个子窗口都重复后台下载同一个更新包。
-   * 同时还要用户没在设置页关掉「自动检查更新」（app_config `update.auto_check`）。
+   * 同时还要用户没在设置页关掉「自动更新」（app_config `update.auto_check`）。
    */
   enabled?: boolean;
 }
