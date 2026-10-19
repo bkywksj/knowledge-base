@@ -435,7 +435,13 @@ export function SyncV1Section() {
     setBusyOp("test");
     try {
       await syncV1Api.testConnection(id);
-      message.success("连接正常");
+      // 目录可达 ≠ 能同步：填错一级目录 / 选了快照归档目录时也会「连接正常」，顺带查一下有没有同步数据
+      const hint = await syncV1Api.remoteDataHint(id).catch(() => null);
+      if (hint) {
+        modal.warning({ title: "连接正常，但远端还没有同步数据", content: hint });
+      } else {
+        message.success("连接正常");
+      }
     } catch (e) {
       message.error(`连接失败: ${e}`);
     } finally {

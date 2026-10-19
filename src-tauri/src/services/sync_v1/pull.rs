@@ -74,6 +74,19 @@ pub(crate) fn explain_missing_manifest(root_files: Option<&[String]>) -> Option<
     )
 }
 
+/// 「测试连接」成功后的追加检查：远端有没有多端同步数据。有 → `None`；没有 → 可读原因。
+///
+/// 测试连接只验证目录可达，填错一级目录 / 把快照归档目录当同步目录时照样「连接正常」，
+/// 用户（群反馈：手机扫码导入后测试通过却拉不到）要等点了拉取才发现，这里提前说清楚。
+pub fn remote_data_hint(backend: &dyn SyncBackendImpl) -> Result<Option<String>, AppError> {
+    if backend.read_manifest()?.is_some() {
+        return Ok(None);
+    }
+    // 列目录失败不影响结论（已确定没有 manifest），按「不支持列举」给通用说明
+    let root_files = backend.list_root_files().unwrap_or(None);
+    Ok(explain_missing_manifest(root_files.as_deref()))
+}
+
 pub fn pull<R: Runtime, E: Emitter<R>>(
     db: &Database,
     backend_id: i64,
@@ -1124,6 +1137,24 @@ mod tests {
         assert!(explain_missing_manifest(Some(&other)).unwrap().contains("manifest.json"));
         // 不支持列举（S3）也要给一句可读提示，不能静默返回空成功
         assert!(explain_missing_manifest(None).is_some());
+    }
+
+    /// 测试连接后的追加检查：空目录 / 只有快照归档 → 给原因
+    #[test]
+    fn remote_data_hint_flags_dirs_without_manifest() {
+        let dir = std::env::temp_dir().join(format!("kb-hint-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let b = super::super::backend_local::LocalPathBackend::new(dir.to_str().unwrap());
+
+        let empty = remote_data_hint(&b).unwrap().expect("空目录应提示");
+        assert!(empty.contains("空的") || empty.contains("manifest.json"), "{}", empty);
+
+        std::fs::write(dir.join("kb-sync-PC1.zip"), b"x").unwrap();
+        let snap = remote_data_hint(&b).unwrap().expect("快照目录应提示");
+        assert!(snap.contains("快照归档"), "{}", snap);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

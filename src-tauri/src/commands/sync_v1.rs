@@ -86,6 +86,21 @@ pub async fn sync_v1_test_connection(app: tauri::AppHandle, id: i64) -> Result<(
     .map_err(|e| format!("连接测试任务异常终止: {}", e))?
 }
 
+/// 测试连接成功后调：远端没有多端同步数据时返回原因（目录空 / 只有快照归档 / 可能填错目录），
+/// 有数据返回 None。网络 IO → async
+#[tauri::command]
+pub async fn sync_v1_remote_data_hint(
+    app: tauri::AppHandle,
+    id: i64,
+) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let b = build_backend(&app, id)?;
+        crate::services::sync_v1::pull::remote_data_hint(b.as_ref()).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("检查远端数据任务异常终止: {}", e))?
+}
+
 /// 读远端 manifest（前端调试用；网络 IO → async）
 #[tauri::command]
 pub async fn sync_v1_read_remote_manifest(

@@ -1431,6 +1431,9 @@ export const syncV1Api = {
     invoke<boolean>("sync_v1_delete_backend", { id }),
   testConnection: (id: number) =>
     invoke<void>("sync_v1_test_connection", { id }),
+  /** 测试连接成功后调：远端没有多端同步数据时返回原因，有数据返回 null */
+  remoteDataHint: (id: number) =>
+    invoke<string | null>("sync_v1_remote_data_hint", { id }),
   readRemoteManifest: (id: number) =>
     invoke<SyncManifestV1 | null>("sync_v1_read_remote_manifest", { id }),
   push: (id: number) => invoke<SyncPushResult>("sync_v1_push", { id }),

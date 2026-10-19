@@ -1364,6 +1364,7 @@ pub fn run() {
             commands::sync_v1::sync_v1_update_backend,
             commands::sync_v1::sync_v1_delete_backend,
             commands::sync_v1::sync_v1_test_connection,
+            commands::sync_v1::sync_v1_remote_data_hint,
             commands::sync_v1::sync_v1_read_remote_manifest,
             commands::sync_v1::sync_v1_push,
             commands::sync_v1::sync_v1_pull,
