@@ -225,9 +225,65 @@ const MCP_TOOL_PREFIX: &str = "mcp__";
 ///   2) dispatch 时一眼能看出走 in-memory MCP 路径而不是 5 skills 的 db 直连
 const KB_TOOL_PREFIX: &str = "kb__";
 
+/// 外部 MCP server 是不是「指向本库的 kb-mcp」—— 即用户把设置页给的 kb-mcp 片段
+/// 又注册回了自家应用。
+///
+/// 这种注册对 AI 问答是纯负收益：内置 `kb__*` 已覆盖同一套工具且带写权限，
+/// 外部这份多半没加 `--writable`，模型看到两套同名工具会随机挑，挑中只读那份就写失败
+/// （用户反馈「偶尔存不进笔记」的根因）。判定要求 exe 名以 `kb-mcp` 开头 **且**
+/// `--db-path` 指向本应用当前的库 —— 用 kb-mcp 挂别的库是正当用法，不能误伤。
+#[cfg(desktop)]
+fn is_self_kb_mcp(server: &crate::models::McpServer, own_db: &std::path::Path) -> bool {
+    let stem = std::path::Path::new(server.command.trim_matches('"'))
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if !stem.starts_with("kb-mcp") {
+        return false;
+    }
+    let mut db_arg: Option<&str> = None;
+    let mut iter = server.args.iter();
+    while let Some(a) = iter.next() {
+        if let Some(v) = a.strip_prefix("--db-path=") {
+            db_arg = Some(v);
+        } else if a == "--db-path" {
+            db_arg = iter.next().map(String::as_str);
+        }
+    }
+    let Some(db_arg) = db_arg else {
+        return false;
+    };
+    same_path(std::path::Path::new(db_arg.trim_matches('"')), own_db)
+}
+
+/// 路径相等：优先 canonicalize（能消掉 `.` / 符号链接 / 大小写差异），
+/// 文件暂时不可访问时退回到"统一分隔符 + 忽略大小写"的字符串比较（Windows 路径不区分大小写）。
+#[cfg(desktop)]
+fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
+    if let (Ok(ca), Ok(cb)) = (a.canonicalize(), b.canonicalize()) {
+        return ca == cb;
+    }
+    let norm = |p: &std::path::Path| {
+        let s = p.to_string_lossy().replace('\\', "/");
+        if cfg!(windows) {
+            s.to_lowercase()
+        } else {
+            s
+        }
+    };
+    norm(a) == norm(b)
+}
+
+/// 本应用当前使用的 SQLite 路径（与 commands::mcp 拼 sidecar 片段时同一口径）
+#[cfg(desktop)]
+fn own_db_path(state: &AppState) -> std::path::PathBuf {
+    let prefix = if cfg!(debug_assertions) { "dev-" } else { "" };
+    state.data_dir.join(format!("{}app.db", prefix))
+}
+
 /// 按 OpenAI tools 格式返回所有可用工具：
 ///   - 5 个高层内置 skills（直接 db 调用，最快）
-///   - 内置 kb-core 工具（in-memory MCP，前缀 `kb__`，含 11 个写工具）
+///   - 内置 kb-core 工具（in-memory MCP，前缀 `kb__`，含全部写工具）
 ///   - 所有 enabled 外部 MCP server 的工具（仅桌面端，前缀 `mcp__<id>__`）
 ///
 /// 写工具拦截在 dispatch 入口做，list 阶段全量暴露 schema —— 模型能"看到"自己有能力，
@@ -299,7 +355,16 @@ pub async fn tool_schemas_with_mcp(app: &AppHandle) -> Vec<Value> {
             }
         };
 
+        let own_db = own_db_path(&state);
         for server in servers {
+            if is_self_kb_mcp(&server, &own_db) {
+                log::info!(
+                    "[ai-mcp] server '{}' (id={}) 是指向本库的 kb-mcp，与内置 kb__* 工具重复，跳过",
+                    server.name,
+                    server.id
+                );
+                continue;
+            }
             let client = match state.mcp_external.get_or_spawn(&server).await {
                 Ok(c) => c,
                 Err(e) => {
@@ -393,6 +458,36 @@ pub async fn dispatch_with_mcp(
     dispatch(db, name, args_json, scope_ids, result_limit)
 }
 
+/// 把模型给的 tool call 参数解析成 rmcp 要的 JSON object（空串 / null = 无参数）。
+///
+/// 解析失败必须如实报错：以前这里 `unwrap_or(Null)` 静默吞掉，长正文（代码块、反斜杠多）
+/// 的 JSON 一旦没转义好，就变成"不带参数调工具"，服务端只回一句 `missing field title`，
+/// 模型完全不知道是自己的 JSON 坏了，只会原样重试到轮数耗尽。
+fn parse_tool_args(args_json: &str) -> Result<Option<serde_json::Map<String, Value>>, AppError> {
+    if args_json.trim().is_empty() {
+        return Ok(None);
+    }
+    match serde_json::from_str::<Value>(args_json) {
+        Ok(Value::Object(m)) => Ok(Some(m)),
+        Ok(Value::Null) => Ok(None),
+        Ok(other) => Err(AppError::Custom(format!(
+            "工具参数应为 JSON object，收到的是 {}",
+            match other {
+                Value::Array(_) => "数组",
+                Value::String(_) => "字符串",
+                Value::Number(_) => "数字",
+                _ => "布尔值",
+            }
+        ))),
+        Err(e) => Err(AppError::Custom(format!(
+            "工具参数不是合法 JSON（{e}，参数共 {} 字符）。\
+             常见原因：正文里的双引号、反斜杠、换行没有转义，或参数太长被截断。\
+             请修正转义后重新调用。",
+            args_json.chars().count()
+        ))),
+    }
+}
+
 /// 走 in-memory MCP client 调用 kb-core 工具，写工具走相同拦截门
 async fn dispatch_kb_internal(
     app: &AppHandle,
@@ -422,18 +517,7 @@ async fn dispatch_kb_internal(
         .ok_or_else(|| AppError::Custom("in-memory MCP server 未就绪".into()))?
         .clone();
 
-    // 解析 args_json 为 JsonObject（rmcp call_tool 要求 Map<String, Value>）
-    let args_value: Value = serde_json::from_str(args_json).unwrap_or(Value::Null);
-    let args_object = match args_value {
-        Value::Object(m) => Some(m),
-        Value::Null => None,
-        other => {
-            return Err(AppError::Custom(format!(
-                "kb__ 工具参数应为 JSON object，收到: {}",
-                other
-            )));
-        }
-    };
+    let args_object = parse_tool_args(args_json)?;
 
     let mut req = CallToolRequestParams::new(tool_name.to_string());
     if let Some(obj) = args_object {
@@ -522,24 +606,22 @@ async fn dispatch_mcp(
         .get_mcp_server(server_id)?
         .ok_or_else(|| AppError::Custom(format!("MCP server {} 不存在", server_id)))?;
 
+    // 列表阶段已经过滤掉了，这里兜的是历史对话里残留的旧工具名：
+    // 不去调那个多半只读的子进程，直接把模型指到内置工具
+    if is_self_kb_mcp(&server, &own_db_path(&state)) {
+        return Err(AppError::Custom(format!(
+            "「{}」是对本知识库的重复注册，已停用。请改用内置工具 {KB_TOOL_PREFIX}{tool_name}（参数相同）。",
+            server.name
+        )));
+    }
+
     let client = state
         .mcp_external
         .get_or_spawn(&server)
         .await
         .map_err(|e| AppError::Custom(format!("spawn MCP server 失败: {e}")))?;
 
-    // 解析 args_json 为 JsonObject（rmcp call_tool 要求 Map<String, Value>）
-    let args_value: Value = serde_json::from_str(args_json).unwrap_or(Value::Null);
-    let args_object = match args_value {
-        Value::Object(m) => Some(m),
-        Value::Null => None,
-        other => {
-            return Err(AppError::Custom(format!(
-                "MCP 工具参数应为 JSON object，收到: {}",
-                other
-            )));
-        }
-    };
+    let args_object = parse_tool_args(args_json)?;
 
     let mut req = CallToolRequestParams::new(tool_name.to_string());
     if let Some(obj) = args_object {
@@ -847,6 +929,64 @@ mod tests {
         }
     }
     use super::*;
+
+    #[test]
+    fn parse_tool_args_surfaces_bad_json() {
+        assert!(parse_tool_args("").unwrap().is_none());
+        assert!(parse_tool_args("null").unwrap().is_none());
+        assert_eq!(
+            parse_tool_args(r#"{"title":"t"}"#).unwrap().unwrap()["title"],
+            "t"
+        );
+        // 回归：以前坏 JSON 被吞成"无参数"，模型只看到 missing field
+        let err = parse_tool_args(r#"{"title":"t","content":"未转义的 " 引号"}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("不是合法 JSON"), "{err}");
+        assert!(parse_tool_args("[1,2]").is_err());
+    }
+
+    #[cfg(desktop)]
+    fn mcp_server(command: &str, args: &[&str]) -> crate::models::McpServer {
+        crate::models::McpServer {
+            id: 1,
+            name: "kb".into(),
+            transport: "stdio".into(),
+            command: command.into(),
+            args: args.iter().map(|s| s.to_string()).collect(),
+            env: Default::default(),
+            enabled: true,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn self_kb_mcp_detected_only_for_own_db() {
+        let own = std::path::Path::new(r"C:\Users\x\AppData\Roaming\com.agilefr.kb\app.db");
+        let sidecar = r"C:\Program Files\kb\kb-mcp-x86_64-pc-windows-msvc.exe";
+        // 指向本库：分隔符 / 大小写不同、--db-path=X 写法都算
+        assert!(is_self_kb_mcp(
+            &mcp_server(sidecar, &["--db-path", r"C:\Users\x\AppData\Roaming\com.agilefr.kb\app.db"]),
+            own
+        ));
+        if cfg!(windows) {
+            assert!(is_self_kb_mcp(
+                &mcp_server(sidecar, &["--db-path=c:/users/x/appdata/roaming/com.agilefr.kb/app.db", "--writable"]),
+                own
+            ));
+        }
+        // 挂别的库是正当用法
+        assert!(!is_self_kb_mcp(&mcp_server(sidecar, &["--db-path", r"D:\other\app.db"]), own));
+        // 不是 kb-mcp
+        assert!(!is_self_kb_mcp(
+            &mcp_server("npx", &["--db-path", r"C:\Users\x\AppData\Roaming\com.agilefr.kb\app.db"]),
+            own
+        ));
+        // 没给 --db-path 无法判断，不跳过
+        assert!(!is_self_kb_mcp(&mcp_server(sidecar, &[]), own));
+    }
 
     #[test]
     fn result_limit_scales_with_model_context() {
