@@ -868,12 +868,16 @@ export function CreateTaskModal({
       title={isEdit ? "编辑任务" : "新建任务"}
       open={open}
       onCancel={onClose}
-      width={520}
+      // 720：附件条 / 识别卡片 / 时间区按钮一行放得下，分类与项目可并排；
+      // 再宽在 1280 宽的笔记本上会显得空。高度随窗口走，少滚动
+      width={720}
       destroyOnHidden
       // 编辑型 Modal 防误关：点遮罩不关闭（避免填到一半误点关 Modal 丢失编辑）；
       // Esc 仍可关（桌面应用预期行为，配合"取消"按钮）
       maskClosable={false}
-      styles={{ body: { maxHeight: "65vh", overflowY: "auto", paddingRight: 12 } }}
+      styles={{
+        body: { maxHeight: "calc(100vh - 240px)", overflowY: "auto", paddingRight: 12 },
+      }}
       footer={
         <div className="flex items-center justify-between">
           <Checkbox
@@ -1116,8 +1120,9 @@ export function CreateTaskModal({
           </div>
         </div>
 
-        {/* 分类 */}
-        <div>
+        {/* 分类 + 项目并排（弹窗加宽后一行放得下，少一屏滚动） */}
+        <div className="grid grid-cols-2 gap-4">
+        <div className="min-w-0">
           <div className="text-[11px] mb-1" style={{ color: token.colorTextSecondary }}>
             分类（可选）
           </div>
@@ -1127,7 +1132,7 @@ export function CreateTaskModal({
             onChange={(v) => setCategoryId((v as number | undefined) ?? null)}
             allowClear
             placeholder="未分类"
-            style={{ minWidth: 200 }}
+            style={{ width: "100%" }}
             treeDefaultExpandAll
             treeData={categoryTreeSelectData(categories)}
             treeTitleRender={(n) => (
@@ -1148,7 +1153,7 @@ export function CreateTaskModal({
         </div>
 
         {/* 项目（v41）— 配合甘特图。起始日已并入下方「时间」区（时间段模式） */}
-        <div>
+        <div className="min-w-0">
           <div>
             <div className="text-[11px] mb-1" style={{ color: token.colorTextSecondary }}>
               项目（可选，配合甘特图）
@@ -1260,6 +1265,7 @@ export function CreateTaskModal({
               )}
             />
           </div>
+        </div>
         </div>
 
         {/* 时间：日期（单个截止时刻）/ 时间段（起止区间）—— 同一组字段的两种录入形态 */}
