@@ -15,6 +15,7 @@ import tauriLogo from "@/assets/promo/tauri.svg";
 import workstationLogo from "@/assets/promo/workstation.svg";
 import agileshotLogo from "@/assets/promo/agileshot.png";
 import storyloomLogo from "@/assets/promo/storyloom.png";
+import officiaLogo from "@/assets/promo/officia.svg";
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -33,6 +34,7 @@ export function RecommendCards() {
   const [reeveOpen, setReeveOpen] = useState(false);
   const [agileshotOpen, setAgileshotOpen] = useState(false);
   const [storyloomOpen, setStoryloomOpen] = useState(false);
+  const [officiaOpen, setOfficiaOpen] = useState(false);
 
   const cardStyle: React.CSSProperties = {
     padding: "12px 16px",
@@ -203,6 +205,26 @@ export function RecommendCards() {
           <br />
           <Text type="secondary" style={{ fontSize: 11 }}>
             面向网文作者的本地 AI 创作工作台
+          </Text>
+        </div>
+        <RightOutlined style={{ fontSize: 11, color: "var(--ant-color-text-quaternary)" }} />
+      </div>
+
+      {/* 推荐：Officia（同生态 Java 文档处理开发套件，面向做集成的开发者） */}
+      <div
+        onClick={() => setOfficiaOpen(true)}
+        style={cardStyle}
+        onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-primary)")}
+        onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-border)")}
+      >
+        <img src={officiaLogo} alt="" style={{ width: 22, height: 22, objectFit: "contain" }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Text strong style={{ fontSize: 13 }}>
+            Officia · Java 文档处理套件
+          </Text>
+          <br />
+          <Text type="secondary" style={{ fontSize: 11 }}>
+            零依赖 · 支持 JDK 8 · Office 无损转 PDF + 在线编辑
           </Text>
         </div>
         <RightOutlined style={{ fontSize: 11, color: "var(--ant-color-text-quaternary)" }} />
@@ -867,6 +889,109 @@ export function RecommendCards() {
           </Button>
           <Button type="link" size="small" onClick={() => openUrl("https://aicoder.ruoyi.plus/download.html")}>
             下载
+          </Button>
+        </div>
+      </Modal>
+
+      {/* Officia 详情弹窗 */}
+      <Modal
+        title={null}
+        open={officiaOpen}
+        onCancel={() => setOfficiaOpen(false)}
+        footer={[
+          <Button key="close" onClick={() => setOfficiaOpen(false)}>关闭</Button>,
+          <Button key="demo" onClick={() => openUrl("https://demo.officia.ruoyi.plus/")}>
+            在线试用
+          </Button>,
+          <Button key="site" type="primary" onClick={() => openUrl("https://officia.ruoyi.plus/")}>
+            访问官网
+          </Button>,
+        ]}
+        width={520}
+      >
+        <div style={{ textAlign: "center", paddingTop: 8, paddingBottom: 12 }}>
+          <img src={officiaLogo} alt="" style={{ width: 44, height: 44, objectFit: "contain" }} />
+          <Title level={4} style={{ margin: "12px 0 4px" }}>
+            Officia · Java 文档处理套件
+          </Title>
+          <Paragraph type="secondary" style={{ marginBottom: 12 }}>
+            Word/Excel/PPT ↔ PDF 双向转换、浏览器在线编辑；另含 PDF 加密 · 图像 · 条码 · 邮件 · OCR
+          </Paragraph>
+          <div style={{ display: "flex", justifyContent: "center", gap: 24 }}>
+            {[
+              ["124/124", "Word 样本转换成功"],
+              ["JDK 8+", "仅需 JDK 标准库"],
+              ["8 大", "能力模块门面"],
+            ].map(([num, label]) => (
+              <div key={label} style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "var(--ant-color-primary)" }}>
+                  {num}
+                </div>
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  {label}
+                </Text>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center", marginBottom: 8 }}>
+            <Tag color="red">无损转 PDF</Tag>
+            <Tag color="volcano">PDF 转 Word</Tag>
+            <Tag color="green">在线编辑</Tag>
+            <Tag color="orange">JDK 8+</Tag>
+            <Tag color="blue">零依赖</Tag>
+            <Tag color="purple">离线授权</Tag>
+          </div>
+
+          {[
+            [
+              "无损转 PDF，版式不跑偏",
+              "分页、表格、页眉页脚、图片与图表按原样还原；Excel 按每张表的打印设置分页；中文字体子集嵌入，正确显示、可复制可检索。还原度别看参数表，拿自己最难的那份文档上在线测试台跑一遍",
+            ],
+            [
+              "在线编辑 · 免部署",
+              "Officia.Editor 在浏览器里直接编辑 Word / Excel，不用另外部署 Document Server；PDF 转 Word 流式还原表格、跨页续表与多栏",
+            ],
+            [
+              "零依赖 · JDK 8 起",
+              "只依赖 JDK 标准库，引入不带任何传递依赖；JDK 8 即可运行，老项目也能直接接入，避开 POI + iText 那套依赖冲突与体积膨胀",
+            ],
+            [
+              "对齐 Aspose · 洁净室自研",
+              "OfficiaWords.toPdf(docx) 一行出 PDF；Words / Cells / Slides / Pdf / Email / Imaging / BarCode / OCR 八大门面；只依据公开规范实现，可闭源商用，officia.lic 离线验签、不联网不锁机器",
+            ],
+          ].map(([title, desc]) => (
+            <div
+              key={title}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 6,
+                background: "var(--ant-color-bg-layout)",
+                border: "1px solid var(--ant-color-border)",
+              }}
+            >
+              <Text strong style={{ fontSize: 13 }}>
+                {title}
+              </Text>
+              <br />
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {desc}
+              </Text>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <Button type="link" size="small" onClick={() => openUrl("https://www.bilibili.com/video/BV1QGuS6SEVp")}>
+            视频演示
+          </Button>
+          <Button type="link" size="small" onClick={() => openUrl("https://gitee.com/bkywksj/officia-demo")}>
+            示例仓库
+          </Button>
+          <Button type="link" size="small" onClick={() => openUrl("https://officia.ruoyi.plus/guide/licensing.html")}>
+            授权定价 ¥1288 起
           </Button>
         </div>
       </Modal>

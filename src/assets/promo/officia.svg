@@ -1,0 +1,14 @@
+<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Officia">
+  <defs>
+    <linearGradient id="officiaBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5b8cff"/>
+      <stop offset="1" stop-color="#1e57e6"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="104" height="104" rx="26" fill="url(#officiaBg)"/>
+  <circle cx="60" cy="60" r="39" fill="none" stroke="#ffffff" stroke-width="6"/>
+  <path d="M46.5 39 H65 L77 51 V77.5 Q77 81 73.5 81 H46.5 Q43 81 43 77.5 V42.5 Q43 39 46.5 39 Z" fill="#ffffff"/>
+  <path d="M65 39 V51 H77 Z" fill="rgba(0,0,0,.12)"/>
+  <rect x="50" y="58" width="20" height="3.4" rx="1.7" fill="#5b8cff"/>
+  <rect x="50" y="67" width="14.4" height="3.4" rx="1.7" fill="#5b8cff"/>
+</svg>
