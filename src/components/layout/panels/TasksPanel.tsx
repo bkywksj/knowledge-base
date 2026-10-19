@@ -513,14 +513,6 @@ export function TasksPanel() {
             title="管理分类"
           />
         </div>
-        <SmartRow
-          active={currentCategory === "none"}
-          icon={<InboxIcon size={14} />}
-          label="未分类"
-          count={categoryCounts.none}
-          onClick={() => goToCategory("none")}
-          token={token}
-        />
         {categoryRows.map(({ category: c, depth, hasChildren }) => (
           <SmartRow
             key={c.id}
@@ -579,6 +571,22 @@ export function TasksPanel() {
             token={token}
           />
         ))}
+        {/* 未分类放在分类树最后、和顶级分类左对齐：以前排第一且图标顶格，
+            下面的分类因为预留了折叠箭头位整体右缩，看起来像是「未分类」的子目录 */}
+        <SmartRow
+          active={currentCategory === "none"}
+          icon={
+            <span style={{ display: "inline-flex", alignItems: "center" }}>
+              {/* 与分类行的折叠箭头位同宽（12 + 2），保证图标列对齐 */}
+              <span style={{ display: "inline-flex", width: 12, marginRight: 2 }} />
+              <InboxIcon size={12} style={{ color: token.colorTextTertiary }} />
+            </span>
+          }
+          label="未分类"
+          count={categoryCounts.none}
+          onClick={() => goToCategory("none")}
+          token={token}
+        />
         {categories.length === 0 && (
           <div
             style={{
