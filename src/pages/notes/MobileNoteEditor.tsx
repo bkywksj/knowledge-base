@@ -21,6 +21,7 @@ import { noteApi, aiChatApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import type { Note } from "@/types";
 import { useKeyboardInset } from "@/hooks/useKeyboardInset";
+import { resolveNoteTitle } from "@/lib/noteTitle";
 
 /**
  * 移动端笔记编辑页（设计稿：02-note-edit.html）
@@ -113,7 +114,8 @@ export function MobileNoteEditor() {
       // 直接从 ref 读最新值，避免闭包陷阱（用户在 1.2s debounce
       // 期间多敲了几个字，state 已更新但 doSave closure 还是旧的）
       await noteApi.update(note.id, {
-        title: titleRef.current,
+        // 标题空时按正文首行 / 时间兜底，与桌面端一致，避免库里存成空标题
+        title: resolveNoteTitle(titleRef.current, contentRef.current),
         content: contentRef.current,
         folder_id: note.folder_id,
       });

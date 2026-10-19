@@ -452,7 +452,8 @@ interface AppStore {
    * 笔记自动保存开关（持久化）。
    * 开启后：编辑器内容变更后，停止输入 autoSaveDelay 毫秒触发静默保存，
    * 用户无需手动点保存按钮（OneNote / Notion 体感）。
-   * 默认关闭，保留传统"必须手动保存"行为。
+   * 默认开启：日记页一直自动保存，笔记页默认不存会让新用户误以为两边一样而丢内容。
+   * 已持久化过该键的老用户按其保存值恢复（见 loadThemeFromStore），不会被强改。
    */
   autoSaveEnabled: boolean;
   /** 自动保存防抖延迟（毫秒，持久化） */
@@ -950,7 +951,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   editorHighlightShortcut: EDITOR_HIGHLIGHT_SHORTCUT_DEFAULT,
   uiScale: UI_SCALE_DEFAULT,
   uiScaleUserSet: false,
-  autoSaveEnabled: false,
+  autoSaveEnabled: true,
   autoSaveDelay: AUTO_SAVE_DELAY_DEFAULT,
   pasteCodeAsBlock: true,
   defaultViewMode: "edit",
@@ -1901,7 +1902,7 @@ export async function loadThemeFromStore() {
       useAppStore.getState().setOutlinePosition(op);
     }
 
-    // 恢复自动保存偏好（默认关闭，老用户升级后行为不变）
+    // 恢复自动保存偏好（新装默认开启；已存过该键的老用户按保存值恢复，行为不变）
     const ase = await store.get<boolean>("autoSaveEnabled");
     if (typeof ase === "boolean") {
       useAppStore.getState().setAutoSaveEnabled(ase);

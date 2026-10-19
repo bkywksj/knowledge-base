@@ -57,6 +57,7 @@ import { MindMapView } from "@/components/notes/MindMapView";
 import { SlideshowView } from "@/components/notes/SlideshowView";
 import type { Note, Tag, Folder, NoteLink } from "@/types";
 import { accelToKeys, findShortcut } from "@/lib/shortcuts/registry";
+import { resolveNoteTitle } from "@/lib/noteTitle";
 
 const { Text } = Typography;
 
@@ -930,12 +931,13 @@ function DesktopNoteEditorPage() {
   const autoSaveEnabled = useAppStore((s) => s.autoSaveEnabled);
   const autoSaveDelay = useAppStore((s) => s.autoSaveDelay);
   /**
-   * 最近一次"自动保存"完成的时间戳（毫秒）。
-   * 仅自动保存（debounce 触发的 silent save）写入；手动保存按钮 / Ctrl+S 不写，
-   * 因为手动保存已有 toast 反馈，无需顶部"已自动保存 N 秒前"的二次提示。
+   * 最近一次保存成功的时间戳（毫秒），手动 / 自动保存都写。
+   * 顶部常驻「已保存 · N 秒前」：toast 一闪就没，手动保存模式下用户回头看不出存没存上。
    * 切笔记 / 卸载组件后重置，避免显示上一篇笔记的时间戳。
    */
   const [lastAutoSavedAt, setLastAutoSavedAt] = useState<number | null>(null);
+  /** 最近一次保存失败的原因；成功保存后清空。顶部显示「保存失败 · 重试」 */
+  const [saveError, setSaveError] = useState<string | null>(null);
   /** 自动保存触发的"保存中"瞬时标记（区别于手动保存的 saving，只用于顶部提示文案） */
   const [autoSaving, setAutoSaving] = useState(false);
   /**
@@ -1260,18 +1262,17 @@ function DesktopNoteEditorPage() {
    * silent=true 用于"跳转前自动保存"场景：不弹"保存成功"toast，避免干扰用户操作；
    *             但若有未匹配的 wiki 链接仍会弹 warning（这种信息必须告知）。
    */
-  async function handleSave(silent = false) {
-    if (!title.trim()) {
-      if (!silent) message.warning("标题不能为空");
-      return;
-    }
+  async function handleSave(silent = false): Promise<boolean> {
     setSaving(true);
     // 标题是否被改动：保存后用来决定要不要 bump 侧栏笔记缓存。
     // tabs overlay 已覆盖渲染，但用户关 tab 后侧栏回退到 note.title（DB 缓存里的旧值）→
     // 需要 bumpNotesRefresh 让 NotesPanel 重拉 notesByFolder / uncategorizedNotes，
     // 把 DB 真值灌进缓存。仅在 title 真变化时 bump：避免内容自动保存频繁触发侧栏闪烁。
     const prevTitle = note?.title ?? "";
-    const nextTitle = title.trim();
+    // 标题留空不再拒绝保存（之前直接 return，自动保存也跳过 → 只写了正文的笔记会丢）：
+    // 用正文第一行 / 「未命名笔记 + 时间」兜底，并回填到标题框让用户看见存成了什么
+    const nextTitle = resolveNoteTitle(title, content);
+    if (nextTitle !== title) setTitle(nextTitle);
     try {
       const updated = await noteApi.update(noteId, {
         title: nextTitle,
@@ -1282,6 +1283,8 @@ function DesktopNoteEditorPage() {
       setDirty(false);
       setTabDirty(noteId, false);
       updateTabTitle(noteId, updated.title);
+      setLastAutoSavedAt(Date.now());
+      setSaveError(null);
       // 内容已落库，清掉草稿快照
       clearDraft(noteId);
 
@@ -1410,8 +1413,11 @@ function DesktopNoteEditorPage() {
           console.warn("[writeback] failed:", err);
         }
       }
+      return true;
     } catch (e) {
+      setSaveError(String(e));
       message.error(String(e));
+      return false;
     } finally {
       setSaving(false);
     }
@@ -1422,7 +1428,7 @@ function DesktopNoteEditorPage() {
    * 用于所有 navigate 到其他笔记/路由的场景（wiki 链接点击、消歧选择、模糊匹配等）。
    */
   async function ensureSavedBeforeNavigate() {
-    if (dirty && title.trim()) {
+    if (dirty) {
       await handleSave(true);
     }
   }
@@ -1446,7 +1452,7 @@ function DesktopNoteEditorPage() {
   useEffect(() => {
     return () => {
       const f = flushRef.current;
-      if (f.dirty && f.title.trim()) {
+      if (f.dirty) {
         setDraft(noteId, { title: f.title, content: f.content });
       }
     };
@@ -1470,10 +1476,10 @@ function DesktopNoteEditorPage() {
   useEffect(() => {
     return () => {
       const s = dbSaveOnUnmountRef.current;
-      if (!s.dirty || !s.title.trim()) return;
+      if (!s.dirty) return;
       noteApi
         .update(noteId, {
-          title: s.title.trim(),
+          title: resolveNoteTitle(s.title, s.content),
           content: s.content,
           folder_id: s.folderId,
         })
@@ -1502,7 +1508,6 @@ function DesktopNoteEditorPage() {
     setAutoSaving(true);
     try {
       await handleSave(true);
-      setLastAutoSavedAt(Date.now());
     } finally {
       setAutoSaving(false);
     }
@@ -1510,7 +1515,9 @@ function DesktopNoteEditorPage() {
   useEffect(() => {
     if (!autoSaveEnabled) return;
     if (!dirty) return;
-    if (!title.trim()) return;
+    // 标题被清空、但库里已有标题 → 多半是用户正在改名，别把半截状态自动兜底成正文首行；
+    // 新笔记（库里也没标题）照常自动保存，由 handleSave 兜底标题
+    if (!title.trim() && note?.title?.trim()) return;
     // 阅读模式兜底：入口都已按只读拦掉，万一还有漏网的改动也不自动写盘，
     // 保留「未保存」标记交给用户决定（之前只读下误删表格会被直接自动保存）
     if (readingMode) return;
@@ -1518,12 +1525,13 @@ function DesktopNoteEditorPage() {
       void autoSaveTriggerRef.current();
     }, autoSaveDelay);
     return () => clearTimeout(timer);
-  }, [autoSaveEnabled, autoSaveDelay, dirty, title, content, readingMode]);
+  }, [autoSaveEnabled, autoSaveDelay, dirty, title, content, readingMode, note?.title]);
 
   // 切换到不同笔记时，清掉上一篇笔记的"已自动保存"时间戳，避免视觉残留
   useEffect(() => {
     setLastAutoSavedAt(null);
     setAutoSaving(false);
+    setSaveError(null);
   }, [noteId]);
 
   useEffect(() => {
@@ -2223,25 +2231,36 @@ function DesktopNoteEditorPage() {
           >
             返回
           </Button>
-          {(note || autoSaving || dirty || (autoSaveEnabled && lastAutoSavedAt)) && (
+          {(note || autoSaving || dirty || saveError || lastAutoSavedAt) && (
             <div className="editor-topbar__meta">
               {note && (
                 <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.2 }}>
                   更新于 {relativeTime(note.updated_at)}
                 </Text>
               )}
-              {/* 保存状态提示：优先级 自动保存中 > 未保存 > 已自动保存（沿用旧逻辑） */}
-              {autoSaving ? (
+              {/* 保存状态提示：优先级 保存中 > 保存失败 > 未保存 > 已保存 */}
+              {autoSaving || saving ? (
                 <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.2 }}>
-                  自动保存中…
+                  {autoSaving ? "自动保存中…" : "保存中…"}
                 </Text>
+              ) : saveError ? (
+                <Tooltip title={saveError}>
+                  <Text
+                    type="danger"
+                    style={{ fontSize: 11, lineHeight: 1.2, cursor: "pointer" }}
+                    onClick={() => void handleSave()}
+                  >
+                    保存失败 · 点此重试
+                  </Text>
+                </Tooltip>
               ) : dirty ? (
                 <Text type="warning" style={{ fontSize: 11, lineHeight: 1.2 }}>
-                  未保存
+                  {autoSaveEnabled ? "未保存" : "未保存 · Ctrl+S 保存"}
                 </Text>
-              ) : autoSaveEnabled && lastAutoSavedAt ? (
+              ) : lastAutoSavedAt ? (
                 <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.2 }}>
-                  已自动保存 {relativeTime(new Date(lastAutoSavedAt).toISOString())}
+                  {autoSaveEnabled ? "已自动保存" : "已保存"} ·{" "}
+                  {relativeTime(new Date(lastAutoSavedAt).toISOString())}
                 </Text>
               ) : null}
             </div>

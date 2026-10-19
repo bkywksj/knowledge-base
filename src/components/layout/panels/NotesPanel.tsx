@@ -115,8 +115,26 @@ const NOTE_KEY_PREFIX = "note:";
 // 从 lib/newNoteTarget 引入，避免这边的 key 约定和那边的判定各写一份字面量后漂移
 const UNCATEGORIZED_KEY = SHARED_UNCATEGORIZED_KEY;
 
-/** 单个文件夹直属笔记的展示上限（超过引导用户去主区） */
+/** 单个文件夹直属笔记每页条数（后端 page_size 上限也是 100），超过时末尾挂「加载更多」 */
 const NOTES_PER_FOLDER_LIMIT = 100;
+
+/** 「还有 N 篇，加载更多」节点 key 前缀，后接文件夹 id 或 UNCATEGORIZED_KEY */
+const MORE_NODE_PREFIX = "__more_";
+function isMoreKey(key: string): boolean {
+  return key.startsWith(MORE_NODE_PREFIX);
+}
+
+/** 已加载条数 < 总数时生成「加载更多」叶子（之前超过 100 篇的直接看不到，也没有任何提示） */
+function moreNode(folderKey: string, loaded: number, total: number | undefined): EnrichedNode[] {
+  if (total == null || loaded >= total) return [];
+  return [
+    {
+      key: `${MORE_NODE_PREFIX}${folderKey}`,
+      title: `还有 ${total - loaded} 篇`,
+      isLeaf: true,
+    },
+  ];
+}
 
 /** 拖拽悬停多久（ms）后自动展开折叠文件夹（spring-loaded）。
  *  取 600ms：低于 ~400 仍易误触，高于 ~800 等得不耐烦；与 Finder / VS Code 体感一致。 */
@@ -167,18 +185,19 @@ function foldersToTreeData(
   notesByFolder: Map<number, Note[]>,
   tabTitleByNoteId: Map<number, string>,
   showOnlyFolders: boolean,
+  folderTotals: Map<string, number>,
   depth: number = 0,
 ): EnrichedNode[] {
   return folders.map((f) => {
     const subFolders: EnrichedNode[] = f.children.length
-      ? foldersToTreeData(f.children, creatingUnderKey, notesByFolder, tabTitleByNoteId, showOnlyFolders, depth + 1)
+      ? foldersToTreeData(f.children, creatingUnderKey, notesByFolder, tabTitleByNoteId, showOnlyFolders, folderTotals, depth + 1)
       : [];
 
     // showOnlyFolders 开启时彻底跳过笔记叶节点，只保留子文件夹层级
+    const loadedNotes = notesByFolder.get(f.id) ?? [];
     const noteLeaves: EnrichedNode[] = showOnlyFolders
       ? []
-      : (notesByFolder.get(f.id) ?? [])
-          .slice(0, NOTES_PER_FOLDER_LIMIT)
+      : loadedNotes
           .map((n) => ({
             key: noteKey(n.id),
             // 当该笔记 tab 已打开时，优先用 tabs store 的实时 title（编辑器
@@ -187,7 +206,8 @@ function foldersToTreeData(
             title: tabTitleByNoteId.get(n.id) || n.title || "未命名",
             isLeaf: true,
             data: { isNote: true, note: n },
-          }));
+          }) as EnrichedNode)
+          .concat(moreNode(String(f.id), loadedNotes.length, folderTotals.get(String(f.id))));
 
     const children: EnrichedNode[] = [...subFolders, ...noteLeaves];
 
@@ -319,6 +339,10 @@ export function NotesPanel() {
   );
   // 正在请求的 folderId 集合，避免同一个文件夹并发请求
   const loadingNotesRef = useRef<Set<number>>(new Set());
+  // 每个文件夹（key = 文件夹 id / UNCATEGORIZED_KEY）的直属笔记总数，用来判断要不要挂「加载更多」
+  const [folderTotals, setFolderTotals] = useState<Map<string, number>>(new Map());
+  // 每个文件夹已经加载到第几页：刷新（notesRefreshTick）时按这个页数重拉，点过的「加载更多」不会被收回
+  const loadedPagesRef = useRef<Map<string, number>>(new Map());
 
   // 未分类笔记（folder_id IS NULL）：底部"未分类"虚拟节点展开时按需加载，
   // 让用户在 NotesPanel 顶部"+ 新建笔记"建出来的 null-folder 笔记能立刻看到。
@@ -335,26 +359,62 @@ export function NotesPanel() {
   // 「临时文件」弹层：临时笔记不进笔记树（不属于文件夹体系），按需拉起列表查看
   const [scratchModalOpen, setScratchModalOpen] = useState(false);
 
-  /** 拉某个文件夹的直属笔记（include_descendants=false） */
-  async function loadNotesForFolder(folderId: number) {
-    if (loadingNotesRef.current.has(folderId)) return;
-    loadingNotesRef.current.add(folderId);
-    try {
+  /** 按页拉一个文件夹（或未分类）的前 pages 页并拼起来，返回条目与总数 */
+  async function fetchFolderPages(
+    query: { folder_id: number; include_descendants: false } | { uncategorized: true },
+    pages: number,
+  ): Promise<{ items: Note[]; total: number }> {
+    const items: Note[] = [];
+    const seen = new Set<number>();
+    let total = 0;
+    for (let page = 1; page <= pages; page++) {
       const r = await noteApi.list({
-        folder_id: folderId,
-        include_descendants: false,
-        page: 1,
+        ...query,
+        page,
         page_size: NOTES_PER_FOLDER_LIMIT,
         // 树是组织视图，按用户自定义顺序展示（sort_order ASC）；
         // 未拖排过的笔记 sort_order 由 v31 迁移按 updated_at DESC 初始化，
         // 肉眼仍是时间序，拖排后立刻可见
         sort_by: "custom",
       });
+      total = r.total;
+      // 翻页期间别处新增 / 删除会让页边界错位，按 id 去重兜底
+      for (const n of r.items) {
+        if (!seen.has(n.id)) {
+          seen.add(n.id);
+          items.push(n);
+        }
+      }
+      if (items.length >= total || r.items.length < NOTES_PER_FOLDER_LIMIT) break;
+    }
+    return { items, total };
+  }
+
+  function setFolderTotal(key: string, total: number) {
+    setFolderTotals((prev) => {
+      if (prev.get(key) === total) return prev;
+      const next = new Map(prev);
+      next.set(key, total);
+      return next;
+    });
+  }
+
+  /** 拉某个文件夹的直属笔记（include_descendants=false） */
+  async function loadNotesForFolder(folderId: number) {
+    if (loadingNotesRef.current.has(folderId)) return;
+    loadingNotesRef.current.add(folderId);
+    try {
+      const pages = loadedPagesRef.current.get(String(folderId)) ?? 1;
+      const r = await fetchFolderPages(
+        { folder_id: folderId, include_descendants: false },
+        pages,
+      );
       setNotesByFolder((prev) => {
         const next = new Map(prev);
         next.set(folderId, r.items);
         return next;
       });
+      setFolderTotal(String(folderId), r.total);
     } catch (e) {
       console.warn(`[notes-panel] 加载文件夹 ${folderId} 笔记失败:`, e);
     } finally {
@@ -367,19 +427,30 @@ export function NotesPanel() {
     if (loadingUncategorizedRef.current) return;
     loadingUncategorizedRef.current = true;
     try {
-      const r = await noteApi.list({
-        uncategorized: true,
-        page: 1,
-        page_size: NOTES_PER_FOLDER_LIMIT,
-        sort_by: "custom",
-      });
+      const pages = loadedPagesRef.current.get(UNCATEGORIZED_KEY) ?? 1;
+      const r = await fetchFolderPages({ uncategorized: true }, pages);
       setUncategorizedNotes(r.items);
+      setFolderTotal(UNCATEGORIZED_KEY, r.total);
       setUncategorizedLoaded(true);
     } catch (e) {
       console.warn("[notes-panel] 加载未分类笔记失败:", e);
     } finally {
       loadingUncategorizedRef.current = false;
     }
+  }
+
+  /** 点「加载更多」：多拉一页（总页数记下来，后续刷新保持已展开的数量） */
+  function loadMoreNotes(folderKey: string) {
+    const loaded =
+      folderKey === UNCATEGORIZED_KEY
+        ? uncategorizedNotes.length
+        : (notesByFolder.get(Number(folderKey))?.length ?? 0);
+    loadedPagesRef.current.set(
+      folderKey,
+      Math.floor(loaded / NOTES_PER_FOLDER_LIMIT) + 1,
+    );
+    if (folderKey === UNCATEGORIZED_KEY) void loadUncategorizedNotes();
+    else void loadNotesForFolder(Number(folderKey));
   }
 
   // 用 store 里的预热缓存做种子，避免首次打开 Panel 时空白闪烁；
@@ -1090,6 +1161,7 @@ export function NotesPanel() {
     const dragKey = String(info.dragNode.key);
     const dropKey = String(info.node.key);
     if (dragKey.startsWith(NEW_NODE_PREFIX) || dropKey.startsWith(NEW_NODE_PREFIX)) return;
+    if (isMoreKey(dragKey) || isMoreKey(dropKey)) return;
 
     // ── 笔记拖动 → 跨 folder 改 folder_id；同 folder 内调 reorder 改 sort_order ──
     // Why: 跨 folder 时改 sort_order 没意义（用户肯定还要再拖到目标位置），保持原行为；
@@ -1309,7 +1381,7 @@ export function NotesPanel() {
   }
 
   function handleTitleClick(key: string) {
-    if (key.startsWith(NEW_NODE_PREFIX)) return;
+    if (key.startsWith(NEW_NODE_PREFIX) || isMoreKey(key)) return;
     if (editingKey === key) return;
 
     // 点文件夹 / 未分类 → 退出笔记多选（多选只在笔记之间维持）
@@ -1358,7 +1430,7 @@ export function NotesPanel() {
 
   /** 文件夹/未分类的双击 = 切换展开/折叠。笔记叶子不参与（无展开态）。 */
   function handleTitleDoubleClick(key: string) {
-    if (key.startsWith(NEW_NODE_PREFIX) || isNoteKey(key)) return;
+    if (key.startsWith(NEW_NODE_PREFIX) || isNoteKey(key) || isMoreKey(key)) return;
     if (key === UNCATEGORIZED_KEY) {
       const cur = uncategorizedExpanded;
       setUncategorizedExpanded(!cur);
@@ -2030,6 +2102,25 @@ export function NotesPanel() {
       );
     }
 
+    if (isMoreKey(key)) {
+      const folderKey = key.slice(MORE_NODE_PREFIX.length);
+      const listUrl =
+        folderKey === UNCATEGORIZED_KEY
+          ? "/notes?folder=uncategorized"
+          : `/notes?folder=${folderKey}`;
+      return (
+        <span
+          className="flex items-center gap-2 w-full min-w-0"
+          style={{ fontSize: 12, color: token.colorTextTertiary }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span className="truncate">{String(node.title ?? "")}</span>
+          <a onClick={() => loadMoreNotes(folderKey)}>加载更多</a>
+          <a onClick={() => navigate(listUrl)}>在列表中查看全部</a>
+        </span>
+      );
+    }
+
     const name = String(node.title ?? "");
     const { emoji, rest } = parseEmojiPrefix(name);
     const display = rest || name;
@@ -2199,6 +2290,7 @@ export function NotesPanel() {
       notesByFolder,
       tabTitleByNoteId,
       showOnlyFolders,
+      folderTotals,
     );
     // showOnlyFolders 开启时不挂"未分类"——它本质只装笔记，留着是空壳，会让纯文件夹视图变脏。
     // 另外：已加载完且确实为空 → 也隐藏，让侧栏更清爽；只有"未加载"或"非空"才挂上去。
@@ -2207,18 +2299,16 @@ export function NotesPanel() {
       // 末尾追加"未分类"虚拟根节点：folder_id IS NULL 的笔记直接挂在这里。
       // 这样未分类笔记也能参与 antd Tree 的拖拽（拖到任意文件夹会触发 handleDrop
       // 跨 folder 移动逻辑），不需要单独写一套 HTML5 drag 系统。
-      const uncatTitle =
-        uncategorizedNotes.length > 0
-          ? `未分类 ${uncategorizedNotes.length}`
-          : "未分类";
+      const uncatTotal = folderTotals.get(UNCATEGORIZED_KEY) ?? uncategorizedNotes.length;
+      const uncatTitle = uncatTotal > 0 ? `未分类 ${uncatTotal}` : "未分类";
       const uncatChildren: EnrichedNode[] = uncategorizedNotes
-        .slice(0, NOTES_PER_FOLDER_LIMIT)
         .map((n) => ({
           key: noteKey(n.id),
           title: tabTitleByNoteId.get(n.id) || n.title || "未命名",
           isLeaf: true,
           data: { isNote: true, note: n },
-        }));
+        }) as EnrichedNode)
+        .concat(moreNode(UNCATEGORIZED_KEY, uncategorizedNotes.length, folderTotals.get(UNCATEGORIZED_KEY)));
       folderTree.push({
         key: UNCATEGORIZED_KEY,
         title: uncatTitle,
@@ -2228,7 +2318,7 @@ export function NotesPanel() {
       });
     }
     return folderTree;
-  }, [folders, creatingUnderKey, notesByFolder, tabTitleByNoteId, uncategorizedNotes, uncategorizedLoaded, showOnlyFolders]);
+  }, [folders, creatingUnderKey, notesByFolder, tabTitleByNoteId, uncategorizedNotes, uncategorizedLoaded, showOnlyFolders, folderTotals]);
 
   // 当前 treeData 里所有笔记 key 的「展示顺序」扁平列表，供 Shift 连选按顺序取区间。
   // 含折叠文件夹下未渲染的笔记也无妨：Shift 连选基于逻辑顺序，与是否展开无关。
@@ -2785,6 +2875,7 @@ export function NotesPanel() {
                     const k = String(node.key);
                     if (editingKey === k) return false;
                     if (creatingUnderKey && k.startsWith(NEW_NODE_PREFIX)) return false;
+                    if (isMoreKey(k)) return false;
                     return true;
                   },
                 }}
@@ -2872,7 +2963,7 @@ export function NotesPanel() {
                   event.preventDefault();
                   event.stopPropagation();
                   const key = String(node.key);
-                  if (key.startsWith(NEW_NODE_PREFIX)) return;
+                  if (key.startsWith(NEW_NODE_PREFIX) || isMoreKey(key)) return;
                   // 笔记叶节点：用 note.title 作为 name 传给菜单
                   let name: string | null;
                   if (isNoteKey(key)) {
