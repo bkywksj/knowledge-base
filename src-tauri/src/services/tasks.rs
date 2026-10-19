@@ -118,7 +118,7 @@ impl TaskService {
         db.search_tasks(keyword, n)
     }
 
-    /// 稍后提醒：把截止时间向后推 N 分钟 + 清提醒已触发标记
+    /// 稍后提醒：N 分钟后再提醒一次（只写 snooze_until，不改截止时间）
     pub fn snooze(db: &Database, id: i64, minutes: i32) -> Result<bool, AppError> {
         db.snooze_task(id, minutes)
     }
@@ -364,6 +364,83 @@ pub fn advance_recurrence(task: &Task, all_day_base: &str, now_dt: NaiveDateTime
     }
 }
 
+/// 循环任务在 `date` 这一次之后的下一次（遵守 repeat_until / repeat_count）。
+///
+/// `done` 是「走到 `date` 这一次时已消耗的次数」；跳到下一次会再消耗一次，
+/// 达到 repeat_count 上限就没有下一次了 —— 口径与 `advance_recurrence` 一致。
+fn next_occurrence_within_limits(task: &Task, date: NaiveDate, done: i32) -> Option<NaiveDate> {
+    if let Some(max) = task.repeat_count {
+        if done.saturating_add(1) >= max {
+            return None;
+        }
+    }
+    let next = next_due_date(
+        date,
+        &task.repeat_kind,
+        task.repeat_interval,
+        task.repeat_weekdays.as_deref(),
+    )?;
+    let until = task
+        .repeat_until
+        .as_deref()
+        .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+    match until {
+        Some(u) if next > u => None,
+        _ => Some(next),
+    }
+}
+
+/// 循环任务「下一次」的提醒时刻；没有下一次（已到上限 / 无截止 / 未设提醒）返回 None。
+/// 调度器据此决定睡多久，保证用户没理会的循环任务在下一次到点时准时醒来。
+pub fn next_occurrence_remind_at(task: &Task, all_day_base: &str) -> Option<NaiveDateTime> {
+    if task.repeat_kind == "none" {
+        return None;
+    }
+    let remind = task.remind_before_minutes?;
+    let (date, time_part) = split_due(task.due_date.as_deref()?)?;
+    let next = next_occurrence_within_limits(task, date, task.repeat_done_count)?;
+    compute_remind_trigger(next, time_part.as_deref(), all_day_base, remind)
+}
+
+/// 用户一直没处理的循环任务：下一次（或更后面几次）的提醒时刻已经到了，
+/// 就把任务滚到「最近一次已到点」的那一次，让它重新提醒一回。
+///
+/// - 提醒触发本身**不推进**循环（推进只发生在「完成本次」），所以没人理会时任务会停在
+///   已提醒的那一次；不滚的话之后的每一次都不会再提醒
+/// - 中间漏掉的几次合并，只提醒最新那次；漏掉的照样计入 repeat_done_count（占用次数上限）
+/// - 撞到 repeat_until / repeat_count 就停在最后一次，**不自动标完成** —— 用户没做完的事
+///   不能替他勾掉
+///
+/// 返回 None = 下一次还没到，不用动。
+pub fn roll_missed_recurrence(
+    task: &Task,
+    all_day_base: &str,
+    now_dt: NaiveDateTime,
+) -> Option<AdvanceResult> {
+    if task.repeat_kind == "none" {
+        return None;
+    }
+    let remind = task.remind_before_minutes?;
+    let (mut date, time_part) = split_due(task.due_date.as_deref()?)?;
+    let mut done = task.repeat_done_count;
+    let mut rolled = false;
+
+    while let Some(next) = next_occurrence_within_limits(task, date, done) {
+        let trigger = compute_remind_trigger(next, time_part.as_deref(), all_day_base, remind)?;
+        if trigger > now_dt {
+            break;
+        }
+        date = next;
+        done = done.saturating_add(1);
+        rolled = true;
+    }
+
+    rolled.then(|| AdvanceResult {
+        next_due: Some(compose_due(date, time_part.as_deref())),
+        new_done_count: done,
+    })
+}
+
 /// 计算下一次 due 日期（不检查终止条件）
 fn next_due_date(
     current: NaiveDate,
@@ -438,4 +515,131 @@ fn compute_remind_trigger(
         .or_else(|_| NaiveDateTime::parse_from_str(&dt_str, "%Y-%m-%d %H:%M"))
         .ok()?;
     parsed.checked_sub_signed(Duration::minutes(remind_before_minutes as i64))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dt(s: &str) -> NaiveDateTime {
+        NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").unwrap()
+    }
+
+    /// 每天 09:00、提前 10 分钟提醒的循环任务（经 DB 建出来，字段与线上一致）
+    fn daily_task(db: &Database, due: &str) -> Task {
+        let id = db
+            .create_task(CreateTaskInput {
+                title: "每日站会".into(),
+                description: None,
+                priority: Some(1),
+                important: None,
+                due_date: Some(due.into()),
+                remind_before_minutes: Some(10),
+                links: None,
+                repeat_kind: Some("daily".into()),
+                repeat_interval: Some(1),
+                repeat_weekdays: None,
+                repeat_until: None,
+                repeat_count: None,
+                source_batch_id: None,
+                category_id: None,
+                parent_task_id: None,
+                project_id: None,
+                start_date: None,
+            })
+            .unwrap();
+        db.get_task(id).unwrap().unwrap()
+    }
+
+    fn fresh() -> Database {
+        Database::init(":memory:").unwrap()
+    }
+
+    /// 下一次还没到点：不滚，任务停在已提醒的这一次等用户处理
+    #[test]
+    fn roll_waits_until_next_occurrence_is_due() {
+        let db = fresh();
+        let t = daily_task(&db, "2026-10-19 09:00:00");
+        assert!(roll_missed_recurrence(&t, "09:00:00", dt("2026-10-19 12:00:00")).is_none());
+        // 下一次提醒时刻 = 10-20 08:50，差一分钟也不滚
+        assert!(roll_missed_recurrence(&t, "09:00:00", dt("2026-10-20 08:49:00")).is_none());
+        assert_eq!(
+            next_occurrence_remind_at(&t, "09:00:00"),
+            Some(dt("2026-10-20 08:50:00"))
+        );
+    }
+
+    /// 用户一直没理会：下一次到点就滚过去（再提醒一次），中间漏掉的合并、计入次数
+    #[test]
+    fn roll_jumps_to_latest_due_occurrence() {
+        let db = fresh();
+        let t = daily_task(&db, "2026-10-19 09:00:00");
+
+        let r = roll_missed_recurrence(&t, "09:00:00", dt("2026-10-20 08:50:00")).unwrap();
+        assert_eq!(r.next_due.as_deref(), Some("2026-10-20 09:00:00"));
+        assert_eq!(r.new_done_count, 1);
+
+        // 关机三天后打开：只滚到最新已到点的那一次（10-23），不是 10-24
+        let r = roll_missed_recurrence(&t, "09:00:00", dt("2026-10-23 10:00:00")).unwrap();
+        assert_eq!(r.next_due.as_deref(), Some("2026-10-23 09:00:00"));
+        assert_eq!(r.new_done_count, 4);
+    }
+
+    /// 撞到次数上限：停在最后一次，不替用户把没做的事勾成完成
+    #[test]
+    fn roll_stops_at_last_occurrence_without_completing() {
+        let db = fresh();
+        let mut t = daily_task(&db, "2026-10-19 09:00:00");
+        t.repeat_count = Some(3); // 共 3 次：19 / 20 / 21
+
+        let r = roll_missed_recurrence(&t, "09:00:00", dt("2026-10-30 10:00:00")).unwrap();
+        assert_eq!(r.next_due.as_deref(), Some("2026-10-21 09:00:00"));
+        assert_eq!(r.new_done_count, 2);
+
+        // 已经在最后一次：没有下一次可滚，也不再安排唤醒
+        t.due_date = r.next_due;
+        t.repeat_done_count = r.new_done_count;
+        assert!(roll_missed_recurrence(&t, "09:00:00", dt("2026-10-30 10:00:00")).is_none());
+        assert_eq!(next_occurrence_remind_at(&t, "09:00:00"), None);
+    }
+
+    /// repeat_until 同理：最后一次在截止日当天
+    #[test]
+    fn roll_respects_repeat_until() {
+        let db = fresh();
+        let mut t = daily_task(&db, "2026-10-19 09:00:00");
+        t.repeat_until = Some("2026-10-20".into());
+        let r = roll_missed_recurrence(&t, "09:00:00", dt("2026-10-25 10:00:00")).unwrap();
+        assert_eq!(r.next_due.as_deref(), Some("2026-10-20 09:00:00"));
+    }
+
+    /// 回归：提醒触发后点「完成本次」只推进一期。
+    /// 以前提醒触发时已推进一次、点完成再推进一次 → 跳过一期、次数多算 1。
+    #[test]
+    fn reminder_then_complete_advances_exactly_once() {
+        let db = fresh();
+        let now = chrono::Local::now().naive_local();
+        let due = (now - Duration::hours(1)).format("%Y-%m-%d %H:%M:%S").to_string();
+        let t = daily_task(&db, &due);
+
+        // 调度器：命中 → 只标记已提醒
+        let hits = db.list_due_reminders("09:00:00").unwrap();
+        assert_eq!(hits.len(), 1);
+        db.mark_task_reminded(t.id).unwrap();
+        let after_remind = db.get_task(t.id).unwrap().unwrap();
+        assert_eq!(after_remind.due_date.as_deref(), Some(due.as_str()), "提醒不该推进截止");
+        assert_eq!(after_remind.repeat_done_count, 0);
+        assert!(db.list_due_reminders("09:00:00").unwrap().is_empty(), "同一次不重复提醒");
+
+        // 用户点「完成本次」
+        TaskService::complete_occurrence(&db, t.id, "09:00:00").unwrap();
+        let done = db.get_task(t.id).unwrap().unwrap();
+        let expected = (now - Duration::hours(1) + Duration::days(1))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        assert_eq!(done.due_date.as_deref(), Some(expected.as_str()));
+        assert_eq!(done.repeat_done_count, 1);
+        assert_eq!(done.status, 0, "循环未结束，仍是未完成");
+        assert!(done.reminded_at.is_none(), "推进后下一次要能再提醒");
+    }
 }

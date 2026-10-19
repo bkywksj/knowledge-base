@@ -9,6 +9,8 @@
 //! 4. 醒来后扫一次 due，按 priority 派发：
 //!    - priority == 0：开全屏接管窗口（前端循环铃声 + 抢焦点）
 //!    - 其它：闪烁主窗任务栏 + emit `task:reminder` 让主窗弹 antd Modal
+//! 5. 循环任务提醒只标记已提醒、不推进（推进只在「完成本次」）；用户一直没处理时，
+//!    下一次到点由 `roll_missed_recurrences` 滚到新的一次再提醒
 //!
 //! 精度：~毫秒级。空闲零 DB 查询。
 
@@ -78,17 +80,22 @@ fn compute_sleep_duration(app: &AppHandle) -> Duration {
         }
     };
 
-    let Some(next_str) = next else {
+    let next_due = match next {
+        Some(s) => match NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S") {
+            Ok(dt) => Some(dt),
+            Err(_) => {
+                log::warn!("[reminder] 无法解析下次提醒时刻: {}, 退化为 5min 轮询", s);
+                return IDLE_SAFETY_INTERVAL;
+            }
+        },
+        None => None,
+    };
+    // 已提醒但没人处理的循环任务，下一次到点也要醒（届时滚到新的一次再提醒）
+    let rollover = earliest_rollover_at(&state, &base_time);
+    let Some(next_dt) = [next_due, rollover].into_iter().flatten().min() else {
         return IDLE_SAFETY_INTERVAL;
     };
-
-    let Ok(next_dt) = NaiveDateTime::parse_from_str(&next_str, "%Y-%m-%d %H:%M:%S") else {
-        log::warn!(
-            "[reminder] 无法解析下次提醒时刻: {}, 退化为 5min 轮询",
-            next_str
-        );
-        return IDLE_SAFETY_INTERVAL;
-    };
+    let next_str = next_dt.format("%Y-%m-%d %H:%M:%S").to_string();
 
     let now = chrono::Local::now().naive_local();
     let delta = next_dt.signed_duration_since(now);
@@ -113,9 +120,55 @@ fn read_base_time(state: &AppState) -> String {
         .unwrap_or_else(|| "09:00:00".to_string())
 }
 
+/// 把「用户没理会、而下一次已经到点」的循环任务滚到最近一次已到点的那一次，
+/// 并清掉已提醒标记 —— 紧接着的 list_due_reminders 就会把它当作新的一次提醒出来。
+///
+/// 必须在 list_due_reminders 之前跑：应用关了好几天再打开时，先滚到最新一期，
+/// 只提醒一次；反过来会先提醒过期的那一期、下一轮再提醒一次新的。
+fn roll_missed_recurrences(state: &AppState, base_time: &str) -> Result<(), AppError> {
+    let now = chrono::Local::now().naive_local();
+    for task in state.db.list_recurring_reminder_tasks()? {
+        let Some(r) = crate::services::tasks::roll_missed_recurrence(&task, base_time, now) else {
+            continue;
+        };
+        log::info!(
+            "[reminder] 循环任务 {} 未处理，滚到 {:?}",
+            task.id,
+            r.next_due
+        );
+        if let Err(e) = state
+            .db
+            .advance_task_recurrence(task.id, r.next_due, r.new_done_count)
+        {
+            log::warn!("[reminder] 滚动循环任务 {} 失败: {}", task.id, e);
+        }
+    }
+    Ok(())
+}
+
+/// 已提醒、等待用户处理的循环任务里，最早的「下一次」提醒时刻。
+fn earliest_rollover_at(state: &AppState, base_time: &str) -> Option<NaiveDateTime> {
+    let tasks = match state.db.list_recurring_reminder_tasks() {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("[reminder] list_recurring_reminder_tasks 失败: {}", e);
+            return None;
+        }
+    };
+    tasks
+        .iter()
+        // 还没提醒过的那一次由 peek_next_due_at 负责，这里只看已提醒的
+        .filter(|t| t.reminded_at.is_some())
+        .filter_map(|t| crate::services::tasks::next_occurrence_remind_at(t, base_time))
+        .min()
+}
+
 fn tick_once(app: &AppHandle) -> Result<(), AppError> {
     let state = app.state::<AppState>();
     let base_time = read_base_time(&state);
+    if let Err(e) = roll_missed_recurrences(&state, &base_time) {
+        log::warn!("[reminder] 滚动未处理的循环任务失败: {}", e);
+    }
     let due = state.db.list_due_reminders(&base_time)?;
     if due.is_empty() {
         return Ok(());
@@ -125,18 +178,11 @@ fn tick_once(app: &AppHandle) -> Result<(), AppError> {
     for task in due {
         // 先更新状态，再推送。先更新能防止调度器重入导致重复通知；即便后续推送失败，
         // 用户只是少了一次提醒，不会被打扰到抓狂。
-        let advance_err = if task.repeat_kind == "none" {
-            state.db.mark_task_reminded(task.id).err()
-        } else {
-            // 循环任务：合并漏掉的多次，一次性跳到下一个 > now 的触发点
-            let now = chrono::Local::now().naive_local();
-            let result = crate::services::tasks::advance_recurrence(&task, &base_time, now);
-            state
-                .db
-                .advance_task_recurrence(task.id, result.next_due, result.new_done_count)
-                .err()
-        };
-        if let Some(e) = advance_err {
+        //
+        // 循环任务也只标记「已提醒」，不推进到下一次：推进只在用户点「完成本次」时发生。
+        // 以前这里就推进一次、用户点完成再推进一次 → 一下跳过两期、完成次数多算一次。
+        // 用户一直不理会的情况由 roll_missed_recurrences 在下一次到点时接手。
+        if let Err(e) = state.db.mark_task_reminded(task.id) {
             log::warn!("[reminder] 更新任务 {} 提醒状态失败: {}", task.id, e);
             continue;
         }

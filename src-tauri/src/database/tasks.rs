@@ -83,7 +83,8 @@ impl super::Database {
                     t.stable_uuid, t.is_deleted,
                     COALESCE(s.done, 0)  AS subtask_done,
                     COALESCE(s.total, 0) AS subtask_total,
-                    (SELECT COUNT(*) FROM task_attachments a WHERE a.task_id = t.id) AS attachment_count
+                    (SELECT COUNT(*) FROM task_attachments a WHERE a.task_id = t.id) AS attachment_count,
+                    t.snooze_until
              FROM tasks t
              LEFT JOIN (
                  SELECT parent_task_id,
@@ -135,6 +136,7 @@ impl super::Database {
                     subtask_done: row.get(26)?,
                     subtask_total: row.get(27)?,
                     attachment_count: row.get(28)?,
+                    snooze_until: row.get(29)?,
                     links: Vec::new(),
                 })
             })?
@@ -194,7 +196,8 @@ impl super::Database {
                         COALESCE((SELECT SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END)
                                   FROM tasks WHERE parent_task_id = t.id AND is_deleted = 0), 0) AS subtask_done,
                         COALESCE((SELECT COUNT(*) FROM tasks WHERE parent_task_id = t.id AND is_deleted = 0), 0) AS subtask_total,
-                        (SELECT COUNT(*) FROM task_attachments a WHERE a.task_id = t.id) AS attachment_count
+                        (SELECT COUNT(*) FROM task_attachments a WHERE a.task_id = t.id) AS attachment_count,
+                        t.snooze_until
                  FROM tasks t WHERE t.id = ?1 AND t.is_deleted = 0",
                 params![id],
                 |row| {
@@ -228,6 +231,7 @@ impl super::Database {
                         subtask_done: row.get(26)?,
                         subtask_total: row.get(27)?,
                         attachment_count: row.get(28)?,
+                        snooze_until: row.get(29)?,
                         links: Vec::new(),
                     })
                 },
@@ -275,7 +279,8 @@ impl super::Database {
                     repeat_count, repeat_done_count, source_batch_id, category_id,
                     parent_task_id, kanban_stage, project_id, start_date,
                     stable_uuid, is_deleted,
-                    (SELECT COUNT(*) FROM task_attachments a WHERE a.task_id = tasks.id) AS attachment_count
+                    (SELECT COUNT(*) FROM task_attachments a WHERE a.task_id = tasks.id) AS attachment_count,
+                    snooze_until
              FROM tasks WHERE parent_task_id = ?1 AND is_deleted = 0
              ORDER BY status ASC, created_at ASC, id ASC",
         )?;
@@ -311,6 +316,7 @@ impl super::Database {
                     subtask_done: 0,
                     subtask_total: 0,
                     attachment_count: row.get(26)?,
+                    snooze_until: row.get(27)?,
                     links: Vec::new(),
                 })
             })?
@@ -449,11 +455,13 @@ impl super::Database {
             sets.push("due_date = NULL");
             // 清空截止时间时一并清掉提醒已触发标记，避免复用时卡住
             sets.push("reminded_at = NULL");
+            sets.push("snooze_until = NULL");
         } else if let Some(dd) = input.due_date {
             sets.push("due_date = ?");
             binds.push(Box::new(dd));
-            // 截止时间变更也重置提醒触发标记
+            // 截止时间变更也重置提醒触发标记；旧的稍后提醒作废，按新截止重新算
             sets.push("reminded_at = NULL");
+            sets.push("snooze_until = NULL");
         }
         if input.clear_remind_before_minutes.unwrap_or(false) {
             sets.push("remind_before_minutes = NULL");
@@ -462,6 +470,7 @@ impl super::Database {
             binds.push(Box::new(rm));
             // 改动提醒时机时重置已触发，使新设置立即生效
             sets.push("reminded_at = NULL");
+            sets.push("snooze_until = NULL");
         }
         // ─── 循环规则 ─────────────────────────────
         if let Some(k) = input.repeat_kind.as_ref() {
@@ -547,6 +556,7 @@ impl super::Database {
                     "UPDATE tasks
                         SET due_date = ?1,
                             reminded_at = NULL,
+                            snooze_until = NULL,
                             repeat_done_count = ?2,
                             updated_at = datetime('now','localtime')
                       WHERE id = ?3",
@@ -560,6 +570,7 @@ impl super::Database {
                         SET status = 1,
                             completed_at = datetime('now','localtime'),
                             reminded_at = datetime('now','localtime'),
+                            snooze_until = NULL,
                             repeat_done_count = ?1,
                             repeat_kind = 'none',
                             updated_at = datetime('now','localtime')
@@ -595,7 +606,7 @@ impl super::Database {
         if next == 1 {
             conn.execute(
                 "UPDATE tasks SET status = 1, completed_at = datetime('now','localtime'),
-                                    kanban_stage = 'done',
+                                    kanban_stage = 'done', snooze_until = NULL,
                                     updated_at = datetime('now','localtime') WHERE id = ?1",
                 params![id],
             )?;
@@ -605,6 +616,7 @@ impl super::Database {
                 "UPDATE tasks
                  SET status = 0,
                      completed_at = NULL,
+                     snooze_until = NULL,
                      kanban_stage = CASE WHEN kanban_stage = 'done' THEN 'todo' ELSE kanban_stage END,
                      updated_at = datetime('now','localtime')
                  WHERE id = ?1",
@@ -787,8 +799,8 @@ impl super::Database {
 
     /// 捞出所有"到提醒点了但还没提醒过"的未完成任务。
     ///
-    /// 条件：status=0 AND 有 due_date AND 有 remind_before_minutes AND reminded_at IS NULL
-    /// 且 now >= (due_datetime - remind_before_minutes 分钟)
+    /// 条件：status=0 AND reminded_at IS NULL AND now >= 提醒时刻；
+    /// 提醒时刻 = snooze_until（稍后提醒中）或 due_datetime - remind_before_minutes 分钟
     ///
     /// 纯日期 due_date 的提醒基准时刻由 `all_day_base_time` 参数指定，
     /// 格式 'HH:MM:SS'（如 "09:00:00"）。对齐 Apple Reminders / MS To Do 的默认 09:00。
@@ -809,65 +821,115 @@ impl super::Database {
         // 子任务的时刻唤醒，醒来却查不到任何待提醒任务，随即按同一个（已过期的）时刻
         // 重新入睡，形成空转。子任务支持单独设时间后（滴答清单同款），改为两处都不过滤：
         // 没设 remind_before_minutes 的子任务本来就不会命中，老数据零影响。
-        let sql = "
+        //
+        // v67 稍后提醒：snooze_until 非空时以它为准（优先于「截止 - 提前量」），
+        // 口径写在 REMIND_AT_SQL / REMINDABLE_SQL 里，与 peek_next_due_at 共用。
+        let sql = format!(
+            "
             SELECT id, title, description, priority, important, status, due_date,
                    completed_at, created_at, updated_at, remind_before_minutes, reminded_at,
                    repeat_kind, repeat_interval, repeat_weekdays, repeat_until,
-                   repeat_count, repeat_done_count, source_batch_id, category_id, parent_task_id
+                   repeat_count, repeat_done_count, source_batch_id, category_id, parent_task_id,
+                   snooze_until
             FROM tasks
             WHERE status = 0
               AND is_deleted = 0
               AND reminded_at IS NULL
-              AND due_date IS NOT NULL
-              AND remind_before_minutes IS NOT NULL
-              AND datetime(
-                    CASE WHEN LENGTH(due_date) <= 10
-                         THEN due_date || ' ' || ?1
-                         ELSE due_date END,
-                    '-' || remind_before_minutes || ' minutes'
-                  ) <= datetime('now','localtime')
-        ";
-        let mut stmt = conn.prepare(sql)?;
+              AND {REMINDABLE_SQL}
+              AND {REMIND_AT_SQL} <= datetime('now','localtime')
+        "
+        );
+        let mut stmt = conn.prepare(&sql)?;
         let rows = stmt
-            .query_map(params![all_day_base_time], |row| {
-                Ok(Task {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    description: row.get(2)?,
-                    priority: row.get(3)?,
-                    important: row.get::<_, i32>(4)? != 0,
-                    status: row.get(5)?,
-                    due_date: row.get(6)?,
-                    completed_at: row.get(7)?,
-                    created_at: row.get(8)?,
-                    updated_at: row.get(9)?,
-                    remind_before_minutes: row.get(10)?,
-                    reminded_at: row.get(11)?,
-                    repeat_kind: row.get(12)?,
-                    repeat_interval: row.get(13)?,
-                    repeat_weekdays: row.get(14)?,
-                    repeat_until: row.get(15)?,
-                    repeat_count: row.get(16)?,
-                    repeat_done_count: row.get(17)?,
-                    source_batch_id: row.get(18)?,
-                    category_id: row.get(19)?,
-                    parent_task_id: row.get(20)?,
-                    // 提醒扫描内部不关心这些字段，用默认值占位
-                    kanban_stage: "todo".to_string(),
-                    project_id: None,
-                    start_date: None,
-                    stable_uuid: None,
-                    is_deleted: false,
-                    subtask_done: 0,
-                    subtask_total: 0,
-                    attachment_count: 0,
-                    links: Vec::new(),
-                })
-            })?
+            .query_map(params![all_day_base_time], map_reminder_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
+    /// 列出「有提醒的未完成循环任务」（不管这一次提醒过没有）。
+    ///
+    /// 调度器用它处理「用户一直没理会」的循环任务：下一次的提醒时刻到了，就把任务滚到
+    /// 最近一次已到点的那一次再提醒（见 `services::tasks::roll_missed_recurrence`）。
+    /// 正在稍后提醒中的不算 —— 用户已经表态「等会儿再说」，别把它滚走。
+    pub fn list_recurring_reminder_tasks(&self) -> Result<Vec<Task>, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "SELECT id, title, description, priority, important, status, due_date,
+                    completed_at, created_at, updated_at, remind_before_minutes, reminded_at,
+                    repeat_kind, repeat_interval, repeat_weekdays, repeat_until,
+                    repeat_count, repeat_done_count, source_batch_id, category_id, parent_task_id,
+                    snooze_until
+             FROM tasks
+             WHERE status = 0
+               AND is_deleted = 0
+               AND repeat_kind <> 'none'
+               AND due_date IS NOT NULL
+               AND remind_before_minutes IS NOT NULL
+               AND snooze_until IS NULL",
+        )?;
+        let rows = stmt
+            .query_map([], map_reminder_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+}
+
+/// 一条任务「该提醒的时刻」：稍后提醒中取 snooze_until，否则 = 截止 - 提前量。
+/// 纯日期截止用 ?1（全天任务基准时刻 'HH:MM:SS'）补成时刻。
+const REMIND_AT_SQL: &str = "COALESCE(
+                    snooze_until,
+                    datetime(
+                        CASE WHEN LENGTH(due_date) <= 10
+                             THEN due_date || ' ' || ?1
+                             ELSE due_date END,
+                        '-' || remind_before_minutes || ' minutes'))";
+
+/// 「可能需要提醒」的口径：正在稍后提醒，或者既有截止又设了提前量。
+const REMINDABLE_SQL: &str =
+    "(snooze_until IS NOT NULL OR (due_date IS NOT NULL AND remind_before_minutes IS NOT NULL))";
+
+/// 提醒相关查询的行映射（SELECT 列顺序见 list_due_reminders）。
+fn map_reminder_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
+    Ok(Task {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        description: row.get(2)?,
+        priority: row.get(3)?,
+        important: row.get::<_, i32>(4)? != 0,
+        status: row.get(5)?,
+        due_date: row.get(6)?,
+        completed_at: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+        remind_before_minutes: row.get(10)?,
+        reminded_at: row.get(11)?,
+        repeat_kind: row.get(12)?,
+        repeat_interval: row.get(13)?,
+        repeat_weekdays: row.get(14)?,
+        repeat_until: row.get(15)?,
+        repeat_count: row.get(16)?,
+        repeat_done_count: row.get(17)?,
+        source_batch_id: row.get(18)?,
+        category_id: row.get(19)?,
+        parent_task_id: row.get(20)?,
+        // 提醒扫描内部不关心这些字段，用默认值占位
+        kanban_stage: "todo".to_string(),
+        project_id: None,
+        start_date: None,
+        stable_uuid: None,
+        is_deleted: false,
+        subtask_done: 0,
+        subtask_total: 0,
+        attachment_count: 0,
+        snooze_until: row.get(21)?,
+        links: Vec::new(),
+    })
+}
+
+impl super::Database {
     /// 查最早一条「待提醒」任务的 effective_remind_at（含已逾期的）。
     /// 返回字符串 'YYYY-MM-DD HH:MM:SS'（local），无待提醒任务时返回 None。
     /// 调度器据此 sleep_until 精准触发，避免轮询空跑。
@@ -876,22 +938,20 @@ impl super::Database {
             .conn
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
-        let sql = "
-            SELECT MIN(datetime(
-                CASE WHEN LENGTH(due_date) <= 10
-                     THEN due_date || ' ' || ?1
-                     ELSE due_date END,
-                '-' || remind_before_minutes || ' minutes'
-            )) AS next_at
+        // 口径必须与 list_due_reminders 一致（共用 REMIND_AT_SQL / REMINDABLE_SQL），
+        // 否则调度器会被一个查不到任务的时刻唤醒、原地空转。
+        let sql = format!(
+            "
+            SELECT MIN({REMIND_AT_SQL}) AS next_at
             FROM tasks
             WHERE status = 0
               AND is_deleted = 0
               AND reminded_at IS NULL
-              AND due_date IS NOT NULL
-              AND remind_before_minutes IS NOT NULL
-        ";
+              AND {REMINDABLE_SQL}
+        "
+        );
         // MIN 在无匹配行时返回一行 NULL，所以走 `Option<String>` 接收避免 InvalidColumnType
-        let next: Option<String> = conn.query_row(sql, params![all_day_base_time], |row| {
+        let next: Option<String> = conn.query_row(&sql, params![all_day_base_time], |row| {
             row.get::<_, Option<String>>(0)
         })?;
         Ok(next)
@@ -904,15 +964,18 @@ impl super::Database {
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
         conn.execute(
-            "UPDATE tasks SET reminded_at = datetime('now','localtime') WHERE id = ?1",
+            "UPDATE tasks SET reminded_at = datetime('now','localtime'), snooze_until = NULL
+              WHERE id = ?1",
             params![id],
         )?;
         Ok(())
     }
 
-    /// 稍后再提醒：清 reminded_at 并把 due_date 向后推 N 分钟
+    /// 稍后再提醒：从现在起 N 分钟后再提醒一次。
     ///
-    /// 原 due_date 为纯日期时会被补 23:59:59 再推。
+    /// 只写 snooze_until + 清 reminded_at，**不动 due_date**（v67 之前是把截止时间往后推，
+    /// 推几次截止就晚几次，纯日期任务还被补成 23:59:59）。也不碰 updated_at：
+    /// 推迟不是内容修改，不该让同步把它当成「刚改过」。
     pub fn snooze_task(&self, id: i64, minutes: i32) -> Result<bool, AppError> {
         if minutes <= 0 {
             return Err(AppError::InvalidInput("snooze 分钟数必须大于 0".into()));
@@ -923,13 +986,8 @@ impl super::Database {
             .map_err(|e| AppError::Custom(e.to_string()))?;
         let affected = conn.execute(
             "UPDATE tasks
-               SET due_date = datetime(
-                     CASE WHEN LENGTH(IFNULL(due_date,'')) <= 10
-                          THEN IFNULL(due_date, DATE('now','localtime')) || ' 23:59:59'
-                          ELSE due_date END,
-                     '+' || ?1 || ' minutes'),
-                   reminded_at = NULL,
-                   updated_at = datetime('now','localtime')
+               SET snooze_until = datetime('now','localtime', '+' || ?1 || ' minutes'),
+                   reminded_at = NULL
              WHERE id = ?2",
             params![minutes, id],
         )?;
@@ -1080,6 +1138,7 @@ impl super::Database {
                     subtask_done: 0,
                     subtask_total: 0,
                     attachment_count: 0,
+                    snooze_until: None,
                     links: Vec::new(),
                 })
             })?
@@ -1456,5 +1515,95 @@ mod tests {
 
         let due = db.list_due_reminders("09:00:00").unwrap();
         assert!(due.is_empty(), "没设提醒的任务不该被扫成待提醒");
+    }
+
+    fn set_raw(db: &Database, sql: &str) {
+        db.conn.lock().unwrap().execute_batch(sql).unwrap();
+    }
+
+    fn snooze_of(db: &Database, id: i64) -> Option<String> {
+        db.conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT snooze_until FROM tasks WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap()
+    }
+
+    /// v67：稍后提醒不改截止时间（以前推两次截止就晚一小时、纯日期被补成 23:59:59）
+    #[test]
+    fn snooze_keeps_due_date_and_delays_reminder() {
+        let db = fresh();
+        let id = db
+            .create_task(task_input("交报告", Some("2020-01-01"), Some(0), None))
+            .unwrap();
+        assert_eq!(db.list_due_reminders("09:00:00").unwrap().len(), 1);
+        db.mark_task_reminded(id).unwrap();
+
+        assert!(db.snooze_task(id, 30).unwrap());
+        let t = db.get_task(id).unwrap().unwrap();
+        assert_eq!(t.due_date.as_deref(), Some("2020-01-01"), "截止时间不该被推迟改写");
+        assert!(t.reminded_at.is_none());
+        assert!(t.snooze_until.is_some());
+
+        // 推迟期内：不提醒，但调度器要知道 30 分钟后醒
+        assert!(db.list_due_reminders("09:00:00").unwrap().is_empty());
+        assert_eq!(db.peek_next_due_at("09:00:00").unwrap(), t.snooze_until);
+
+        // 推迟到点：再提醒一次，触发后清掉 snooze_until
+        set_raw(&db, &format!("UPDATE tasks SET snooze_until = '2020-01-01 00:00:00' WHERE id = {id}"));
+        assert_eq!(db.list_due_reminders("09:00:00").unwrap().len(), 1);
+        db.mark_task_reminded(id).unwrap();
+        assert_eq!(snooze_of(&db, id), None);
+        assert!(db.list_due_reminders("09:00:00").unwrap().is_empty());
+    }
+
+    /// 完成 / 改截止 / 改提醒时机：旧的稍后提醒作废
+    #[test]
+    fn snooze_cleared_by_complete_and_edits() {
+        let db = fresh();
+        let id = db
+            .create_task(task_input("开会", Some("2099-01-01 10:00:00"), Some(10), None))
+            .unwrap();
+
+        db.snooze_task(id, 30).unwrap();
+        db.toggle_task_status(id).unwrap(); // 完成
+        assert_eq!(snooze_of(&db, id), None);
+        db.toggle_task_status(id).unwrap(); // 取消完成：不能把旧推迟复活
+        assert!(db.list_due_reminders("09:00:00").unwrap().is_empty());
+
+        db.snooze_task(id, 30).unwrap();
+        let input: crate::models::UpdateTaskInput =
+            serde_json::from_value(serde_json::json!({ "due_date": "2099-02-01 10:00:00" }))
+                .unwrap();
+        db.update_task(id, input).unwrap();
+        assert_eq!(snooze_of(&db, id), None);
+
+        db.snooze_task(id, 30).unwrap();
+        let input: crate::models::UpdateTaskInput =
+            serde_json::from_value(serde_json::json!({ "remind_before_minutes": 60 })).unwrap();
+        db.update_task(id, input).unwrap();
+        assert_eq!(snooze_of(&db, id), None);
+
+        // 改标题这类无关修改不动推迟
+        db.snooze_task(id, 30).unwrap();
+        let input: crate::models::UpdateTaskInput =
+            serde_json::from_value(serde_json::json!({ "title": "开会（改名）" })).unwrap();
+        db.update_task(id, input).unwrap();
+        assert!(snooze_of(&db, id).is_some());
+    }
+
+    /// 推迟中的循环任务不参与「未处理自动滚动」—— 用户已经说了等会儿再说
+    #[test]
+    fn snoozed_recurring_task_not_listed_for_rollover() {
+        let db = fresh();
+        let mut input = task_input("每日站会", Some("2020-01-01 09:00:00"), Some(10), None);
+        input.repeat_kind = Some("daily".into());
+        let id = db.create_task(input).unwrap();
+        assert_eq!(db.list_recurring_reminder_tasks().unwrap().len(), 1);
+
+        db.snooze_task(id, 30).unwrap();
+        assert!(db.list_recurring_reminder_tasks().unwrap().is_empty());
     }
 }

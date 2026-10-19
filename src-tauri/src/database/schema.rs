@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 66;
+pub const SCHEMA_VERSION: i32 = 67;
 
 /// `ai_models.max_context` 的历史默认值。v51 把旧默认 32000 统一抬到它，此后新建也默认填它 ——
 /// 所以存量里的 128000 分不清是用户填的还是默认值，v62 一律当作「未设置」。
@@ -102,6 +102,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             63 => migrate_v63_to_v64(conn)?,
             64 => migrate_v64_to_v65(conn)?,
             65 => migrate_v65_to_v66(conn)?,
+            66 => migrate_v66_to_v67(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2514,6 +2515,24 @@ fn migrate_v65_to_v66(conn: &Connection) -> Result<(), AppError> {
     )?;
 
     set_version(conn, 66)?;
+    Ok(())
+}
+
+/// v66 -> v67：待办「稍后提醒」改存独立的 `tasks.snooze_until`。
+///
+/// 以前推迟是把 `due_date` 往后推 N 分钟：推迟两次截止时间就晚了一小时，
+/// 纯日期任务还会被补成 23:59:59 —— 用户的截止时间被提醒功能悄悄改掉了。
+/// 现在推迟只写 snooze_until，提醒扫描时它优先于「截止 - 提前量」。
+/// 不回填：老数据里已经被推过的 due_date 无法区分是不是用户本意，原样保留。
+fn migrate_v66_to_v67(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v66 -> v67 (tasks.snooze_until 稍后提醒)");
+
+    let cols = list_columns(conn, "tasks")?;
+    if !cols.iter().any(|c| c == "snooze_until") {
+        conn.execute_batch("ALTER TABLE tasks ADD COLUMN snooze_until TEXT;")?;
+    }
+
+    set_version(conn, 67)?;
     Ok(())
 }
 

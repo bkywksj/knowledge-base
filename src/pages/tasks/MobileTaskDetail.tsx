@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Drawer, Modal, message } from "antd";
 import { taskApi } from "@/lib/api";
+import { describeRepeat } from "@/lib/taskRepeat";
 import { useAppStore } from "@/store";
 import type { Task } from "@/types";
 import TaskAttachments from "@/components/tasks/TaskAttachments";
@@ -189,7 +190,13 @@ export function MobileTaskDetail() {
   async function toggleSelf() {
     if (!task) return;
     try {
-      await taskApi.toggleStatus(task.id);
+      // 循环任务勾选 = 完成本次（推进到下一次），不是结束整条循环
+      if (task.status === 0 && task.repeat_kind !== "none") {
+        await taskApi.completeOccurrence(task.id);
+        message.success("已完成本次，已推进到下一次");
+      } else {
+        await taskApi.toggleStatus(task.id);
+      }
       await load();
       useAppStore.getState().refreshTaskStats();
     } catch (e) {
@@ -199,7 +206,11 @@ export function MobileTaskDetail() {
 
   async function toggleSubtask(sub: Task) {
     try {
-      await taskApi.toggleStatus(sub.id);
+      if (sub.status === 0 && sub.repeat_kind !== "none") {
+        await taskApi.completeOccurrence(sub.id);
+      } else {
+        await taskApi.toggleStatus(sub.id);
+      }
       const subs = await taskApi.listSubtasks(taskId);
       setSubtasks(subs);
     } catch (e) {
@@ -466,9 +477,12 @@ export function MobileTaskDetail() {
               label="提醒"
               value={
                 <span className="text-xs text-slate-500">
-                  {task?.remind_before_minutes
-                    ? `提前 ${task.remind_before_minutes} 分钟`
-                    : "不提醒"}
+                  {/* 0 = 到点准时提醒，不是「不提醒」；只有 null 才是不提醒 */}
+                  {task?.remind_before_minutes == null
+                    ? "不提醒"
+                    : task.remind_before_minutes === 0
+                      ? "准时提醒"
+                      : `提前 ${task.remind_before_minutes} 分钟`}
                 </span>
               }
               onClick={() => setRemindOpen(true)}
@@ -478,9 +492,7 @@ export function MobileTaskDetail() {
               label="重复"
               value={
                 <span className="text-xs text-slate-400">
-                  {task?.repeat_kind && task.repeat_kind !== "none"
-                    ? task.repeat_kind
-                    : "不重复"}
+                  {(task && describeRepeat(task)) || "不重复"}
                 </span>
               }
               onClick={() => message.info("重复规则需要在桌面端编辑")}

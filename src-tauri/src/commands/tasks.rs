@@ -135,7 +135,7 @@ pub fn get_task_stats(state: State<'_, AppState>) -> Result<TaskStats, String> {
     TaskService::stats(&state.db).map_err(|e| e.to_string())
 }
 
-/// 稍后再提醒：把截止时间向后推 N 分钟并重置"已提醒"标记
+/// 稍后再提醒：N 分钟后再提醒一次（写 snooze_until，不改截止时间）
 #[tauri::command]
 pub fn snooze_task_reminder(
     state: State<'_, AppState>,

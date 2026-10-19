@@ -115,10 +115,16 @@ export function MobileTasks() {
     all: todoTasks.length,
   };
 
-  // 切换状态
+  // 切换状态。未完成的循环任务勾选 = 完成本次（推进到下一次），与桌面端一致；
+  // 直接 toggleStatus 会把整条循环标成完成，以后再也不会出现。
   async function toggleTask(task: Task) {
     try {
-      await taskApi.toggleStatus(task.id);
+      if (task.status === 0 && task.repeat_kind !== "none") {
+        await taskApi.completeOccurrence(task.id);
+        message.success("已完成本次，已推进到下一次");
+      } else {
+        await taskApi.toggleStatus(task.id);
+      }
       await load();
     } catch (e) {
       console.error("toggle task failed:", e);

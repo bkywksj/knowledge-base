@@ -1292,6 +1292,11 @@ pub struct Task {
     /// 附件数（v65；列表 / 子任务列表填充，用于显示回形针角标；其它查询恒为 0）
     #[serde(default)]
     pub attachment_count: i32,
+    /// 「稍后提醒」的再次提醒时刻（v67，'YYYY-MM-DD HH:MM:SS' 本地时间）。
+    /// 推迟只写这里、不改 due_date —— 截止时间是用户定的事实，推迟提醒不该让它悄悄变晚。
+    /// 提醒触发 / 完成 / 改截止或提醒时机时清空。本地字段，不参与同步。
+    #[serde(default)]
+    pub snooze_until: Option<String>,
     pub links: Vec<TaskLink>,
 }
 

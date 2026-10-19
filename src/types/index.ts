@@ -1405,6 +1405,8 @@ export interface Task {
   subtask_total: number;
   /** 附件数（v65；列表 / 子任务列表才填，其它接口恒为 0） */
   attachment_count?: number;
+  /** 稍后提醒的再次提醒时刻（v67）；推迟不改 due_date，只写这里。null = 没在推迟 */
+  snooze_until?: string | null;
   links: TaskLink[];
   /** 工作流看板列归属：'todo' / 'doing' / 'done'（v40 引入） */
   kanban_stage: KanbanStage;
