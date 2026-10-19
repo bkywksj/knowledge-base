@@ -32,6 +32,7 @@ import {
   Minimize2,
 } from "lucide-react";
 
+import { useEditorEditable } from "./useEditorEditable";
 // 与 FigureImage.configure({ minWidth, maxWidth }) 保持一致
 const MIN_WIDTH = 50;
 const MAX_WIDTH = 1200;
@@ -53,7 +54,7 @@ export function ImageResizeNodeView(props: NodeViewProps) {
   const align = (node.attrs.align as "left" | "center" | "right" | null) ?? null;
   const width = parseWidth(node.attrs.width);
 
-  const isEditable = editor?.isEditable !== false;
+  const isEditable = useEditorEditable(editor);
   const { token } = antdTheme.useToken();
 
   const imgRef = useRef<HTMLImageElement>(null);

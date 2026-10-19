@@ -19,15 +19,23 @@ import { revealItemInDir, openPath } from "@tauri-apps/plugin-opener";
 import { writeImage } from "@tauri-apps/plugin-clipboard-manager";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useFeatureEnabled } from "@/hooks/useFeatureEnabled";
-import {
-  findWikiLinkAtPos,
-  type WikiLinkRange,
-} from "./WikiLinkDecoration";
+import { findWikiLinkAtPos, type WikiLinkRange } from "./WikiLinkDecoration";
 import { systemApi, linkApi, imageApi, cardApi } from "@/lib/api";
 import { parseKbAsset } from "@/lib/assetUrl";
-import {
-  type ContextMenuEntry,
-} from "@/components/ui/ContextMenuOverlay";
+import { type ContextMenuEntry } from "@/components/ui/ContextMenuOverlay";
+import { useEditorEditable } from "./useEditorEditable";
+
+/**
+ * 会改文档的菜单项 key：阅读模式下隐藏。
+ * 改链接 / 调图片尺寸 / 删图片·视频·批注·折叠块 / 编辑批注
+ */
+const READONLY_HIDDEN_KEYS = new Set([
+  "edit-link",
+  "actual-size",
+  "fit-width",
+  "delete",
+  "edit",
+]);
 
 /**
  * Tiptap 编辑器节点右键菜单 hook。
@@ -305,7 +313,7 @@ export function useEditorContextMenu(
   }, [editor, handleContextMenu]);
 
   // ─── 菜单项构造（按节点类型派发） ───────────────
-  const menuItems = useMemo<ContextMenuEntry[]>(() => {
+  const allMenuItems = useMemo<ContextMenuEntry[]>(() => {
     const p = ctx.state.payload;
     if (!p) return [];
 
@@ -394,7 +402,8 @@ export function useEditorContextMenu(
         ctx.drawImage(bitmap, 0, 0);
         return await new Promise<Blob>((resolve, reject) => {
           canvas.toBlob(
-            (b) => (b ? resolve(b) : reject(new Error("canvas.toBlob 返回 null"))),
+            (b) =>
+              b ? resolve(b) : reject(new Error("canvas.toBlob 返回 null")),
             "image/png",
           );
         });
@@ -766,6 +775,23 @@ export function useEditorContextMenu(
     noteId,
     cardsEnabled,
   ]);
+
+  // 阅读模式：去掉会改文档的项，再收掉因此落单 / 连续的分隔线
+  const editable = useEditorEditable(editor);
+  const menuItems = useMemo<ContextMenuEntry[]>(() => {
+    if (editable) return allMenuItems;
+    const kept = allMenuItems.filter(
+      (it) => !("key" in it && READONLY_HIDDEN_KEYS.has(it.key)),
+    );
+    return kept.filter((it, i) => {
+      if (!("type" in it) || it.type !== "divider") return true;
+      const prev = kept[i - 1];
+      const next = kept[i + 1];
+      const isDiv = (x?: ContextMenuEntry) =>
+        !!x && "type" in x && x.type === "divider";
+      return !!prev && !!next && !isDiv(prev);
+    });
+  }, [allMenuItems, editable]);
 
   return { ctx, menuItems };
 }

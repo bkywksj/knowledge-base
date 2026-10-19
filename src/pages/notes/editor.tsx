@@ -1511,11 +1511,14 @@ function DesktopNoteEditorPage() {
     if (!autoSaveEnabled) return;
     if (!dirty) return;
     if (!title.trim()) return;
+    // 阅读模式兜底：入口都已按只读拦掉，万一还有漏网的改动也不自动写盘，
+    // 保留「未保存」标记交给用户决定（之前只读下误删表格会被直接自动保存）
+    if (readingMode) return;
     const timer = setTimeout(() => {
       void autoSaveTriggerRef.current();
     }, autoSaveDelay);
     return () => clearTimeout(timer);
-  }, [autoSaveEnabled, autoSaveDelay, dirty, title, content]);
+  }, [autoSaveEnabled, autoSaveDelay, dirty, title, content, readingMode]);
 
   // 切换到不同笔记时，清掉上一篇笔记的"已自动保存"时间戳，避免视觉残留
   useEffect(() => {

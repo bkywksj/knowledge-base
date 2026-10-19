@@ -17,6 +17,7 @@ import { imageApi } from "@/lib/api";
 import { isEncryptedAsset, parseKbAsset, resolveAssetSrc } from "@/lib/assetUrl";
 import { WhiteboardEditModal } from "./WhiteboardEditModal";
 
+import { useEditorEditable } from "./useEditorEditable";
 export function WhiteboardBlockNodeView({
   node,
   updateAttributes,
@@ -28,6 +29,7 @@ export function WhiteboardBlockNodeView({
   const { message } = AntdApp.useApp();
   const dataDir = useAppStore((s) => s.instanceInfo?.dataDir ?? null);
   const [editing, setEditing] = useState(false);
+  const isEditable = useEditorEditable(editor);
 
   const scene = (node.attrs.scene as string | null) ?? null;
   const preview = (node.attrs.preview as string | null) ?? null;
@@ -98,21 +100,21 @@ export function WhiteboardBlockNodeView({
   const autoOpenedRef = useRef(false);
   useEffect(() => {
     if (scene || autoOpenedRef.current) return;
-    if (!editor.isEditable) return;
+    if (!isEditable) return;
     if (!extension.options.getNoteId?.()) return; // 笔记还没 id，留占位块并在点击时提示
     autoOpenedRef.current = true;
     setEditing(true);
-  }, [scene, editor.isEditable, extension.options]);
+  }, [scene, isEditable, extension.options]);
 
   const openEditor = useCallback(() => {
-    if (!editor.isEditable) return; // 只读模式（预览 / 导出）不给编辑
+    if (!isEditable) return; // 只读模式（预览 / 导出）不给编辑
     const noteId = extension.options.getNoteId?.();
     if (!noteId) {
       message.warning("笔记还没保存，无法创建白板");
       return;
     }
     setEditing(true);
-  }, [editor.isEditable, extension.options, message]);
+  }, [isEditable, extension.options, message]);
 
   return (
     <NodeViewWrapper className="tiptap-whiteboard my-3" data-drag-handle>
@@ -187,7 +189,7 @@ export function WhiteboardBlockNodeView({
             刻意**常显**而不是只在 hover 时浮出：白板是"看起来像图、其实能改"的东西，
             全靠 hover 才发现的入口等于没有 —— 触屏没有 hover，用户也未必会去试。
             用低透明度收着，hover 时补满，既不喧宾夺主又始终够得着。 */}
-        {previewSrc && editor.isEditable && (
+        {previewSrc && isEditable && (
           <div className="absolute top-2 right-2 opacity-60 group-hover:opacity-100 transition-opacity">
             <Button
               size="small"

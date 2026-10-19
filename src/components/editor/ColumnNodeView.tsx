@@ -15,8 +15,9 @@ import {
 import { Tooltip } from "antd";
 import { X } from "lucide-react";
 
+import { useEditorEditable } from "./useEditorEditable";
 export function ColumnNodeView({ editor, getPos }: NodeViewProps) {
-  const isEditable = editor?.isEditable !== false;
+  const isEditable = useEditorEditable(editor);
 
   function stopMouseDown(e: React.MouseEvent) {
     e.preventDefault();

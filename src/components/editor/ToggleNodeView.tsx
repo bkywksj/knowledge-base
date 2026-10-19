@@ -12,9 +12,10 @@ import {
 } from "@tiptap/react";
 import { ChevronRight } from "lucide-react";
 
+import { useEditorEditable } from "./useEditorEditable";
 export function ToggleNodeView({ node, updateAttributes, editor }: NodeViewProps) {
   const open = node.attrs.open !== false;
-  const isEditable = editor?.isEditable !== false;
+  const isEditable = useEditorEditable(editor);
 
   function toggleOpen(e: React.MouseEvent) {
     e.preventDefault();

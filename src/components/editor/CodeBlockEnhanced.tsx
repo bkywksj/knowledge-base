@@ -34,6 +34,7 @@ import { Copy, Check } from "lucide-react";
 import { common, createLowlight } from "lowlight";
 import { MermaidPreview } from "./MermaidPreview";
 
+import { useEditorEditable } from "./useEditorEditable";
 const lowlight = createLowlight(common);
 
 /** 不属于 lowlight 高亮语言、但在编辑器中有特殊 NodeView 行为的"伪语言" */
@@ -558,7 +559,7 @@ function CodeBlockNodeView({
     e.stopPropagation();
   };
 
-  const isEditable = editor?.isEditable !== false;
+  const isEditable = useEditorEditable(editor);
 
   return (
     <NodeViewWrapper

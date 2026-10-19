@@ -25,6 +25,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { computeBubbleMenuLayout } from "@/lib/bubbleMenuPosition";
+import { useEditorEditable } from "./useEditorEditable";
 
 interface Props {
   editor: Editor | null;
@@ -46,6 +47,8 @@ export function TableBubbleMenu({ editor }: Props) {
   const { token } = antdTheme.useToken();
   const [visible, setVisible] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
+  // 阅读模式只保留选中 / 复制 / 导出图片这类不改文档的按钮
+  const editable = useEditorEditable(editor);
 
   const update = useCallback(() => {
     if (!editor || editor.isDestroyed) {
@@ -361,80 +364,85 @@ export function TableBubbleMenu({ editor }: Props) {
           void exportTableAsImage();
         }}
       />
-      <VDivider />
-      <Btn
-        icon={<ChevronLeft size={14} />}
-        title="在左侧加列"
-        disabled={!can.addColumnBefore()}
-        onClick={() => editor.chain().focus().addColumnBefore().run()}
-      />
-      <Btn
-        icon={<ChevronRight size={14} />}
-        title="在右侧加列"
-        disabled={!can.addColumnAfter()}
-        onClick={() => editor.chain().focus().addColumnAfter().run()}
-      />
-      <Btn
-        icon={<Columns3 size={14} />}
-        title="删除当前列"
-        danger
-        disabled={!can.deleteColumn()}
-        onClick={() => editor.chain().focus().deleteColumn().run()}
-      />
-      <VDivider />
-      <Btn
-        icon={<ChevronUp size={14} />}
-        title="在上方加行"
-        disabled={!can.addRowBefore()}
-        onClick={() => editor.chain().focus().addRowBefore().run()}
-      />
-      <Btn
-        icon={<ChevronDown size={14} />}
-        title="在下方加行"
-        disabled={!can.addRowAfter()}
-        onClick={() => editor.chain().focus().addRowAfter().run()}
-      />
-      <Btn
-        icon={<Rows3 size={14} />}
-        title="删除当前行"
-        danger
-        disabled={!can.deleteRow()}
-        onClick={() => editor.chain().focus().deleteRow().run()}
-      />
-      <VDivider />
-      <Btn
-        icon={<PanelTop size={14} />}
-        title="设置/取消标题行"
-        disabled={!can.toggleHeaderRow()}
-        onClick={() => editor.chain().focus().toggleHeaderRow().run()}
-      />
-      <Btn
-        icon={<PanelLeft size={14} />}
-        title="设置/取消标题列"
-        disabled={!can.toggleHeaderColumn()}
-        onClick={() => editor.chain().focus().toggleHeaderColumn().run()}
-      />
-      <VDivider />
-      <Btn
-        icon={<Combine size={14} />}
-        title="合并单元格"
-        disabled={!can.mergeCells()}
-        onClick={() => editor.chain().focus().mergeCells().run()}
-      />
-      <Btn
-        icon={<Split size={14} />}
-        title="拆分单元格"
-        disabled={!can.splitCell()}
-        onClick={() => editor.chain().focus().splitCell().run()}
-      />
-      <VDivider />
-      <Btn
-        icon={<Trash2 size={14} />}
-        title="删除整张表"
-        danger
-        disabled={!can.deleteTable()}
-        onClick={() => editor.chain().focus().deleteTable().run()}
-      />
+      {/* 以下都会改文档：阅读模式下不渲染（否则能在只读笔记里删表，还会被自动保存） */}
+      {editable && (
+        <>
+          <VDivider />
+          <Btn
+            icon={<ChevronLeft size={14} />}
+            title="在左侧加列"
+            disabled={!can.addColumnBefore()}
+            onClick={() => editor.chain().focus().addColumnBefore().run()}
+          />
+          <Btn
+            icon={<ChevronRight size={14} />}
+            title="在右侧加列"
+            disabled={!can.addColumnAfter()}
+            onClick={() => editor.chain().focus().addColumnAfter().run()}
+          />
+          <Btn
+            icon={<Columns3 size={14} />}
+            title="删除当前列"
+            danger
+            disabled={!can.deleteColumn()}
+            onClick={() => editor.chain().focus().deleteColumn().run()}
+          />
+          <VDivider />
+          <Btn
+            icon={<ChevronUp size={14} />}
+            title="在上方加行"
+            disabled={!can.addRowBefore()}
+            onClick={() => editor.chain().focus().addRowBefore().run()}
+          />
+          <Btn
+            icon={<ChevronDown size={14} />}
+            title="在下方加行"
+            disabled={!can.addRowAfter()}
+            onClick={() => editor.chain().focus().addRowAfter().run()}
+          />
+          <Btn
+            icon={<Rows3 size={14} />}
+            title="删除当前行"
+            danger
+            disabled={!can.deleteRow()}
+            onClick={() => editor.chain().focus().deleteRow().run()}
+          />
+          <VDivider />
+          <Btn
+            icon={<PanelTop size={14} />}
+            title="设置/取消标题行"
+            disabled={!can.toggleHeaderRow()}
+            onClick={() => editor.chain().focus().toggleHeaderRow().run()}
+          />
+          <Btn
+            icon={<PanelLeft size={14} />}
+            title="设置/取消标题列"
+            disabled={!can.toggleHeaderColumn()}
+            onClick={() => editor.chain().focus().toggleHeaderColumn().run()}
+          />
+          <VDivider />
+          <Btn
+            icon={<Combine size={14} />}
+            title="合并单元格"
+            disabled={!can.mergeCells()}
+            onClick={() => editor.chain().focus().mergeCells().run()}
+          />
+          <Btn
+            icon={<Split size={14} />}
+            title="拆分单元格"
+            disabled={!can.splitCell()}
+            onClick={() => editor.chain().focus().splitCell().run()}
+          />
+          <VDivider />
+          <Btn
+            icon={<Trash2 size={14} />}
+            title="删除整张表"
+            danger
+            disabled={!can.deleteTable()}
+            onClick={() => editor.chain().focus().deleteTable().run()}
+          />
+        </>
+      )}
     </div>,
     document.body,
   );

@@ -16,8 +16,9 @@ import {
 import { Tooltip } from "antd";
 import { GripHorizontal, Minus, Plus, Trash2 } from "lucide-react";
 
+import { useEditorEditable } from "./useEditorEditable";
 export function ColumnsNodeView({ editor, node, getPos }: NodeViewProps) {
-  const isEditable = editor?.isEditable !== false;
+  const isEditable = useEditorEditable(editor);
   const colCount = node.childCount;
 
   function stopMouseDown(e: React.MouseEvent) {

@@ -14,13 +14,14 @@ import {
 import { Dropdown } from "antd";
 import { CALLOUT_PRESETS, type CalloutType } from "./Callout";
 
+import { useEditorEditable } from "./useEditorEditable";
 export function CalloutNodeView({ node, updateAttributes, editor }: NodeViewProps) {
   const type: CalloutType = (node.attrs.type as CalloutType) || "info";
   const preset = CALLOUT_PRESETS[type] ?? CALLOUT_PRESETS.info;
   const [_open, setOpen] = useState(false);
   void _open;
 
-  const isEditable = editor?.isEditable !== false;
+  const isEditable = useEditorEditable(editor);
 
   function stopMouseDown(e: React.MouseEvent) {
     e.stopPropagation();

@@ -14,6 +14,7 @@ import { Button, Input, Tooltip, message } from "antd";
 import { MapPin, Pencil, Check, X, Scissors } from "lucide-react";
 import { insertVideoTimestamp } from "./VideoTimestamp";
 
+import { useEditorEditable } from "./useEditorEditable";
 export function VideoNodeView({ node, updateAttributes, editor, getPos }: NodeViewProps) {
   const src: string = (node.attrs.src as string | null) ?? "";
   const id: string = (node.attrs.id as string | null) ?? "";
@@ -42,7 +43,7 @@ export function VideoNodeView({ node, updateAttributes, editor, getPos }: NodeVi
   }, [editor.state.doc, getPos]);
 
   const displayLabel = label || `视频 ${autoIndex}`;
-  const isEditable = editor?.isEditable !== false;
+  const isEditable = useEditorEditable(editor);
 
   function handleSaveLabel() {
     const trimmed = labelInput.trim();

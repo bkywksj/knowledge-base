@@ -35,6 +35,7 @@ import type { DataviewConfig, DataviewKind, DataviewRow } from "@/types";
 import { relativeTime } from "@/lib/utils";
 import { DataviewBlockModal } from "./DataviewBlockModal";
 
+import { useEditorEditable } from "./useEditorEditable";
 const KIND_LABEL: Record<DataviewKind, string> = {
   "recent-notes": "最近修改的笔记",
   "notes-by-tag": "按标签筛选笔记",
@@ -108,7 +109,7 @@ export function DataviewNodeView({
     void reload();
   }, [reload]);
 
-  const isEditable = editor?.isEditable !== false;
+  const isEditable = useEditorEditable(editor);
   const heading = config.title?.trim() || KIND_LABEL[config.kind] || "数据视图";
 
   function handleRowClick(row: DataviewRow) {

@@ -2578,7 +2578,8 @@ export function TiptapEditor({
       <SearchReplaceBar
         editor={editor}
         open={searchOpen}
-        showReplace={searchShowReplace}
+        // 阅读模式只能查找不能替换（替换会改文档并触发自动保存）
+        showReplace={searchShowReplace && !readingMode}
         onClose={() => setSearchOpen(false)}
         initialQuery={initialSearch}
       />

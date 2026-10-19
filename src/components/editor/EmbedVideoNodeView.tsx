@@ -12,6 +12,7 @@ import { Copy, ExternalLink, Trash2 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { EmbedProviderId } from "./embedVideoProviders";
 
+import { useEditorEditable } from "./useEditorEditable";
 const PROVIDER_DISPLAY: Record<EmbedProviderId, { label: string; icon: string }> = {
   bilibili: { label: "B站", icon: "📺" },
   youtube: { label: "YouTube", icon: "▶️" },
@@ -31,7 +32,7 @@ export function EmbedVideoNodeView({ node, editor, deleteNode }: NodeViewProps) 
     (node.attrs.provider as EmbedProviderId | null) ?? "generic";
   const display = PROVIDER_DISPLAY[provider] ?? PROVIDER_DISPLAY.generic;
 
-  const isEditable = editor?.isEditable !== false;
+  const isEditable = useEditorEditable(editor);
   const [iframeError, setIframeError] = useState(false);
 
   function stopMouseDown(e: React.MouseEvent) {
