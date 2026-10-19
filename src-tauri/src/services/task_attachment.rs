@@ -13,7 +13,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 use crate::database::Database;
 use crate::error::AppError;
-use crate::models::TaskAttachment;
+use crate::models::{PasteImage, TaskAttachment};
 use crate::services::attachment::{mime_for_ext, BLOCKED_EXTS};
 use crate::services::{asset_path, safe_filename};
 
@@ -44,6 +44,48 @@ fn mime_of(ext: &str) -> &'static str {
         "txt" | "md" | "log" => "text/plain",
         other => mime_for_ext(other),
     }
+}
+
+/// 粘贴预览允许读取的本地图片上限（和前端 base64 上传上限一致）
+const MAX_PASTE_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
+
+/// 把图片字节打包成前端可直接预览的 `PasteImage`
+pub fn paste_image_from_bytes(file_name: String, ext: &str, data: &[u8]) -> PasteImage {
+    PasteImage {
+        file_name,
+        mime: mime_of(ext).to_string(),
+        base64: STANDARD.encode(data),
+    }
+}
+
+/// 读取粘贴 HTML 里 `file:///` 指向的本地图片（QQ / 微信把图放在本地目录）。
+///
+/// 🔴 只放行图片扩展名 + 大小上限：路径来自剪贴板内容，不能变成「任意读本地文件」的口子。
+pub fn load_local_paste_image(path: &str) -> Result<PasteImage, AppError> {
+    let p = Path::new(path);
+    let ext = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if !matches!(
+        ext.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "avif" | "ico"
+    ) {
+        return Err(AppError::Custom(format!("不是图片文件: {}", path)));
+    }
+    let meta =
+        std::fs::metadata(p).map_err(|_| AppError::NotFound(format!("图片不存在: {}", path)))?;
+    if !meta.is_file() || meta.len() > MAX_PASTE_IMAGE_BYTES {
+        return Err(AppError::Custom(format!("图片不可读或超过 50MB: {}", path)));
+    }
+    let data = std::fs::read(p)?;
+    let name = p
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("image.png")
+        .to_string();
+    Ok(paste_image_from_bytes(name, &ext, &data))
 }
 
 /// 拆 stem / ext 并做扩展名黑名单校验
@@ -204,6 +246,24 @@ impl TaskAttachmentService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paste_image_only_reads_images() {
+        let dir = std::env::temp_dir().join(format!("kb-paste-img-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let txt = dir.join("secret.txt");
+        let png = dir.join("pic 1.png");
+        std::fs::write(&txt, b"secret").unwrap();
+        std::fs::write(&png, [1u8, 2, 3]).unwrap();
+
+        // 剪贴板 HTML 可以指向任意路径：非图片扩展名一律拒绝
+        assert!(load_local_paste_image(&txt.to_string_lossy()).is_err());
+        let img = load_local_paste_image(&png.to_string_lossy()).unwrap();
+        assert_eq!(img.file_name, "pic 1.png");
+        assert_eq!(img.mime, "image/png");
+        assert_eq!(img.base64, "AQID");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn blocked_ext_rejected() {

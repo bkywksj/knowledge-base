@@ -76,6 +76,7 @@ import type {
   RestoreBatchResult,
   Task,
   TaskAttachment,
+  PasteImage,
   TaskLinkInput,
   CreateTaskInput,
   UpdateTaskInput,
@@ -1495,6 +1496,9 @@ export const taskAttachmentApi = {
   /** 网页图文里的外链图片：后端下载（绕开 WebView 的 CORS / 防盗链） */
   addFromUrl: (taskId: number, url: string, referer?: string) =>
     invoke<TaskAttachment>("add_task_attachment_from_url", { taskId, url, referer }),
+  /** 把粘贴 HTML 里的图（file:/// 本地路径或外链）读成 base64，给草稿做预览 */
+  loadPasteImage: (source: string) =>
+    invoke<PasteImage>("load_paste_image", { source }),
   remove: (id: number) => invoke<boolean>("delete_task_attachment", { id }),
   reorder: (taskId: number, ids: number[]) =>
     invoke<void>("reorder_task_attachments", { taskId, ids }),

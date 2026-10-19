@@ -1310,6 +1310,15 @@ pub struct TaskAttachment {
     pub created_at: String,
 }
 
+/// 粘贴图文时 HTML 里引用的图片（本地 file:/// 或外链），读成字节交给前端。
+/// 新建任务还没 id 时用它做草稿预览；保存时按普通 base64 附件上传。
+#[derive(Debug, Clone, Serialize)]
+pub struct PasteImage {
+    pub file_name: String,
+    pub mime: String,
+    pub base64: String,
+}
+
 fn default_kanban_stage() -> String {
     "todo".to_string()
 }

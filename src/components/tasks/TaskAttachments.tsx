@@ -142,6 +142,45 @@ export function draftsFromPlan(plan: ClipboardPlan): DraftAttachment[] {
   ];
 }
 
+function base64ToFile(b64: string, name: string, mime: string): File {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new File([bytes], name, { type: mime });
+}
+
+/**
+ * 把外链 / 本地路径草稿就地读成内存 File（带 blob: 预览）。
+ * 读不到的（外链失效、防盗链、文件被删）保留原样 —— 保存时后端还会再试一次。
+ */
+export async function inlineRemoteDrafts(
+  drafts: DraftAttachment[],
+): Promise<DraftAttachment[]> {
+  return Promise.all(
+    drafts.map(async (d) => {
+      const source = d.url ?? d.path;
+      if (d.file || !source) return d;
+      try {
+        const img = await taskAttachmentApi.loadPasteImage(source);
+        const file = base64ToFile(img.base64, img.file_name, img.mime);
+        return {
+          key: d.key,
+          name: img.file_name,
+          file,
+          previewUrl: URL.createObjectURL(file),
+        };
+      } catch (e) {
+        console.warn(
+          "[TaskAttachments] 粘贴图片预读失败，保存时再试",
+          source,
+          e,
+        );
+        return d;
+      }
+    }),
+  );
+}
+
 /** 新建任务落库后把草稿附件传上去；返回失败条数（不抛错，任务本身已建好） */
 export async function flushDraftAttachments(
   taskId: number,
@@ -273,25 +312,33 @@ export default function TaskAttachments({
     [live, taskId, drafts, onDraftsChange, message, reload],
   );
 
-  /** 外链图片 / 本地路径：实时模式交后端下载或复制，草稿模式先记下来 */
+  /**
+   * 外链图片 / 本地路径：实时模式交后端下载或复制；
+   * 草稿模式先让后端读出字节转成内存 File，这样立刻有缩略图、能点开预览
+   */
   const addRemote = useCallback(
     async (urls: string[], paths: string[]) => {
       if (urls.length === 0 && paths.length === 0) return;
       if (!live) {
         const stamp = Date.now();
-        onDraftsChange?.([
-          ...drafts,
-          ...urls.map((url, i) => ({
-            key: `${stamp}-u${i}`,
-            name: nameFromUrl(url),
-            url,
-          })),
-          ...paths.map((path, i) => ({
-            key: `${stamp}-p${i}`,
-            name: path.split(/[\\/]/).pop() || path,
-            path,
-          })),
-        ]);
+        setBusy(true);
+        try {
+          const inlined = await inlineRemoteDrafts([
+            ...urls.map((url, i) => ({
+              key: `${stamp}-u${i}`,
+              name: nameFromUrl(url),
+              url,
+            })),
+            ...paths.map((path, i) => ({
+              key: `${stamp}-p${i}`,
+              name: path.split(/[\\/]/).pop() || path,
+              path,
+            })),
+          ]);
+          onDraftsChange?.([...drafts, ...inlined]);
+        } finally {
+          setBusy(false);
+        }
         return;
       }
       setBusy(true);

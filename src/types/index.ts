@@ -1331,6 +1331,13 @@ export interface TaskLink {
 }
 
 /** 任务附件（v65 task_attachments）：图片显示缩略图，其它文件显示文件条 */
+/** 粘贴 HTML 里引用的图片读出来的字节（load_paste_image），草稿预览用 */
+export interface PasteImage {
+  file_name: string;
+  mime: string;
+  base64: string;
+}
+
 export interface TaskAttachment {
   id: number;
   task_id: number;

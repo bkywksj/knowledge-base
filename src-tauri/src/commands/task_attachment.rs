@@ -6,9 +6,9 @@
 
 use tauri::State;
 
-use crate::models::TaskAttachment;
+use crate::models::{PasteImage, TaskAttachment};
 use crate::services::image_download;
-use crate::services::task_attachment::TaskAttachmentService;
+use crate::services::task_attachment::{self, TaskAttachmentService};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -68,6 +68,34 @@ pub async fn add_task_attachment_from_url(
         .unwrap_or(0);
     let file_name = format!("pasted-{}.{}", ts, ext);
     TaskAttachmentService::add_from_bytes(&state.db, &state.data_dir, task_id, &file_name, &bytes)
+        .map_err(|e| e.to_string())
+}
+
+/// 把粘贴 HTML 里的图片（`file:///` 本地路径或 http(s) 外链）读成字节交给前端。
+///
+/// 新建任务还没有 id、附件无处落盘时用：前端拿到字节转成内存 File，立刻能显示缩略图 /
+/// 点开预览，保存任务时再按普通 base64 附件上传。WebView 自己读不到这些图
+/// （CSP 只放行 asset / data / blob，外链还有防盗链）。
+#[tauri::command]
+pub async fn load_paste_image(source: String) -> Result<PasteImage, String> {
+    if source.starts_with("http://") || source.starts_with("https://") {
+        let (bytes, ext) = image_download::fetch_image_bytes(&source, None)
+            .await
+            .map_err(|e| e.to_string())?;
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        return Ok(task_attachment::paste_image_from_bytes(
+            format!("pasted-{}.{}", ts, ext),
+            &ext,
+            &bytes,
+        ));
+    }
+    // 本地读盘是同步 IO，丢到阻塞线程池，别卡住 IPC
+    tauri::async_runtime::spawn_blocking(move || task_attachment::load_local_paste_image(&source))
+        .await
+        .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
 }
 
