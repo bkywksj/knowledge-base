@@ -16,7 +16,6 @@ import type { Task } from "@/types";
 import { MicButton } from "@/components/MicButton";
 import { CopyButton } from "@/components/ui/CopyButton";
 import TaskAttachments, {
-  filesFromClipboard,
   type TaskAttachmentsHandle,
 } from "./TaskAttachments";
 
@@ -378,9 +377,7 @@ export function SubtaskList({
                   className="outline-none"
                   style={{ padding: "4px 0 6px 28px" }}
                   onPaste={(e) => {
-                    const files = filesFromClipboard(e);
-                    if (files.length > 0)
-                      void attachmentRefs.current.get(t.id)?.addFiles(files);
+                    attachmentRefs.current.get(t.id)?.handlePaste(e);
                   }}
                   title="可在此处粘贴截图"
                 >

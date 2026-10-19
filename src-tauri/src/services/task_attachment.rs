@@ -98,13 +98,24 @@ impl TaskAttachmentService {
         file_name: &str,
         base64_data: &str,
     ) -> Result<TaskAttachment, AppError> {
-        Self::ensure_task_exists(db, task_id)?;
-        let (stem, ext) = split_name(file_name)?;
         let data = STANDARD
             .decode(base64_data)
             .map_err(|e| AppError::Custom(format!("base64 解码失败: {}", e)))?;
+        Self::add_from_bytes(db, app_data_dir, task_id, file_name, &data)
+    }
+
+    /// 字节已在内存里（base64 解码后 / 外链图片下载后）
+    pub fn add_from_bytes(
+        db: &Database,
+        app_data_dir: &Path,
+        task_id: i64,
+        file_name: &str,
+        data: &[u8],
+    ) -> Result<TaskAttachment, AppError> {
+        Self::ensure_task_exists(db, task_id)?;
+        let (stem, ext) = split_name(file_name)?;
         let abs =
-            safe_filename::save_unique(&Self::task_dir(app_data_dir, task_id), &stem, &ext, &data)?;
+            safe_filename::save_unique(&Self::task_dir(app_data_dir, task_id), &stem, &ext, data)?;
         Self::record(
             db,
             app_data_dir,

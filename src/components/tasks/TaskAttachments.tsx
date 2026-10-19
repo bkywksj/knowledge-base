@@ -9,14 +9,17 @@
  * - `taskId` 为 null：草稿模式（新建任务还没 id），文件先暂存在 `drafts`，
  *   父组件建完任务后调 `flushDraftAttachments` 一次性上传
  *
- * 添加入口：粘贴（父组件在描述框 onPaste 里调 ref.addFiles）、拖入、点「＋」选文件。
+ * 添加入口：粘贴（父组件在 onPaste 里调 ref.handlePaste）、拖入、点「＋」选文件。
+ *
+ * 粘贴图文混合内容（网页 / 微信 / QQ 复制一段带图的文字）：文字照常进描述框，
+ * 图片自动识别成附件 —— 见 `parseClipboard`。
  */
 import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useRef,
   useState,
-  type ClipboardEvent,
   type DragEvent,
   type Ref,
 } from "react";
@@ -28,19 +31,40 @@ import { taskAttachmentApi } from "@/lib/api";
 import { resolveAssetSrc, toKbAsset } from "@/lib/assetUrl";
 import { useAppStore } from "@/store";
 import { useAttachmentPreviewStore } from "@/store/attachmentPreview";
+import { MAX_HTML_IMAGES, parseClipboard } from "@/lib/clipboardAttachments";
 import type { TaskAttachment } from "@/types";
 
-/** 草稿附件（新建任务尚未落库时暂存） */
+/**
+ * 草稿附件（新建任务尚未落库时暂存）。三选一：
+ * - `file`：截图 / 拖入的文件，已在内存里
+ * - `url`：网页图文里的外链图片，落库时由后端下载
+ * - `path`：微信 / QQ 等把图片放在本地临时目录，HTML 里是 file:/// 地址，落库时由后端复制
+ */
 export interface DraftAttachment {
   key: string;
-  file: File;
-  /** 图片的 blob: 预览地址；非图片为 undefined */
+  name: string;
+  file?: File;
+  url?: string;
+  path?: string;
+  /** 图片的 blob: 预览地址；外链 / 本地路径拿不到预览（CSP 只放行 asset/data/blob） */
   previewUrl?: string;
 }
 
+/** 粘贴事件的最小接口：React 合成事件和原生 ClipboardEvent 都满足 */
+export interface PasteLike {
+  clipboardData: DataTransfer | null;
+  preventDefault: () => void;
+}
+
 export interface TaskAttachmentsHandle {
-  /** 追加文件（粘贴 / 拖入时由父组件调用） */
+  /** 追加文件（拖入时由父组件调用） */
   addFiles: (files: File[]) => Promise<void>;
+  /**
+   * 处理一次粘贴：识别出图片 / 文件就收进附件条，返回是否识别到附件。
+   * `keepText`：粘贴目标是文本框时传 true —— 有文字就不拦截，让文字照常进框；
+   * 没有文本框的地方（详情页 / 子任务区）传 false，识别到附件就拦截。
+   */
+  handlePaste: (e: PasteLike, opts?: { keepText?: boolean }) => boolean;
 }
 
 /** base64 走 IPC，太大的文件会卡 —— 超过这个大小请用「＋」选文件（后端直接复制） */
@@ -80,14 +104,13 @@ function nameForFile(file: File, idx: number): string {
   return `pasted-${Date.now()}-${idx}.${ext}`;
 }
 
-/**
- * 从粘贴事件里取文件。有文件时 preventDefault（不把文件名当文本插进描述），
- * 纯文本粘贴返回空数组、不拦截。
- */
-export function filesFromClipboard(e: ClipboardEvent): File[] {
-  const files = Array.from(e.clipboardData?.files ?? []);
-  if (files.length > 0) e.preventDefault();
-  return files;
+function nameFromUrl(url: string): string {
+  try {
+    const last = new URL(url).pathname.split("/").filter(Boolean).pop();
+    return last ? decodeURIComponent(last) : "网页图片";
+  } catch {
+    return "网页图片";
+  }
 }
 
 /** 新建任务落库后把草稿附件传上去；返回失败条数（不抛错，任务本身已建好） */
@@ -98,13 +121,19 @@ export async function flushDraftAttachments(
   let failed = 0;
   for (const [idx, d] of drafts.entries()) {
     try {
-      await taskAttachmentApi.add(
-        taskId,
-        nameForFile(d.file, idx),
-        await fileToBase64(d.file),
-      );
+      if (d.file) {
+        await taskAttachmentApi.add(
+          taskId,
+          nameForFile(d.file, idx),
+          await fileToBase64(d.file),
+        );
+      } else if (d.url) {
+        await taskAttachmentApi.addFromUrl(taskId, d.url);
+      } else if (d.path) {
+        await taskAttachmentApi.addFromPath(taskId, d.path);
+      }
     } catch (e) {
-      console.error("[TaskAttachments] 草稿附件上传失败", d.file.name, e);
+      console.error("[TaskAttachments] 草稿附件上传失败", d.name, e);
       failed++;
     }
   }
@@ -184,6 +213,7 @@ export default function TaskAttachments({
       if (!live) {
         const next = ok.map((file, i) => ({
           key: `${Date.now()}-${i}-${file.name}`,
+          name: file.name || nameForFile(file, i),
           file,
           previewUrl: file.type.startsWith("image/")
             ? URL.createObjectURL(file)
@@ -214,7 +244,88 @@ export default function TaskAttachments({
     [live, taskId, drafts, onDraftsChange, message, reload],
   );
 
-  useImperativeHandle(ref, () => ({ addFiles }), [addFiles]);
+  /** 外链图片 / 本地路径：实时模式交后端下载或复制，草稿模式先记下来 */
+  const addRemote = useCallback(
+    async (urls: string[], paths: string[]) => {
+      if (urls.length === 0 && paths.length === 0) return;
+      if (!live) {
+        const stamp = Date.now();
+        onDraftsChange?.([
+          ...drafts,
+          ...urls.map((url, i) => ({
+            key: `${stamp}-u${i}`,
+            name: nameFromUrl(url),
+            url,
+          })),
+          ...paths.map((path, i) => ({
+            key: `${stamp}-p${i}`,
+            name: path.split(/[\\/]/).pop() || path,
+            path,
+          })),
+        ]);
+        return;
+      }
+      setBusy(true);
+      let failed = 0;
+      try {
+        for (const url of urls) {
+          await taskAttachmentApi.addFromUrl(taskId, url).catch(() => failed++);
+        }
+        for (const p of paths) {
+          await taskAttachmentApi.addFromPath(taskId, p).catch(() => failed++);
+        }
+      } finally {
+        setBusy(false);
+        if (failed > 0)
+          message.warning(`${failed} 张图片没取到（可能已失效或被防盗链拦截）`);
+        await reload();
+      }
+    },
+    [live, taskId, drafts, onDraftsChange, message, reload],
+  );
+
+  const handlePaste = useCallback(
+    (e: PasteLike, opts?: { keepText?: boolean }) => {
+      const plan = parseClipboard(e.clipboardData);
+      const found = plan.files.length + plan.urls.length + plan.paths.length;
+      if (found === 0) return false;
+      // 文字留给文本框自己插入；没有文字（纯截图）或者根本没有文本框时才拦截默认行为
+      if (!opts?.keepText || plan.text.trim() === "") e.preventDefault();
+      if (plan.skipped > 0)
+        message.info(`图片较多，只收了前 ${MAX_HTML_IMAGES} 张`);
+      // addFiles 和 addRemote 都基于同一份 drafts 闭包，草稿模式下串行调用会互相覆盖 ——
+      // 有文件就先收文件，外链 / 路径留到下一次渲染拿到新 drafts 再收
+      if (
+        !live &&
+        plan.files.length > 0 &&
+        plan.urls.length + plan.paths.length > 0
+      ) {
+        void addFiles(plan.files);
+        pendingRemote.current = { urls: plan.urls, paths: plan.paths };
+        return true;
+      }
+      void addFiles(plan.files);
+      void addRemote(plan.urls, plan.paths);
+      return true;
+    },
+    [live, addFiles, addRemote, message],
+  );
+
+  // 见 handlePaste：草稿模式里文件和外链同时出现时，外链在 drafts 更新后补收
+  const pendingRemote = useRef<{ urls: string[]; paths: string[] } | null>(
+    null,
+  );
+  useEffect(() => {
+    const p = pendingRemote.current;
+    if (!p) return;
+    pendingRemote.current = null;
+    void addRemote(p.urls, p.paths);
+  }, [drafts, addRemote]);
+
+  useImperativeHandle(ref, () => ({ addFiles, handlePaste }), [
+    addFiles,
+    handlePaste,
+  ]);
 
   async function pickFiles() {
     if (!live) {
@@ -319,7 +430,7 @@ export default function TaskAttachments({
   const fileChip = (
     key: string | number,
     name: string,
-    bytes: number,
+    bytes: number | undefined,
     onOpen?: () => void,
     onRemove?: () => void,
   ) => (
@@ -340,7 +451,11 @@ export default function TaskAttachments({
       />
       <div className="min-w-0">
         <div className="truncate">{name}</div>
-        {size !== "small" && <div className="opacity-50">{fmtSize(bytes)}</div>}
+        {size !== "small" && (
+          <div className="opacity-50">
+            {bytes != null ? fmtSize(bytes) : "保存后下载"}
+          </div>
+        )}
       </div>
       {onRemove && removeBtn(onRemove)}
     </div>
@@ -398,7 +513,7 @@ export default function TaskAttachments({
               <div key={d.key} className="group relative">
                 <Image
                   src={d.previewUrl}
-                  alt={d.file.name}
+                  alt={d.name}
                   width={tile}
                   height={tile}
                   styles={{ image: { objectFit: "cover", borderRadius: 4 } }}
@@ -419,7 +534,7 @@ export default function TaskAttachments({
             ),
           )}
           {draftOthers.map((d) =>
-            fileChip(d.key, d.file.name, d.file.size, undefined, () =>
+            fileChip(d.key, d.name, d.file?.size, undefined, () =>
               removeDraft(d.key),
             ),
           )}

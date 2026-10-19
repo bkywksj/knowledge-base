@@ -1600,6 +1600,7 @@ pub fn run() {
             commands::task_attachment::list_task_attachments,
             commands::task_attachment::add_task_attachment,
             commands::task_attachment::add_task_attachment_from_path,
+            commands::task_attachment::add_task_attachment_from_url,
             commands::task_attachment::delete_task_attachment,
             commands::task_attachment::reorder_task_attachments,
             // 待办模块

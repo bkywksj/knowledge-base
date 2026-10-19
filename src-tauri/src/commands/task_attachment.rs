@@ -7,6 +7,7 @@
 use tauri::State;
 
 use crate::models::TaskAttachment;
+use crate::services::image_download;
 use crate::services::task_attachment::TaskAttachmentService;
 use crate::state::AppState;
 
@@ -44,6 +45,29 @@ pub fn add_task_attachment_from_path(
     source_path: String,
 ) -> Result<TaskAttachment, String> {
     TaskAttachmentService::add_from_path(&state.db, &state.data_dir, task_id, &source_path)
+        .map_err(|e| e.to_string())
+}
+
+/// 下载外链图片为任务附件（从网页复制图文时，HTML 里的 `<img src="https://...">`）。
+///
+/// 走 Rust 侧下载而不是前端 fetch：WebView 受 CORS / 防盗链限制，
+/// `fetch_image_bytes` 会按 host 注入 Referer（与笔记粘贴外链图片同一套逻辑）。
+#[tauri::command]
+pub async fn add_task_attachment_from_url(
+    state: State<'_, AppState>,
+    task_id: i64,
+    url: String,
+    referer: Option<String>,
+) -> Result<TaskAttachment, String> {
+    let (bytes, ext) = image_download::fetch_image_bytes(&url, referer.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let file_name = format!("pasted-{}.{}", ts, ext);
+    TaskAttachmentService::add_from_bytes(&state.db, &state.data_dir, task_id, &file_name, &bytes)
         .map_err(|e| e.to_string())
 }
 

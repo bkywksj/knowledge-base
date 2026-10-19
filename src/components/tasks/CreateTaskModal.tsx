@@ -37,7 +37,6 @@ import { SubtaskList } from "./SubtaskList";
 import { ProjectManageModal } from "./ProjectManageModal";
 import { MicButton } from "@/components/MicButton";
 import TaskAttachments, {
-  filesFromClipboard,
   flushDraftAttachments,
   type DraftAttachment,
   type TaskAttachmentsHandle,
@@ -642,10 +641,9 @@ export function CreateTaskModal({
             placeholder="备注 / 上下文"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            // 粘贴图片 / 文件 → 进附件条，不往描述里塞文件名；纯文本粘贴照常
+            // 粘贴截图 / 文件 → 进附件条；图文混合（网页、微信）→ 文字进描述、图片进附件条
             onPaste={(e) => {
-              const files = filesFromClipboard(e);
-              if (files.length > 0) void attachmentsRef.current?.addFiles(files);
+              attachmentsRef.current?.handlePaste(e, { keepText: true });
             }}
           />
           <div className="mt-2">

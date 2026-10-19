@@ -1492,6 +1492,9 @@ export const taskAttachmentApi = {
   /** 文件选择框 / OS 拖放：后端直接复制，不经 IPC 传字节 */
   addFromPath: (taskId: number, sourcePath: string) =>
     invoke<TaskAttachment>("add_task_attachment_from_path", { taskId, sourcePath }),
+  /** 网页图文里的外链图片：后端下载（绕开 WebView 的 CORS / 防盗链） */
+  addFromUrl: (taskId: number, url: string, referer?: string) =>
+    invoke<TaskAttachment>("add_task_attachment_from_url", { taskId, url, referer }),
   remove: (id: number) => invoke<boolean>("delete_task_attachment", { id }),
   reorder: (taskId: number, ids: number[]) =>
     invoke<void>("reorder_task_attachments", { taskId, ids }),

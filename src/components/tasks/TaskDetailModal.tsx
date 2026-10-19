@@ -67,10 +67,8 @@ export function TaskDetailModal({
       if (e.defaultPrevented) return;
       const el = document.activeElement as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
-      const files = Array.from(e.clipboardData?.files ?? []);
-      if (files.length === 0) return;
-      e.preventDefault();
-      void attachmentsRef.current?.addFiles(files);
+      // 详情页没有可写的描述框：图文混合时只收图片，文字丢弃
+      attachmentsRef.current?.handlePaste(e);
     };
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
