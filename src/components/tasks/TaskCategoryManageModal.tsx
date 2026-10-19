@@ -6,10 +6,11 @@ import {
   List,
   Popconfirm,
   ColorPicker,
+  TreeSelect,
   App as AntdApp,
   theme as antdTheme,
 } from "antd";
-import { Plus, Trash2, Edit3, Check, X, GripVertical } from "lucide-react";
+import { Plus, Trash2, Edit3, Check, X, GripVertical, CornerDownRight } from "lucide-react";
 import {
   DndContext,
   PointerSensor,
@@ -26,6 +27,11 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { taskCategoryApi } from "@/lib/api";
 import type { TaskCategory } from "@/types";
+import {
+  categoryTreeSelectData,
+  flattenCategoryTree,
+  type CategoryTreeNode,
+} from "@/lib/categoryTree";
 
 interface Props {
   open: boolean;
@@ -73,7 +79,15 @@ function toHex(value: unknown): string {
  */
 interface SortableCategoryItemProps {
   category: TaskCategory;
+  /** 层级深度（0 = 顶层），用于缩进 */
+  depth: number;
   isEditing: boolean;
+  /** 编辑态的上级分类；null = 顶层 */
+  editParent: number | null;
+  onEditParentChange: (v: number | null) => void;
+  /** 上级候选（已排除自身子树，选了不会成环） */
+  parentTreeData: CategoryTreeNode[];
+  onAddChild: () => void;
   editName: string;
   editColor: string;
   onStartEdit: () => void;
@@ -88,7 +102,12 @@ interface SortableCategoryItemProps {
 
 function SortableCategoryItem({
   category: c,
+  depth,
   isEditing,
+  editParent,
+  onEditParentChange,
+  parentTreeData,
+  onAddChild,
   editName,
   editColor,
   onStartEdit,
@@ -136,6 +155,14 @@ function SortableCategoryItem({
               ]
             : [
                 <Button
+                  key="add-child"
+                  type="text"
+                  size="small"
+                  icon={<CornerDownRight size={14} />}
+                  onClick={onAddChild}
+                  title="在这个分类下新建子分类"
+                />,
+                <Button
                   key="edit"
                   type="text"
                   size="small"
@@ -146,7 +173,7 @@ function SortableCategoryItem({
                 <Popconfirm
                   key="del"
                   title="删除这个分类？"
-                  description="原任务的分类会被清空（落到「未分类」），不会丢失"
+                  description="原任务回落到「未分类」，子分类上移一级，都不会丢失"
                   okText="删除"
                   cancelText="取消"
                   okButtonProps={{ danger: true }}
@@ -163,7 +190,10 @@ function SortableCategoryItem({
               ]
         }
       >
-        <div className="flex items-center gap-2 flex-1 min-w-0">
+        <div
+          className="flex items-center gap-2 flex-1 min-w-0"
+          style={{ paddingLeft: depth * 18 }}
+        >
           {/* 拖动手柄：仅这里挂 dnd-kit 的 listeners，避免和按钮/输入框冲突。
               编辑态隐藏手柄，提示用户先保存/取消才能继续重排。 */}
           {!isEditing && (
@@ -199,6 +229,17 @@ function SortableCategoryItem({
                 autoFocus
                 style={{ flex: 1 }}
               />
+              <TreeSelect
+                size="small"
+                style={{ width: 130 }}
+                placeholder="上级：顶层"
+                allowClear
+                value={editParent ?? undefined}
+                onChange={(v) => onEditParentChange((v as number | undefined) ?? null)}
+                treeData={parentTreeData}
+                treeDefaultExpandAll
+                popupMatchSelectWidth={200}
+              />
             </>
           ) : (
             <>
@@ -231,11 +272,18 @@ export function TaskCategoryManageModal({ open, onClose, onChanged }: Props) {
   // 新建态
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState("#1677ff");
+  /** 新建到哪个上级下；null = 顶层 */
+  const [newParent, setNewParent] = useState<number | null>(null);
 
   // 编辑态：单条编辑
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
   const [editColor, setEditColor] = useState("#1677ff");
+  const [editParent, setEditParent] = useState<number | null>(null);
+
+  /** 按树展开的显示顺序（父在前、子紧跟） */
+  const rows = useMemo(() => flattenCategoryTree(categories), [categories]);
+  const newParentTreeData = useMemo(() => categoryTreeSelectData(categories), [categories]);
 
   async function load() {
     setLoading(true);
@@ -254,6 +302,7 @@ export function TaskCategoryManageModal({ open, onClose, onChanged }: Props) {
       load();
       setNewName("");
       setNewColor("#1677ff");
+      setNewParent(null);
       setEditingId(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -280,7 +329,9 @@ export function TaskCategoryManageModal({ open, onClose, onChanged }: Props) {
       await taskCategoryApi.create({
         name,
         color: newColor,
-        sort_order: categories.length,
+        // 排到同级末尾
+        sort_order: categories.filter((c) => (c.parent_id ?? null) === newParent).length,
+        parent_id: newParent,
       });
       setNewName("");
       setNewColor("#1677ff");
@@ -298,6 +349,7 @@ export function TaskCategoryManageModal({ open, onClose, onChanged }: Props) {
     setEditingId(c.id);
     setEditName(c.name);
     setEditColor(c.color);
+    setEditParent(c.parent_id ?? null);
   }
   function cancelEdit() {
     setEditingId(null);
@@ -310,7 +362,17 @@ export function TaskCategoryManageModal({ open, onClose, onChanged }: Props) {
       return;
     }
     try {
-      await taskCategoryApi.update(id, { name, color: editColor });
+      const original = categories.find((c) => c.id === id);
+      const parentChanged = (original?.parent_id ?? null) !== editParent;
+      await taskCategoryApi.update(id, {
+        name,
+        color: editColor,
+        ...(parentChanged
+          ? editParent == null
+            ? { clear_parent: true }
+            : { parent_id: editParent }
+          : {}),
+      });
       setEditingId(null);
       await load();
       onChanged?.();
@@ -344,12 +406,26 @@ export function TaskCategoryManageModal({ open, onClose, onChanged }: Props) {
   async function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    const oldIdx = categories.findIndex((c) => c.id === active.id);
-    const newIdx = categories.findIndex((c) => c.id === over.id);
-    if (oldIdx < 0 || newIdx < 0) return;
-
-    const reordered = arrayMove(categories, oldIdx, newIdx);
-    setCategories(reordered); // 乐观更新
+    const from = categories.find((c) => c.id === active.id);
+    const to = categories.find((c) => c.id === over.id);
+    if (!from || !to) return;
+    // 多级之后拖拽只负责同级排序；换上级走「编辑 → 上级分类」，拖错层级比点错按钮更难察觉
+    const parent = from.parent_id ?? null;
+    if ((to.parent_id ?? null) !== parent) {
+      message.info("拖拽只能在同一层级内排序，换上级请点「编辑」");
+      return;
+    }
+    const siblings = flattenCategoryTree(categories)
+      .map((r) => r.category)
+      .filter((c) => (c.parent_id ?? null) === parent);
+    const oldIdx = siblings.findIndex((c) => c.id === from.id);
+    const newIdx = siblings.findIndex((c) => c.id === to.id);
+    const reordered = arrayMove(siblings, oldIdx, newIdx);
+    const orderOf = new Map(reordered.map((c, idx) => [c.id, idx]));
+    // 乐观更新
+    setCategories((prev) =>
+      prev.map((c) => (orderOf.has(c.id) ? { ...c, sort_order: orderOf.get(c.id)! } : c)),
+    );
 
     try {
       await Promise.all(
@@ -374,7 +450,7 @@ export function TaskCategoryManageModal({ open, onClose, onChanged }: Props) {
       footer={
         <Button onClick={onClose}>关闭</Button>
       }
-      width={480}
+      width={560}
       destroyOnHidden
     >
       <div className="flex flex-col gap-3">
@@ -402,6 +478,16 @@ export function TaskCategoryManageModal({ open, onClose, onChanged }: Props) {
               status={newNameDup ? "error" : undefined}
               style={{ flex: 1 }}
             />
+            <TreeSelect
+              style={{ width: 130 }}
+              placeholder="上级：顶层"
+              allowClear
+              value={newParent ?? undefined}
+              onChange={(v) => setNewParent((v as number | undefined) ?? null)}
+              treeData={newParentTreeData}
+              treeDefaultExpandAll
+              popupMatchSelectWidth={200}
+            />
             <Button
               type="primary"
               size="middle"
@@ -425,18 +511,28 @@ export function TaskCategoryManageModal({ open, onClose, onChanged }: Props) {
         {/* 列表（可拖拽重排） */}
         <DndContext sensors={dndSensors} onDragEnd={handleDragEnd}>
           <SortableContext
-            items={categories.map((c) => c.id)}
+            items={rows.map((r) => r.category.id)}
             strategy={verticalListSortingStrategy}
           >
             <List
               loading={loading}
-              dataSource={categories}
+              dataSource={rows}
               locale={{ emptyText: "还没有分类，使用上方输入框创建第一个" }}
-              renderItem={(c) => (
+              renderItem={({ category: c, depth }) => (
                 <SortableCategoryItem
                   key={c.id}
                   category={c}
+                  depth={depth}
                   isEditing={editingId === c.id}
+                  editParent={editParent}
+                  onEditParentChange={setEditParent}
+                  parentTreeData={
+                    editingId === c.id ? categoryTreeSelectData(categories, c.id) : []
+                  }
+                  onAddChild={() => {
+                    setNewParent(c.id);
+                    message.info(`在上方输入名称，将新建到「${c.name}」下`);
+                  }}
                   editName={editName}
                   editColor={editColor}
                   onStartEdit={() => startEdit(c)}

@@ -10,6 +10,7 @@ import {
   Tag,
   Dropdown,
   Select,
+  TreeSelect,
   App as AntdApp,
   Space,
   Typography,
@@ -22,6 +23,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useNavigate } from "react-router-dom";
 import { taskApi, taskCategoryApi, noteApi, configApi, projectApi, aiPlanApi } from "@/lib/api";
 import { parseTaskText, type ParsedTaskText } from "@/lib/taskTextParser";
+import { categoryTreeSelectData } from "@/lib/categoryTree";
 import { relativeTime } from "@/lib/utils";
 import type {
   Note,
@@ -806,32 +808,29 @@ export function CreateTaskModal({
           <div className="text-[11px] mb-1" style={{ color: token.colorTextSecondary }}>
             分类（可选）
           </div>
-          <Select
-            value={categoryId}
-            onChange={(v) => setCategoryId(v ?? null)}
+          {/* v66 多级分类：树形选择，父子都能选 */}
+          <TreeSelect
+            value={categoryId ?? undefined}
+            onChange={(v) => setCategoryId((v as number | undefined) ?? null)}
             allowClear
             placeholder="未分类"
             style={{ minWidth: 200 }}
-            options={[
-              { value: null, label: <span style={{ color: token.colorTextTertiary }}>未分类</span> },
-              ...categories.map((c) => ({
-                value: c.id,
-                label: (
-                  <span className="inline-flex items-center gap-2">
-                    <span
-                      style={{
-                        display: "inline-block",
-                        width: 10,
-                        height: 10,
-                        borderRadius: 999,
-                        background: c.color,
-                      }}
-                    />
-                    {c.name}
-                  </span>
-                ),
-              })),
-            ]}
+            treeDefaultExpandAll
+            treeData={categoryTreeSelectData(categories)}
+            treeTitleRender={(n) => (
+              <span className="inline-flex items-center gap-2">
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: 10,
+                    height: 10,
+                    borderRadius: 999,
+                    background: (n as { color?: string }).color,
+                  }}
+                />
+                {String((n as { title?: unknown }).title ?? "")}
+              </span>
+            )}
           />
         </div>
 

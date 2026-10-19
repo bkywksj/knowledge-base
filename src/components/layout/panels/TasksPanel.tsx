@@ -18,6 +18,8 @@ import {
   Tags as TagsIcon,
   Settings as SettingsIcon,
   Inbox as InboxIcon,
+  ChevronRight as ChevronRightIcon,
+  ChevronDown as ChevronDownIcon,
   Edit3,
   Trash2,
 } from "lucide-react";
@@ -25,6 +27,7 @@ import { taskApi, taskCategoryApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import type { Task, TaskStats, TaskCategory } from "@/types";
 import { TaskCategoryManageModal } from "@/components/tasks/TaskCategoryManageModal";
+import { flattenCategoryTree, subtreeCounts } from "@/lib/categoryTree";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import {
   ContextMenuOverlay,
@@ -46,6 +49,9 @@ import {
  * 订阅 urgentTodoCount：主区做任务操作后会 refreshTaskStats，这里 tick
  * 一次就重拉两份数据，Badge 保持实时。
  */
+
+/** 侧栏折叠的父分类 id 列表（多级分类）*/
+const COLLAPSED_CATS_KEY = "kb.tasks.collapsedCategories";
 
 type FilterKey =
   | "todo"
@@ -135,6 +141,24 @@ export function TasksPanel() {
   const [stats, setStats] = useState<TaskStats | null>(null);
   const [categories, setCategories] = useState<TaskCategory[]>([]);
   const [manageOpen, setManageOpen] = useState(false);
+  /** 折叠的父分类（存 localStorage：切页面回来保持用户的折叠习惯） */
+  const [collapsedCats, setCollapsedCats] = useState<Set<number>>(() => {
+    try {
+      const raw = localStorage.getItem(COLLAPSED_CATS_KEY);
+      return new Set(raw ? (JSON.parse(raw) as number[]) : []);
+    } catch {
+      return new Set();
+    }
+  });
+  function toggleCollapsed(id: number) {
+    setCollapsedCats((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      localStorage.setItem(COLLAPSED_CATS_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -165,8 +189,14 @@ export function TasksPanel() {
         map.set(t.category_id, (map.get(t.category_id) ?? 0) + 1);
       }
     }
-    return { byId: map, none };
-  }, [todoTasks]);
+    // 父分类显示「自身 + 子孙」的数：点进去列出来的就是这么多（后端按子树筛选）
+    return { byId: subtreeCounts(categories, map), none };
+  }, [todoTasks, categories]);
+
+  const categoryRows = useMemo(
+    () => flattenCategoryTree(categories, collapsedCats),
+    [categories, collapsedCats],
+  );
 
   const counts = useMemo(() => {
     const c = deriveCounts(todoTasks);
@@ -428,21 +458,53 @@ export function TasksPanel() {
           onClick={() => goToCategory("none")}
           token={token}
         />
-        {categories.map((c) => (
+        {categoryRows.map(({ category: c, depth, hasChildren }) => (
           <SmartRow
             key={c.id}
             active={currentCategory === String(c.id)}
             contextActive={ctx.state.payload?.id === c.id}
             icon={
+              // 缩进 + 折叠箭头塞在图标位里，SmartRow 本身不用改
               <span
                 style={{
-                  display: "inline-block",
-                  width: 10,
-                  height: 10,
-                  borderRadius: 999,
-                  background: c.color,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  paddingLeft: depth * 12,
                 }}
-              />
+              >
+                <span
+                  role={hasChildren ? "button" : undefined}
+                  title={hasChildren ? (collapsedCats.has(c.id) ? "展开" : "收起") : undefined}
+                  onClick={(e) => {
+                    if (!hasChildren) return;
+                    e.stopPropagation();
+                    toggleCollapsed(c.id);
+                  }}
+                  style={{
+                    display: "inline-flex",
+                    width: 12,
+                    marginRight: 2,
+                    color: token.colorTextTertiary,
+                    cursor: hasChildren ? "pointer" : "default",
+                  }}
+                >
+                  {hasChildren &&
+                    (collapsedCats.has(c.id) ? (
+                      <ChevronRightIcon size={11} />
+                    ) : (
+                      <ChevronDownIcon size={11} />
+                    ))}
+                </span>
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: 10,
+                    height: 10,
+                    borderRadius: 999,
+                    background: c.color,
+                  }}
+                />
+              </span>
             }
             label={c.name}
             count={categoryCounts.byId.get(c.id) ?? 0}

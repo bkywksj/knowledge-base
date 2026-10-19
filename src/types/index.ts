@@ -1559,6 +1559,8 @@ export interface TaskCategory {
   icon: string | null;
   sort_order: number;
   created_at: string;
+  /** 父分类 id（v66 多级分类）；null = 顶层 */
+  parent_id?: number | null;
 }
 
 export interface CreateTaskCategoryInput {
@@ -1566,6 +1568,8 @@ export interface CreateTaskCategoryInput {
   color?: string | null;
   icon?: string | null;
   sort_order?: number | null;
+  /** 父分类 id；缺省 = 顶层 */
+  parent_id?: number | null;
 }
 
 export interface UpdateTaskCategoryInput {
@@ -1574,6 +1578,10 @@ export interface UpdateTaskCategoryInput {
   icon?: string | null;
   clear_icon?: boolean;
   sort_order?: number;
+  /** 移到某个父分类下 */
+  parent_id?: number;
+  /** true = 移到顶层 */
+  clear_parent?: boolean;
 }
 
 export interface TaskStats {
