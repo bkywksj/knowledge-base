@@ -8,7 +8,7 @@ use crate::services::source_file::SourceFileService;
 use crate::state::AppState;
 
 /// 探测当前系统可用的 .doc 转换器
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_converter_status() -> DocConverter {
     converter::detect_converter()
 }
@@ -16,7 +16,7 @@ pub fn get_converter_status() -> DocConverter {
 /// 详细诊断：列出每个 Word ProgId 的实测结果（含 PowerShell 错误细节）
 ///
 /// 用于"导入 .doc 失败"时帮用户定位缺哪个 ProgId / 哪个版本的 WPS-Office
-#[tauri::command]
+#[tauri::command(async)]
 pub fn diagnose_doc_converter() -> ConverterDiagnostic {
     converter::diagnose()
 }
@@ -24,7 +24,7 @@ pub fn diagnose_doc_converter() -> ConverterDiagnostic {
 /// 把任意路径的文件读成 base64（前端跑 mammoth 时用）
 ///
 /// 路径来源是 dialog.open 返回值（用户已确认）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_file_as_base64(path: String) -> Result<String, String> {
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
     Ok(STANDARD.encode(bytes))
@@ -33,7 +33,7 @@ pub fn read_file_as_base64(path: String) -> Result<String, String> {
 /// 把 .doc 转换为 .docx，并以 base64 字符串返回 .docx 字节流
 ///
 /// 临时 .docx 在临时目录，转换完读取后立即删除
-#[tauri::command]
+#[tauri::command(async)]
 pub fn convert_doc_to_docx_base64(path: String) -> Result<String, String> {
     let src = PathBuf::from(&path);
     let temp_dir = std::env::temp_dir().join("kb_doc_convert");
@@ -46,7 +46,7 @@ pub fn convert_doc_to_docx_base64(path: String) -> Result<String, String> {
 /// 把源文件附到笔记上：拷贝原文件 + 更新 source_file_path/type
 ///
 /// 用于 Word 导入：前端先建笔记拿到 note_id，再调用本接口把原文件挂上
-#[tauri::command]
+#[tauri::command(async)]
 pub fn attach_source_file(
     state: State<'_, AppState>,
     note_id: i64,
@@ -70,7 +70,7 @@ pub fn attach_source_file(
 /// 的 PDF 引用走另一套 kb-asset:// + Step 4 数据迁移。
 ///
 /// 老的 `get_pdf_absolute_path` 仍保留作 PDF 专用别名（已迁到相对路径）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_source_file_absolute_path(
     state: State<'_, AppState>,
     note_id: i64,

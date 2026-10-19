@@ -8,7 +8,7 @@ use crate::state::AppState;
 ///
 /// 每条带 match_kind + existing_note_id，便于前端预览弹窗展示
 /// "全新 / 已导入过 / 可能重复" 三桶统计。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn scan_markdown_folder(
     state: tauri::State<'_, AppState>,
     path: String,
@@ -80,7 +80,7 @@ pub async fn open_markdown_file(
 /// 取出首次启动时由命令行带入的 .md 文件路径（幂等，取一次就清空）
 ///
 /// 前端 App 初始化完成后调用：若返回 Some，则自动打开这个 md 文件。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn take_pending_open_md_path(
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<String>, String> {

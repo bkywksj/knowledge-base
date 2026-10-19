@@ -9,7 +9,7 @@ use crate::state::AppState;
 ///
 /// 笔记在保存时（`update_note`）会自动调用一次（force=false），所以前端通常只在
 /// 冲突解决时才主动调用 `force=true`，或在设置页提供"立即同步"按钮。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn write_back_source_md(
     state: tauri::State<'_, AppState>,
     note_id: i64,
@@ -22,7 +22,7 @@ pub fn write_back_source_md(
 ///
 /// 触发场景：原文件已丢失（writeback 返回 Missing），或用户在 UI 上主动点"解除关联"。
 /// 调用后该笔记降级为纯本地笔记，保存不再写回磁盘，也不再弹"双向同步暂时中断"提示。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_source_md_link(
     state: tauri::State<'_, AppState>,
     note_id: i64,

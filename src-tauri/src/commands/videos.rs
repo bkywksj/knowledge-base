@@ -31,7 +31,7 @@ fn to_relative(state: &AppState, abs: &str) -> Result<String, String> {
 ///
 /// 返回**相对 data_dir 的 POSIX 路径**（如 `kb_assets/videos/1/x.mp4`）。
 /// 前端拼 `kb-asset://<rel>` 写入 content。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_video(
     state: State<'_, AppState>,
     note_id: i64,
@@ -65,7 +65,7 @@ pub fn save_video(
 /// 从本地文件路径保存视频（用于工具栏文件选择 / 大文件回退路径）
 ///
 /// 后端走 `std::fs::copy` 零拷贝，避免大视频走 IPC
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_video_from_path(
     state: State<'_, AppState>,
     note_id: i64,
@@ -85,13 +85,13 @@ pub fn save_video_from_path(
 }
 
 /// 删除笔记的所有视频
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_note_videos(state: State<'_, AppState>, note_id: i64) -> Result<(), String> {
     VideoService::delete_note_videos(&state.data_dir, note_id).map_err(|e| e.to_string())
 }
 
 /// 获取视频存储目录（设置页"打开目录"入口用）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_videos_dir(state: State<'_, AppState>) -> Result<String, String> {
     let dir = VideoService::ensure_dir(&state.data_dir).map_err(|e| e.to_string())?;
     Ok(dir.to_string_lossy().into_owned())

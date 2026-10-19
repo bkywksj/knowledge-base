@@ -39,7 +39,7 @@ pub fn reorder_tags(
 }
 
 /// 获取所有标签
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_tags(state: tauri::State<'_, AppState>) -> Result<Vec<Tag>, String> {
     TagService::list(&state.db).map_err(|e| e.to_string())
 }
@@ -87,7 +87,7 @@ pub fn remove_tag_from_note(
 }
 
 /// 获取笔记的所有标签
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_note_tags(state: tauri::State<'_, AppState>, note_id: i64) -> Result<Vec<Tag>, String> {
     TagService::get_note_tags(&state.db, note_id).map_err(|e| e.to_string())
 }
@@ -95,7 +95,7 @@ pub fn get_note_tags(state: tauri::State<'_, AppState>, note_id: i64) -> Result<
 /// 批量获取一组笔记各自的标签（笔记列表「标签」列用）
 ///
 /// 返回 `{ 笔记id: [标签...] }`，没有标签的笔记不在表里（JSON 里整数键会变成字符串）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_tags_for_notes(
     state: tauri::State<'_, AppState>,
     note_ids: Vec<i64>,
@@ -104,7 +104,7 @@ pub fn get_tags_for_notes(
 }
 
 /// 获取标签下的笔记列表（分页）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_notes_by_tag(
     state: tauri::State<'_, AppState>,
     tag_id: i64,

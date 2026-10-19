@@ -92,7 +92,7 @@ pub fn delete_folder_cascade(
 }
 
 /// 扫描空文件夹（子树内没有任何未回收笔记），供"清理空文件夹"预览
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_empty_folders(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<EmptyFolderInfo>, String> {
@@ -110,7 +110,7 @@ pub fn cleanup_empty_folders(
 }
 
 /// 获取文件夹树
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_folders(state: tauri::State<'_, AppState>) -> Result<Vec<Folder>, String> {
     FolderService::list_tree(&state.db).map_err(|e| e.to_string())
 }

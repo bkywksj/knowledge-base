@@ -39,7 +39,7 @@ fn rewrite_to_relative(state: &AppState, info: AttachmentInfo) -> Result<Attachm
 /// 保存附件（base64 数据，用于前端拖放）
 ///
 /// 返回附件信息，`path` 为相对 data_dir 的 POSIX 路径。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_note_attachment(
     state: State<'_, AppState>,
     note_id: i64,
@@ -53,7 +53,7 @@ pub fn save_note_attachment(
 }
 
 /// 从本地文件路径零拷贝保存附件（用于工具栏"插入附件"按钮）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_note_attachment_from_path(
     state: State<'_, AppState>,
     note_id: i64,
@@ -65,13 +65,13 @@ pub fn save_note_attachment_from_path(
 }
 
 /// 删除笔记的所有附件
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_note_attachments(state: State<'_, AppState>, note_id: i64) -> Result<(), String> {
     AttachmentService::delete_note_attachments(&state.data_dir, note_id).map_err(|e| e.to_string())
 }
 
 /// 获取附件存储目录路径（设置页"打开目录"入口用）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_attachments_dir(state: State<'_, AppState>) -> Result<String, String> {
     let dir = AttachmentService::ensure_dir(&state.data_dir).map_err(|e| e.to_string())?;
     Ok(dir.to_string_lossy().into_owned())
@@ -97,7 +97,7 @@ fn resolve_attachment_path(state: &AppState, rel: &str) -> Result<std::path::Pat
 ///
 /// 仅桌面端：依赖 calamine（Android target 编译失败）。移动端不注册此 command。
 #[cfg(desktop)]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_excel_attachment(
     state: State<'_, AppState>,
     rel: String,
@@ -124,7 +124,7 @@ pub fn preview_excel_attachment(
 /// 读取文本文件做预览（md/txt/json/csv/代码等）。
 ///
 /// 超过 TEXT_PREVIEW_MAX_CHARS 时尾部截断并标记 truncated=true，避免 Modal 内一次渲染巨型字符串卡死。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_text_attachment(
     state: State<'_, AppState>,
     rel: String,

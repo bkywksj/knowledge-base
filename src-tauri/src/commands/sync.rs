@@ -12,7 +12,7 @@ use crate::state::AppState;
 
 // ─── 本地 ZIP 导出/导入 ──────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_export_to_file(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
@@ -40,7 +40,7 @@ pub fn sync_export_to_file(
     result.map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_import_from_file(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
@@ -229,7 +229,7 @@ pub struct RemoteSnapshot {
 
 // ─── 密码加密存取（AES-GCM + SQLite） ─────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_save_webdav_password(
     state: State<'_, AppState>,
     username: String,
@@ -238,7 +238,7 @@ pub fn sync_save_webdav_password(
     SyncService::save_webdav_password(&state.db, &username, &password).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_has_webdav_password(
     state: State<'_, AppState>,
     username: String,
@@ -251,7 +251,7 @@ pub fn sync_has_webdav_password(
 /// 取出已加密存储的 WebDAV 密码明文。
 /// 仅供"新增/编辑同步源 → 一键复用备份与恢复配置"流程使用：
 /// V1 backend 把密码塞在 backend.config_json 里，需要明文以构造 JSON。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_get_webdav_password(
     state: State<'_, AppState>,
     username: String,
@@ -259,7 +259,7 @@ pub fn sync_get_webdav_password(
     SyncService::get_webdav_password(&state.db, &username).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_delete_webdav_password(
     state: State<'_, AppState>,
     username: String,
@@ -269,7 +269,7 @@ pub fn sync_delete_webdav_password(
 
 // ─── T-S050 备份密码（端到端加密快照用，全局唯一一个）─────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_save_backup_password(
     state: State<'_, AppState>,
     password: String,
@@ -277,7 +277,7 @@ pub fn sync_save_backup_password(
     SyncService::save_backup_password(&state.db, &password).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_has_backup_password(state: State<'_, AppState>) -> Result<bool, String> {
     SyncService::get_backup_password(&state.db)
         .map(|p| p.is_some())
@@ -285,19 +285,19 @@ pub fn sync_has_backup_password(state: State<'_, AppState>) -> Result<bool, Stri
 }
 
 /// 取已保存的备份密码明文（前端 SyncSection 加载时填回密码框）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_get_backup_password(state: State<'_, AppState>) -> Result<Option<String>, String> {
     SyncService::get_backup_password(&state.db).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_delete_backup_password(state: State<'_, AppState>) -> Result<(), String> {
     SyncService::delete_backup_password(&state.db).map_err(|e| e.to_string())
 }
 
 // ─── 同步历史 ─────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_list_history(
     state: State<'_, AppState>,
     limit: Option<usize>,
@@ -309,7 +309,7 @@ pub fn sync_list_history(
 }
 
 /// 唤醒自动同步调度器：配置变更后由前端调用
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_scheduler_reload(state: State<'_, AppState>) -> Result<(), String> {
     state.sync_scheduler_notify.notify_one();
     Ok(())

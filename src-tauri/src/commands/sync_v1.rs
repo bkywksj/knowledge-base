@@ -33,12 +33,12 @@ fn build_backend(
     backend::create_backend(auth).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_v1_list_backends(state: State<'_, AppState>) -> Result<Vec<SyncBackend>, String> {
     state.db.list_sync_backends().map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_v1_get_backend(
     state: State<'_, AppState>,
     id: i64,
@@ -46,7 +46,7 @@ pub fn sync_v1_get_backend(
     state.db.get_sync_backend(id).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_v1_create_backend(
     state: State<'_, AppState>,
     input: SyncBackendInput,
@@ -57,7 +57,7 @@ pub fn sync_v1_create_backend(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_v1_update_backend(
     state: State<'_, AppState>,
     id: i64,
@@ -69,7 +69,7 @@ pub fn sync_v1_update_backend(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_v1_delete_backend(state: State<'_, AppState>, id: i64) -> Result<bool, String> {
     state.db.delete_sync_backend(id).map_err(|e| e.to_string())
 }
@@ -151,7 +151,7 @@ pub async fn sync_v1_pull(
 }
 
 /// 后台同步：立即返回，同步（先拉后推）在后台 tokio task 里跑，完成/失败通过 `sync_v1:auto-triggered` 事件回报。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_v1_trigger_background_sync(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
@@ -244,7 +244,7 @@ pub async fn sync_v1_gc_attachments(
 // ─── T-S051: 同步冲突解决 ──────────────────────────────────
 
 /// 列出所有同步源待解决的冲突（给设置页"冲突待处理"用）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_v1_list_conflicts(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
@@ -258,7 +258,7 @@ pub fn sync_v1_list_conflicts(
 }
 
 /// 解决一条冲突：`keep_local`（保留本地）/ `use_remote`（采用远端）/ `merged`（采用手动合并结果）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_v1_resolve_conflict(
     state: State<'_, AppState>,
     app: tauri::AppHandle,

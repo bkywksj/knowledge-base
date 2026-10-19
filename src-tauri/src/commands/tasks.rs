@@ -12,7 +12,7 @@ fn notify_reminder(state: &State<'_, AppState>) {
     state.reminder_notify.notify_one();
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_tasks(
     state: State<'_, AppState>,
     query: Option<TaskQuery>,
@@ -20,7 +20,7 @@ pub fn list_tasks(
     TaskService::list(&state.db, query.unwrap_or_default()).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_task(state: State<'_, AppState>, id: i64) -> Result<Task, String> {
     TaskService::get(&state.db, id)
         .map_err(|e| e.to_string())?
@@ -28,7 +28,7 @@ pub fn get_task(state: State<'_, AppState>, id: i64) -> Result<Task, String> {
 }
 
 /// 列出某主任务的子任务
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_subtasks(state: State<'_, AppState>, parent_id: i64) -> Result<Vec<Task>, String> {
     TaskService::list_subtasks(&state.db, parent_id).map_err(|e| e.to_string())
 }
@@ -130,7 +130,7 @@ pub fn remove_task_link(state: State<'_, AppState>, link_id: i64) -> Result<bool
     TaskService::remove_link(&state.db, link_id).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_task_stats(state: State<'_, AppState>) -> Result<TaskStats, String> {
     TaskService::stats(&state.db).map_err(|e| e.to_string())
 }
@@ -148,7 +148,7 @@ pub fn snooze_task_reminder(
 }
 
 /// 顶栏 Ctrl+K 全局搜索：按关键词查待办（title / description LIKE）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_tasks(
     state: State<'_, AppState>,
     query: String,
@@ -159,7 +159,7 @@ pub fn search_tasks(
 
 // ─── 分类 CRUD ────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_task_categories(state: State<'_, AppState>) -> Result<Vec<TaskCategory>, String> {
     TaskService::list_categories(&state.db).map_err(|e| e.to_string())
 }

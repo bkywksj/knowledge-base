@@ -10,7 +10,7 @@ use crate::state::AppState;
 use tauri::{Emitter, Manager};
 
 /// 列出笔记的历史版本（不含正文，只有时间 / 体积 / 来源）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_note_snapshots(
     state: tauri::State<'_, AppState>,
     note_id: i64,
@@ -19,7 +19,7 @@ pub fn list_note_snapshots(
 }
 
 /// 取某一份历史版本的完整正文（预览 / 对比用）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_note_snapshot(
     state: tauri::State<'_, AppState>,
     snapshot_id: i64,
@@ -32,7 +32,7 @@ pub fn get_note_snapshot(
 }
 
 /// 手动存一个版本。返回 false = 内容与上一份存档相同，没存。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_note_snapshot(
     state: tauri::State<'_, AppState>,
     note_id: i64,
@@ -45,7 +45,7 @@ pub fn create_note_snapshot(
 /// 与 `update_note` 一样广播 `note:updated`，让别的窗口跟着刷新。
 /// 这里**不带** sourceLabel：发起方自己也要重新加载正文，
 /// 不能像常规保存那样忽略自己发出的事件。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn restore_note_snapshot(
     state: tauri::State<'_, AppState>,
     window: tauri::Window,
@@ -63,13 +63,13 @@ pub fn restore_note_snapshot(
 // ─── 用量与清理（设置页）──────────────────────────────────
 
 /// 全库历史版本用量（总数 / 总体积 / 占用最大的笔记）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_snapshot_usage(state: tauri::State<'_, AppState>) -> Result<SnapshotUsage, String> {
     snapshot::usage(&state.db).map_err(|e| e.to_string())
 }
 
 /// 清理某条笔记的全部历史版本，返回删除条数。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_note_snapshots(
     state: tauri::State<'_, AppState>,
     note_id: i64,
@@ -78,7 +78,7 @@ pub fn clear_note_snapshots(
 }
 
 /// 清理所有超过指定天数的历史版本，返回删除条数。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_snapshots_older_than(
     state: tauri::State<'_, AppState>,
     days: i64,
@@ -87,7 +87,7 @@ pub fn clear_snapshots_older_than(
 }
 
 /// 清空全部历史版本，返回删除条数。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_all_snapshots(state: tauri::State<'_, AppState>) -> Result<usize, String> {
     snapshot::clear_all(&state.db).map_err(|e| e.to_string())
 }

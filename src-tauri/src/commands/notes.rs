@@ -44,7 +44,7 @@ pub fn delete_note(state: tauri::State<'_, AppState>, id: i64) -> Result<(), Str
 }
 
 /// 获取单个笔记
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_note(state: tauri::State<'_, AppState>, id: i64) -> Result<Note, String> {
     NoteService::get(&state.db, id).map_err(|e| e.to_string())
 }
@@ -52,7 +52,7 @@ pub fn get_note(state: tauri::State<'_, AppState>, id: i64) -> Result<Note, Stri
 /// 取一批笔记里的图片资源（AI 回答下方"溯源"挂缩略图用）。
 ///
 /// 入参一般是 AI message references 里的笔记 id。只回带图的笔记；空结果合法。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_notes_images(
     state: tauri::State<'_, AppState>,
     note_ids: Vec<i64>,
@@ -88,7 +88,7 @@ pub fn reorder_notes(
 
 /// 取当前筛选条件下「全部」笔记 id（不分页），按当前 sort_by 排序。
 /// 拖拽排序专用：前端拿完整 id 列表后再 reorder，避免按页 reorder 导致跨页撞车。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_note_ids_for_reorder(
     state: tauri::State<'_, AppState>,
     query: NoteQuery,
@@ -133,7 +133,7 @@ pub fn trash_all_notes(state: tauri::State<'_, AppState>) -> Result<usize, Strin
 }
 
 /// 查询笔记列表（分页）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_notes(
     state: tauri::State<'_, AppState>,
     query: NoteQuery,
@@ -156,7 +156,7 @@ pub fn set_note_hidden(
 }
 
 /// 列出所有隐藏笔记（分页 + 可选目录过滤）—— 用于 /hidden 专用页
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_hidden_notes(
     state: tauri::State<'_, AppState>,
     page: Option<usize>,
@@ -169,7 +169,7 @@ pub fn list_hidden_notes(
 }
 
 /// 返回所有"含至少一篇隐藏笔记"的 folder_id；None=未分类
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_hidden_folder_ids(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<Option<i64>>, String> {
@@ -177,7 +177,7 @@ pub fn list_hidden_folder_ids(
 }
 
 /// 列出「临时编辑」笔记（分页）—— 用于侧栏「临时文件」面板
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_scratch_notes(
     state: tauri::State<'_, AppState>,
     page: Option<usize>,

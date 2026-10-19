@@ -4,13 +4,13 @@ use crate::services::template::{self, TemplateService};
 use crate::state::AppState;
 
 /// 获取所有模板
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_templates(state: tauri::State<'_, AppState>) -> Result<Vec<NoteTemplate>, String> {
     TemplateService::list(&state.db).map_err(|e| e.to_string())
 }
 
 /// 获取单个模板
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_template(state: tauri::State<'_, AppState>, id: i64) -> Result<NoteTemplate, String> {
     TemplateService::get(&state.db, id).map_err(|e| e.to_string())
 }

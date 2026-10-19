@@ -24,7 +24,7 @@ pub fn create_whiteboard(
 ///
 /// 前端**不要**直接拿 `note.content` 当场景用 —— 那里面的图片是
 /// `kb-asset://` 引用，画布拿到会显示成裂图。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_whiteboard_scene(
     state: tauri::State<'_, AppState>,
     id: i64,
@@ -58,7 +58,7 @@ pub fn save_embedded_whiteboard(
 }
 
 /// 读取笔记内嵌白板的画布（图片已内联回 base64）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn load_embedded_whiteboard(
     state: tauri::State<'_, AppState>,
     rel_path: String,
@@ -93,7 +93,7 @@ pub fn save_whiteboard_scene(
 // ─── 历史版本 ────────────────────────────────────────────────
 
 /// 列出白板的历史版本（不含画布正文，只有时间 / 体积 / 来源）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_whiteboard_snapshots(
     state: tauri::State<'_, AppState>,
     note_id: i64,
@@ -102,7 +102,7 @@ pub fn list_whiteboard_snapshots(
 }
 
 /// 取某一份历史版本的画布内容（图片已内联，可直接渲染预览）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_whiteboard_snapshot_scene(
     state: tauri::State<'_, AppState>,
     snapshot_id: i64,
@@ -149,7 +149,7 @@ pub fn restore_whiteboard_snapshot(
 // ─── 素材库 ──────────────────────────────────────────────────
 
 /// 读用户的白板素材库（`.excalidrawlib` 原文）。没存过返回空串。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_whiteboard_library(state: tauri::State<'_, AppState>) -> Result<String, String> {
     whiteboard::load_library(&state.data_dir).map_err(|e| e.to_string())
 }
@@ -168,7 +168,7 @@ pub fn save_whiteboard_library(
 /// 批量取笔记摘要，供白板上的「笔记卡片」显示。
 ///
 /// 每次打开白板都会调一次：卡片显示的是笔记**当前**内容，而不是插入那一刻的快照。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_note_excerpts(
     state: tauri::State<'_, AppState>,
     note_ids: Vec<i64>,
@@ -179,7 +179,7 @@ pub fn get_note_excerpts(
 // ─── 内嵌白板的历史版本 ──────────────────────────────────
 
 /// 列出某块内嵌白板的历史版本。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_embedded_whiteboard_snapshots(
     state: tauri::State<'_, AppState>,
     note_id: i64,
@@ -189,7 +189,7 @@ pub fn list_embedded_whiteboard_snapshots(
 }
 
 /// 取某一份内嵌白板历史版本的画布（图片已内联，可直接预览）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_embedded_whiteboard_snapshot_scene(
     state: tauri::State<'_, AppState>,
     snapshot_id: i64,

@@ -13,7 +13,7 @@ use crate::services::orphan_scan::OrphanScanService;
 use crate::state::AppState;
 
 /// 扫描全部孤儿素材（5 类）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn scan_orphan_assets(state: State<'_, AppState>) -> Result<OrphanAssetScan, String> {
     OrphanScanService::scan_all(&state.db, &state.data_dir).map_err(|e| e.to_string())
 }
@@ -21,7 +21,7 @@ pub fn scan_orphan_assets(state: State<'_, AppState>) -> Result<OrphanAssetScan,
 /// 批量清理孤儿素材（按 OrphanItem 列表删除）
 ///
 /// 安全：每条 path 必须落在对应 kind 的 assets 子目录下，否则计入 failed。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clean_orphan_assets(
     state: State<'_, AppState>,
     items: Vec<OrphanItem>,

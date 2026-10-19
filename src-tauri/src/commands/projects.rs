@@ -9,7 +9,7 @@ use crate::state::AppState;
 /// 列出项目（含未完成/已完成任务计数）。
 ///
 /// `includeArchived` 默认 false：归档项目从主列表移除，不打扰当前视野。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_projects(
     state: State<'_, AppState>,
     include_archived: Option<bool>,
@@ -18,7 +18,7 @@ pub fn list_projects(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_project(
     state: State<'_, AppState>,
     id: i64,

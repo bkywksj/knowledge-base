@@ -11,7 +11,7 @@ use crate::services::image_download;
 use crate::services::task_attachment::{self, TaskAttachmentService};
 use crate::state::AppState;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_task_attachments(
     state: State<'_, AppState>,
     task_id: i64,
@@ -20,7 +20,7 @@ pub fn list_task_attachments(
 }
 
 /// 保存 base64 数据为任务附件（粘贴截图 / 前端拿到的 File）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_task_attachment(
     state: State<'_, AppState>,
     task_id: i64,
@@ -38,7 +38,7 @@ pub fn add_task_attachment(
 }
 
 /// 从本地路径复制为任务附件（文件选择框 / OS 拖放）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_task_attachment_from_path(
     state: State<'_, AppState>,
     task_id: i64,
@@ -99,13 +99,13 @@ pub async fn load_paste_image(source: String) -> Result<PasteImage, String> {
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_task_attachment(state: State<'_, AppState>, id: i64) -> Result<bool, String> {
     TaskAttachmentService::delete(&state.db, &state.data_dir, id).map_err(|e| e.to_string())
 }
 
 /// 按 ids 顺序重排某任务的附件
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reorder_task_attachments(
     state: State<'_, AppState>,
     task_id: i64,

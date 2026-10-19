@@ -14,7 +14,7 @@ pub fn create_card(
     CardService::create(&state.db, input).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_cards(
     state: tauri::State<'_, AppState>,
     deck: Option<String>,
@@ -22,7 +22,7 @@ pub fn list_cards(
     CardService::list(&state.db, deck).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_card(
     state: tauri::State<'_, AppState>,
     id: i64,
@@ -31,7 +31,7 @@ pub fn get_card(
 }
 
 /// 取今天到期 / 已过期 / 新卡 的待复习队列
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_due_cards(
     state: tauri::State<'_, AppState>,
     limit: Option<i64>,
@@ -63,12 +63,12 @@ pub fn review_card(
     CardService::review(&state.db, input).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_card_stats(state: tauri::State<'_, AppState>) -> Result<CardStats, String> {
     CardService::stats(&state.db).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_card_review_logs(
     state: tauri::State<'_, AppState>,
     card_id: i64,

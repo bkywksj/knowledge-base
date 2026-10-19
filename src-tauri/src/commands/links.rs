@@ -15,7 +15,7 @@ pub fn sync_note_links(
 }
 
 /// 获取反向链接
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_backlinks(state: State<'_, AppState>, note_id: i64) -> Result<Vec<NoteLink>, String> {
     LinkService::get_backlinks(&state.db, note_id).map_err(|e| e.to_string())
 }
@@ -23,7 +23,7 @@ pub fn get_backlinks(state: State<'_, AppState>, note_id: i64) -> Result<Vec<Not
 /// 当前笔记的链接全貌：出链（我引用了谁）+ 入链（谁引用了我）+ 断链。
 ///
 /// 编辑器底部状态条一次取齐三类，不为一条状态条打三次 IPC。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_note_link_summary(
     state: State<'_, AppState>,
     note_id: i64,
@@ -45,7 +45,7 @@ pub fn rebuild_note_links(
 }
 
 /// 搜索笔记标题（用于 [[ 自动补全）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_link_targets(
     state: State<'_, AppState>,
     keyword: String,
@@ -56,7 +56,7 @@ pub fn search_link_targets(
 }
 
 /// 按"规范化精确匹配"查找笔记 ID（用于 wiki 链接保存时解析 `[[标题]]`）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn find_note_id_by_title_loose(
     state: State<'_, AppState>,
     title: String,
@@ -65,7 +65,7 @@ pub fn find_note_id_by_title_loose(
 }
 
 /// 获取知识图谱数据
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_graph_data(state: State<'_, AppState>) -> Result<GraphData, String> {
     LinkService::get_graph_data(&state.db).map_err(|e| e.to_string())
 }

@@ -16,7 +16,7 @@ use crate::state::AppState;
 /// `rel` 是相对 data_dir 的附件路径（笔记 content 里 `kb-asset://` 后那段）。
 /// 重复调用 = 整体替换该文件已有的数据集（源文件改一行都可能让结构全变）。
 /// `force` 缺省为 false：文件哈希没变时直接跳过，避免白白重解析 + 重插几千行。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_attachment_datasets(
     state: State<'_, AppState>,
     rel: String,
@@ -37,7 +37,7 @@ pub fn import_attachment_datasets(
 }
 
 /// 列出某个附件下已入库的数据集
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_attachment_datasets(
     state: State<'_, AppState>,
     rel: String,
@@ -49,7 +49,7 @@ pub fn list_attachment_datasets(
 }
 
 /// 取数据集详情（元信息 + 列画像）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_dataset_schema(
     state: State<'_, AppState>,
     dataset_id: i64,
@@ -64,7 +64,7 @@ pub fn get_dataset_schema(
 ///
 /// 返回的是每行的 `{"列名": "值"}` JSON 字符串数组，前端自行 parse ——
 /// 不在 Rust 侧转二维数组，免得列顺序在两侧各维护一份。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_dataset_rows(
     state: State<'_, AppState>,
     dataset_id: i64,

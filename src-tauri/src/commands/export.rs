@@ -18,7 +18,7 @@ use crate::state::AppState;
 /// `知识库导出_YYYYMMDD_HHmmss/` 作为实际导出根（结果中的 `root_dir`）。
 ///
 /// `recursive`：指定 `folder_id` 时是否连子文件夹一起导出。缺省 `false` 保持老调用方行为不变。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_notes(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
@@ -45,7 +45,7 @@ pub fn export_notes(
 /// - `target_path`: 用户在 save dialog 选定的最终文件路径（含扩展名）
 /// - `format`: `markdown` / `html` / `word`（word 仅桌面端）
 /// - `root_title`: 文档顶层标题，一般传文件夹名
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_folder_merged(
     state: tauri::State<'_, AppState>,
     folder_id: Option<i64>,
@@ -77,7 +77,7 @@ pub fn export_folder_merged(
 /// - `id`: 笔记 ID
 /// - `parent_dir`: 用户选择的父目录路径
 /// - `single_file`: 是否导出为单文件（不生成文件夹），缺省 false 保持原行为
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_single_note(
     state: tauri::State<'_, AppState>,
     id: i64,
@@ -99,7 +99,7 @@ pub fn export_single_note(
 /// `target_path` 是用户在 save dialog 选定的最终 .docx 路径
 /// 仅桌面端：docx_rs 移动端编译失败
 #[cfg(desktop)]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_single_note_to_word(
     state: tauri::State<'_, AppState>,
     id: i64,
@@ -131,7 +131,7 @@ pub fn export_single_note_to_word(
 }
 
 /// T-020 导出单条笔记为 HTML（单文件，图片内嵌 base64，可独立分享）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_single_note_to_html(
     state: tauri::State<'_, AppState>,
     id: i64,
@@ -177,7 +177,7 @@ pub fn export_single_note_to_html(
 ///
 /// `base64_data` 可以是带前缀的 data URL（`data:image/png;base64,...`），
 /// 也可以是纯 base64 字符串。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_png_to_file(target_path: String, base64_data: String) -> Result<(), String> {
     let b64 = base64_data
         .split_once("base64,")
@@ -197,7 +197,7 @@ pub fn export_png_to_file(target_path: String, base64_data: String) -> Result<()
 ///
 /// 返回的 HTML 与 export_single_note_to_html 一致：图片内嵌 base64，
 /// 自包含可独立打印，无需额外资源加载。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn render_note_html_for_pdf(
     state: tauri::State<'_, AppState>,
     id: i64,
@@ -233,7 +233,7 @@ pub fn render_note_html_for_pdf(
 /// 套的是另一套极简 CSS 模板，导出后样式跟编辑器里看到的不一样；本条不碰结构 / 样式，
 /// 直接接收编辑器**已渲染**的真实 DOM HTML，只做资源内嵌，让前端「打印 = 屏幕所见」。
 /// 前端负责克隆 DOM、注入应用同一份 CSS、触发系统打印对话框。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn inline_note_html_assets(
     state: tauri::State<'_, AppState>,
     html: String,
@@ -252,7 +252,7 @@ pub fn inline_note_html_assets(
 ///
 /// `max_bytes` 缺省 32 MiB：单个文件超过就返回 data_url = null，前端保留原 URL
 /// （应用内仍能显示，只是导出物不自包含），避免一个巨型附件把内存顶爆。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn resolve_asset_data_urls(
     state: tauri::State<'_, AppState>,
     urls: Vec<String>,

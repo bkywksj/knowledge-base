@@ -14,7 +14,7 @@ use crate::state::AppState;
 /// `onlyEnabled`（前端传 `only_enabled`，serde 自动转驼峰）：
 /// - true：编辑器菜单只需要启用项
 /// - false：管理页需要看到禁用项以便重新启用
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_prompts(
     state: State<'_, AppState>,
     only_enabled: Option<bool>,
@@ -26,7 +26,7 @@ pub fn list_prompts(
 }
 
 /// 获取单条提示词
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_prompt(state: State<'_, AppState>, id: i64) -> Result<PromptTemplate, String> {
     state.db.get_prompt(id).map_err(|e| e.to_string())
 }

@@ -6,7 +6,7 @@ use crate::state::AppState;
 ///
 /// `filters` 可选（P1-2）：不传 = 不筛选，与旧行为一致。
 /// 前端只需传用户真正勾选的维度，其余字段省略即可。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_notes(
     state: tauri::State<'_, AppState>,
     query: String,

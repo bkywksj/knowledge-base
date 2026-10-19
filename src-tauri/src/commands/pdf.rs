@@ -33,7 +33,7 @@ pub async fn import_pdfs(
 ///
 /// 返回值前端拼 `kb-asset://<rel>` 喂给 iframe / 渲染层。
 /// 历史命名保留 `absolute` 字样仅为兼容 IPC 调用方，含义已变。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_pdf_absolute_path(
     state: State<'_, AppState>,
     note_id: i64,
