@@ -1456,6 +1456,7 @@ pub fn run() {
             commands::ai::cancel_ai_write_assist,
             commands::ai::ai_plan_today,
             commands::ai::ai_extract_task_from_text,
+            commands::ai::ai_recognize_task,
             commands::ai::ai_plan_from_goal,
             // Excel 解析仅桌面端（calamine 移动端编译失败，T-M013 后再决策）
             #[cfg(desktop)]

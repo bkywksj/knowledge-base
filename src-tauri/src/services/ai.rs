@@ -9,7 +9,8 @@ use tokio::sync::watch;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::models::{
-    AiMessage, AiModel, AiModelInput, AiModelTestResult, AttachmentPreview, DraftNoteRequest,
+    AiMessage, AiModel, AiModelInput, AiModelTestResult, AiRecognizedTask, AttachmentPreview,
+    DraftNoteRequest,
     DraftNoteResponse, ExcelPreview, Folder, MessageAttachment, MilestoneDraft, PdfPreview,
     PlanFromExcelRequest, PlanFromGoalRequest, PlanFromGoalResponse, PlanTodayRequest,
     PlanTodayResponse, SkillCall, TaskQuery, TaskSuggestion, TextPreview, TurnMeta,
@@ -3280,6 +3281,97 @@ impl AiService {
         })
     }
 
+    /// AI 识别通知 / 消息 → 结构化待办（标题 / 截止 / 时间段 / 提醒 / 紧急重要 / 地点 / 子任务）。
+    ///
+    /// 与 `extract_task_from_text`（一句口语 → 一个任务）的区别：输入是一整段通知，
+    /// 里面常有发文日期、截止、活动时间、起止区间和多条事项，规则口径与前端本地识别
+    /// （lib/taskTextParser）一致：按日期「身份」挑截止时间，而不是取第一个日期。
+    pub async fn recognize_task(db: &Database, text: &str) -> Result<AiRecognizedTask, AppError> {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Err(AppError::InvalidInput("文本为空".into()));
+        }
+        // 通知可能很长，截断避免把上下文 / token 全耗在原文上（4000 字足够覆盖正文）
+        let input: String = trimmed.chars().take(4000).collect();
+
+        let model = db.get_default_ai_model()?;
+        let now = chrono::Local::now();
+        let today = now.format("%Y-%m-%d").to_string();
+        let weekday = now.format("%A").to_string();
+        let now_full = now.format("%Y-%m-%d %H:%M:%S").to_string();
+
+        let system_prompt = format!(
+            "你是待办识别助手：把用户粘贴的一段通知 / 消息整理成一条待办 JSON。\n\
+             当前时间: {now_full}（{weekday}）\n今天日期: {today}\n\n\
+             严格返回 JSON 对象（不要 markdown 代码块、不要任何额外文字），格式：\n\
+             {{\n  \
+             \"title\": \"待办标题\",\n  \
+             \"dueDate\": \"YYYY-MM-DD HH:MM:SS\" | \"YYYY-MM-DD\" | null,\n  \
+             \"startDate\": \"YYYY-MM-DD\" | null,\n  \
+             \"remindBefore\": null|0|15|30|60|180|1440|10080,\n  \
+             \"priority\": 0|1|2,\n  \
+             \"important\": true|false,\n  \
+             \"location\": \"地点\" | null,\n  \
+             \"subtasks\": [{{ \"title\": \"子任务\", \"dueDate\": \"YYYY-MM-DD HH:MM:SS\" | \"YYYY-MM-DD\" | null }}]\n\
+             }}\n\n\
+             规则：\n\
+             1. 先判断每个日期的身份，不要简单取第一个日期：\n\
+                · 截止（「前 / 之前 / 截止 / 截至 / 不晚于 / 最迟」）→ 优先作为 dueDate\n\
+                · 活动开始（召开 / 举行 / 开会 / 培训 / 报到 / 考试…）→ 没有截止时作为 dueDate\n\
+                · 时间段（「A 至 B」）→ startDate=A，dueDate=B\n\
+                · 发文 / 印发 / 落款日期 → 忽略\n\
+                · 已经过去的日期 → 一般不是待办时间\n\
+             2. 原文只有日期没有时刻时 dueDate 只给 'YYYY-MM-DD'，不要编造时刻。\n\
+             3. title：简短可执行的事项（10~20 字为宜）。会议类用会议名称；\n\
+                去掉「关于…的通知」外壳和「请各单位」之类的套话。\n\
+             4. subtasks：原文里有多条需要分别完成的事项（编号清单、多个「X 日前做 Y」）时拆出来，\n\
+                各自带时间；只有一件事时给空数组。不要把背景说明拆成子任务。\n\
+             5. remindBefore：有具体时刻的活动 30；截止类 1440；原文明说提前多久就照填。\n\
+             6. priority：0=今明两天必须完成或原文写紧急 / 加急；1=一般；2=不急。\n\
+                important：原文出现「务必 / 重要 / 逾期不候 / 不得延误」等为 true。\n\
+             7. location：原文明确写了地点才填，否则 null。\n\n\
+             🔴 JSON 字符串里严禁出现英文双引号 \"，需要引用时用中文「」。"
+        );
+
+        let messages = vec![
+            json!({ "role": "system", "content": system_prompt }),
+            json!({ "role": "user", "content": input }),
+        ];
+
+        let client = crate::services::http_client::shared();
+        let mut req_body = json!({
+            "model": model.model_id,
+            "messages": messages,
+            "stream": false,
+            "response_format": { "type": "json_object" },
+            "max_tokens": 1200,
+        });
+        strip_unsupported_response_format(&mut req_body, &model);
+
+        let response = model_chat_request(client, &model, &req_body)
+            .send()
+            .await
+            .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(AppError::Custom(format_openai_api_error(status, &body)));
+        }
+        let resp_json: Value = response
+            .json()
+            .await
+            .map_err(|e| AppError::Custom(format!("解析响应失败: {}", e)))?;
+        let content = completion_text(&model.provider, &resp_json)
+            .ok_or_else(|| AppError::Custom("AI 返回格式异常：响应里没有正文".into()))?;
+
+        parse_json_lenient::<AiRecognizedTask>(&content).ok_or_else(|| {
+            AppError::Custom(format!(
+                "AI 返回的 JSON 无法解析。原始响应：\n{}",
+                content.chars().take(400).collect::<String>()
+            ))
+        })
+    }
+
     // ══════════════════════════════════════════════════════════════════
     // T-006 AI 写笔记并归档
     // ══════════════════════════════════════════════════════════════════
@@ -4192,6 +4284,43 @@ mod plan_today_tests {
         let raw = "好的，我来为你规划：\n{\"tasks\":[{\"title\":\"写周报\",\"priority\":1}],\"summary\":\"\"}\n希望对你有帮助";
         let r = parse_plan_today_response(raw).unwrap();
         assert_eq!(r.tasks.len(), 1);
+    }
+}
+
+/// 通用的宽松 JSON 解析：原样 → 剥 ```json 围栏 → 截取首个 { 到最后一个 }（三轮兜底）
+fn parse_json_lenient<T: serde::de::DeserializeOwned>(raw: &str) -> Option<T> {
+    if let Ok(r) = serde_json::from_str::<T>(raw.trim()) {
+        return Some(r);
+    }
+    let stripped = raw
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    if let Ok(r) = serde_json::from_str::<T>(stripped) {
+        return Some(r);
+    }
+    let start = raw.find('{')?;
+    let end = raw.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    serde_json::from_str(&raw[start..=end]).ok()
+}
+
+#[cfg(test)]
+mod recognize_task_tests {
+    use super::*;
+
+    #[test]
+    fn parse_recognized_task_with_fence_and_missing_fields() {
+        let raw = "```json\n{\"title\":\"季度总结会\",\"dueDate\":\"2026-10-25 14:00:00\",\"location\":\"三楼会议室\",\"subtasks\":[{\"title\":\"准备 PPT\"}]}\n```";
+        let r: AiRecognizedTask = parse_json_lenient(raw).unwrap();
+        assert_eq!(r.title, "季度总结会");
+        assert_eq!(r.start_date, None);
+        assert_eq!(r.subtasks.len(), 1);
+        assert_eq!(r.subtasks[0].due_date, None);
     }
 }
 

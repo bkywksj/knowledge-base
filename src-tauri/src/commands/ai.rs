@@ -2,7 +2,8 @@ use tauri::State;
 use tokio::sync::watch;
 
 use crate::models::{
-    AiConversation, AiMessage, AiModel, AiModelInput, AiModelTestResult, AttachmentPreview,
+    AiConversation, AiMessage, AiModel, AiModelInput, AiModelTestResult, AiRecognizedTask,
+    AttachmentPreview,
     DraftNoteRequest, DraftNoteResponse, ExcelPreview, MessageAttachment, Note, NoteInput,
     PlanFromExcelRequest, PlanFromGoalRequest, PlanFromGoalResponse, PlanTodayRequest,
     PlanTodayResponse, TaskSuggestion,
@@ -533,6 +534,17 @@ pub async fn ai_extract_task_from_text(
     text: String,
 ) -> Result<TaskSuggestion, String> {
     AiService::extract_task_from_text(&state.db, &text)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// AI 识别一段通知 / 消息 → 结构化待办（含时间段、地点、子任务），只回填表单不落库
+#[tauri::command]
+pub async fn ai_recognize_task(
+    state: State<'_, AppState>,
+    text: String,
+) -> Result<AiRecognizedTask, String> {
+    AiService::recognize_task(&state.db, &text)
         .await
         .map_err(|e| e.to_string())
 }

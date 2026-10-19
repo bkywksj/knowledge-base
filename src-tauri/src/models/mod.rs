@@ -1651,6 +1651,39 @@ fn default_true() -> bool {
 /// AI 对一条待办的建议（未真正写入数据库）
 ///
 /// 前端把这些建议展示在 Modal 表格，用户可编辑/勾选后调用现有 `taskApi.create`
+/// AI 识别通知 / 消息得到的待办（新建待办弹窗「AI 识别」用）。
+/// 比 `TaskSuggestion` 多了时间段、地点、子任务：一段通知里常有多件事、起止区间。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiRecognizedTask {
+    pub title: String,
+    /// 'YYYY-MM-DD HH:MM:SS' 或 'YYYY-MM-DD'；时间段时为结束时间
+    #[serde(default)]
+    pub due_date: Option<String>,
+    /// 时间段起始日 'YYYY-MM-DD'；不是时间段为 null
+    #[serde(default)]
+    pub start_date: Option<String>,
+    #[serde(default)]
+    pub remind_before: Option<i32>,
+    /// 0=紧急 / 1=一般 / 2=不急
+    #[serde(default)]
+    pub priority: Option<i32>,
+    #[serde(default)]
+    pub important: Option<bool>,
+    #[serde(default)]
+    pub location: Option<String>,
+    #[serde(default)]
+    pub subtasks: Vec<AiRecognizedSubtask>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiRecognizedSubtask {
+    pub title: String,
+    #[serde(default)]
+    pub due_date: Option<String>,
+}
+
 /// 批量写入 tasks 表。与 `CreateTaskInput` 刻意保持字段兼容，方便前端直接映射。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
