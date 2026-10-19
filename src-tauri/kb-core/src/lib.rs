@@ -40,7 +40,7 @@ use rmcp::{
     },
     schemars, tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler,
 };
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::Serialize;
 
 // ─── 数据库连接（只读 + WAL 兼容） ─────────────────────────────────
@@ -250,6 +250,32 @@ struct CreateFolderArgs {
     /// 父文件夹 id；不传或 null 表示创建顶级文件夹
     #[serde(default, deserialize_with = "lenient_int::de_opt_i64")]
     parent_id: Option<i64>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct RenameFolderArgs {
+    /// 文件夹 id（从 list_folders 取）
+    #[serde(deserialize_with = "lenient_int::de_i64")]
+    id: i64,
+    /// 新名称（必填，前后空白会被 trim）
+    name: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct MoveFolderArgs {
+    /// 要移动的文件夹 id
+    #[serde(deserialize_with = "lenient_int::de_i64")]
+    id: i64,
+    /// 新的父文件夹 id；不传或 null 表示移到顶级
+    #[serde(default, deserialize_with = "lenient_int::de_opt_i64")]
+    parent_id: Option<i64>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct ReorderFoldersArgs {
+    /// 同一父文件夹下的兄弟文件夹 id，按期望的显示顺序排列（第一个排最前）
+    #[serde(deserialize_with = "lenient_int::de_vec_i64")]
+    ordered_ids: Vec<i64>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -988,6 +1014,97 @@ impl KbServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
+    // ─── ✏️ 写工具：rename_folder ────────────────────────────────
+    #[tool(description = "重命名文件夹（先 list_folders 取 id）。\
+                          仅 --writable 模式可用。返回 {id, name}。")]
+    fn rename_folder(
+        &self,
+        Parameters(args): Parameters<RenameFolderArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.ensure_writable()?;
+        let name = args.name.trim();
+        if name.is_empty() {
+            return Err(McpError::invalid_params("name 不能为空".to_string(), None));
+        }
+        let conn = self
+            .db
+            .conn
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("db lock: {e}"), None))?;
+        let affected = rename_folder(&conn, args.id, name)
+            .map_err(|e| McpError::internal_error(format!("rename_folder: {e}"), None))?;
+        if affected == 0 {
+            return Err(McpError::invalid_params(
+                format!("文件夹 {} 不存在", args.id),
+                None,
+            ));
+        }
+        let json = serde_json::to_string(&serde_json::json!({
+            "id": args.id,
+            "name": name,
+        }))
+        .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    // ─── ✏️ 写工具：move_folder ──────────────────────────────────
+    #[tool(description = "把文件夹移到另一个父文件夹下（parent_id=null 移到顶级）。\
+                          不能移到自身或自己的子孙下。仅 --writable 模式可用。\
+                          返回 {id, parent_id}。")]
+    fn move_folder(
+        &self,
+        Parameters(args): Parameters<MoveFolderArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.ensure_writable()?;
+        let conn = self
+            .db
+            .conn
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("db lock: {e}"), None))?;
+        move_folder(&conn, args.id, args.parent_id)?;
+        let json = serde_json::to_string(&serde_json::json!({
+            "id": args.id,
+            "parent_id": args.parent_id,
+        }))
+        .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    // ─── ✏️ 写工具：reorder_folders ──────────────────────────────
+    #[tool(description = "调整同一父文件夹下兄弟文件夹的显示顺序：\
+                          ordered_ids 按期望顺序传入（第一个排最前），必须全部属于同一个父文件夹。\
+                          建议传入该父文件夹下的全部子文件夹，漏传的会排在后面。\
+                          仅 --writable 模式可用。返回 {count}。")]
+    fn reorder_folders(
+        &self,
+        Parameters(args): Parameters<ReorderFoldersArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.ensure_writable()?;
+        if args.ordered_ids.is_empty() {
+            return Err(McpError::invalid_params(
+                "ordered_ids 不能为空".to_string(),
+                None,
+            ));
+        }
+        if args.ordered_ids.len() > 500 {
+            return Err(McpError::invalid_params(
+                "单次最多排序 500 个文件夹".to_string(),
+                None,
+            ));
+        }
+        let mut conn = self
+            .db
+            .conn
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("db lock: {e}"), None))?;
+        reorder_folders(&mut conn, &args.ordered_ids)?;
+        let json = serde_json::to_string(&serde_json::json!({
+            "count": args.ordered_ids.len(),
+        }))
+        .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
     // ─── ✏️ 写工具：create_note_from_template ───────────────────
     #[tool(
         description = "按模板建笔记。title 不传则自动用「模板名 · YYYY-MM-DD」。\
@@ -1349,7 +1466,8 @@ impl ServerHandler for KbServer {
                  list_templates / list_trash。\
                  写工具：create_note / update_note / delete_note / move_notes_batch / \
                  add_tag_to_note / remove_tag_from_note / create_task / update_task / \
-                 create_folder / create_note_from_template / restore_note_from_trash（{}）。\
+                 create_folder / rename_folder / move_folder / reorder_folders / \
+                 create_note_from_template / restore_note_from_trash（{}）。\
                  默认过滤回收站、隐藏、加密笔记，保护隐私。",
                 if self.writable { "已启用" } else { "当前禁用，启动加 --writable 开启" }
             ))
@@ -2064,6 +2182,133 @@ fn create_folder(
     Ok(conn.last_insert_rowid())
 }
 
+/// 重命名文件夹。返回受影响行数（0 = 文件夹不存在）。
+/// 与主应用 database/folders.rs::rename_folder 一致：只改 name。
+fn rename_folder(conn: &Connection, id: i64, name: &str) -> Result<usize, rusqlite::Error> {
+    conn.execute(
+        "UPDATE folders SET name = ?1 WHERE id = ?2",
+        params![name, id],
+    )
+}
+
+/// 修改文件夹父节点（parent_id = None 移到顶级）。
+/// 防循环口径与主应用 database/folders.rs::move_folder 一致：
+/// 沿目标父节点的父链向上走，碰到自己说明目标是自己的子孙。
+fn move_folder(conn: &Connection, id: i64, parent_id: Option<i64>) -> Result<(), McpError> {
+    let db_err = |e: rusqlite::Error| McpError::internal_error(format!("move_folder: {e}"), None);
+    if let Some(pid) = parent_id {
+        if pid == id {
+            return Err(McpError::invalid_params("不能把文件夹移到自身".to_string(), None));
+        }
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM folders WHERE id = ?1)",
+                params![pid],
+                |row| row.get(0),
+            )
+            .map_err(db_err)?;
+        if !exists {
+            return Err(McpError::invalid_params(
+                format!("目标父文件夹 {pid} 不存在"),
+                None,
+            ));
+        }
+        let mut cursor = Some(pid);
+        while let Some(current) = cursor {
+            if current == id {
+                return Err(McpError::invalid_params(
+                    "不能把文件夹移到自己的子孙中".to_string(),
+                    None,
+                ));
+            }
+            cursor = conn
+                .query_row(
+                    "SELECT parent_id FROM folders WHERE id = ?1",
+                    params![current],
+                    |row| row.get::<_, Option<i64>>(0),
+                )
+                .optional()
+                .map_err(db_err)?
+                .flatten();
+        }
+    }
+    let affected = conn
+        .execute(
+            "UPDATE folders SET parent_id = ?1 WHERE id = ?2",
+            params![parent_id, id],
+        )
+        .map_err(db_err)?;
+    if affected == 0 {
+        return Err(McpError::invalid_params(format!("文件夹 {id} 不存在"), None));
+    }
+    Ok(())
+}
+
+/// 按给定顺序把兄弟文件夹的 sort_order 赋为 0..N-1（与主应用 set_folder_sort_orders 一致）。
+///
+/// 比主应用多一道校验：id 必须全部存在且同属一个父文件夹。主应用的调用方是拖拽 UI，
+/// 天然只会传兄弟节点；LLM 传参没这个保证，混入别的层级会把两边的顺序都搅乱。
+fn reorder_folders(conn: &mut Connection, ordered_ids: &[i64]) -> Result<(), McpError> {
+    let db_err =
+        |e: rusqlite::Error| McpError::internal_error(format!("reorder_folders: {e}"), None);
+    let mut seen = std::collections::HashSet::new();
+    let mut parent: Option<Option<i64>> = None;
+    for id in ordered_ids {
+        if !seen.insert(*id) {
+            return Err(McpError::invalid_params(
+                format!("ordered_ids 里 {id} 重复出现"),
+                None,
+            ));
+        }
+        let pid: Option<i64> = conn
+            .query_row(
+                "SELECT parent_id FROM folders WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(db_err)?
+            .ok_or_else(|| McpError::invalid_params(format!("文件夹 {id} 不存在"), None))?;
+        match parent {
+            None => parent = Some(pid),
+            Some(p) if p != pid => {
+                return Err(McpError::invalid_params(
+                    "ordered_ids 必须全部属于同一个父文件夹（先用 list_folders 看 parent_id）"
+                        .to_string(),
+                    None,
+                ));
+            }
+            _ => {}
+        }
+    }
+    // 没传进来的兄弟按原顺序接在后面 —— 只给部分 id 赋 0..N-1 的话，
+    // 剩下的旧 sort_order 会和新值撞车，结果顺序不可预期
+    let parent_id = parent.flatten();
+    let rest: Vec<i64> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id FROM folders WHERE parent_id IS ?1 ORDER BY sort_order ASC, name ASC",
+            )
+            .map_err(db_err)?;
+        let ids = stmt
+            .query_map(params![parent_id], |row| row.get::<_, i64>(0))
+            .map_err(db_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(db_err)?;
+        ids.into_iter().filter(|id| !seen.contains(id)).collect()
+    };
+    let tx = conn.transaction().map_err(db_err)?;
+    for (idx, id) in ordered_ids.iter().chain(rest.iter()).enumerate() {
+        tx.execute(
+            "UPDATE folders SET sort_order = ?1 WHERE id = ?2",
+            params![idx as i64, id],
+        )
+        .map_err(db_err)?;
+    }
+    tx.commit().map_err(db_err)?;
+    Ok(())
+}
+
 /// 按模板创建笔记。title 不传则用「模板名 · YYYY-MM-DD」。
 /// 内部复用 create_note 的字段维护（title_normalized + content_hash），
 /// 落库前先渲染 `{{date}} / {{weekday}} / {{title}} / ...` 等占位符。
@@ -2429,6 +2674,80 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM notes WHERE stable_uuid IS NULL", [], |r| r.get(0))
             .unwrap();
         assert_eq!(null_rows, 0);
+    }
+
+    /// 文件夹树：1(A) ─┬─ 2(A1)
+    ///                 └─ 3(A2) ── 4(A2x)
+    ///             5(B)   6(C)
+    fn folder_test_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE folders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                parent_id INTEGER,
+                sort_order INTEGER DEFAULT 0
+            );
+            INSERT INTO folders (id, name, parent_id, sort_order) VALUES
+                (1, 'A', NULL, 0), (2, 'A1', 1, 0), (3, 'A2', 1, 1), (4, 'A2x', 3, 0),
+                (5, 'B', NULL, 1), (6, 'C', NULL, 2);",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn folder_row(conn: &Connection, id: i64) -> (String, Option<i64>, i64) {
+        conn.query_row(
+            "SELECT name, parent_id, sort_order FROM folders WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn rename_folder_reports_missing_id() {
+        let conn = folder_test_conn();
+        assert_eq!(rename_folder(&conn, 5, "新名字").unwrap(), 1);
+        assert_eq!(folder_row(&conn, 5).0, "新名字");
+        assert_eq!(rename_folder(&conn, 999, "x").unwrap(), 0);
+    }
+
+    #[test]
+    fn move_folder_rejects_cycles_and_missing_parent() {
+        let conn = folder_test_conn();
+        assert!(move_folder(&conn, 1, Some(1)).is_err(), "不能移到自身");
+        assert!(move_folder(&conn, 1, Some(4)).is_err(), "不能移到孙子下");
+        assert!(move_folder(&conn, 1, Some(999)).is_err(), "父文件夹不存在");
+        assert!(move_folder(&conn, 999, None).is_err(), "文件夹不存在");
+
+        move_folder(&conn, 3, Some(5)).unwrap();
+        assert_eq!(folder_row(&conn, 3).1, Some(5));
+        move_folder(&conn, 3, None).unwrap();
+        assert_eq!(folder_row(&conn, 3).1, None);
+    }
+
+    #[test]
+    fn reorder_folders_appends_unlisted_siblings() {
+        let mut conn = folder_test_conn();
+        // 只传两个顶级：6 排第一、5 排第二，没传的 1 接在后面
+        reorder_folders(&mut conn, &[6, 5]).unwrap();
+        assert_eq!(folder_row(&conn, 6).2, 0);
+        assert_eq!(folder_row(&conn, 5).2, 1);
+        assert_eq!(folder_row(&conn, 1).2, 2);
+        // 子层级不受影响
+        assert_eq!(folder_row(&conn, 2).2, 0);
+        assert_eq!(folder_row(&conn, 3).2, 1);
+    }
+
+    #[test]
+    fn reorder_folders_rejects_mixed_parents_duplicates_and_missing() {
+        let mut conn = folder_test_conn();
+        assert!(reorder_folders(&mut conn, &[1, 2]).is_err(), "跨层级");
+        assert!(reorder_folders(&mut conn, &[5, 5]).is_err(), "重复 id");
+        assert!(reorder_folders(&mut conn, &[5, 999]).is_err(), "不存在的 id");
+        // 校验失败时不能改动任何行
+        assert_eq!(folder_row(&conn, 5).2, 1);
     }
 
     #[test]

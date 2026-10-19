@@ -593,7 +593,7 @@ interface AppStore {
   /** 启动时拉一次后端 system_info；失败静默（不是关键路径） */
   loadInstanceInfo: () => Promise<void>;
   /**
-   * 内置 in-memory MCP 是否允许 AI 调用写工具（create/update/delete/move 等 11 个）。
+   * 内置 in-memory MCP 是否允许 AI 调用写工具（create/update/delete/move 等）。
    * 默认 true（兼容旧版）。关闭后 AI 问答页里 LLM 调写工具会被后端拦截，返回友好错误。
    * 持久化在 app_config（key="ai_writable"），与外部 sidecar 的 --writable 互不影响。
    */

@@ -385,7 +385,7 @@ export function MCPServerSection() {
             }
             description={
               aiWritable
-                ? "开启后，AI 可调用 create_note / update_note / delete_note / move_notes_batch / add_tag_to_note 等 11 个写工具。批量删除/移动前请让 AI 先列计划再确认。"
+                ? "开启后，AI 可调用 create_note / update_note / delete_note / move_notes_batch / add_tag_to_note、rename_folder 等写工具。批量删除/移动前请让 AI 先列计划再确认。"
                 : "关闭后，AI 调用任何写工具都会被后端拦截并返回友好错误，相当于安全只读模式。"
             }
           />

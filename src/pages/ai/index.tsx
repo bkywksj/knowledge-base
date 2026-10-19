@@ -186,7 +186,7 @@ function DesktopAiChatPage() {
   // 设计上不再区分"RAG 模式 / Skills 模式"——RAG 本质就是预先调一次 search_notes，
   // Skills 让 LLM 按需调，是 RAG 的超集。把选择权交给 LLM，用户只管开关。
   const [useSkills, setUseSkills] = useState(true);
-  // AI 写权限：默认 true（保留旧 UX）。关掉后内置 MCP 的 11 个写工具会在 Rust 侧被拦截。
+  // AI 写权限：默认 true（保留旧 UX）。关掉后内置 MCP 的写工具会在 Rust 侧被拦截。
   // 真相在 app_config.ai_writable，启动时已 loadAiWritable() 同步过。
   const aiWritable = useAppStore((s) => s.aiWritable);
   const setAiWritable = useAppStore((s) => s.setAiWritable);
@@ -1162,7 +1162,7 @@ function DesktopAiChatPage() {
                     />
                   </div>
                 </Tooltip>
-                {/* AI 写权限：控制内置 MCP 写工具（create/update/delete 等 11 个）是否可被 AI 调用 */}
+                {/* AI 写权限：控制内置 MCP 写工具（create/update/delete 等）是否可被 AI 调用 */}
                 <Tooltip
                   title={
                     aiWritable

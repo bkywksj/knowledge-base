@@ -29,12 +29,16 @@ const TARGET_TRIPLE: &str = env!("TAURI_ENV_TARGET_TRIPLE");
 /// 兼容老版本——升级前 in-memory MCP 永远 writable，不能升级后突然把用户的 AI 锁死。
 const AI_WRITABLE_KEY: &str = "ai_writable";
 
-/// kb-core 11 个写工具的精确名单。命中即在 in-memory MCP 入口处拦截。
+/// kb-core 14 个写工具的精确名单。命中即在 in-memory MCP 入口处拦截。
 /// 不用前缀匹配是怕将来加只读但前缀冲突的工具（如 add_search_filter）误伤。
+/// 🔴 kb-core 新增写工具时必须同步加到这里，否则关掉「AI 写权限」也拦不住它。
 const KB_WRITE_TOOLS: &[&str] = &[
     "create_note",
     "create_note_from_template",
     "create_folder",
+    "rename_folder",
+    "move_folder",
+    "reorder_folders",
     "create_task",
     "update_note",
     "update_task",
@@ -45,7 +49,7 @@ const KB_WRITE_TOOLS: &[&str] = &[
     "remove_tag_from_note",
 ];
 
-/// 是否是 kb-core 11 个写工具之一。
+/// 是否是 kb-core 写工具之一。
 /// 暴露给 `services::skills::dispatch_kb_internal` 共用同一份名单。
 pub(crate) fn is_kb_write_tool(name: &str) -> bool {
     KB_WRITE_TOOLS.contains(&name)
@@ -164,7 +168,7 @@ fn build_claude_md_template() -> String {
 - `list_templates` — 笔记模板（会议记录/读书笔记/周报 等）
 - `list_trash(limit?)` — 回收站里的笔记（可恢复）
 
-**写工具（需 `--writable` 启动开关，需用户授权，11 个）**：
+**写工具（需 `--writable` 启动开关，需用户授权，14 个）**：
 
 *笔记类*：
 - `create_note(title, content, folder_id?)` — 创建空白笔记
@@ -176,6 +180,9 @@ fn build_claude_md_template() -> String {
 
 *文件夹类*：
 - `create_folder(name, parent_id?)` — 建归档桶（parent_id=null 顶级）
+- `rename_folder(id, name)` — 重命名文件夹
+- `move_folder(id, parent_id?)` — 把文件夹移到另一个父文件夹下（parent_id=null 移到顶级）
+- `reorder_folders(ordered_ids)` — 调整同一父文件夹下兄弟文件夹的顺序（先 list_folders 看 parent_id）
 
 *标签类*：
 - `add_tag_to_note(note_id, tag)` — 给笔记加标签（标签不存在自动建）
