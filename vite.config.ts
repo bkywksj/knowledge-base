@@ -100,14 +100,30 @@ export default defineConfig(async () => ({
     },
     rollupOptions: {
       output: {
-        manualChunks: {
-          "vendor-react": ["react", "react-dom", "react-router-dom"],
-          "vendor-antd": ["antd", "@ant-design/icons"],
-          "vendor-editor": ["@tiptap/react", "@tiptap/starter-kit"],
-          // 白板单独切块：Excalidraw 依赖树很重（roughjs / pica / jotai / radix-ui …），
-          // 混进主 bundle 会拖慢所有用户的冷启动。配合前端的 React.lazy，
-          // 只有真正打开白板的人才会下载这一块。
-          "vendor-excalidraw": ["@excalidraw/excalidraw"],
+        // 函数形式而非对象形式：对象形式会把入口的**整棵依赖树**并进该块，
+        // Excalidraw 依赖树里和主包共用的模块（react 周边 / lodash 等）因此被拉进
+        // vendor-excalidraw，主入口反过来要 modulepreload 这 1.1MB —— React.lazy 形同虚设。
+        // 这里只按包路径精确归类，共享依赖留给 Rollup 自己决定放哪。
+        manualChunks(id) {
+          // Vite 注入的懒加载辅助（__vitePreload）被所有 import() 共用；不指定的话 Rollup 会把它
+          // 塞进某个用到 import() 的块 —— 实测落进了 vendor-excalidraw，主入口为了拿这个几百字节的
+          // 函数被迫 modulepreload 整个白板块。固定放到首屏必载的 vendor-react 里。
+          if (id.includes("vite/preload-helper") || id.includes("vite/modulepreload-polyfill")) {
+            return "vendor-react";
+          }
+          if (!id.includes("node_modules")) return undefined;
+          const p = id.replace(/\\/g, "/");
+          // pnpm 路径形如 node_modules/.pnpm/<pkg>@x/node_modules/<pkg>/…，取最后一段 node_modules 之后的包名
+          const tail = p.slice(p.lastIndexOf("/node_modules/") + "/node_modules/".length);
+          const pkg = tail.startsWith("@") ? tail.split("/").slice(0, 2).join("/") : tail.split("/")[0];
+          // 白板单独切块：只有真正打开白板的人才下载（配合 WhiteboardCanvas 的 React.lazy）
+          if (pkg === "@excalidraw/excalidraw") return "vendor-excalidraw";
+          if (pkg === "react" || pkg === "react-dom" || pkg === "react-router-dom" || pkg === "react-router" || pkg === "scheduler") {
+            return "vendor-react";
+          }
+          if (pkg === "antd" || pkg === "@ant-design/icons") return "vendor-antd";
+          if (pkg === "@tiptap/react" || pkg === "@tiptap/starter-kit") return "vendor-editor";
+          return undefined;
         },
       },
     },

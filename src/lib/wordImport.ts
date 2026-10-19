@@ -1,4 +1,6 @@
-import mammoth from "mammoth";
+// mammoth 约 600KB，只在真的导入 Word 时才动态加载（不进主包拖慢冷启动）
+type Mammoth = typeof import("mammoth");
+const loadMammoth = (): Promise<Mammoth> => import("mammoth").then((m) => m.default);
 import { noteApi, sourceFileApi, imageApi } from "@/lib/api";
 import { toKbAsset } from "@/lib/assetUrl";
 import type { Note } from "@/types";
@@ -27,7 +29,7 @@ function fileStem(path: string): string {
 }
 
 /** mammoth 把内联图片转成 data URL；后续替换成本地 asset:// */
-function imgConvertOption() {
+function imgConvertOption(mammoth: Mammoth) {
   return mammoth.images.imgElement(async (image) => {
     const buf = await image.read("base64");
     return { src: `data:${image.contentType};base64,${buf}` };
@@ -117,9 +119,10 @@ export async function importWordFile(
   const arrayBuffer = base64ToArrayBuffer(base64);
 
   // 2. mammoth 转 HTML（图片先嵌入 data URL）
+  const mammoth = await loadMammoth();
   const result = await mammoth.convertToHtml(
     { arrayBuffer },
-    { convertImage: imgConvertOption() },
+    { convertImage: imgConvertOption(mammoth) },
   );
   const rawHtml = result.value || "<p></p>";
   for (const m of result.messages || []) {

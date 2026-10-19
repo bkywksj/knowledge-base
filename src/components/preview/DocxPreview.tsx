@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { Spin, Alert, theme as antdTheme } from "antd";
-import mammoth from "mammoth";
 import { sourceFileApi, systemApi } from "@/lib/api";
 
 interface Props {
@@ -65,6 +64,9 @@ export function DocxPreview({ rel }: Props) {
         }
         if (cancelled) return;
         const arrayBuffer = base64ToArrayBuffer(base64);
+        // mammoth 体积大，预览 Word 时才加载，不进主包
+        const mammoth = (await import("mammoth")).default;
+        if (cancelled) return;
         const result = await mammoth.convertToHtml(
           { arrayBuffer },
           {

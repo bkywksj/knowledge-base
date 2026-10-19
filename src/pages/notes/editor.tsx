@@ -5,6 +5,10 @@ import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 const NoteSnapshotDrawer = lazy(
   () => import("@/components/notes/NoteSnapshotDrawer"),
 );
+/** 思维导图分栏：markmap-lib / markmap-view 体积大，只有点开导图才加载 */
+const MindMapView = lazy(() =>
+  import("@/components/notes/MindMapView").then((m) => ({ default: m.MindMapView })),
+);
 import {
   Input,
   Button,
@@ -53,7 +57,6 @@ import { EditorStats } from "@/components/editor/EditorStats";
 import { TagColorPicker } from "@/components/TagColorPicker";
 import { MicButton } from "@/components/MicButton";
 import { NoteAiDrawer } from "@/components/ai/NoteAiDrawer";
-import { MindMapView } from "@/components/notes/MindMapView";
 import { SlideshowView } from "@/components/notes/SlideshowView";
 import type { Note, Tag, Folder, NoteLink } from "@/types";
 import { accelToKeys, findShortcut } from "@/lib/shortcuts/registry";
@@ -767,7 +770,9 @@ function DesktopNoteEditorPage() {
   const initialSearch = (searchParams.get("q") ?? "").trim() || undefined;
   // 上下文感知的 message / notification（避免静态方法丢主题、偶发不显示）
   const { message, notification } = AntdApp.useApp();
-  const { focusMode, setFocusMode } = useAppStore();
+  // 逐字段订阅：useAppStore() 订阅整个 store，任何 tick（如待办统计刷新）都会让整个编辑页重渲染
+  const focusMode = useAppStore((s) => s.focusMode);
+  const setFocusMode = useAppStore((s) => s.setFocusMode);
   // 阅读模式：初值跟全局默认（设置页可改），每篇笔记独立 state，切笔记不残留上一篇状态
   const defaultViewMode = useAppStore((s) => s.defaultViewMode);
   const [readingMode, setReadingMode] = useState<boolean>(defaultViewMode === "read");
@@ -2891,14 +2896,16 @@ function DesktopNoteEditorPage() {
             height: "100%",
           }}
         >
-          <MindMapView
-            open={mindMapOpen}
-            onClose={() => setMindMapOpen(false)}
-            markdown={content}
-            title={title}
-            noteId={Number.isFinite(noteId) ? noteId : null}
-            variant="embed"
-          />
+          <Suspense fallback={null}>
+            <MindMapView
+              open={mindMapOpen}
+              onClose={() => setMindMapOpen(false)}
+              markdown={content}
+              title={title}
+              noteId={Number.isFinite(noteId) ? noteId : null}
+              variant="embed"
+            />
+          </Suspense>
         </div>
       )}
       </div>
@@ -2919,18 +2926,6 @@ function DesktopNoteEditorPage() {
           navigate(`/notes/${id}`);
         }}
       />
-
-      {/* 历史版本抽屉：开过一次才挂载，没点过的用户不用为它买单 */}
-      {historyOpen && (
-        <Suspense fallback={null}>
-          <NoteSnapshotDrawer
-            open={historyOpen}
-            onClose={() => setHistoryOpen(false)}
-            noteId={noteId}
-            onRestored={handleSnapshotRestored}
-          />
-        </Suspense>
-      )}
 
       {/* 历史版本抽屉：开过一次才挂载，从没点过的用户不用为它买单 */}
       {historyOpen && (

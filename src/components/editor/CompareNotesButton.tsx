@@ -11,7 +11,8 @@ import { FileDiff } from "lucide-react";
 import type { Editor } from "@tiptap/react";
 import { noteApi } from "@/lib/api";
 import type { Note } from "@/types";
-import { DiffMergeModal, type DiffSide } from "./DiffMergeModal";
+import { DiffMergeModal } from "./LazyDiffMergeModal";
+import type { DiffSide } from "./DiffMergeModal";
 
 interface Props {
   editor: Editor;

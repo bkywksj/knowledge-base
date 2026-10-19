@@ -15,7 +15,8 @@ import { Button, Segmented, Tooltip, message } from "antd";
 import { Diff } from "lucide-react";
 import type { Editor } from "@tiptap/react";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
-import { DiffMergeModal, type DiffSide } from "./DiffMergeModal";
+import { DiffMergeModal } from "./LazyDiffMergeModal";
+import type { DiffSide } from "./DiffMergeModal";
 import { getNoteMarkdown, getNotePlainText, looksLikeMarkdown } from "./markdownDiffUtil";
 
 interface Props {

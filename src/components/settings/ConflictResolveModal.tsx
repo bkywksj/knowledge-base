@@ -5,7 +5,7 @@
  * 这里把这些冲突列出来，每条用 本地 / 远端 双栏 diff 展示，
  * 用户选「用本地 / 用远端 / 保存合并结果」→ 写回笔记 + 删冲突文件。
  */
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import {
   Alert,
   App as AntdApp,
@@ -18,7 +18,12 @@ import {
   Spin,
   Tag,
 } from "antd";
-import ReactDiffViewer, { DiffMethod } from "react-diff-viewer-continued";
+import type { DiffMethod } from "react-diff-viewer-continued";
+
+// diff 视图只在真有冲突时才渲染；它被同步设置页静态引用，懒加载避免拖进主包
+const ReactDiffViewer = lazy(() => import("react-diff-viewer-continued"));
+// 枚举值直接写字面量：值导入 DiffMethod 会把整个库又拉回主包
+const DIFF_WORDS = "diffWords" as DiffMethod;
 import { useAppStore } from "@/store";
 import { syncV1Api } from "@/lib/api";
 import type { SyncConflictItem, SyncConflictResolution } from "@/types";
@@ -270,15 +275,17 @@ function ConflictDetail({
           borderRadius: 6,
         }}
       >
-        <ReactDiffViewer
-          oldValue={item.localContent}
-          newValue={item.remoteContent}
-          splitView
-          useDarkTheme={dark}
-          compareMethod={DiffMethod.WORDS}
-          leftTitle="本地版本"
-          rightTitle="远端版本"
-        />
+        <Suspense fallback={<Spin style={{ display: "block", padding: 24 }} />}>
+          <ReactDiffViewer
+            oldValue={item.localContent}
+            newValue={item.remoteContent}
+            splitView
+            useDarkTheme={dark}
+            compareMethod={DIFF_WORDS}
+            leftTitle="本地版本"
+            rightTitle="远端版本"
+          />
+        </Suspense>
       </div>
       <div style={{ marginTop: 12 }}>
         <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>

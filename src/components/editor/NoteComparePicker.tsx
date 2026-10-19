@@ -8,7 +8,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { App as AntdApp, Modal, Select } from "antd";
 import { noteApi } from "@/lib/api";
 import type { Note } from "@/types";
-import { DiffMergeModal, type DiffSide } from "./DiffMergeModal";
+import { DiffMergeModal } from "./LazyDiffMergeModal";
+import type { DiffSide } from "./DiffMergeModal";
 import { tidyNoteMarkdown } from "./markdownDiffUtil";
 
 interface Props {

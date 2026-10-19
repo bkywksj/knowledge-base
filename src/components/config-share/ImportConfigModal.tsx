@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Modal, Tabs, message, Alert, Input } from "antd";
 import { ClipboardPaste, ScanLine, Lock } from "lucide-react";
-import { Html5Qrcode } from "html5-qrcode";
+import type { Html5Qrcode } from "html5-qrcode";
 import { readText as readClipboardText } from "@tauri-apps/plugin-clipboard-manager";
 import {
   KIND_LABELS,
@@ -123,6 +123,8 @@ export function ImportConfigModal({
     try {
       // 等 DOM 渲染出 reader 容器
       await new Promise((r) => setTimeout(r, 50));
+      // 扫码库只在真点「扫码」时加载：这个弹窗被设置页 / 同步页静态引用，不能让它拖进主包
+      const { Html5Qrcode } = await import("html5-qrcode");
       const html5Qr = new Html5Qrcode(scanContainerId);
       scannerRef.current = html5Qr;
       await html5Qr.start(
