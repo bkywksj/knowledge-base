@@ -23,6 +23,12 @@ import {
   X as XIcon,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import dayjs from "dayjs";
+import {
+  hasActiveFilters,
+  parseSearchUrl,
+  writeSearchUrl,
+} from "@/lib/searchUrlState";
 import { searchApi, taskApi, folderApi, tagApi } from "@/lib/api";
 import { MicButton } from "@/components/MicButton";
 import { useAppStore } from "@/store";
@@ -74,8 +80,10 @@ function DesktopSearchPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { token } = antdTheme.useToken();
+  // 进入页面时从 URL 恢复条件：点进笔记再返回、刷新都不丢（见 lib/searchUrlState）
+  const [initialUrl] = useState(() => parseSearchUrl(searchParams));
 
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialUrl.q);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [taskResults, setTaskResults] = useState<TaskSearchHit[]>([]);
   const [loading, setLoading] = useState(false);
@@ -83,15 +91,20 @@ function DesktopSearchPage() {
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // ─── 筛选（P1-2）────────────────────────────────
-  const [showFilters, setShowFilters] = useState(false);
+  // 带着筛选条件回来时直接展开面板，让用户看到条件还在
+  const [showFilters, setShowFilters] = useState(() => hasActiveFilters(initialUrl));
   const [folders, setFolders] = useState<Folder[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
-  const [pickedFolders, setPickedFolders] = useState<number[]>([]);
-  const [pickedTags, setPickedTags] = useState<number[]>([]);
-  const [pickedTypes, setPickedTypes] = useState<NoteType[]>([]);
-  const [dateRange, setDateRange] = useState<[string, string] | null>(null);
-  const [createdRange, setCreatedRange] = useState<[string, string] | null>(null);
-  const [titleOnly, setTitleOnly] = useState(false);
+  const [pickedFolders, setPickedFolders] = useState<number[]>(initialUrl.folders);
+  const [pickedTags, setPickedTags] = useState<number[]>(initialUrl.tags);
+  const [pickedTypes, setPickedTypes] = useState<NoteType[]>(initialUrl.types);
+  const [dateRange, setDateRange] = useState<[string, string] | null>(() =>
+    initialUrl.updated ? toDayRange(initialUrl.updated) : null,
+  );
+  const [createdRange, setCreatedRange] = useState<[string, string] | null>(() =>
+    initialUrl.created ? toDayRange(initialUrl.created) : null,
+  );
+  const [titleOnly, setTitleOnly] = useState(initialUrl.titleOnly);
   // RangePicker 是非受控的：清空筛选时靠换 key 重挂载，才能把选择器上残留的日期也清掉
   const [pickerResetKey, setPickerResetKey] = useState(0);
 
@@ -111,8 +124,11 @@ function DesktopSearchPage() {
   const filters = useMemo<SearchFilters | undefined>(() => {
     const f: SearchFilters = {};
     if (pickedFolders.length > 0) {
-      // 选了「工作」应当含其下所有子文件夹，否则用户会觉得"明明在这个目录里却搜不到"
-      f.folderIds = collectSubtreeIds(folders, pickedFolders);
+      // 选了「工作」应当含其下所有子文件夹，否则用户会觉得"明明在这个目录里却搜不到"。
+      // 🔴 从 URL 恢复时文件夹树可能还没拉到：此时子树展开会得到 []，后端 fail-closed 直接零结果。
+      //    先用选中的 id 本身，树到了 filtersKey 变化会自动按子树重搜。
+      f.folderIds =
+        folders.length > 0 ? collectSubtreeIds(folders, pickedFolders) : pickedFolders;
     }
     if (pickedTags.length > 0) f.tagIds = pickedTags;
     if (pickedTypes.length > 0) f.noteTypes = pickedTypes;
@@ -171,11 +187,46 @@ function DesktopSearchPage() {
   // 同步输入框并触发重搜；用户在输入框 typing 走下方本地 debounce，不走这里
   const urlQ = (searchParams.get("q") ?? "").trim();
   useEffect(() => {
-    if (!urlQ) return;
+    // 与输入框一致说明是本页自己写回 URL 的（见下方同步），不是外部跳转，别重复搜
+    if (!urlQ || urlQ === query.trim()) return;
     setQuery(urlQ);
     doSearch(urlQ);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlQ]);
+
+  // 首次进入：URL 里带着关键词（含从笔记返回）就按恢复的条件搜一次
+  useEffect(() => {
+    if (initialUrl.q) doSearch(initialUrl.q);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 条件变化 → 写回 URL（replace，不往历史栈里塞记录，后退仍是回到上一页）
+  useEffect(() => {
+    const day = (r: [string, string] | null): [string, string] | null =>
+      r ? [r[0].slice(0, 10), r[1].slice(0, 10)] : null;
+    const next = writeSearchUrl(searchParams, {
+      q: query,
+      folders: pickedFolders,
+      tags: pickedTags,
+      types: pickedTypes,
+      updated: day(dateRange),
+      created: day(createdRange),
+      titleOnly,
+    });
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [
+    query,
+    pickedFolders,
+    pickedTags,
+    pickedTypes,
+    dateRange,
+    createdRange,
+    titleOnly,
+    searchParams,
+    setSearchParams,
+  ]);
 
   /** 并发拉笔记 + 待办；任意一边失败不阻塞另一边 */
   async function doSearch(keyword: string) {
@@ -345,6 +396,9 @@ function DesktopSearchPage() {
           />
           <DatePicker.RangePicker
             key={`updated-${pickerResetKey}`}
+            defaultValue={
+              dateRange ? [dayjs(dateRange[0]), dayjs(dateRange[1])] : undefined
+            }
             size="small"
             style={{ minWidth: 220 }}
             onChange={(_, strs) => setDateRange(toDayRange(strs))}
@@ -352,6 +406,9 @@ function DesktopSearchPage() {
           />
           <DatePicker.RangePicker
             key={`created-${pickerResetKey}`}
+            defaultValue={
+              createdRange ? [dayjs(createdRange[0]), dayjs(createdRange[1])] : undefined
+            }
             size="small"
             style={{ minWidth: 220 }}
             onChange={(_, strs) => setCreatedRange(toDayRange(strs))}
