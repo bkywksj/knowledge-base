@@ -96,6 +96,11 @@ impl TaskService {
         db.delete_task(id)
     }
 
+    /// 撤销删除（单条 / 批量共用）
+    pub fn restore_deleted(db: &Database, ids: &[i64]) -> Result<usize, AppError> {
+        db.restore_tasks_by_ids(ids)
+    }
+
     pub fn add_link(db: &Database, task_id: i64, input: TaskLinkInput) -> Result<i64, AppError> {
         db.add_task_link(task_id, input)
     }

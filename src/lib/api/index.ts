@@ -1533,6 +1533,9 @@ export const taskApi = {
   /** 批量删除任务（多选模式用），返回实际删除条数 */
   deleteBatch: (ids: number[]) =>
     invoke<number>("delete_tasks_batch", { ids }),
+  /** 撤销删除（删除提示条里的「撤销」），返回实际恢复条数 */
+  restoreDeleted: (ids: number[]) =>
+    invoke<number>("restore_deleted_tasks", { ids }),
   /** 批量标记完成（多选模式用），返回实际更新条数 */
   completeBatch: (ids: number[]) =>
     invoke<number>("complete_tasks_batch", { ids }),

@@ -95,6 +95,7 @@ import {
 } from "@/lib/notesListColumns";
 // AntD 已有 Tag 组件同名，这里给类型起个别名避免冲突
 import type { Note, NoteTagBrief, PageResult, Folder, Tag as NoteTag } from "@/types";
+import { notifyNotesTrashed } from "@/lib/undoDelete";
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -1148,7 +1149,7 @@ function DesktopNoteListPage() {
       try {
         await trashApi.softDelete(id);
         useTabsStore.getState().closeTab(id);
-        message.success("已移到回收站");
+        notifyNotesTrashed(message, [id], "已移到回收站", () => loadNotes(data.page));
         useAppStore.getState().bumpNotesRefresh();
         loadNotes(data.page);
       } catch (e) {
@@ -1662,7 +1663,10 @@ function DesktopNoteListPage() {
             onConfirm={async () => {
               try {
                 const n = await noteApi.trashBatch(selectedIds);
-                message.success(`已移到回收站 ${n} 条`);
+                const trashedIds = selectedIds;
+                notifyNotesTrashed(message, trashedIds, `已移到回收站 ${n} 篇`, () =>
+                  loadNotes(data.page),
+                );
                 setSelectedIds([]);
                 useAppStore.getState().bumpNotesRefresh();
                 await loadNotes(data.page);

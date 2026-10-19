@@ -94,6 +94,7 @@ import { folderKeysFromDepth, maxFolderDepth } from "@/lib/folderDepth";
 import { ImportPreviewModal } from "@/components/ImportPreviewModal";
 import { TagColorPicker } from "@/components/TagColorPicker";
 import { Palette } from "lucide-react";
+import { notifyNotesTrashed } from "@/lib/undoDelete";
 
 /**
  * NotesPanel —— Activity Bar 模式下"笔记"视图的主面板内容。
@@ -1706,7 +1707,7 @@ export function NotesPanel() {
             try {
               await trashApi.softDelete(noteId);
               useTabsStore.getState().closeTab(noteId);
-              message.success("已移到回收站");
+              notifyNotesTrashed(message, [noteId]);
               useAppStore.getState().bumpNotesRefresh();
             } catch (e) {
               message.error(String(e));
@@ -2410,7 +2411,7 @@ export function NotesPanel() {
           ids.forEach((id) => useTabsStore.getState().closeTab(id));
           clearMultiSelect();
           useAppStore.getState().bumpNotesRefresh();
-          message.success(`已移到回收站 ${n} 篇`);
+          notifyNotesTrashed(message, ids, `已移到回收站 ${n} 篇`);
         } catch (e) {
           message.error(String(e));
         }

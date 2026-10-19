@@ -1617,6 +1617,7 @@ pub fn run() {
             commands::tasks::set_task_kanban_stage,
             commands::tasks::delete_task,
             commands::tasks::delete_tasks_batch,
+            commands::tasks::restore_deleted_tasks,
             commands::tasks::complete_tasks_batch,
             commands::tasks::add_task_link,
             commands::tasks::remove_task_link,

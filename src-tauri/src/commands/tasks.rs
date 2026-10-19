@@ -105,6 +105,15 @@ pub fn delete_tasks_batch(state: State<'_, AppState>, ids: Vec<i64>) -> Result<u
     Ok(n)
 }
 
+/// 撤销删除：删除提示条里点「撤销」时调用。返回实际恢复条数。
+#[tauri::command]
+pub fn restore_deleted_tasks(state: State<'_, AppState>, ids: Vec<i64>) -> Result<usize, String> {
+    let n = TaskService::restore_deleted(&state.db, &ids).map_err(|e| e.to_string())?;
+    // 恢复的任务可能带提醒，重新排一次
+    notify_reminder(&state);
+    Ok(n)
+}
+
 /// 批量标记任务为已完成（任务页多选模式用）。返回实际更新条数。
 #[tauri::command]
 pub fn complete_tasks_batch(state: State<'_, AppState>, ids: Vec<i64>) -> Result<usize, String> {

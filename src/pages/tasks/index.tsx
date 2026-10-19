@@ -61,6 +61,7 @@ import { QuadrantView } from "@/components/tasks/QuadrantView";
 import { CalendarView } from "@/components/tasks/CalendarView";
 import { GanttView } from "@/components/tasks/GanttView";
 import { ProjectManageModal } from "@/components/tasks/ProjectManageModal";
+import { notifyTasksDeleted } from "@/lib/undoDelete";
 
 const { Text, Paragraph } = Typography;
 
@@ -382,8 +383,15 @@ function DesktopTasksPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
+  // 切换视图 / 筛选 / 分类时，新数据回来之前屏幕上还是旧列表，看起来像「切过去又闪回来」。
+  // 记下当前列表对应的查询，不一致时把旧列表淡出并禁止点击；搜索词不算（边打边搜不该闪）
+  const queryKey = `${viewMode}|${filter}|${categoryParam ?? ""}`;
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const listStale = loadedKey !== null && loadedKey !== queryKey;
+
   const loadTasks = useCallback(async () => {
     const seq = ++loadSeqRef.current;
+    const key = `${viewMode}|${filter}|${categoryParam ?? ""}`;
     if (!loadedOnceRef.current) setLoading(true);
     try {
       // 数据范围策略：
@@ -423,6 +431,8 @@ function DesktopTasksPage() {
       if (seq === loadSeqRef.current) {
         loadedOnceRef.current = true;
         setLoading(false);
+        // 失败也要落下，否则列表一直半透明
+        setLoadedKey(key);
       }
     }
   }, [viewMode, filter, searchKeyword, categoryParam, message]);
@@ -537,8 +547,8 @@ function DesktopTasksPage() {
   async function handleDelete(task: Task) {
     try {
       await taskApi.delete(task.id);
-      message.success("已删除");
-      await loadTasks();
+      notifyTasksDeleted(message, [task.id], "已删除", loadTasks);
+      reloadAfterWrite();
     } catch (e) {
       message.error(`删除失败: ${e}`);
     }
@@ -550,9 +560,9 @@ function DesktopTasksPage() {
     if (ids.length === 0) return;
     try {
       const removed = await taskApi.deleteBatch(ids);
-      message.success(`已删除 ${removed} 条任务`);
+      notifyTasksDeleted(message, ids, `已删除 ${removed} 条任务`, loadTasks);
       exitMultiSelect();
-      await loadTasks();
+      reloadAfterWrite();
     } catch (e) {
       message.error(`批量删除失败: ${e}`);
     }
@@ -728,7 +738,15 @@ function DesktopTasksPage() {
         )}
       </div>
 
-      <div className="flex-1 min-h-0 overflow-auto pr-1">
+      <div
+        className="flex-1 min-h-0 overflow-auto pr-1"
+        style={{
+          opacity: listStale ? 0.45 : 1,
+          pointerEvents: listStale ? "none" : undefined,
+          transition: "opacity 120ms",
+        }}
+        aria-busy={listStale || loading}
+      >
       {loading ? (
         <div className="flex justify-center py-12">
           <Spin />
@@ -1645,15 +1663,16 @@ function TaskRow({
               onClick={() => onEdit(task)}
             />
           </Tooltip>
-          <Popconfirm
-            title="确定删除？"
-            okText="删除"
-            okButtonProps={{ danger: true }}
-            cancelText="取消"
-            onConfirm={() => onDelete(task)}
-          >
-            <Button type="text" size="small" icon={<Trash2 size={12} />} danger />
-          </Popconfirm>
+          {/* 不再二次确认：删完提示条里可以撤销 */}
+          <Tooltip title="删除（可撤销）">
+            <Button
+              type="text"
+              size="small"
+              icon={<Trash2 size={12} />}
+              danger
+              onClick={() => onDelete(task)}
+            />
+          </Tooltip>
         </div>
       )}
     </div>

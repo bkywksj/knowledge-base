@@ -752,6 +752,28 @@ impl super::Database {
         Ok(affected)
     }
 
+    /// 撤销删除：把刚打上 tombstone 的任务恢复回来（删除提示条里的「撤销」用）。
+    /// 刷新 updated_at，让同步端把「复活」当成一次新修改传出去，不会被旧 tombstone 盖回。
+    /// 只动 is_deleted = 1 的行；返回实际恢复条数。
+    pub fn restore_tasks_by_ids(&self, ids: &[i64]) -> Result<usize, AppError> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!(
+            "UPDATE tasks SET is_deleted = 0,
+                              updated_at = datetime('now','localtime')
+             WHERE id IN ({}) AND is_deleted = 1",
+            placeholders
+        );
+        let affected = conn.execute(&sql, rusqlite::params_from_iter(ids))?;
+        Ok(affected)
+    }
+
     /// 批量标记任务为已完成（多选场景）。循环任务也直接置为完成态，不推进周期。
     /// 返回实际更新条数。
     pub fn complete_tasks_by_ids(&self, ids: &[i64]) -> Result<usize, AppError> {
@@ -1368,6 +1390,21 @@ mod tests {
             s.urgent_todo, 1,
             "软删任务不应再计入 urgent_todo（侧边栏待办 Badge 的数据源）"
         );
+    }
+
+    /// 撤销删除：墓碑行恢复后重新计入统计；未删除的行不受影响、不计入返回数
+    #[test]
+    fn restore_deleted_tasks_undoes_tombstone() {
+        let db = fresh();
+        let id1 = db.create_task(urgent_task("要撤销的")).unwrap();
+        let id2 = db.create_task(urgent_task("没删的")).unwrap();
+        assert_eq!(db.delete_tasks_by_ids(&[id1]).unwrap(), 1);
+        assert_eq!(db.get_task_stats().unwrap().total_todo, 1);
+
+        assert_eq!(db.restore_tasks_by_ids(&[id1, id2]).unwrap(), 1, "只恢复墓碑行");
+        assert_eq!(db.get_task_stats().unwrap().total_todo, 2);
+        assert!(db.get_task(id1).unwrap().is_some_and(|t| !t.is_deleted));
+        assert_eq!(db.restore_tasks_by_ids(&[]).unwrap(), 0);
     }
 
     /// 构造一条任务入参：可指定截止时间 / 提前提醒分钟 / 父任务。
