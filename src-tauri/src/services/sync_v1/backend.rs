@@ -140,6 +140,14 @@ pub trait SyncBackendImpl {
     fn list_attachment_hashes(&self) -> Result<Vec<String>, AppError> {
         Ok(vec![])
     }
+
+    /// 列出远端根目录下的文件名（不含子目录），只在"远端没有 manifest"时用来给用户解释原因：
+    /// 是目录空着（还没有设备推送过）、还是里面放的是快照归档的 `kb-sync-*.zip`（两套数据混用）。
+    ///
+    /// `Ok(None)` = 该 backend 不支持列举（S3 暂未实现），调用方按"不知道"处理。
+    fn list_root_files(&self) -> Result<Option<Vec<String>>, AppError> {
+        Ok(None)
+    }
 }
 
 /// 从 sync_backends.config_json 解析为 BackendAuth

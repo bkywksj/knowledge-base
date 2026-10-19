@@ -32,6 +32,48 @@ struct ProgressEvent {
     message: String,
 }
 
+/// 远端没有 manifest.json 时给用户的说明。`root_files` 为 None = backend 不支持列举。
+///
+/// 快照归档（设置 → 同步 → 快照归档）往同一种 WebDAV 目录里放的是 `kb-sync-<设备>.zip(.enc)`，
+/// 和多端同步的 manifest + notes/ 是两套互不相认的数据 —— 用户最常见的误会就是把两者当一回事。
+pub(crate) fn explain_missing_manifest(root_files: Option<&[String]>) -> Option<String> {
+    let files = match root_files {
+        Some(f) => f,
+        None => {
+            return Some(
+                "远端还没有多端同步数据（缺少 manifest.json）。请先在已有数据的设备上点一次「推送」，\
+                 并确认两台设备填的是同一个同步地址 / 目录。"
+                    .into(),
+            )
+        }
+    };
+    let snapshots: Vec<&str> = files
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|n| n.starts_with("kb-sync-") && (n.ends_with(".zip") || n.ends_with(".zip.enc")))
+        .collect();
+    if !snapshots.is_empty() {
+        return Some(format!(
+            "这个目录里只有「快照归档」的整包备份（{}），没有多端同步数据。两者是两套数据：\
+             要恢复整包备份，请到电脑端「设置 → 同步 → 快照归档」拉取；\
+             要开始多端同步，请先在已有数据的设备上用多端同步「推送」一次（建议换一个单独的目录）。",
+            snapshots.join("、")
+        ));
+    }
+    if files.is_empty() {
+        return Some(
+            "远端目录是空的，还没有任何设备推送过。请先在已有数据的设备上点一次「推送」；\
+             如果电脑上已经推送过，请检查这里填的地址 / 目录是否和电脑上完全一致。"
+                .into(),
+        );
+    }
+    Some(
+        "远端目录里没有多端同步数据（缺少 manifest.json），可能填错了目录。\
+         请确认和已推送过的设备使用同一个同步地址 / 目录。"
+            .into(),
+    )
+}
+
 pub fn pull<R: Runtime, E: Emitter<R>>(
     db: &Database,
     backend_id: i64,
@@ -58,7 +100,17 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
     let remote = match backend.read_manifest()? {
         Some(m) => m,
         None => {
-            // 远端没东西，无操作
+            // 远端没有 manifest：本地什么都不动，但要告诉用户为什么"拉了个寂寞"。
+            // 之前直接返回空成功，手机端显示「已是最新」，用户（群反馈：WebDAV 手机拉取失败）
+            // 根本不知道是地址填错 / 电脑没推过 / 还是把快照归档的目录当成了同步目录。
+            // 双向同步（先拉后推）只看 Err，不看 errors，首台设备首次同步不会被这条提示打断。
+            let root_files = backend.list_root_files().unwrap_or_else(|e| {
+                log::warn!("[sync_v1] backend {} 列远端根目录失败: {}", backend_id, e);
+                None
+            });
+            if let Some(msg) = explain_missing_manifest(root_files.as_deref()) {
+                result.errors.push(msg);
+            }
             return Ok(result);
         }
     };
@@ -1054,6 +1106,24 @@ mod tests {
         // 该笔记从未同步过 / 信息缺失 → 不算分歧
         assert!(!is_divergence(Some("localH"), None, "remoteH"));
         assert!(!is_divergence(None, Some("syncedH"), "remoteH"));
+    }
+
+    #[test]
+    fn missing_manifest_explains_snapshot_archive_mixup() {
+        let files = vec!["kb-sync-PC1.zip.enc".to_string(), "readme.txt".to_string()];
+        let msg = explain_missing_manifest(Some(&files)).unwrap();
+        assert!(msg.contains("快照归档"), "{}", msg);
+        assert!(msg.contains("kb-sync-PC1.zip.enc"), "应点名是哪个文件: {}", msg);
+    }
+
+    #[test]
+    fn missing_manifest_explains_empty_dir_and_unknown() {
+        let msg = explain_missing_manifest(Some(&[])).unwrap();
+        assert!(msg.contains("空的"), "{}", msg);
+        let other = vec!["foo.md".to_string()];
+        assert!(explain_missing_manifest(Some(&other)).unwrap().contains("manifest.json"));
+        // 不支持列举（S3）也要给一句可读提示，不能静默返回空成功
+        assert!(explain_missing_manifest(None).is_some());
     }
 
     #[test]

@@ -168,6 +168,18 @@ impl SyncBackendImpl for LocalPathBackend {
         }
         Ok(hashes)
     }
+
+    fn list_root_files(&self) -> Result<Option<Vec<String>>, AppError> {
+        if !self.root.exists() {
+            return Ok(Some(vec![]));
+        }
+        let names = fs::read_dir(&self.root)?
+            .flatten()
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+            .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
+            .collect();
+        Ok(Some(names))
+    }
 }
 
 #[cfg(test)]

@@ -69,6 +69,44 @@ function persistUsername(v: string) {
   configApi.set(CFG_KEY_USER, v.trim()).catch(() => {});
 }
 
+/**
+ * 导入 / 拉取前的二次确认，两种模式都要弹。
+ *
+ * 为什么「保留本地文件」模式也要确认：两种模式下数据库（笔记 / 待办 / 设置）都会**整库替换**
+ * 成备份里的内容，区别只在图片 / PDF 等文件目录是否整体换掉。旧文案把它叫「合并」，
+ * 用户以为本地新写的笔记会保留，结果被冲掉了 —— 所以必须把真实后果讲清楚再让用户点。
+ */
+function confirmImport(mode: SyncImportMode, source: string): Promise<boolean> {
+  const overwrite = mode === "overwrite";
+  return new Promise<boolean>((resolve) => {
+    Modal.confirm({
+      title: overwrite ? `完全替换为${source}的数据？` : `用${source}的数据替换本机笔记？`,
+      content: (
+        <div style={{ fontSize: 13, lineHeight: 1.7 }}>
+          <div>
+            本机当前的<b>笔记、文件夹、待办、设置</b>会整体替换为备份里的内容，
+            本机在备份之后新写的内容<b>不会保留</b>。
+          </div>
+          <div>
+            {overwrite
+              ? "图片 / PDF / Word 附件目录也会整体换成备份里的。"
+              : "本机已有的图片 / PDF / Word 附件文件会保留，只补上备份里多出的文件。"}
+          </div>
+          <div style={{ color: "var(--ant-color-text-secondary, #888)", marginTop: 4 }}>
+            替换前会自动把当前数据库另存为 app.db.bak-时间
+            {overwrite ? "，旧附件目录改名为 <目录>.bak-时间" : ""}，可手动找回。
+          </div>
+        </div>
+      ),
+      okText: "确认替换",
+      okType: "danger",
+      cancelText: "取消",
+      onOk: () => resolve(true),
+      onCancel: () => resolve(false),
+    });
+  });
+}
+
 export function SyncSection() {
   // 同步范围 & 模式
   const [scope, setScope] = useState<SyncScope>({ ...DEFAULT_SYNC_SCOPE });
@@ -243,21 +281,7 @@ export function SyncSection() {
     });
     if (!selected) return;
 
-    if (importMode === "overwrite") {
-      const confirmed = await new Promise<boolean>((resolve) => {
-        Modal.confirm({
-          title: "覆盖式导入 — 危险操作",
-          content:
-            "当前本地所有笔记、图片、PDF、Word 都会被清空并替换为该 ZIP 包里的数据。此操作不可撤销。确定继续？",
-          okText: "我已备份，继续",
-          okType: "danger",
-          cancelText: "取消",
-          onOk: () => resolve(true),
-          onCancel: () => resolve(false),
-        });
-      });
-      if (!confirmed) return;
-    }
+    if (!(await confirmImport(importMode, "该备份包"))) return;
 
     setImporting(true);
     try {
@@ -362,20 +386,7 @@ export function SyncSection() {
   }
 
   async function handlePull() {
-    if (importMode === "overwrite") {
-      const confirmed = await new Promise<boolean>((resolve) => {
-        Modal.confirm({
-          title: "覆盖式拉取 — 危险操作",
-          content: "本地所有数据将被云端数据替换。确定继续？",
-          okText: "继续",
-          okType: "danger",
-          cancelText: "取消",
-          onOk: () => resolve(true),
-          onCancel: () => resolve(false),
-        });
-      });
-      if (!confirmed) return;
-    }
+    if (!(await confirmImport(importMode, "云端"))) return;
     setPulling(true);
     try {
       const config = { url, username, password: password || undefined };
@@ -417,20 +428,7 @@ export function SyncSection() {
   }
 
   async function handlePullFromDevice(snap: RemoteSnapshot) {
-    if (importMode === "overwrite") {
-      const confirmed = await new Promise<boolean>((resolve) => {
-        Modal.confirm({
-          title: `覆盖式拉取 "${snap.device}" 的数据 — 危险操作`,
-          content: "本地所有数据将被云端数据替换。确定继续？",
-          okText: "继续",
-          okType: "danger",
-          cancelText: "取消",
-          onOk: () => resolve(true),
-          onCancel: () => resolve(false),
-        });
-      });
-      if (!confirmed) return;
-    }
+    if (!(await confirmImport(importMode, `「${snap.device}」`))) return;
     setPulling(true);
     try {
       const config = { url, username, password: password || undefined };
@@ -551,17 +549,24 @@ export function SyncSection() {
         </div>
       </div>
 
-      {/* 导入模式 — T-B03 默认改"合并"，覆盖移到第二位且明示危险 */}
+      {/* 导入模式。两种都会整库替换笔记数据（整包备份不做逐条合并），
+          区别只在附件目录；旧文案叫「合并」让人误以为本地笔记会保留，已按真实语义改名 */}
       <div style={{ marginBottom: 12 }}>
         <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>导入模式</div>
         <Radio.Group value={importMode} onChange={(e) => setImportMode(e.target.value)}>
           <Radio value="merge">
-            合并 <Text type="secondary" style={{ fontSize: 12 }}>（推荐 · 只添加云端有而本地无的资产）</Text>
+            替换笔记，保留本地附件{" "}
+            <Text type="secondary" style={{ fontSize: 12 }}>（推荐 · 本机已有的图片 / PDF 不删）</Text>
           </Radio>
           <Radio value="overwrite">
-            覆盖 <Text type="danger" style={{ fontSize: 12 }}>（危险 · 清空本地，用云端替换）</Text>
+            完全替换{" "}
+            <Text type="danger" style={{ fontSize: 12 }}>（附件目录也换成备份里的）</Text>
           </Radio>
         </Radio.Group>
+        <div style={{ fontSize: 12, color: "var(--ant-color-text-secondary, #888)", marginTop: 4 }}>
+          整包备份不会逐条合并：两种模式下笔记、待办、设置都以备份为准，本机之后新写的内容会被替换。
+          想多台设备互相合并，请用「多端实时同步」标签页。
+        </div>
       </div>
 
       <Divider style={{ margin: "12px 0" }}>加密备份（端到端）</Divider>

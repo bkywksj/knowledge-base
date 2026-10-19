@@ -25,6 +25,7 @@ import { useAppStore } from "@/store";
 import type {
   SyncBackend,
   SyncBackendKind,
+  SyncPullResult,
   SyncV1ProgressEvent,
   WebDavConfig,
 } from "@/types";
@@ -42,6 +43,39 @@ import { relativeTime } from "@/lib/utils";
  *
  * 桌面端零影响：MobileSync 只通过 /sync 路由触达，且桌面端入口在 settings/SyncSettings 里走另一套。
  */
+
+/**
+ * 拉取结果里"需要用户知道"的问题：后端放进 errors 的原因（远端没数据 / 版本不符 / 单条失败）
+ * 和被跳过的加密笔记数。之前手机端只弹「拉取完成：下载 0」，用户以为成功了其实什么都没拉到。
+ */
+function pullProblems(r: SyncPullResult): string[] {
+  const out = [...r.errors];
+  const skipped = r.encryptedSkipped ?? 0;
+  if (skipped > 0) {
+    out.push(
+      `${skipped} 篇加密笔记未同步：本机加密保险库与远端不匹配（密码 / salt 不一致），请确认两台设备用的是同一个保险库密码。`,
+    );
+  }
+  return out;
+}
+
+function showPullProblems(title: string, problems: string[]) {
+  Modal.warning({
+    title,
+    content: (
+      <div style={{ maxHeight: "50vh", overflowY: "auto", fontSize: 13, lineHeight: 1.6 }}>
+        {problems.slice(0, 20).map((p, i) => (
+          <div key={i} style={{ marginBottom: 6 }}>
+            {problems.length > 1 ? `${i + 1}. ` : ""}
+            {p}
+          </div>
+        ))}
+        {problems.length > 20 && <div>…另有 {problems.length - 20} 条</div>}
+      </div>
+    ),
+    okText: "知道了",
+  });
+}
 
 /** 统一承载 WebDAV + S3 两种后端的表单字段（按 kind 显示对应字段） */
 interface BackendForm {
@@ -254,10 +288,15 @@ export function MobileSync() {
     setProgress(null);
     try {
       const r = await syncV1Api.pull(id);
-      message.success(
-        `拉取完成：下载 ${r.downloaded} · 删除本地 ${r.deletedLocal}` +
-          (r.conflicts > 0 ? ` · ${r.conflicts} 冲突` : ""),
-      );
+      const summary =
+        `下载 ${r.downloaded} · 删除本地 ${r.deletedLocal}` +
+        (r.conflicts > 0 ? ` · ${r.conflicts} 冲突` : "");
+      const problems = pullProblems(r);
+      if (problems.length > 0) {
+        showPullProblems(`拉取有问题（${summary}）`, problems);
+      } else {
+        message.success(`拉取完成：${summary}`);
+      }
       useAppStore.getState().bumpNotesRefresh();
       await load();
     } catch (e) {
@@ -293,8 +332,14 @@ export function MobileSync() {
           : "") +
         (q.conflicts > 0 ? ` · ${q.conflicts} 冲突` : "") +
         (p.errors.length > 0 ? ` · ${p.errors.length} 错误` : "");
-      message.success(`同步完成：${summary}`);
-      void notifySystem("同步完成", summary);
+      const problems = pullProblems(q);
+      if (problems.length > 0) {
+        showPullProblems(`同步有问题（${summary}）`, problems);
+        void notifySystem("同步有问题", problems[0].slice(0, 120));
+      } else {
+        message.success(`同步完成：${summary}`);
+        void notifySystem("同步完成", summary);
+      }
       useAppStore.getState().bumpNotesRefresh();
       await load();
     } catch (e) {

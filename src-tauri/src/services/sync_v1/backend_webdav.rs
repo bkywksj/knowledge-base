@@ -259,6 +259,11 @@ impl SyncBackendImpl for WebdavBackend {
         };
         Ok(hrefs_to_attachment_hashes(&hrefs))
     }
+
+    fn list_root_files(&self) -> Result<Option<Vec<String>>, AppError> {
+        // PROPFIND Depth:1，list_files 已跳过目录项（以 / 结尾的 href）
+        Ok(Some(block_on(self.client.list_files())?))
+    }
 }
 
 /// 错误信息看着像"服务器繁忙 / 限流 / 网关挂了"这类**临时性 5xx**吗？

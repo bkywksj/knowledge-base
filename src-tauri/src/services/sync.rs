@@ -2,8 +2,8 @@
 //!
 //! V1/V2 设计：
 //! - **全量快照**：每次导出/推送都生成完整 ZIP 包（app.db + 资产 + settings.json）
-//! - **overwrite 模式**：导入时替换本地所有数据（先清空 → 再展开 ZIP）
-//! - **merge 模式**：只添加 ZIP 里有、本地没有的资产；app.db 不合并（MVP 暂不实现真正合并，等同 overwrite）
+//! - **overwrite 模式**：app.db 原子替换；资产目录先解到暂存目录，库校验通过后整目录换入，旧目录改名 `.bak-<ts>` 保留
+//! - **merge 模式**：app.db 同样整库替换（整包快照不做逐条合并），资产只补本地缺的文件、本地已有的保留
 //! - **密码**：WebDAV 密码 AES-256-GCM 加密后存入 SQLite app_config
 //!   （密钥从 hostname + 固定 salt 派生；复制 db 到别的机器无法解密）
 
@@ -29,6 +29,10 @@ const SETTINGS_FILE_IN_ZIP: &str = "settings.json";
 const DB_BACKUP_SUFFIX: &str = ".bak-";
 /// 滚动保留的自动备份份数（超出的删最旧）
 const DB_BACKUP_KEEP: usize = 3;
+/// overwrite 导入时资产目录的暂存位置（`.sync-tmp-` 前缀：残留会被启动期清理收走）
+const IMPORT_STAGING_DIR: &str = ".sync-tmp-import-assets";
+/// 被替换掉的旧资产目录保留份数。资产目录可能有几个 GB，比数据库备份少留一份
+const DIR_BACKUP_KEEP: usize = 2;
 
 pub struct SyncService;
 
@@ -251,30 +255,40 @@ impl SyncService {
             _ => {}
         }
 
-        // overwrite 模式：替换 app.db 前先清掉资产目录
-        if matches!(mode, SyncImportMode::Overwrite) {
+        // overwrite 模式要整目录替换的资产目录。
+        //
+        // 旧实现在解压前就 `remove_dir_all` 这些目录：之后只要包损坏 / 库校验失败 / 磁盘满，
+        // 数据库虽然因为原子替换保住了，图片 / PDF / 源文件却已经被删光，笔记里全是裂图。
+        // 现在改成：资产先解到暂存目录，数据库校验通过后再把暂存目录换进来，
+        // 旧目录改名为 `<目录>.bak-<时间戳>` 留作后悔药（见 swap_in_staged_dirs）。
+        let replaced_dirs: Vec<&'static str> = if matches!(mode, SyncImportMode::Overwrite) {
+            let mut v = Vec::new();
             if manifest.scope.images {
-                let d = data_dir.join(assets_dir_name());
-                if d.exists() {
-                    let _ = fs::remove_dir_all(&d);
-                }
-                fs::create_dir_all(&d)?;
+                v.push(assets_dir_name());
             }
             if manifest.scope.pdfs {
-                let d = data_dir.join(pdfs_dir_name());
-                if d.exists() {
-                    let _ = fs::remove_dir_all(&d);
-                }
-                fs::create_dir_all(&d)?;
+                v.push(pdfs_dir_name());
             }
             if manifest.scope.sources {
-                let d = data_dir.join(sources_dir_name());
-                if d.exists() {
-                    let _ = fs::remove_dir_all(&d);
-                }
-                fs::create_dir_all(&d)?;
+                v.push(sources_dir_name());
             }
+            v
+        } else {
+            Vec::new()
+        };
+        let staging_dir = data_dir.join(IMPORT_STAGING_DIR);
+        if staging_dir.exists() {
+            let _ = fs::remove_dir_all(&staging_dir);
         }
+        // settings.json 同理：先落临时文件，数据库替换成功后再顶上去，失败时原设置不变
+        let settings_tmp_path = data_dir.join(".sync-tmp-import-settings");
+        let _ = fs::remove_file(&settings_tmp_path);
+        let mut settings_extracted = false;
+        // 任何失败出口都要把暂存物清掉，避免下次导入 / 启动时残留
+        let cleanup_staging = || {
+            let _ = fs::remove_dir_all(&staging_dir);
+            let _ = fs::remove_file(&settings_tmp_path);
+        };
 
         // app.db 的落地策略（本次改造核心）：
         //
@@ -291,80 +305,129 @@ impl SyncService {
         let _ = fs::remove_file(&db_tmp_path);
         let mut db_extracted = false;
 
-        // 展开 ZIP 所有文件
-        for i in 0..archive.len() {
-            let mut file = archive
-                .by_index(i)
-                .map_err(|e| AppError::Custom(format!("读取 ZIP 条目失败: {}", e)))?;
-            let name = file.name().to_string();
+        // 展开 ZIP 所有文件。放进闭包：循环里任何一处 `?` 失败都走同一个出口，
+        // 统一清理临时库 / 暂存目录，用户原有的库、资产、设置一个都没动过。
+        let extract_result = (|| -> Result<(), AppError> {
+            for i in 0..archive.len() {
+                let mut file = archive
+                    .by_index(i)
+                    .map_err(|e| AppError::Custom(format!("读取 ZIP 条目失败: {}", e)))?;
+                let name = file.name().to_string();
 
-            if name == MANIFEST_FILE {
-                continue;
-            }
-
-            // 安全（ZIP slip 防护）：合法导出端只会写出 app.db / settings.json /
-            // <dev->kb_assets|pdfs|sources>/... 这类规整相对路径。entry 名含 `..`、
-            // 以 `/` 或 `\` 开头、带 Windows 盘符或 NUL 一律视为被篡改 / 损坏的包，
-            // 直接中止导入（fail-closed），绝不让下面的 `data_dir.join(name)` 把文件
-            // 写到 data_dir 之外（如自启动目录、覆盖系统文件）。
-            // 与 V1 `sync_v1::pull` 附件还原的路径校验同款规则，两条导入链路保持一致。
-            if !is_safe_zip_entry_name(&name) {
-                return Err(AppError::Custom(format!(
-                    "同步包包含非法路径条目 {:?}，疑似被篡改或损坏，已中止导入",
-                    name
-                )));
-            }
-
-            let target = match name.as_str() {
-                n if n == DB_FILE_IN_ZIP => {
-                    // 先落到临时文件，校验通过后才原子替换真正的 db_path（可能是 dev- 前缀）
-                    db_extracted = true;
-                    db_tmp_path.clone()
+                if name == MANIFEST_FILE {
+                    continue;
                 }
-                n if n == SETTINGS_FILE_IN_ZIP => data_dir.join(settings_file_name()),
-                other => {
-                    // 资产路径在 ZIP 内已带当前实例风格的 dev/prod 前缀
-                    // （由 export 端 assets_dir_name() 等决定）+ 已通过 manifest.is_dev 校验
-                    // 与当前 build 一致，直接 join 到 data_dir 落盘即可。
-                    // 历史上有个 BUG：这里又加一遍 dev- 前缀导致 dev-dev-kb_assets/ 双前缀目录，
-                    // 已通过 export/import 路径前缀职责对齐 + manifest 校验消除。
-                    data_dir.join(other)
+
+                // 安全（ZIP slip 防护）：合法导出端只会写出 app.db / settings.json /
+                // <dev->kb_assets|pdfs|sources>/... 这类规整相对路径。entry 名含 `..`、
+                // 以 `/` 或 `\` 开头、带 Windows 盘符或 NUL 一律视为被篡改 / 损坏的包，
+                // 直接中止导入（fail-closed），绝不让下面的 `data_dir.join(name)` 把文件
+                // 写到 data_dir 之外（如自启动目录、覆盖系统文件）。
+                // 与 V1 `sync_v1::pull` 附件还原的路径校验同款规则，两条导入链路保持一致。
+                if !is_safe_zip_entry_name(&name) {
+                    return Err(AppError::Custom(format!(
+                        "同步包包含非法路径条目 {:?}，疑似被篡改或损坏，已中止导入",
+                        name
+                    )));
                 }
-            };
 
-            if file.is_dir() {
-                fs::create_dir_all(&target)?;
-                continue;
+                let target = match name.as_str() {
+                    n if n == DB_FILE_IN_ZIP => {
+                        // 先落到临时文件，校验通过后才原子替换真正的 db_path（可能是 dev- 前缀）
+                        db_extracted = true;
+                        db_tmp_path.clone()
+                    }
+                    n if n == SETTINGS_FILE_IN_ZIP => {
+                        settings_extracted = true;
+                        settings_tmp_path.clone()
+                    }
+                    other => {
+                        // 资产路径在 ZIP 内已带当前实例风格的 dev/prod 前缀
+                        // （由 export 端 assets_dir_name() 等决定）+ 已通过 manifest.is_dev 校验
+                        // 与当前 build 一致，直接 join 到 data_dir 落盘即可。
+                        // 历史上有个 BUG：这里又加一遍 dev- 前缀导致 dev-dev-kb_assets/ 双前缀目录，
+                        // 已通过 export/import 路径前缀职责对齐 + manifest 校验消除。
+                        // overwrite 要整目录替换的资产先进暂存目录，等库校验通过再换入。
+                        let top = other.split('/').next().unwrap_or("");
+                        if replaced_dirs.iter().any(|d| *d == top) {
+                            staging_dir.join(other)
+                        } else {
+                            data_dir.join(other)
+                        }
+                    }
+                };
+
+                if file.is_dir() {
+                    fs::create_dir_all(&target)?;
+                    continue;
+                }
+
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+
+                // merge 模式：资产文件已存在则跳过（app.db / settings.json 总是覆盖）
+                let is_asset = name != DB_FILE_IN_ZIP && name != SETTINGS_FILE_IN_ZIP;
+                if is_asset && matches!(mode, SyncImportMode::Merge) && target.exists() {
+                    continue;
+                }
+
+                let mut out = fs::File::create(&target)?;
+                // 显式 flush + sync：copy 只保证写进了内核缓冲。后面马上要 rename 顶替真库，
+                // 必须先确保字节真的落盘，否则断电时会出现"rename 已生效但内容还没写完"的空/半截库。
+                std::io::copy(&mut file, &mut out).and_then(|_| {
+                    out.flush()?;
+                    out.sync_all()
+                })?;
             }
+            Ok(())
+        })();
+        if let Err(e) = extract_result {
+            let _ = fs::remove_file(&db_tmp_path);
+            cleanup_staging();
+            return Err(e);
+        }
 
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent)?;
-            }
-
-            // merge 模式：资产文件已存在则跳过（app.db / settings.json 总是覆盖）
-            let is_asset = name != DB_FILE_IN_ZIP && name != SETTINGS_FILE_IN_ZIP;
-            if is_asset && matches!(mode, SyncImportMode::Merge) && target.exists() {
-                continue;
-            }
-
-            let mut out = fs::File::create(&target)?;
-            // 显式 flush + sync：copy 只保证写进了内核缓冲。后面马上要 rename 顶替真库，
-            // 必须先确保字节真的落盘，否则断电时会出现"rename 已生效但内容还没写完"的空/半截库。
-            if let Err(e) = std::io::copy(&mut file, &mut out).and_then(|_| {
-                out.flush()?;
-                out.sync_all()
-            }) {
+        // ── 先单独校验新库：资产目录换入之前就要知道这个包能不能用，
+        //    校验不过直接退出，此时资产、设置、数据库全都原封不动
+        if db_extracted {
+            if let Err(e) = Self::verify_sqlite_snapshot(&db_tmp_path) {
                 let _ = fs::remove_file(&db_tmp_path);
-                return Err(e.into());
+                cleanup_staging();
+                return Err(e);
             }
         }
+
+        // ── overwrite：把暂存的资产目录换进来，旧目录改名保留（失败会自动还原已换的目录）
+        let swapped = match Self::swap_in_staged_dirs(data_dir, &staging_dir, &replaced_dirs) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = fs::remove_file(&db_tmp_path);
+                cleanup_staging();
+                return Err(e);
+            }
+        };
 
         // ── app.db 原子替换（只有包里确实含 app.db 时才走）
         if db_extracted {
             if let Err(e) = Self::commit_db_replacement(db_path, &db_tmp_path) {
-                // 失败时临时文件已在内部清理；用户原库**完全没被动过**，直接把错误抛给前端
+                // 库没换成：已换入的资产目录也还原回去，保证"要么全换、要么全不换"
+                Self::rollback_swapped_dirs(data_dir, &swapped);
+                cleanup_staging();
                 return Err(e);
             }
+        }
+
+        // ── settings.json 最后落位（同目录 rename 覆盖，Windows 上也会替换已有文件）
+        if settings_extracted {
+            if let Err(e) = fs::rename(&settings_tmp_path, data_dir.join(settings_file_name())) {
+                // 库和资产都已换好，只差设置：不回滚整次导入，记日志保留原设置即可
+                log::warn!("[sync] 替换设置文件失败，保留原设置: {}", e);
+            }
+        }
+        cleanup_staging();
+        for (name, _) in &swapped {
+            Self::prune_old_dir_backups(data_dir, name);
         }
 
         // 同步完成后清理失效的 WebDAV 加密密码条目
@@ -534,6 +597,120 @@ impl SyncService {
         }
     }
 
+    /// 把暂存目录里的资产目录换到 `data_dir` 下，旧目录改名为 `<目录>.bak-<时间戳>`。
+    ///
+    /// 返回已换入的 `(目录名, 旧目录备份路径)`，供数据库替换失败时 [`Self::rollback_swapped_dirs`] 还原。
+    /// 包里没有某个目录的任何文件（比如备份时图片目录是空的）→ 换入一个空目录，
+    /// 与旧实现"覆盖 = 先清空"的语义一致。
+    ///
+    /// 用 rename 而不是复制：同盘 rename 不占额外空间、瞬间完成；资产目录动辄上 GB，复制太慢。
+    /// 中途任一步失败，已换的目录全部还原后再返回错误。
+    fn swap_in_staged_dirs(
+        data_dir: &Path,
+        staging_dir: &Path,
+        names: &[&'static str],
+    ) -> Result<Vec<(&'static str, Option<std::path::PathBuf>)>, AppError> {
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+        let mut done: Vec<(&'static str, Option<std::path::PathBuf>)> = Vec::new();
+        for &name in names {
+            let live = data_dir.join(name);
+            let staged = staging_dir.join(name);
+            if !staged.exists() {
+                if let Err(e) = fs::create_dir_all(&staged) {
+                    Self::rollback_swapped_dirs(data_dir, &done);
+                    return Err(e.into());
+                }
+            }
+            let bak = if live.exists() {
+                // 同一秒内连续导入两次时备份名会撞，追加序号避开（rename 到已存在目录会失败）
+                let mut bak = data_dir.join(format!("{}{}{}", name, DB_BACKUP_SUFFIX, stamp));
+                let mut seq = 1;
+                while bak.exists() {
+                    bak = data_dir.join(format!("{}{}{}-{}", name, DB_BACKUP_SUFFIX, stamp, seq));
+                    seq += 1;
+                }
+                if let Err(e) = fs::rename(&live, &bak) {
+                    Self::rollback_swapped_dirs(data_dir, &done);
+                    return Err(AppError::Custom(format!(
+                        "替换 {} 目录失败，已中止导入（原数据未受影响）。\
+                         常见原因：目录里有文件正被其它程序打开: {}",
+                        name, e
+                    )));
+                }
+                Some(bak)
+            } else {
+                None
+            };
+            if let Err(e) = fs::rename(&staged, &live) {
+                // 本目录先还原，再还原前面已换的
+                if let Some(b) = &bak {
+                    let _ = fs::rename(b, &live);
+                }
+                Self::rollback_swapped_dirs(data_dir, &done);
+                return Err(AppError::Custom(format!(
+                    "换入新的 {} 目录失败，已中止导入（原数据未受影响）: {}",
+                    name, e
+                )));
+            }
+            done.push((name, bak));
+        }
+        Ok(done)
+    }
+
+    /// 撤销 [`Self::swap_in_staged_dirs`]：删掉换入的新目录，旧目录改回原名。
+    /// 只尽力而为并记日志 —— 走到这里本身就是失败路径，不能再抛错盖住原始错误。
+    fn rollback_swapped_dirs(data_dir: &Path, swapped: &[(&'static str, Option<std::path::PathBuf>)]) {
+        for (name, bak) in swapped.iter().rev() {
+            let live = data_dir.join(name);
+            if let Err(e) = fs::remove_dir_all(&live) {
+                log::warn!("[sync] 回滚：删除新换入的 {} 失败 {}", live.display(), e);
+            }
+            if let Some(b) = bak {
+                if let Err(e) = fs::rename(b, &live) {
+                    log::error!(
+                        "[sync] 回滚：旧目录 {} 改回 {} 失败，请手动改名恢复: {}",
+                        b.display(),
+                        live.display(),
+                        e
+                    );
+                }
+            }
+        }
+    }
+
+    /// 旧资产目录备份只留最近 [`DIR_BACKUP_KEEP`] 份（时间戳字典序 == 时间序）。
+    fn prune_old_dir_backups(data_dir: &Path, name: &str) {
+        let prefix = format!("{}{}", name, DB_BACKUP_SUFFIX);
+        let mut backups: Vec<std::path::PathBuf> = match fs::read_dir(data_dir) {
+            Ok(e) => e
+                .flatten()
+                .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.file_name()
+                        .and_then(|s| s.to_str())
+                        .map(|n| n.starts_with(&prefix))
+                        .unwrap_or(false)
+                })
+                .collect(),
+            Err(e) => {
+                log::warn!("[sync] 清理旧资产目录备份：读取目录失败 {}", e);
+                return;
+            }
+        };
+        if backups.len() <= DIR_BACKUP_KEEP {
+            return;
+        }
+        backups.sort();
+        let drop_count = backups.len() - DIR_BACKUP_KEEP;
+        for old in backups.into_iter().take(drop_count) {
+            match fs::remove_dir_all(&old) {
+                Ok(_) => log::info!("[sync] 清理旧资产目录备份: {}", old.display()),
+                Err(e) => log::warn!("[sync] 清理旧资产目录备份 {} 失败: {}", old.display(), e),
+            }
+        }
+    }
+
     /// 扫描 app_config 中所有 sync.webdav_pw_enc.* 条目，
     /// 解密失败的（换设备后无效）直接删除。失败仅 warn，不阻塞同步。
     fn cleanup_invalid_webdav_passwords(db_path: &Path) {
@@ -663,6 +840,16 @@ impl SyncService {
         let _ = fs::remove_file(&upload_path);
         let _ = fs::remove_file(&tmp_zip); // 兜底（明文路径已删过，加密路径也删过，这里 noop）
         upload_result?;
+
+        // 记下这次推上去的笔记数，托盘 / 定时推送据此判断"本机是不是突然少了一大半"
+        // （见 sync_scheduler::check_push_safety）。只是保护用的参考值，写失败不影响推送结果。
+        // 范围没勾笔记时 notes_count 恒为 0，记下来反而会让保护失效，跳过
+        if scope.notes {
+            let _ = db.set_config(
+                crate::services::sync_scheduler::LAST_PUSH_NOTES_KEY,
+                &stats.notes_count.to_string(),
+            );
+        }
 
         Ok(SyncResult {
             stats,
@@ -877,9 +1064,19 @@ impl SyncService {
         let mut removed = 0usize;
         for entry in entries.flatten() {
             let path = entry.path();
-            // 只删顶层"文件"，绝不进子目录、绝不动目录本身
+            // 只删顶层"文件"，绝不进子目录、绝不动目录本身；
+            // 唯一例外是导入暂存目录（名字精确匹配），它整个都是半途而废的导入残留
             let is_file = entry.file_type().map(|t| t.is_file()).unwrap_or(false);
             if !is_file {
+                if entry.file_name().to_str() == Some(IMPORT_STAGING_DIR) {
+                    match fs::remove_dir_all(&path) {
+                        Ok(_) => {
+                            log::info!("[sync] 启动清理导入暂存目录: {}", path.display());
+                            removed += 1;
+                        }
+                        Err(e) => log::warn!("[sync] 删除导入暂存目录 {} 失败: {}", path.display(), e),
+                    }
+                }
                 continue;
             }
             let name = match path.file_name().and_then(|s| s.to_str()) {
@@ -1655,6 +1852,177 @@ mod tests {
         assert_eq!(n.as_deref(), Some("加密备份测试笔记"), "导入的笔记应存在");
 
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ─── overwrite 资产目录：暂存 → 校验 → 换入 ─────────────────────────
+
+    /// 打包一个含 app.db（字节原样）+ 若干资产文件的快照，scope.images = true
+    fn mk_zip_with_assets(db_bytes: &[u8], assets: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut zip = ZipWriter::new(Cursor::new(&mut buf));
+            let opt = SimpleFileOptions::default();
+            let manifest = SyncManifest {
+                schema_version: 1,
+                device: "t".into(),
+                exported_at: "x".into(),
+                app_version: "t".into(),
+                scope: SyncScope {
+                    notes: true,
+                    images: true,
+                    pdfs: false,
+                    sources: false,
+                    settings: false,
+                },
+                stats: SyncStats::default(),
+                is_dev: None,
+                db_user_version: None,
+            };
+            zip.start_file(MANIFEST_FILE, opt).unwrap();
+            zip.write_all(serde_json::to_string(&manifest).unwrap().as_bytes())
+                .unwrap();
+            zip.start_file(DB_FILE_IN_ZIP, opt).unwrap();
+            zip.write_all(db_bytes).unwrap();
+            for (name, bytes) in assets {
+                zip.start_file(format!("{}/{}", assets_dir_name(), name), opt)
+                    .unwrap();
+                zip.write_all(bytes).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+        buf
+    }
+
+    fn dir_backups(dir: &Path, name: &str) -> Vec<std::path::PathBuf> {
+        let prefix = format!("{}{}", name, DB_BACKUP_SUFFIX);
+        let mut v: Vec<_> = fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+            .map(|e| e.path())
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// 包里的库是坏的 → 导入失败，**本机图片一个都不能少**（旧实现会先把资产目录删光）
+    #[test]
+    fn overwrite_with_corrupt_db_keeps_local_assets() {
+        let dir = mk_tmp_dir("ow-corrupt");
+        let dest = dir.join("app.db");
+        mk_db(&dest, "原有数据");
+        let assets = dir.join(assets_dir_name());
+        fs::create_dir_all(assets.join("images")).unwrap();
+        fs::write(assets.join("images/keep.png"), b"old").unwrap();
+
+        let zip = mk_zip_with_assets(b"definitely not sqlite", &[("images/new.png", b"new")]);
+        let r = SyncService::apply_snapshot_from_reader(
+            &dir,
+            &dest,
+            Cursor::new(&zip),
+            SyncImportMode::Overwrite,
+        );
+        assert!(r.is_err(), "坏库必须拒绝导入");
+        assert_eq!(fs::read(assets.join("images/keep.png")).unwrap(), b"old");
+        assert!(!assets.join("images/new.png").exists(), "失败时不应混入包里的文件");
+        assert!(!dir.join(IMPORT_STAGING_DIR).exists(), "暂存目录应清理");
+        assert!(dir_backups(&dir, assets_dir_name()).is_empty(), "失败时不应改名旧目录");
+        assert_eq!(note_titles_at(&dest), vec!["原有数据".to_string()]);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 正常覆盖：资产目录换成包里的，旧目录改名为 .bak-<ts> 保留
+    #[test]
+    fn overwrite_swaps_assets_and_keeps_old_dir_as_backup() {
+        let dir = mk_tmp_dir("ow-ok");
+        let src = dir.join("src.db");
+        mk_db(&src, "来自备份包");
+        let dest = dir.join("app.db");
+        mk_db(&dest, "原有数据");
+        let assets = dir.join(assets_dir_name());
+        fs::create_dir_all(assets.join("images")).unwrap();
+        fs::write(assets.join("images/keep.png"), b"old").unwrap();
+
+        let zip = mk_zip_with_assets(&fs::read(&src).unwrap(), &[("images/new.png", b"new")]);
+        SyncService::apply_snapshot_from_reader(
+            &dir,
+            &dest,
+            Cursor::new(&zip),
+            SyncImportMode::Overwrite,
+        )
+        .unwrap();
+
+        assert_eq!(note_titles_at(&dest), vec!["来自备份包".to_string()]);
+        assert_eq!(fs::read(assets.join("images/new.png")).unwrap(), b"new");
+        assert!(!assets.join("images/keep.png").exists(), "overwrite 后旧文件不在现用目录");
+        let baks = dir_backups(&dir, assets_dir_name());
+        assert_eq!(baks.len(), 1);
+        assert_eq!(fs::read(baks[0].join("images/keep.png")).unwrap(), b"old");
+        assert!(!dir.join(IMPORT_STAGING_DIR).exists());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// merge：库替换，本机已有资产保留、包里多出的补上
+    #[test]
+    fn merge_keeps_local_assets_and_adds_missing() {
+        let dir = mk_tmp_dir("merge");
+        let src = dir.join("src.db");
+        mk_db(&src, "来自备份包");
+        let dest = dir.join("app.db");
+        mk_db(&dest, "原有数据");
+        let assets = dir.join(assets_dir_name());
+        fs::create_dir_all(assets.join("images")).unwrap();
+        fs::write(assets.join("images/keep.png"), b"old").unwrap();
+
+        let zip = mk_zip_with_assets(
+            &fs::read(&src).unwrap(),
+            &[("images/new.png", b"new"), ("images/keep.png", b"from-zip")],
+        );
+        SyncService::apply_snapshot_from_reader(
+            &dir,
+            &dest,
+            Cursor::new(&zip),
+            SyncImportMode::Merge,
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(assets.join("images/keep.png")).unwrap(), b"old", "已有文件不覆盖");
+        assert_eq!(fs::read(assets.join("images/new.png")).unwrap(), b"new");
+        assert!(dir_backups(&dir, assets_dir_name()).is_empty(), "merge 不动目录");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 旧资产目录备份只留最近 2 份
+    #[test]
+    fn prune_old_dir_backups_keeps_latest_two() {
+        let dir = mk_tmp_dir("prune-dir");
+        for stamp in ["20260101-000000", "20260102-000000", "20260103-000000"] {
+            fs::create_dir_all(dir.join(format!("kb_assets.bak-{}", stamp))).unwrap();
+        }
+        fs::create_dir_all(dir.join("kb_assets")).unwrap();
+        SyncService::prune_old_dir_backups(&dir, "kb_assets");
+        let left = dir_backups(&dir, "kb_assets");
+        assert_eq!(left.len(), DIR_BACKUP_KEEP);
+        assert!(left[0].ends_with("kb_assets.bak-20260102-000000"), "删的应是最旧的");
+        assert!(dir.join("kb_assets").exists(), "现用目录不能被当成备份删掉");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 导入中途崩溃留下的暂存目录，启动清理要收走；别的目录不动
+    #[test]
+    fn cleanup_removes_import_staging_dir() {
+        let dir = mk_tmp_dir("staging-clean");
+        fs::create_dir_all(dir.join(IMPORT_STAGING_DIR).join("kb_assets")).unwrap();
+        fs::create_dir_all(dir.join(".sync-tmp-other-dir")).unwrap();
+        assert_eq!(SyncService::cleanup_orphan_temp_files(&dir), 1);
+        assert!(!dir.join(IMPORT_STAGING_DIR).exists());
+        assert!(dir.join(".sync-tmp-other-dir").exists(), "只认精确名字");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// 临时目录内放 4 类文件：3 个 `.sync-tmp-*` 应被删，2 个业务文件必须保留。
