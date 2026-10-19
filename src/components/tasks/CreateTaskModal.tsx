@@ -20,7 +20,8 @@ import dayjs, { type Dayjs } from "dayjs";
 import { Plus, NotebookText, Folder as FolderIcon, File as FileIcon, Link as LinkIcon, X, Settings } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useNavigate } from "react-router-dom";
-import { taskApi, taskCategoryApi, noteApi, configApi, projectApi } from "@/lib/api";
+import { taskApi, taskCategoryApi, noteApi, configApi, projectApi, aiPlanApi } from "@/lib/api";
+import { parseTaskText, type ParsedTaskText } from "@/lib/taskTextParser";
 import { relativeTime } from "@/lib/utils";
 import type {
   Note,
@@ -112,6 +113,7 @@ export function CreateTaskModal({
   const [remindBefore, setRemindBefore] = useState<number | null>(null);
   const [links, setLinks] = useState<TaskLinkInput[]>([]);
   const [saving, setSaving] = useState(false);
+  const [aiRecognizing, setAiRecognizing] = useState(false);
   const [continuous, setContinuous] = useState(false);
   // ─── 循环提醒状态 ─────────────────────────
   const [repeatMode, setRepeatMode] = useState<RepeatMode>("none");
@@ -526,6 +528,50 @@ export function CreateTaskModal({
     }
   }
 
+  /** 把识别结果回填表单（只填识别出来的项，没识别出的保持用户原值） */
+  function applyRecognized(p: ParsedTaskText): string[] {
+    const filled: string[] = [];
+    if (p.title) {
+      setTitle(normalizeTaskTitle(p.title));
+      filled.push(`标题「${p.title}」`);
+    }
+    if (p.due) {
+      // 原文没写几点就用设置里的默认时间，与手动选日期一致
+      const [h, m] = (p.due.time ?? defaultTime).split(":").map(Number);
+      setDueDate(dayjs(p.due.date).hour(h ?? 9).minute(m ?? 0).second(0));
+      filled.push(`截止 ${p.due.date}${p.due.time ? ` ${p.due.time}` : ""}`);
+    }
+    return filled;
+  }
+
+  /** 本地规则识别（不联网）：描述框里的通知 → 标题 + 截止时间 */
+  function recognizeLocal(text: string) {
+    const filled = applyRecognized(parseTaskText(text));
+    if (filled.length > 0) message.success(`已识别：${filled.join("，")}`);
+    else message.info("没识别出日期或标题，可以试试「AI 识别」");
+  }
+
+  /** AI 识别：复用 ai_extract_task_from_text，额外带出紧急度 / 重要性 */
+  async function recognizeByAi(text: string) {
+    setAiRecognizing(true);
+    try {
+      const s = await aiPlanApi.extractTaskFromText(text);
+      const due = s.dueDate
+        ? { date: s.dueDate.slice(0, 10), time: s.dueDate.length > 10 ? s.dueDate.slice(11, 16) : null }
+        : null;
+      const filled = applyRecognized({ title: s.title ?? "", due });
+      if (s.priority != null && s.priority >= 0 && s.priority <= 2) {
+        setPriority(s.priority as TaskPriority);
+      }
+      if (s.important != null) setImportant(s.important);
+      message.success(filled.length > 0 ? `AI 已识别：${filled.join("，")}` : "AI 没识别出有用信息");
+    } catch (e) {
+      message.error(`AI 识别失败：${e}（需先在设置里配置模型服务）`);
+    } finally {
+      setAiRecognizing(false);
+    }
+  }
+
   const addMenu: MenuProps = {
     items: [
       { key: "note", icon: <NotebookText size={14} />, label: "笔记" },
@@ -602,6 +648,18 @@ export function CreateTaskModal({
                   void handleSave();
                 }
               }}
+              // 像快递地址识别：往标题粘一整段通知 → 原文进描述，标题 / 截止时间自动回填
+              onPaste={(e) => {
+                const text = e.clipboardData.getData("text/plain").trim();
+                if (text.length < 30 && !text.includes("\n")) return;
+                attachmentsRef.current?.handlePaste(e, { keepText: true });
+                e.preventDefault();
+                setDescription((prev) => (prev.trim() ? `${prev}\n${text}` : text));
+                const filled = applyRecognized(parseTaskText(text));
+                message.success(
+                  `${filled.length > 0 ? `已识别：${filled.join("，")}。` : ""}原文已放入描述`,
+                );
+              }}
               autoSize={{ minRows: 1, maxRows: 5 }}
               style={{ fontSize: 15, paddingRight: 32, resize: "none" }}
               // 不用 allowClear：TextArea 的清除图标钉死在右上角，框只有一行高（32px）时
@@ -630,11 +688,36 @@ export function CreateTaskModal({
             style={{ color: token.colorTextSecondary }}
           >
             <span>描述（可选，可直接粘贴截图）</span>
-            <MicButton
-              onTranscribed={(text) =>
-                setDescription((prev) => (prev ? `${prev}\n${text}` : text))
-              }
-            />
+            <span className="flex items-center gap-1">
+              {description.trim() && (
+                <>
+                  <Button
+                    type="link"
+                    size="small"
+                    style={{ fontSize: 11, paddingInline: 4, height: 20 }}
+                    title="从描述里识别标题和截止时间（本地规则，不联网）"
+                    onClick={() => recognizeLocal(description)}
+                  >
+                    识别
+                  </Button>
+                  <Button
+                    type="link"
+                    size="small"
+                    loading={aiRecognizing}
+                    style={{ fontSize: 11, paddingInline: 4, height: 20 }}
+                    title="用 AI 识别标题、截止时间、紧急度（需配置模型服务）"
+                    onClick={() => void recognizeByAi(description)}
+                  >
+                    AI 识别
+                  </Button>
+                </>
+              )}
+              <MicButton
+                onTranscribed={(text) =>
+                  setDescription((prev) => (prev ? `${prev}\n${text}` : text))
+                }
+              />
+            </span>
           </div>
           <Input.TextArea
             autoSize={{ minRows: 2, maxRows: 8 }}
