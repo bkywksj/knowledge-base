@@ -66,18 +66,46 @@ describe("parseClipboard", () => {
     expect(plan.files[0].size).toBe(3);
   });
 
-  it("Word / Excel：文字 + 无 <img> 的 HTML + 快照图 → 丢掉快照图只要文字", () => {
+  it("Word / Excel：文字 + 带 Office 标记的 HTML + 快照图 → 丢掉快照图只要文字", () => {
     const plan = parseClipboard(
       clip(
         {
           "text/plain": "A\tB\n1\t2",
-          "text/html": "<table><tr><td>A</td></tr></table>",
+          "text/html":
+            '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><table><tr><td>A</td></tr></table></html>',
         },
         [png()],
       ),
     );
     expect(plan.files).toHaveLength(0);
     expect(plan.text).toContain("A\tB");
+  });
+
+  it("非 Office 的「文字 + 图片文件」不丢图", () => {
+    const plan = parseClipboard(
+      clip({ "text/plain": "看图", "text/html": "<p>看图</p>" }, [png()]),
+    );
+    expect(plan.files).toHaveLength(1);
+  });
+
+  it("QQ 图文（实测剪贴板）：路径带空格且未编码 → 进 paths", () => {
+    const plan = parseClipboard(
+      clip({
+        "text/plain": "不是您说的接入脚本，是原生调用 rdb ",
+        "text/html":
+          '<html>\r\n<body>\r\n<!--StartFragment-->不是您说的接入脚本，是原生调用 rdb <br><img src="file:///D:/computer/documents/Tencent Files/770492966/nt_qq/nt_data/Pic/2026-10/Ori/9d80846b.png"><!--EndFragment-->\r\n</body>\r\n</html>',
+      }),
+    );
+    expect(plan.paths).toEqual([
+      "D:/computer/documents/Tencent Files/770492966/nt_qq/nt_data/Pic/2026-10/Ori/9d80846b.png",
+    ]);
+    expect(plan.text).toContain("rdb");
+  });
+
+  it("file: 路径里的反斜杠和孤立 % 也能解析", () => {
+    expect(fileUrlToPath("file:///C:\\Temp\\100%.png")).toBe(
+      "C:/Temp/100%.png",
+    );
   });
 
   it("浏览器「复制图片」：文件 + HTML 里同一张 <img> → 只取文件，不重复下载", () => {

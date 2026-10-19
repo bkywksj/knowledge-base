@@ -65,14 +65,34 @@ export function dataUrlToFile(src: string, idx: number): File | null {
   }
 }
 
-/** file:///C:/a%20b/x.png → C:/a b/x.png；file:///home/x.png → /home/x.png */
+/**
+ * file:///C:/a%20b/x.png → C:/a b/x.png；file:///home/x.png → /home/x.png
+ *
+ * 不走 `new URL()`：QQ 给的是 `file:///D:/.../Tencent Files/...`（空格、中文都不编码），
+ * 有的软件还会给反斜杠或孤立的 `%`。直接剥前缀再尽力解码，和 tauri-cc 终端粘贴同一套做法。
+ */
 export function fileUrlToPath(src: string): string | null {
+  if (!/^file:/i.test(src)) return null;
+  let p = src.replace(/^file:\/{0,3}/i, "");
   try {
-    const p = decodeURIComponent(new URL(src).pathname);
-    return /^\/[A-Za-z]:\//.test(p) ? p.slice(1) : p;
+    p = decodeURIComponent(p);
   } catch {
-    return null;
+    /* 有孤立的 % 就保持原样 */
   }
+  p = p.replace(/\\/g, "/");
+  // 盘符路径（C:/...）保持原样，其余补回根斜杠（POSIX 绝对路径）
+  if (!/^[A-Za-z]:\//.test(p) && !p.startsWith("/")) p = `/${p}`;
+  return p || null;
+}
+
+/**
+ * 是否 Office / WPS 复制出来的 HTML。它们会额外塞一张「整段内容的快照图」，
+ * 要靠这个标记把快照图和真正的图片区分开（只看「HTML 里没 <img>」会误伤 QQ 等软件）。
+ */
+export function isOfficeHtml(html: string): boolean {
+  return /urn:schemas-microsoft-com:office|name=["']?ProgId["']?\s+content=["']?(Word|Excel|PowerPoint)\./i.test(
+    html,
+  );
 }
 
 /**
@@ -83,8 +103,10 @@ export function fileUrlToPath(src: string): string | null {
  * - 浏览器「复制图片」：files + HTML 里一个同图 <img> → 只取 files，避免同图存两份
  * - 网页 / 微信 / QQ 复制图文：text + HTML 里若干 <img>，files 为空 → 文字照常粘贴，
  *   <img> 按 src 分流：data: 解码、http(s) 交后端下载、file:/// 交后端复制
- * - Word / Excel 复制：text + HTML（无 <img>）+ 一张整段内容的快照图 → 只要文字，
- *   丢掉快照图（用户要的是表格文字，不是一张截图）
+ * - Word / Excel 复制：text + 带 Office 标记的 HTML（无 <img>）+ 一张整段内容的快照图
+ *   → 只要文字，丢掉快照图（用户要的是表格文字，不是一张截图）
+ * - QQ 复制图文：text + HTML 里 <img src="file:///D:/.../Tencent Files/...">（空格不编码），
+ *   没有 files → 走 file:/// 分支
  */
 export function parseClipboard(dt: ClipboardLike | null): ClipboardPlan {
   const plan: ClipboardPlan = {
@@ -101,7 +123,8 @@ export function parseClipboard(dt: ClipboardLike | null): ClipboardPlan {
   const srcs = html ? extractImgSrcs(html) : [];
 
   if (files.length > 0) {
-    const officeSnapshot = plan.text.trim() !== "" && srcs.length === 0;
+    const officeSnapshot =
+      plan.text.trim() !== "" && srcs.length === 0 && isOfficeHtml(html);
     if (!officeSnapshot) plan.files = files;
     return plan;
   }

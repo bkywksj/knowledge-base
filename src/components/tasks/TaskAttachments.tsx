@@ -31,7 +31,11 @@ import { taskAttachmentApi } from "@/lib/api";
 import { resolveAssetSrc, toKbAsset } from "@/lib/assetUrl";
 import { useAppStore } from "@/store";
 import { useAttachmentPreviewStore } from "@/store/attachmentPreview";
-import { MAX_HTML_IMAGES, parseClipboard } from "@/lib/clipboardAttachments";
+import {
+  MAX_HTML_IMAGES,
+  parseClipboard,
+  type ClipboardPlan,
+} from "@/lib/clipboardAttachments";
 import type { TaskAttachment } from "@/types";
 
 /**
@@ -111,6 +115,31 @@ function nameFromUrl(url: string): string {
   } catch {
     return "网页图片";
   }
+}
+
+/** 把一次粘贴识别出的附件转成草稿（还没有任务 id 时暂存，之后用 flushDraftAttachments 上传） */
+export function draftsFromPlan(plan: ClipboardPlan): DraftAttachment[] {
+  const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  return [
+    ...plan.files.map((file, i) => ({
+      key: `${stamp}-f${i}`,
+      name: file.name || nameForFile(file, i),
+      file,
+      previewUrl: file.type.startsWith("image/")
+        ? URL.createObjectURL(file)
+        : undefined,
+    })),
+    ...plan.urls.map((url, i) => ({
+      key: `${stamp}-u${i}`,
+      name: nameFromUrl(url),
+      url,
+    })),
+    ...plan.paths.map((path, i) => ({
+      key: `${stamp}-p${i}`,
+      name: path.split(/[\\/]/).pop() || path,
+      path,
+    })),
+  ];
 }
 
 /** 新建任务落库后把草稿附件传上去；返回失败条数（不抛错，任务本身已建好） */

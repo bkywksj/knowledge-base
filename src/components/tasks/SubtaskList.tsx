@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  type ClipboardEvent,
+} from "react";
 import {
   App as AntdApp,
   Button,
@@ -16,8 +22,12 @@ import type { Task } from "@/types";
 import { MicButton } from "@/components/MicButton";
 import { CopyButton } from "@/components/ui/CopyButton";
 import TaskAttachments, {
+  draftsFromPlan,
+  flushDraftAttachments,
+  type DraftAttachment,
   type TaskAttachmentsHandle,
 } from "./TaskAttachments";
+import { parseClipboard } from "@/lib/clipboardAttachments";
 
 /**
  * 子任务列表组件——展示在主任务编辑弹窗的底部。
@@ -61,6 +71,31 @@ export function SubtaskList({
   /** 展开了附件条的子任务。平时收起：子任务行窄，常显缩略图太挤 */
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const attachmentRefs = useRef(new Map<number, TaskAttachmentsHandle>());
+  /**
+   * 在「新增子任务」框里粘贴了图文（如 QQ 消息）：文字进输入框当标题，
+   * 图片先暂存在这里，回车建好子任务后挂到它身上
+   */
+  const [pendingDrafts, setPendingDrafts] = useState<DraftAttachment[]>([]);
+
+  /** 输入框的粘贴：识别出附件就收下；有文字时不拦截，让文字照常进框 */
+  function takeAttachmentsFromPaste(
+    e: ClipboardEvent<HTMLInputElement>,
+  ): DraftAttachment[] {
+    const plan = parseClipboard(e.clipboardData);
+    const drafts = draftsFromPlan(plan);
+    if (drafts.length > 0 && plan.text.trim() === "") e.preventDefault();
+    return drafts;
+  }
+
+  /** 编辑已有子任务时粘贴：图片直接挂到这条子任务上并展开附件条 */
+  async function attachToSubtask(id: number, drafts: DraftAttachment[]) {
+    if (drafts.length === 0) return;
+    const failed = await flushDraftAttachments(id, drafts);
+    if (failed > 0) message.warning(`${failed} 个附件没能添加`);
+    setExpanded((prev) => new Set(prev).add(id));
+    const list = await taskApi.listSubtasks(parentTaskId).catch(() => null);
+    if (list) setItems(list);
+  }
 
   function toggleExpanded(id: number) {
     setExpanded((prev) => {
@@ -98,17 +133,26 @@ export function SubtaskList({
   }, [refresh]);
 
   async function handleAdd() {
-    const title = draft.trim();
+    const drafts = pendingDrafts;
+    // 只粘了图没写字也能建：标题兜底成「图片」，总比把图丢掉强
+    const title = draft.trim() || (drafts.length > 0 ? "图片" : "");
     if (!title) return;
     // 立即乐观清空：输入框马上空出来，焦点不丢，用户可直接连续录入下一条。
     // 同一文本的重复回车由"清空后 title 为空 → 上面的 return"天然挡掉，无需 disable。
     setDraft("");
+    setPendingDrafts([]);
     try {
-      await taskApi.create({
+      const newId = await taskApi.create({
         title,
         priority: 1,
         parent_task_id: parentTaskId,
       });
+      if (drafts.length > 0) {
+        const failed = await flushDraftAttachments(newId, drafts);
+        if (failed > 0)
+          message.warning(`子任务已添加，但 ${failed} 个附件没能添加`);
+        setExpanded((prev) => new Set(prev).add(newId));
+      }
       const list = await taskApi.listSubtasks(parentTaskId);
       setItems(list);
       const done = list.filter((t) => t.status === 1).length;
@@ -270,6 +314,9 @@ export function SubtaskList({
                     value={editingText}
                     onChange={(e) => setEditingText(e.target.value)}
                     onPressEnter={() => void commitEdit()}
+                    onPaste={(e) =>
+                      void attachToSubtask(t.id, takeAttachmentsFromPaste(e))
+                    }
                     // 失焦即保存：用户点到别处通常是"我改完了"，弹确认反而烦
                     onBlur={() => void commitEdit()}
                     onKeyDown={(e) => {
@@ -403,6 +450,11 @@ export function SubtaskList({
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onPressEnter={handleAdd}
+        onPaste={(e) => {
+          const drafts = takeAttachmentsFromPaste(e);
+          if (drafts.length > 0)
+            setPendingDrafts((prev) => [...prev, ...drafts]);
+        }}
         placeholder="新增子任务（回车连续录入）"
         prefix={<Plus size={12} style={{ color: token.colorTextTertiary }} />}
         allowClear
@@ -415,6 +467,28 @@ export function SubtaskList({
           />
         }
       />
+      {pendingDrafts.length > 0 && (
+        <div
+          className="flex items-center gap-2 text-[11px]"
+          style={{ color: token.colorTextTertiary, paddingLeft: 4 }}
+        >
+          <Paperclip size={11} />
+          回车添加子任务时一并附上 {pendingDrafts.length} 个图片 / 附件
+          <Button
+            type="link"
+            size="small"
+            style={{ fontSize: 11, padding: 0, height: "auto" }}
+            onClick={() => {
+              pendingDrafts.forEach(
+                (d) => d.previewUrl && URL.revokeObjectURL(d.previewUrl),
+              );
+              setPendingDrafts([]);
+            }}
+          >
+            不要了
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
