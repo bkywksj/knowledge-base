@@ -22,6 +22,7 @@ import {
   ChevronDown as ChevronDownIcon,
   Edit3,
   Trash2,
+  FolderPlus,
 } from "lucide-react";
 import { taskApi, taskCategoryApi } from "@/lib/api";
 import { useAppStore } from "@/store";
@@ -150,6 +151,16 @@ export function TasksPanel() {
       return new Set();
     }
   });
+  /** 确保某个父分类处于展开状态（新建子分类后要能立刻看到它） */
+  function expandCategory(id: number) {
+    setCollapsedCats((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      localStorage.setItem(COLLAPSED_CATS_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  }
   function toggleCollapsed(id: number) {
     setCollapsedCats((prev) => {
       const next = new Set(prev);
@@ -219,9 +230,19 @@ export function TasksPanel() {
 
   // ─── 右键菜单（分类行）────────────────────────
   const ctx = useContextMenu<{ id: number; name: string }>();
-  // 重命名 Modal（受控）：null = 关闭
-  const [renameTarget, setRenameTarget] = useState<{ id: number; name: string } | null>(null);
-  const [renameInput, setRenameInput] = useState("");
+  // 分类名输入 Modal（新建顶级 / 新建子分类 / 重命名共用）：null = 关闭。
+  // 以前新建只能点齿轮进管理弹窗，侧栏右键和标题的「+」直接走这个小弹窗
+  const [nameDialog, setNameDialog] = useState<
+    | { mode: "create"; parentId: number | null; parentName?: string }
+    | { mode: "rename"; id: number; name: string }
+    | null
+  >(null);
+  const [nameInput, setNameInput] = useState("");
+
+  function openCreateCategory(parentId: number | null, parentName?: string) {
+    setNameDialog({ mode: "create", parentId, parentName });
+    setNameInput("");
+  }
 
   /** 重新拉分类列表（重命名 / 删除后调用） */
   async function reloadCategories() {
@@ -234,12 +255,21 @@ export function TasksPanel() {
     if (!p) return [];
     return [
       {
+        key: "new-child",
+        label: "新建子分类",
+        icon: <FolderPlus size={13} />,
+        onClick: () => {
+          ctx.close();
+          openCreateCategory(p.id, p.name);
+        },
+      },
+      {
         key: "rename",
         label: "重命名",
         icon: <Edit3 size={13} />,
         onClick: () => {
-          setRenameTarget({ id: p.id, name: p.name });
-          setRenameInput(p.name);
+          setNameDialog({ mode: "rename", id: p.id, name: p.name });
+          setNameInput(p.name);
           ctx.close();
         },
       },
@@ -275,24 +305,49 @@ export function TasksPanel() {
     ];
   }, [ctx, currentCategory]);
 
-  async function submitRename() {
-    if (!renameTarget) return;
-    const name = renameInput.trim();
+  async function submitNameDialog() {
+    if (!nameDialog) return;
+    const name = nameInput.trim();
     if (!name) {
       message.warning("分类名不能为空");
       return;
     }
-    if (name === renameTarget.name) {
-      setRenameTarget(null);
+    if (nameDialog.mode === "rename") {
+      if (name === nameDialog.name) {
+        setNameDialog(null);
+        return;
+      }
+      try {
+        await taskCategoryApi.update(nameDialog.id, { name });
+        message.success("已重命名");
+        setNameDialog(null);
+        await reloadCategories();
+      } catch (e) {
+        message.error(`重命名失败：${e}`);
+      }
       return;
     }
+    // 分类名全局唯一（后端也会拦），前端先查一遍省一次往返
+    if (categories.some((c) => c.name === name)) {
+      message.warning(`分类名称「${name}」已存在`);
+      return;
+    }
+    const { parentId } = nameDialog;
+    const parent = parentId == null ? undefined : categories.find((c) => c.id === parentId);
     try {
-      await taskCategoryApi.update(renameTarget.id, { name });
-      message.success("已重命名");
-      setRenameTarget(null);
+      await taskCategoryApi.create({
+        name,
+        // 子分类沿用父分类颜色，一眼看出归属；顶级用默认蓝，之后可在管理弹窗里改
+        color: parent?.color ?? "#1677ff",
+        sort_order: categories.filter((c) => (c.parent_id ?? null) === parentId).length,
+        parent_id: parentId,
+      });
+      message.success("已创建");
+      setNameDialog(null);
+      if (parentId != null) expandCategory(parentId);
       await reloadCategories();
     } catch (e) {
-      message.error(`重命名失败：${e}`);
+      message.error(String(e));
     }
   }
 
@@ -444,6 +499,14 @@ export function TasksPanel() {
           <Button
             type="text"
             size="small"
+            icon={<Plus size={12} />}
+            onClick={() => openCreateCategory(null)}
+            style={{ width: 20, height: 20, padding: 0, fontSize: 11 }}
+            title="新建分类（右键分类可新建子分类）"
+          />
+          <Button
+            type="text"
+            size="small"
             icon={<SettingsIcon size={12} />}
             onClick={() => setManageOpen(true)}
             style={{ width: 20, height: 20, padding: 0, fontSize: 11 }}
@@ -528,7 +591,7 @@ export function TasksPanel() {
               type="link"
               size="small"
               style={{ padding: 0, fontSize: 11, height: "auto" }}
-              onClick={() => setManageOpen(true)}
+              onClick={() => openCreateCategory(null)}
             >
               + 新建分类
             </Button>
@@ -572,21 +635,27 @@ export function TasksPanel() {
         onClose={ctx.close}
       />
 
-      {/* 重命名分类 Modal */}
+      {/* 分类名 Modal：新建 / 新建子分类 / 重命名 */}
       <Modal
-        open={!!renameTarget}
-        title="重命名分类"
-        okText="保存"
+        open={!!nameDialog}
+        title={
+          nameDialog?.mode === "rename"
+            ? "重命名分类"
+            : nameDialog?.parentName
+              ? `在「${nameDialog.parentName}」下新建子分类`
+              : "新建分类"
+        }
+        okText={nameDialog?.mode === "rename" ? "保存" : "创建"}
         cancelText="取消"
-        onCancel={() => setRenameTarget(null)}
-        onOk={submitRename}
+        onCancel={() => setNameDialog(null)}
+        onOk={submitNameDialog}
         destroyOnHidden
       >
         <Input
-          value={renameInput}
-          onChange={(e) => setRenameInput(e.target.value)}
-          onPressEnter={submitRename}
-          placeholder="新分类名"
+          value={nameInput}
+          onChange={(e) => setNameInput(e.target.value)}
+          onPressEnter={submitNameDialog}
+          placeholder={nameDialog?.mode === "rename" ? "新分类名" : "分类名称"}
           maxLength={32}
           autoFocus
         />
