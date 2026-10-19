@@ -716,6 +716,26 @@ fn apply_pulled_task_categories(
                 .push(format!("查任务分类 UUID 失败 {}: {}", e.name, err)),
         }
     }
+
+    // 第二轮挂父子关系：父分类可能在本批里才刚建出来，第一轮建的时候还查不到
+    for e in entries {
+        let Ok(Some(local_id)) = db.get_task_category_id_by_stable_uuid(&e.stable_id) else {
+            continue;
+        };
+        let parent_local = match &e.parent_stable_id {
+            Some(pu) => match db.get_task_category_id_by_stable_uuid(pu) {
+                Ok(Some(pid)) if pid != local_id => Some(pid),
+                // 父级在本端不存在（被删 / 还没同步到）→ 先放顶层，别挂到不存在的 id 上
+                _ => None,
+            },
+            None => None,
+        };
+        if let Err(err) = db.set_task_category_parent(local_id, parent_local) {
+            result
+                .errors
+                .push(format!("设置任务分类 {} 的父级失败: {}", e.name, err));
+        }
+    }
 }
 
 /// pull → 项目：远端独有 → create_with_uuid（含 tombstone：直接以 is_deleted=1 创建占位行，
@@ -1124,7 +1144,27 @@ mod tests {
             color: "#1677ff".into(),
             icon: None,
             sort_order: 0,
+            parent_stable_id: None,
         }
+    }
+
+    /// 多级分类：子分类排在父分类前面也能挂上父级（第二轮再解析 parent_stable_id）
+    #[test]
+    fn apply_pulled_task_categories_links_parent_in_second_pass() {
+        let db = Database::init(":memory:").unwrap();
+        let mut result = SyncPullResult::default();
+        let mut child = mk_category_entry("uuid-child", "周会");
+        child.parent_stable_id = Some("uuid-parent".into());
+        apply_pulled_task_categories(
+            &db,
+            &[child, mk_category_entry("uuid-parent", "工作")],
+            &mut result,
+        );
+        let cats = db.list_task_categories().unwrap();
+        let parent = cats.iter().find(|c| c.name == "工作").unwrap();
+        let child = cats.iter().find(|c| c.name == "周会").unwrap();
+        assert_eq!(child.parent_id, Some(parent.id));
+        assert!(result.errors.is_empty(), "应无错误: {:?}", result.errors);
     }
 
     /// apply_pulled_task_categories：远端独有 → 本地创建；本地已有 → 改名对齐

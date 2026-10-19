@@ -21,7 +21,7 @@ impl super::Database {
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, color, icon, sort_order, created_at, stable_uuid
+            "SELECT id, name, color, icon, sort_order, created_at, stable_uuid, parent_id
              FROM task_categories
              ORDER BY sort_order ASC, id ASC",
         )?;
@@ -38,6 +38,7 @@ impl super::Database {
                     sort_order: row.get(4)?,
                     created_at: get_text_lossy(row, 5, "task_categories.created_at")?,
                     stable_uuid: get_opt_text_lossy(row, 6, "task_categories.stable_uuid")?,
+                    parent_id: row.get(7)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -58,14 +59,15 @@ impl super::Database {
             .to_string();
         let uuid = uuid::Uuid::new_v4().to_string();
         conn.execute(
-            "INSERT INTO task_categories (name, color, icon, sort_order, stable_uuid)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO task_categories (name, color, icon, sort_order, stable_uuid, parent_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 input.name,
                 color,
                 input.icon,
                 input.sort_order.unwrap_or(0),
                 uuid,
+                input.parent_id,
             ],
         )
         .map_err(|e| translate_name_conflict(e, &input.name))?;
@@ -105,6 +107,12 @@ impl super::Database {
             sets.push("sort_order = ?");
             binds.push(Box::new(s));
         }
+        if input.clear_parent.unwrap_or(false) {
+            sets.push("parent_id = NULL");
+        } else if let Some(pid) = input.parent_id {
+            sets.push("parent_id = ?");
+            binds.push(Box::new(pid));
+        }
         if sets.is_empty() {
             return Ok(false);
         }
@@ -122,14 +130,45 @@ impl super::Database {
         Ok(affected > 0)
     }
 
-    /// 删除分类。tasks.category_id 因 ON DELETE SET NULL 自动落到未分类。
+    /// 删除分类。tasks.category_id 因 ON DELETE SET NULL 自动落到未分类；
+    /// 子分类上移一级（挂到被删分类的父级下），不连带删除 —— 删一个目录不该让下面的分类跟着消失。
     pub fn delete_task_category(&self, id: i64) -> Result<bool, AppError> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let tx = conn.transaction()?;
+        let parent: Option<i64> = tx
+            .query_row(
+                "SELECT parent_id FROM task_categories WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap_or(None);
+        tx.execute(
+            "UPDATE task_categories SET parent_id = ?1 WHERE parent_id = ?2",
+            params![parent, id],
+        )?;
+        let affected = tx.execute("DELETE FROM task_categories WHERE id = ?1", params![id])?;
+        tx.commit()?;
+        Ok(affected > 0)
+    }
+
+    /// 只改父级（同步 pull 第二轮用：父分类可能在同一批里才建出来）
+    pub fn set_task_category_parent(
+        &self,
+        id: i64,
+        parent_id: Option<i64>,
+    ) -> Result<(), AppError> {
         let conn = self
             .conn
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
-        let affected = conn.execute("DELETE FROM task_categories WHERE id = ?1", params![id])?;
-        Ok(affected > 0)
+        conn.execute(
+            "UPDATE task_categories SET parent_id = ?1 WHERE id = ?2",
+            params![parent_id, id],
+        )?;
+        Ok(())
     }
 
     /// 按 stable_uuid 找本地分类 id（sync pull 端用）。
@@ -198,5 +237,89 @@ impl super::Database {
         )
         .map_err(|e| translate_name_conflict(e, name))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::database::Database;
+    use crate::models::{
+        CreateTaskCategoryInput, CreateTaskInput, TaskQuery, UpdateTaskCategoryInput,
+    };
+    use crate::services::tasks::TaskService;
+
+    fn cat(db: &Database, name: &str, parent: Option<i64>) -> i64 {
+        TaskService::create_category(
+            db,
+            CreateTaskCategoryInput {
+                name: name.into(),
+                color: None,
+                icon: None,
+                sort_order: None,
+                parent_id: parent,
+            },
+        )
+        .unwrap()
+    }
+
+    fn task_in(db: &Database, title: &str, category: i64) -> i64 {
+        let input: CreateTaskInput = serde_json::from_value(serde_json::json!({
+            "title": title,
+            "category_id": category,
+        }))
+        .unwrap();
+        db.create_task(input).unwrap()
+    }
+
+    #[test]
+    fn delete_parent_moves_children_up_one_level() {
+        let db = Database::init(":memory:").unwrap();
+        let root = cat(&db, "工作", None);
+        let mid = cat(&db, "项目", Some(root));
+        let leaf = cat(&db, "周会", Some(mid));
+        db.delete_task_category(mid).unwrap();
+        let cats = db.list_task_categories().unwrap();
+        assert_eq!(
+            cats.iter().find(|c| c.id == leaf).unwrap().parent_id,
+            Some(root)
+        );
+    }
+
+    #[test]
+    fn reject_moving_category_under_its_own_descendant() {
+        let db = Database::init(":memory:").unwrap();
+        let a = cat(&db, "A", None);
+        let b = cat(&db, "B", Some(a));
+        let move_a_under_b: UpdateTaskCategoryInput =
+            serde_json::from_value(serde_json::json!({ "parent_id": b })).unwrap();
+        assert!(TaskService::update_category(&db, a, move_a_under_b).is_err());
+        let move_a_under_self: UpdateTaskCategoryInput =
+            serde_json::from_value(serde_json::json!({ "parent_id": a })).unwrap();
+        assert!(TaskService::update_category(&db, a, move_a_under_self).is_err());
+        // 移到顶层总是允许
+        let to_top: UpdateTaskCategoryInput =
+            serde_json::from_value(serde_json::json!({ "clear_parent": true })).unwrap();
+        assert!(TaskService::update_category(&db, b, to_top).is_ok());
+    }
+
+    #[test]
+    fn filter_by_parent_includes_descendant_tasks() {
+        let db = Database::init(":memory:").unwrap();
+        let root = cat(&db, "工作", None);
+        let child = cat(&db, "周会", Some(root));
+        let other = cat(&db, "生活", None);
+        task_in(&db, "根上的", root);
+        task_in(&db, "子分类里的", child);
+        task_in(&db, "别的分类", other);
+        let q: TaskQuery =
+            serde_json::from_value(serde_json::json!({ "category_id": root })).unwrap();
+        let mut titles: Vec<String> = db
+            .list_tasks(q)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.title)
+            .collect();
+        titles.sort();
+        assert_eq!(titles, vec!["子分类里的".to_string(), "根上的".to_string()]);
     }
 }

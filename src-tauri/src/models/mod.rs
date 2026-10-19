@@ -1513,7 +1513,7 @@ pub struct TaskSearchHit {
     pub due_date: Option<String>,
 }
 
-/// 待办分类（一级，扁平）
+/// 待办分类（v66 起支持多级：parent_id 指向父分类）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskCategory {
     pub id: i64,
@@ -1529,6 +1529,9 @@ pub struct TaskCategory {
     /// 不必每次都按 name 做匹配。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stable_uuid: Option<String>,
+    /// 父分类 id（v66 多级分类）；None = 顶层
+    #[serde(default)]
+    pub parent_id: Option<i64>,
 }
 
 /// 创建分类入参
@@ -1538,6 +1541,9 @@ pub struct CreateTaskCategoryInput {
     pub color: Option<String>,
     pub icon: Option<String>,
     pub sort_order: Option<i32>,
+    /// 父分类 id；缺省 = 顶层
+    #[serde(default)]
+    pub parent_id: Option<i64>,
 }
 
 /// 更新分类入参（字段缺省 = 不改）
@@ -1548,6 +1554,12 @@ pub struct UpdateTaskCategoryInput {
     pub icon: Option<String>,
     pub clear_icon: Option<bool>,
     pub sort_order: Option<i32>,
+    /// 移到某个父分类下
+    #[serde(default)]
+    pub parent_id: Option<i64>,
+    /// true = 移到顶层（与 parent_id 同时给时以它为准）
+    #[serde(default)]
+    pub clear_parent: Option<bool>,
 }
 
 /// 任务统计（首页卡片 / 侧边栏徽章）
@@ -2265,6 +2277,10 @@ pub struct TaskCategoryManifestEntry {
     pub icon: Option<String>,
     #[serde(default)]
     pub sort_order: i32,
+    /// v66 多级分类：父分类的 stable_id；None = 顶层。
+    /// 旧版本客户端不认识这个字段会直接忽略（serde default），只是看到的是平铺列表
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_stable_id: Option<String>,
 }
 
 /// 推送结果

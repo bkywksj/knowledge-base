@@ -55,7 +55,18 @@ impl super::Database {
         }
         // 分类筛选：category_id 优先；否则看 uncategorized
         if let Some(cid) = query.category_id {
-            where_clauses.push("t.category_id = ?".into());
+            // v66 多级分类：点父分类时连同所有子孙分类下的待办一起列出
+            where_clauses.push(
+                "t.category_id IN (
+                    WITH RECURSIVE sub(id) AS (
+                        SELECT ?
+                        UNION
+                        SELECT c.id FROM task_categories c JOIN sub ON c.parent_id = sub.id
+                    )
+                    SELECT id FROM sub
+                )"
+                .into(),
+            );
             binds.push(Box::new(cid));
         } else if query.uncategorized.unwrap_or(false) {
             where_clauses.push("t.category_id IS NULL".into());

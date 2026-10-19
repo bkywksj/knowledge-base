@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 65;
+pub const SCHEMA_VERSION: i32 = 66;
 
 /// `ai_models.max_context` 的历史默认值。v51 把旧默认 32000 统一抬到它，此后新建也默认填它 ——
 /// 所以存量里的 128000 分不清是用户填的还是默认值，v62 一律当作「未设置」。
@@ -101,6 +101,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             62 => migrate_v62_to_v63(conn)?,
             63 => migrate_v63_to_v64(conn)?,
             64 => migrate_v64_to_v65(conn)?,
+            65 => migrate_v65_to_v66(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2490,6 +2491,29 @@ fn migrate_v64_to_v65(conn: &Connection) -> Result<(), AppError> {
     )?;
 
     set_version(conn, 65)?;
+    Ok(())
+}
+
+/// v65 -> v66：待办分类支持多级（task_categories.parent_id）。
+///
+/// 沿用标签树（v39 tags.parent_id）的做法：ALTER 加列、名称仍全局唯一、
+/// 删父级时子级上移由 Service / DAO 主动处理。
+///
+/// 🔴 不重建表去掉 `name UNIQUE`：`tasks.category_id` 带 `ON DELETE SET NULL`，
+/// 外键开着时 DROP 旧表等于逐行 DELETE，会把所有待办的分类清空。
+fn migrate_v65_to_v66(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v65 -> v66 (task_categories.parent_id 多级分类)");
+
+    let cols = list_columns(conn, "task_categories")?;
+    if !cols.iter().any(|c| c == "parent_id") {
+        conn.execute_batch("ALTER TABLE task_categories ADD COLUMN parent_id INTEGER;")?;
+    }
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_task_categories_parent
+            ON task_categories(parent_id) WHERE parent_id IS NOT NULL;",
+    )?;
+
+    set_version(conn, 66)?;
     Ok(())
 }
 

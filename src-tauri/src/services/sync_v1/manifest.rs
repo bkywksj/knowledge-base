@@ -110,6 +110,11 @@ pub fn task_category_content_hash(c: &TaskCategoryManifestEntry) -> String {
     h.update(c.icon.as_deref().unwrap_or("").as_bytes());
     h.update(b"\n");
     h.update(c.sort_order.to_string().as_bytes());
+    // v66：只有子分类才把父级算进指纹 —— 顶层分类的 hash 与旧版完全一致，升级后不会全量重同步
+    if let Some(p) = &c.parent_stable_id {
+        h.update(b"\nparent:");
+        h.update(p.as_bytes());
+    }
     format!("{:x}", h.finalize())
 }
 
@@ -417,8 +422,14 @@ fn build_project_entries(db: &Database) -> Result<Vec<ProjectManifestEntry>, App
 /// 删除时本端任务 category_id 落 NULL，跨端只关心当前存在的分类。
 fn build_task_category_entries(db: &Database) -> Result<Vec<TaskCategoryManifestEntry>, AppError> {
     let rows = db.list_task_categories()?;
+    // 父级 id → 父级 stable_uuid（跨端只认 uuid，本地自增 id 在别的端没有意义）
+    let uuid_of: HashMap<i64, String> = rows
+        .iter()
+        .filter_map(|c| c.stable_uuid.clone().map(|u| (c.id, u)))
+        .collect();
     let mut entries: Vec<TaskCategoryManifestEntry> = Vec::with_capacity(rows.len());
     for c in rows {
+        let parent_stable_id = c.parent_id.and_then(|pid| uuid_of.get(&pid).cloned());
         let stable_id = match c.stable_uuid {
             Some(u) => u,
             None => continue,
@@ -430,6 +441,7 @@ fn build_task_category_entries(db: &Database) -> Result<Vec<TaskCategoryManifest
             color: c.color,
             icon: c.icon,
             sort_order: c.sort_order,
+            parent_stable_id,
         };
         entry.content_hash = task_category_content_hash(&entry);
         entries.push(entry);
@@ -2125,6 +2137,7 @@ mod tests {
             color: "#1677ff".into(),
             icon: None,
             sort_order: 0,
+            parent_stable_id: None,
         }
     }
 
