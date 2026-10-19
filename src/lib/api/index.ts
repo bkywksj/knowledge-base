@@ -99,6 +99,7 @@ import type {
   PlanFromExcelRequest,
   ExcelPreview,
   TaskSuggestion,
+  AiRecognizedTask,
   AttachmentPreview,
   MessageAttachment,
   DraftNoteRequest,
@@ -1312,6 +1313,9 @@ export const aiPlanApi = {
    */
   extractTaskFromText: (text: string) =>
     invoke<TaskSuggestion>("ai_extract_task_from_text", { text }),
+  /** 识别一段通知 → 结构化待办（时间段 / 地点 / 子任务），只回填表单不落库 */
+  recognizeTask: (text: string) =>
+    invoke<AiRecognizedTask>("ai_recognize_task", { text }),
 };
 
 /**

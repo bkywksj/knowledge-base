@@ -1,19 +1,61 @@
 /**
  * 从一段通知 / 消息里识别待办（本地规则，不联网、不耗 token）。
  *
- * 群里的需求原话：「仿照快递地址识别。如：某某通知，2026年10月26日上交销售数据。
- * 识别的话标题某销售数据，时间根据提供的时间直接先提取，有多个时间先提取第一个。
- * 会议的话更简单，时间 + 会议名称。全段内容直接放在描述里。」
+ * 核心思路：**按日期的「身份」打分，而不是按出现位置。**
+ * 一段通知里常有好几个日期 —— 发文日期、报名截止、开会时间、起止区间 —— 取第一个或第一个
+ * 未来日期都只是在猜。这里看每个日期周围的词判断它是什么，再按身份 + 是否已过去打分选最佳，
+ * 其余候选也返回给 UI，用户点一下就能换。
  *
- * 只给出「建议」：调用方回填表单让用户确认，不直接落库；识别不准时可以再走 AI 识别。
+ * 另外：编号清单拆成子任务；顺带识别提醒、地点、紧急 / 重要。
+ * 只给「建议」：调用方回填表单让用户确认，不直接落库；不确定时可以交给 AI 识别。
  */
 
-export interface ParsedTaskText {
+export interface DueTime {
+  /** YYYY-MM-DD */
+  date: string;
+  /** HH:mm；原文没写时间时为 null（由调用方补默认时间） */
+  time: string | null;
+}
+
+/** 日期身份：截止 / 活动开始 / 时间段 / 发文落款 / 普通提及 */
+export type DateRole = "deadline" | "event" | "range" | "publish" | "plain";
+
+export interface DateCandidate extends DueTime {
+  /** 时间段的起始日（date 是结束日）；非时间段为 undefined */
+  start?: string;
+  role: DateRole;
+  /** 早于今天 */
+  past: boolean;
+  /** 给 UI 切换用的短说明，如「截止 · 上交销售数据」 */
+  label: string;
+  score: number;
+}
+
+export interface RecognizedSubtask {
+  title: string;
+  due: DueTime | null;
+}
+
+export interface RecognizedTask {
   /** 建议标题；识别不出时为空串（调用方保留用户原标题） */
   title: string;
-  /** 建议截止：date = YYYY-MM-DD；time = HH:mm，原文没写时间时为 null（由调用方补默认时间） */
-  due: { date: string; time: string | null } | null;
+  due: DueTime | null;
+  /** 时间段起始日（YYYY-MM-DD），只有识别为时间段时才有 */
+  start: string | null;
+  /** 建议提醒：提前 N 分钟；null = 不建议提醒 */
+  remindBefore: number | null;
+  important: boolean;
+  urgent: boolean;
+  location: string | null;
+  /** 编号清单拆出的子任务（至少 2 项才算清单） */
+  subtasks: RecognizedSubtask[];
+  /** 全部日期候选，按得分从高到低；第一个就是 due 的来源 */
+  candidates: DateCandidate[];
+  /** 本地规则是否有把握（没把握时调用方可以再走 AI） */
+  confident: boolean;
 }
+
+// ─── 数字 / 日期基础 ─────────────────────────────────
 
 const CN_DIGITS: Record<string, number> = {
   零: 0,
@@ -87,6 +129,15 @@ const WEEKDAY: Record<string, number> = {
   "7": 7,
 };
 
+/** 月-日 补年份：早于今天半年以上算明年（12 月说「1月5日」），近期过去的日期保持今年 */
+function inferYear(today: Date, mo: number, d: number): Date | null {
+  const date = validDate(today.getFullYear(), mo, d);
+  if (date && today.getTime() - date.getTime() > 180 * 86400_000) {
+    return validDate(today.getFullYear() + 1, mo, d);
+  }
+  return date;
+}
+
 /** 找出全文所有日期，按出现位置排序 */
 function findDates(text: string, today: Date): DateHit[] {
   const hits: DateHit[] = [];
@@ -109,15 +160,11 @@ function findDates(text: string, today: Date): DateHit[] {
   for (const m of text.matchAll(
     new RegExp(`${NUM}\\s*月\\s*${NUM}\\s*[日号]`, "g"),
   )) {
-    const mo = toNum(m[1]);
-    const d = toNum(m[2]);
-    let date = validDate(today.getFullYear(), mo, d);
-    // 跨年：12 月说「1月5日」指明年。早于今天半年以上才认为是明年，
-    // 免得把「10月15日发布的通知」这种近期过去的日期推到明年
-    if (date && today.getTime() - date.getTime() > 180 * 86400_000) {
-      date = validDate(today.getFullYear() + 1, mo, d);
-    }
-    push(m.index!, m.index! + m[0].length, date);
+    push(
+      m.index!,
+      m.index! + m[0].length,
+      inferYear(today, toNum(m[1]), toNum(m[2])),
+    );
   }
   // 今天 / 明天 / 后天 / 大后天
   for (const m of text.matchAll(/大后天|后天|明天|明日|今天|今日/g)) {
@@ -161,8 +208,12 @@ function readTime(
   return { time: `${pad(h)}:${pad(min)}`, end: pos + m[0].length };
 }
 
+// ─── 文本清洗 / 标题 ─────────────────────────────────
+
 const MEETING_WORDS =
-  "会议|例会|座谈会|研讨会|培训会|评审会|周会|月会|晨会|总结会|推进会|动员会|发布会|讨论会|启动会|交流会|复盘会";
+  "会议|例会|座谈会|研讨会|培训会|评审会|周会|月会|晨会|总结会|推进会|动员会|发布会|讨论会|启动会|交流会|复盘会|年会";
+const EVENT_WORDS =
+  "召开|举行|举办|开会|会议|培训|活动|报到|集合|出发|见面|面试|考试|讲座|演出|聚餐|拜访|开课|上课|答辩|体检|复诊|就诊|面谈|直播|宣讲";
 
 function cleanTitle(s: string): string {
   return s
@@ -170,6 +221,10 @@ function cleanTitle(s: string): string {
     .replace(/[\s，,：:、。．.；;！!？?]+$/, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function clip(s: string, n = 40): string {
+  return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
 /** 会议：取「召开 / 参加…」后面的会议名称 */
@@ -185,70 +240,317 @@ function meetingTitle(text: string): string {
   return bare ? cleanTitle(bare[1]) : "";
 }
 
-/** 通知：取截止日期后面那半句（「…10月26日前上交销售数据。」→「上交销售数据」） */
+/** 取 pos 之后那半句当事项（「…10月26日前上交销售数据，逾期不候」→「上交销售数据」） */
 function actionAfter(text: string, pos: number): string {
-  const rest = text.slice(pos);
   // 只取到第一个逗号：后面多是「逾期不候」「并附说明」这类补充，不适合进标题
-  const sentence = rest.split(/[。！？!?\n；;，,]/)[0] ?? "";
+  const sentence = text.slice(pos).split(/[。！？!?\n；;，,]/)[0] ?? "";
   const s = cleanTitle(
     sentence
       .replace(/^\s*(?:之前|以前|前|截止|为止|止)/, "")
       .replace(/^[\s，,：:、]+/, "")
       .replace(/^(?:请|务必|需要|须|需|要|应)/, "")
-      .replace(/^(?:将|把)/, ""),
+      .replace(/^(?:将|把)/, "")
+      // 「在三楼会议室召开季度总结会」：地点交给 location，标题从动词后开始
+      .replace(/^在[^，,。]{1,16}?(?=召开|举行|举办|开展|进行)/, ""),
   );
   return s.length >= 2 && s.length <= 40 ? s : "";
 }
 
-/** 兜底：第一句话，去掉【】前缀和「关于…的通知」外壳 */
-function firstSentence(text: string): string {
+/** 兜底标题：第一句话，去掉【】前缀和「关于…的通知」外壳 */
+function headline(text: string): string {
   let s = text.split(/[。！？!?\n]/).find((x) => x.trim()) ?? "";
   s = s.replace(/^【[^】]*】/, "").replace(/^(?:通知|公告|提醒)[：:]/, "");
-  const about = /关于(.{2,40}?)的(?:通知|公告|提醒)/.exec(s);
+  const about = /关于(.{2,40}?)的(?:通知|公告|提醒|函)/.exec(s);
   if (about) s = about[1];
-  s = cleanTitle(s);
-  return s.length > 40 ? `${s.slice(0, 40)}…` : s;
+  return clip(cleanTitle(s));
 }
 
-export function parseTaskText(
+function findLocation(text: string): string | null {
+  const labeled = /地点[：:]\s*([^\n，。,；;]{2,24})/.exec(text);
+  if (labeled) return cleanTitle(labeled[1]);
+  const inPlace =
+    /在([^\s，。,；;]{1,16}?(?:会议室|报告厅|礼堂|教室|办公室|大厅|中心|广场|酒店|餐厅|公司|学校|医院|[0-9一二三四五六七八九十]+楼|[0-9]+层|室|厅|馆))/.exec(
+      text,
+    );
+  return inPlace ? inPlace[1] : null;
+}
+
+// ─── 日期身份判断与打分 ─────────────────────────────────
+
+const ROLE_SCORE: Record<DateRole, number> = {
+  deadline: 5,
+  event: 4,
+  range: 4,
+  plain: 2,
+  publish: -10,
+};
+const ROLE_NAME: Record<DateRole, string> = {
+  deadline: "截止",
+  event: "活动",
+  range: "时间段",
+  publish: "发文",
+  plain: "日期",
+};
+
+const RANGE_SEP = /^\s*(?:至|到|~|～|—|－|-)\s*/;
+
+function lineOf(text: string, pos: number): string {
+  const s = text.lastIndexOf("\n", pos - 1) + 1;
+  const e = text.indexOf("\n", pos);
+  return text.slice(s, e < 0 ? text.length : e);
+}
+
+function judgeDates(text: string, today: Date): DateCandidate[] {
+  const hits = findDates(text, today);
+  const out: DateCandidate[] = [];
+  const consumed = new Set<number>();
+
+  hits.forEach((h, i) => {
+    if (consumed.has(i)) return;
+    const t = readTime(text, h.end);
+    let endPos = t?.end ?? h.end;
+    let date = h.date;
+    let time = t?.time ?? null;
+    let start: string | undefined;
+    let role: DateRole | null = null;
+
+    // 时间段：「10月20日至26日」「10月20日-10月26日」
+    const sep = RANGE_SEP.exec(text.slice(endPos));
+    if (sep) {
+      const after = endPos + sep[0].length;
+      const nextIdx = hits.findIndex((x, j) => j > i && x.start === after);
+      const dayOnly = /^(\d{1,2})\s*[日号]/.exec(text.slice(after));
+      let endDate: Date | null = null;
+      let endAt = after;
+      if (nextIdx >= 0) {
+        endDate = hits[nextIdx].date;
+        endAt = hits[nextIdx].end;
+        consumed.add(nextIdx);
+      } else if (dayOnly) {
+        endDate = validDate(
+          h.date.getFullYear(),
+          h.date.getMonth() + 1,
+          Number(dayOnly[1]),
+        );
+        endAt = after + dayOnly[0].length;
+      }
+      if (endDate && endDate.getTime() >= h.date.getTime()) {
+        start = ymd(h.date);
+        date = endDate;
+        const t2 = readTime(text, endAt);
+        time = t2?.time ?? null;
+        endPos = t2?.end ?? endAt;
+        role = "range";
+      }
+    }
+
+    const before = text.slice(Math.max(0, h.start - 10), h.start);
+    const after = text.slice(endPos, endPos + 16);
+    const clause = text
+      .slice(endPos)
+      .split(/[。！？!?\n；;]/)[0]
+      .slice(0, 30);
+    const line = lineOf(text, h.start).trim();
+    const dateText = text.slice(h.start, h.end).trim();
+
+    if (!role) {
+      if (
+        /(印发|发布|发文|签发|成文)\s*$/.test(before) ||
+        /^\s*(印发|发布|发文|签发|起施行|起执行)/.test(after) ||
+        line === dateText // 单独占一行的日期 = 落款
+      ) {
+        role = "publish";
+      } else if (
+        /^\s*(之前|以前|前|为止|止)/.test(after) ||
+        /(截止|截至|不晚于|最迟|最晚|期限)[^，。\n]{0,3}$/.test(before) ||
+        /截止|截至/.test(clause)
+      ) {
+        role = "deadline";
+      } else if (
+        /(定于|将于|拟于|时间[：:])\s*$/.test(before) ||
+        new RegExp(EVENT_WORDS).test(clause)
+      ) {
+        role = "event";
+      } else {
+        role = "plain";
+      }
+    }
+
+    const past = date.getTime() < today.getTime();
+    const snippet =
+      role === "publish"
+        ? ""
+        : actionAfter(text, endPos) || cleanTitle(clause).slice(0, 12);
+    out.push({
+      date: ymd(date),
+      time,
+      start,
+      role,
+      past,
+      label: `${ROLE_NAME[role]}${snippet ? ` · ${clip(snippet, 12)}` : ""}`,
+      // 身份分 + 已过去扣分 + 写了具体时间略加分；位置只做同分时的极小 tie-break
+      score:
+        ROLE_SCORE[role] - (past ? 6 : 0) + (time ? 0.5 : 0) - h.start * 1e-6,
+    });
+    // 记录事项起点，供标题使用
+    (out[out.length - 1] as DateCandidate & { _end?: number })._end = endPos;
+  });
+
+  return out.sort((a, b) => b.score - a.score);
+}
+
+/** 「只有时间没有日期」（「下午3点开会」）→ 今天，已过则明天 */
+function timeOnly(
+  text: string,
+  now: Date,
+  today: Date,
+): { due: DueTime; end: number } | null {
+  for (const m of text.matchAll(
+    /上午|早上|早晨|中午|下午|傍晚|晚上|凌晨|\d{1,2}\s*[:：]\s*\d{2}/g,
+  )) {
+    const t = readTime(text, m.index!);
+    if (!t) continue;
+    const [h, mi] = t.time.split(":").map(Number);
+    const passed = h * 60 + mi <= now.getHours() * 60 + now.getMinutes();
+    return {
+      due: { date: ymd(passed ? addDays(today, 1) : today), time: t.time },
+      end: t.end,
+    };
+  }
+  return null;
+}
+
+// ─── 编号清单 → 子任务 ─────────────────────────────────
+
+const ITEM_RE =
+  /^\s*(?:\d{1,2}\s*[.、．)）]|[（(]\s*\d{1,2}\s*[)）]|[①②③④⑤⑥⑦⑧⑨⑩]|[一二三四五六七八九十][、.．])\s*(.+)$/;
+
+function splitItems(text: string): { items: string[]; listStart: number } {
+  // 同一行里的「：1. xxx；2. xxx」也拆开（冒号后紧跟第一项是很常见的写法）
+  const norm = text.replace(
+    /[；;。：:]\s*(?=(?:\d{1,2}\s*[.、．)）]|[（(]\s*\d{1,2}\s*[)）]|[①②③④⑤⑥⑦⑧⑨⑩]))/g,
+    "\n",
+  );
+  const items: string[] = [];
+  let listStart = -1;
+  let offset = 0;
+  for (const line of norm.split("\n")) {
+    const m = ITEM_RE.exec(line);
+    if (m) {
+      if (listStart < 0)
+        listStart = text.indexOf(m[1]) >= 0 ? text.indexOf(m[1]) : offset;
+      items.push(m[1].trim());
+    }
+    offset += line.length + 1;
+  }
+  return items.length >= 2
+    ? { items, listStart }
+    : { items: [], listStart: -1 };
+}
+
+function recognizeItem(item: string, today: Date): RecognizedSubtask {
+  const best = judgeDates(item, today)[0] as
+    (DateCandidate & { _end?: number }) | undefined;
+  const title =
+    (best && best.role !== "publish"
+      ? actionAfter(item, best._end ?? 0)
+      : "") || clip(cleanTitle(item));
+  return {
+    title,
+    due:
+      best && best.role !== "publish"
+        ? { date: best.date, time: best.time }
+        : null,
+  };
+}
+
+// ─── 入口 ─────────────────────────────────
+
+export function recognizeTask(
   raw: string,
   now: Date = new Date(),
-): ParsedTaskText {
+): RecognizedTask {
   const text = raw.replace(/\r\n?/g, "\n").trim();
-  if (!text) return { title: "", due: null };
+  const empty: RecognizedTask = {
+    title: "",
+    due: null,
+    start: null,
+    remindBefore: null,
+    important: false,
+    urgent: false,
+    location: null,
+    subtasks: [],
+    candidates: [],
+    confident: false,
+  };
+  if (!text) return empty;
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-  const dates = findDates(text, today);
-  // 「有多个时间先取第一个」——但跳过已经过去的（通知开头常写发文日期），全都过去了才用第一个
-  const pick =
-    dates.find((d) => d.date.getTime() >= today.getTime()) ?? dates[0] ?? null;
+  const candidates = judgeDates(text, today);
+  const best = candidates.find((c) => c.role !== "publish") as
+    (DateCandidate & { _end?: number }) | undefined;
 
-  let due: ParsedTaskText["due"] = null;
-  let afterPos = -1;
-  if (pick) {
-    const t = readTime(text, pick.end);
-    due = { date: ymd(pick.date), time: t?.time ?? null };
-    afterPos = t?.end ?? pick.end;
-  } else {
-    // 只有时间没有日期（「下午3点开会」）→ 今天；时间已过则算明天
-    for (const m of text.matchAll(
-      /上午|早上|早晨|中午|下午|傍晚|晚上|凌晨|\d{1,2}\s*[:：]\s*\d{2}/g,
-    )) {
-      const t = readTime(text, m.index!);
-      if (!t) continue;
-      const [h, mi] = t.time.split(":").map(Number);
-      const passed = h * 60 + mi <= now.getHours() * 60 + now.getMinutes();
-      due = { date: ymd(passed ? addDays(today, 1) : today), time: t.time };
-      afterPos = t.end;
-      break;
+  let due: DueTime | null = best ? { date: best.date, time: best.time } : null;
+  let actionPos = best?._end ?? -1;
+  if (!best) {
+    const t = timeOnly(text, now, today);
+    if (t) {
+      due = t.due;
+      actionPos = t.end;
     }
   }
 
+  const { items, listStart } = splitItems(text);
+  const subtasks = items.map((it) => recognizeItem(it, today));
+  const location = findLocation(text);
+  const role = best?.role ?? (due ? "event" : null);
   const isMeeting = new RegExp(`(?:${MEETING_WORDS})(?![室厅])`).test(text);
-  const title =
-    (isMeeting ? meetingTitle(text) : "") ||
-    (afterPos >= 0 ? actionAfter(text, afterPos) : "") ||
-    firstSentence(text);
 
-  return { title, due };
+  // 标题：日期落在清单里时，事项属于子任务，主标题取通知抬头
+  const dateInList = listStart >= 0 && actionPos > listStart;
+  let title =
+    (isMeeting && role === "event" ? meetingTitle(text) : "") ||
+    (actionPos >= 0 && !dateInList ? actionAfter(text, actionPos) : "") ||
+    headline(text);
+  if (location && role === "event" && !title.includes(location)) {
+    title = clip(`${title} @${location}`, 50);
+  }
+
+  const urgent = /紧急|加急|特急|立即|马上|尽快|火速/.test(text);
+  const important =
+    urgent || /务必|重要|逾期不候|不得延误|严禁|必须/.test(text);
+
+  // 提醒：有具体时刻的活动提前 30 分钟；截止 / 时间段提前一天；普通提及不主动建议
+  const remindBefore =
+    role === "event" && due?.time
+      ? 30
+      : role === "deadline" || role === "range"
+        ? 1440
+        : null;
+
+  const top = candidates.filter((c) => c.role !== "publish");
+  const confident =
+    !!best &&
+    !best.past &&
+    (best.role === "deadline" ||
+      best.role === "event" ||
+      best.role === "range") &&
+    !(top[1] && Math.abs(top[1].score - best.score) < 0.01) &&
+    !!title;
+
+  return {
+    title,
+    due,
+    start: best?.role === "range" ? (best.start ?? null) : null,
+    remindBefore,
+    important,
+    urgent,
+    location,
+    subtasks,
+    candidates: candidates.map(({ ...c }) => {
+      delete (c as { _end?: number })._end;
+      return c;
+    }),
+    confident,
+  };
 }

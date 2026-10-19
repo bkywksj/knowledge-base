@@ -719,6 +719,21 @@ export interface PlanTodayRequest {
 }
 
 /** AI 对一条待办的建议；尚未写入 DB */
+/** AI 识别通知得到的待办（ai_recognize_task）：比 TaskSuggestion 多时间段、地点、子任务 */
+export interface AiRecognizedTask {
+  title: string;
+  /** 'YYYY-MM-DD HH:MM:SS' 或 'YYYY-MM-DD'；时间段时为结束时间 */
+  dueDate?: string | null;
+  /** 时间段起始日 'YYYY-MM-DD' */
+  startDate?: string | null;
+  remindBefore?: number | null;
+  /** 0=紧急 / 1=一般 / 2=不急 */
+  priority?: number | null;
+  important?: boolean | null;
+  location?: string | null;
+  subtasks?: { title: string; dueDate?: string | null }[];
+}
+
 export interface TaskSuggestion {
   title: string;
   /** 0=紧急 / 1=普通 / 2=低 */

@@ -22,7 +22,14 @@ import { Plus, NotebookText, Folder as FolderIcon, File as FileIcon, Link as Lin
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useNavigate } from "react-router-dom";
 import { taskApi, taskCategoryApi, noteApi, configApi, projectApi, aiPlanApi } from "@/lib/api";
-import { parseTaskText, type ParsedTaskText } from "@/lib/taskTextParser";
+import { recognizeTask, type DueTime, type RecognizedTask } from "@/lib/taskTextParser";
+import RecognizeResultCard, { type RecognizeSource } from "./RecognizeResultCard";
+import {
+  TASK_RECOGNIZE_MODE_KEY,
+  normalizeRecognizeMode,
+  type TaskRecognizeMode,
+} from "@/components/settings/TaskRecognizeModeRow";
+import type { AiRecognizedTask } from "@/types";
 import { categoryTreeSelectData } from "@/lib/categoryTree";
 import { relativeTime } from "@/lib/utils";
 import type {
@@ -116,6 +123,14 @@ export function CreateTaskModal({
   const [links, setLinks] = useState<TaskLinkInput[]>([]);
   const [saving, setSaving] = useState(false);
   const [aiRecognizing, setAiRecognizing] = useState(false);
+  /** 粘贴识别结果（卡片展示 + 换时间 / 撤销用）；null = 没有识别或已收起 */
+  const [recognized, setRecognized] = useState<{
+    r: RecognizedTask;
+    source: RecognizeSource;
+    picked: number;
+    aiNote: string | null;
+  } | null>(null);
+  const [recognizeMode, setRecognizeMode] = useState<TaskRecognizeMode>("auto");
   const [continuous, setContinuous] = useState(false);
   // ─── 循环提醒状态 ─────────────────────────
   const [repeatMode, setRepeatMode] = useState<RepeatMode>("none");
@@ -152,7 +167,8 @@ export function CreateTaskModal({
   const [dateMode, setDateMode] = useState<"single" | "range">("single");
   // ─── 草稿子任务（仅新建模式用） ────────────────
   /** 新建态尚无主任务 id，子任务先在本地草稿数组里堆着；保存时拿到 newId 后批量 create */
-  const [draftSubtasks, setDraftSubtasks] = useState<string[]>([]);
+  /** due：'YYYY-MM-DD HH:mm:ss'，粘贴识别出的子任务会带上自己的截止时间 */
+  const [draftSubtasks, setDraftSubtasks] = useState<{ title: string; due?: string }[]>([]);
   const [draftSubInput, setDraftSubInput] = useState("");
   /** 新建态的附件同理：先暂存 File，主任务落库后再上传 */
   const [draftAttachments, setDraftAttachments] = useState<DraftAttachment[]>([]);
@@ -181,6 +197,10 @@ export function CreateTaskModal({
       .then((v) => {
         if (v && /^\d{2}:\d{2}/.test(v)) setDefaultTime(v.slice(0, 5));
       })
+      .catch(() => {});
+    configApi
+      .get(TASK_RECOGNIZE_MODE_KEY)
+      .then((v) => setRecognizeMode(normalizeRecognizeMode(v)))
       .catch(() => {});
   }, []);
 
@@ -295,6 +315,8 @@ export function CreateTaskModal({
     setNoteOptions([]);
     setDraftSubtasks([]);
     setDraftAttachments([]);
+    setRecognized(null);
+    preRecognizeRef.current = null;
     setDraftSubInput("");
     setProjectCreating(false);
     setNewProjectName("");
@@ -492,12 +514,14 @@ export function CreateTaskModal({
         // 草稿子任务：主任务落库后顺序创建，失败也不阻断主任务（仅 warn）
         if (draftSubtasks.length > 0) {
           let failed = 0;
-          for (const subTitle of draftSubtasks) {
+          for (const sub of draftSubtasks) {
             try {
               await taskApi.create({
-                title: subTitle,
+                title: sub.title,
                 priority: 1,
                 parent_task_id: newTaskId,
+                // 子任务的时间就是「到点提醒」（与 SubtaskList 同语义）
+                ...(sub.due ? { due_date: sub.due, remind_before_minutes: 0 } : {}),
               });
             } catch {
               failed++;
@@ -530,45 +554,147 @@ export function CreateTaskModal({
     }
   }
 
-  /** 把识别结果回填表单（只填识别出来的项，没识别出的保持用户原值） */
-  function applyRecognized(p: ParsedTaskText): string[] {
-    const filled: string[] = [];
-    if (p.title) {
-      setTitle(normalizeTaskTitle(p.title));
-      filled.push(`标题「${p.title}」`);
-    }
-    if (p.due) {
-      // 原文没写几点就用设置里的默认时间，与手动选日期一致
-      const [h, m] = (p.due.time ?? defaultTime).split(":").map(Number);
-      setDueDate(dayjs(p.due.date).hour(h ?? 9).minute(m ?? 0).second(0));
-      filled.push(`截止 ${p.due.date}${p.due.time ? ` ${p.due.time}` : ""}`);
-    }
-    return filled;
+  /** 识别前的表单快照：撤销时整体还原；连续识别（本地 → AI）始终以第一次识别前为基准 */
+  const preRecognizeRef = useRef<{
+    title: string;
+    dueDate: Dayjs | null;
+    startDate: Dayjs | null;
+    dateMode: "single" | "range";
+    remindBefore: number | null;
+    important: boolean;
+    priority: TaskPriority;
+    draftSubtasks: { title: string; due?: string }[];
+  } | null>(null);
+
+  function dueToDayjs(d: DueTime): Dayjs {
+    // 原文没写几点就用设置里的默认时间，与手动选日期一致
+    const [h, m] = (d.time ?? defaultTime).split(":").map(Number);
+    return dayjs(d.date).hour(h ?? 9).minute(m ?? 0).second(0);
   }
 
-  /** 本地规则识别（不联网）：描述框里的通知 → 标题 + 截止时间 */
-  function recognizeLocal(text: string) {
-    const filled = applyRecognized(parseTaskText(text));
-    if (filled.length > 0) message.success(`已识别：${filled.join("，")}`);
-    else message.info("没识别出日期或标题，可以试试「AI 识别」");
+  /** 只改时间（卡片上点别的候选时间也走这里） */
+  function applyDue(due: DueTime | null, start: string | null | undefined) {
+    const base = preRecognizeRef.current;
+    if (!due) return;
+    setDueDate(dueToDayjs(due));
+    if (start) {
+      setStartDate(dayjs(start));
+      setDateMode("range");
+    } else if (base) {
+      setStartDate(base.startDate);
+      setDateMode(base.dateMode);
+    }
   }
 
-  /** AI 识别：复用 ai_extract_task_from_text，额外带出紧急度 / 重要性 */
-  async function recognizeByAi(text: string) {
+  /** 把识别结果回填表单：只填识别出的项；子任务只在新建时加（编辑时子任务是真实数据） */
+  function applyRecognition(r: RecognizedTask, source: RecognizeSource, aiNote: string | null = null) {
+    if (!preRecognizeRef.current) {
+      preRecognizeRef.current = {
+        title,
+        dueDate,
+        startDate,
+        dateMode,
+        remindBefore,
+        important,
+        priority,
+        draftSubtasks,
+      };
+    }
+    const base = preRecognizeRef.current;
+    setTitle(r.title ? normalizeTaskTitle(r.title) : base.title);
+    if (r.due) applyDue(r.due, r.start);
+    else {
+      setDueDate(base.dueDate);
+      setStartDate(base.startDate);
+      setDateMode(base.dateMode);
+    }
+    setRemindBefore(r.due && r.remindBefore != null ? r.remindBefore : base.remindBefore);
+    setImportant(r.important || base.important);
+    setPriority(r.urgent ? 0 : base.priority);
+    if (!isEdit) {
+      setDraftSubtasks([
+        ...base.draftSubtasks,
+        ...r.subtasks.map((st) => ({
+          title: st.title,
+          due: st.due ? dueToDayjs(st.due).format("YYYY-MM-DD HH:mm:ss") : undefined,
+        })),
+      ]);
+    }
+    setRecognized({ r, source, picked: 0, aiNote });
+  }
+
+  function undoRecognition() {
+    const base = preRecognizeRef.current;
+    if (base) {
+      setTitle(base.title);
+      setDueDate(base.dueDate);
+      setStartDate(base.startDate);
+      setDateMode(base.dateMode);
+      setRemindBefore(base.remindBefore);
+      setImportant(base.important);
+      setPriority(base.priority);
+      setDraftSubtasks(base.draftSubtasks);
+    }
+    preRecognizeRef.current = null;
+    setRecognized(null);
+  }
+
+  /** AI 结构化结果 → 与本地同形，好共用卡片；本地的日期候选保留，方便用户在两者间切换 */
+  function fromAi(ai: AiRecognizedTask, local: RecognizedTask, text: string): RecognizedTask {
+    const toDue = (s?: string | null): DueTime | null =>
+      s ? { date: s.slice(0, 10), time: s.length > 10 ? s.slice(11, 16) : null } : null;
+    const due = toDue(ai.dueDate);
+    const start = ai.startDate ? ai.startDate.slice(0, 10) : null;
+    const aiCandidate = due
+      ? [
+          {
+            ...due,
+            start: start ?? undefined,
+            role: start ? ("range" as const) : ("deadline" as const),
+            past: false,
+            label: "AI 判断",
+            score: 99,
+          },
+        ]
+      : [];
+    return {
+      title: ai.title?.trim() ?? "",
+      due,
+      start,
+      remindBefore: ai.remindBefore ?? null,
+      important: !!ai.important,
+      // AI 常把「务必按时」当成紧急：只有原文写了紧急类词语，或截止就在两天内，才采纳 priority=0
+      urgent:
+        ai.priority === 0 &&
+        (/紧急|加急|特急|立即|马上|尽快|火速/.test(text) ||
+          (!!due && dayjs(due.date).diff(dayjs().startOf("day"), "day") <= 2)),
+      location: ai.location ?? null,
+      subtasks: (ai.subtasks ?? []).map((st) => ({ title: st.title, due: toDue(st.dueDate) })),
+      candidates: [...aiCandidate, ...local.candidates],
+      confident: true,
+    };
+  }
+
+  /**
+   * 识别一段通知：本地规则立刻回填；按设置决定是否再走 AI。
+   * auto 模式下 AI 失败（没配模型 / 网络）不打扰用户，保留本地结果并在卡片上轻提示。
+   */
+  async function runRecognize(text: string, forceAi = false) {
+    const local = recognizeTask(text);
+    applyRecognition(local, "local");
+    const useAi = forceAi || recognizeMode === "ai" || (recognizeMode === "auto" && !local.confident);
+    if (!useAi) return;
     setAiRecognizing(true);
     try {
-      const s = await aiPlanApi.extractTaskFromText(text);
-      const due = s.dueDate
-        ? { date: s.dueDate.slice(0, 10), time: s.dueDate.length > 10 ? s.dueDate.slice(11, 16) : null }
-        : null;
-      const filled = applyRecognized({ title: s.title ?? "", due });
-      if (s.priority != null && s.priority >= 0 && s.priority <= 2) {
-        setPriority(s.priority as TaskPriority);
-      }
-      if (s.important != null) setImportant(s.important);
-      message.success(filled.length > 0 ? `AI 已识别：${filled.join("，")}` : "AI 没识别出有用信息");
+      const ai = await aiPlanApi.recognizeTask(text);
+      applyRecognition(fromAi(ai, local, text), "ai");
     } catch (e) {
-      message.error(`AI 识别失败：${e}（需先在设置里配置模型服务）`);
+      if (forceAi || recognizeMode === "ai") {
+        message.error(`AI 识别失败：${e}（需先在设置里配置模型服务）`);
+      }
+      setRecognized((prev) =>
+        prev ? { ...prev, aiNote: "AI 暂不可用，已使用本地规则结果" } : prev,
+      );
     } finally {
       setAiRecognizing(false);
     }
@@ -622,6 +748,28 @@ export function CreateTaskModal({
       }
     >
       <div className="flex flex-col gap-4 pt-1">
+        {recognized && (
+          <RecognizeResultCard
+            result={recognized.r}
+            source={recognized.source}
+            picked={recognized.picked}
+            onPick={(i) => {
+              const c = recognized.r.candidates[i];
+              if (!c) return;
+              applyDue({ date: c.date, time: c.time }, c.start);
+              setRecognized({ ...recognized, picked: i });
+            }}
+            onUndo={undoRecognition}
+            onClose={() => {
+              setRecognized(null);
+              preRecognizeRef.current = null;
+            }}
+            onAiRetry={() => void runRecognize(description, true)}
+            aiLoading={aiRecognizing}
+            aiNote={recognized.aiNote}
+            subtasksApplied={!isEdit}
+          />
+        )}
         {/* 标题 */}
         <div>
           <div
@@ -657,10 +805,7 @@ export function CreateTaskModal({
                 attachmentsRef.current?.handlePaste(e, { keepText: true });
                 e.preventDefault();
                 setDescription((prev) => (prev.trim() ? `${prev}\n${text}` : text));
-                const filled = applyRecognized(parseTaskText(text));
-                message.success(
-                  `${filled.length > 0 ? `已识别：${filled.join("，")}。` : ""}原文已放入描述`,
-                );
+                void runRecognize(text);
               }}
               autoSize={{ minRows: 1, maxRows: 5 }}
               style={{ fontSize: 15, paddingRight: 32, resize: "none" }}
@@ -697,8 +842,8 @@ export function CreateTaskModal({
                     type="link"
                     size="small"
                     style={{ fontSize: 11, paddingInline: 4, height: 20 }}
-                    title="从描述里识别标题和截止时间（本地规则，不联网）"
-                    onClick={() => recognizeLocal(description)}
+                    title="从描述里识别标题、时间、子任务（按设置里的识别方式）"
+                    onClick={() => void runRecognize(description)}
                   >
                     识别
                   </Button>
@@ -707,8 +852,8 @@ export function CreateTaskModal({
                     size="small"
                     loading={aiRecognizing}
                     style={{ fontSize: 11, paddingInline: 4, height: 20 }}
-                    title="用 AI 识别标题、截止时间、紧急度（需配置模型服务）"
-                    onClick={() => void recognizeByAi(description)}
+                    title="用 AI 识别标题、时间、子任务、紧急度（需配置模型服务）"
+                    onClick={() => void runRecognize(description, true)}
                   >
                     AI 识别
                   </Button>
@@ -1387,10 +1532,15 @@ export function CreateTaskModal({
                     <span
                       className="flex-1 truncate"
                       style={{ fontSize: 13 }}
-                      title={sub}
+                      title={sub.title}
                     >
-                      {sub}
+                      {sub.title}
                     </span>
+                    {sub.due && (
+                      <span style={{ fontSize: 11, color: token.colorTextTertiary }}>
+                        {sub.due.slice(5, 16).replace("-", "/")}
+                      </span>
+                    )}
                     <Button
                       type="text"
                       size="small"
@@ -1417,7 +1567,7 @@ export function CreateTaskModal({
                 e.stopPropagation();
                 const t = draftSubInput.trim();
                 if (!t) return;
-                setDraftSubtasks((prev) => [...prev, t]);
+                setDraftSubtasks((prev) => [...prev, { title: t }]);
                 setDraftSubInput("");
                 // 保险：保持焦点在输入框，回车可连续录入
                 requestAnimationFrame(() =>
