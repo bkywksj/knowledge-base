@@ -146,7 +146,7 @@ export default function OrphanAssetsPanel() {
         type="secondary"
         style={{ fontSize: 12, lineHeight: 1.7, display: "block" }}
       >
-        扫描数据库里没有引用关系的素材文件，覆盖图片 / 视频 / 附件 / PDF / 源文件 5 类，按类别分组展示。
+        扫描数据库里没有引用关系的素材文件，覆盖图片 / 视频 / 附件 / PDF / 源文件 / 待办附件 6 类，按类别分组展示。
       </Text>
 
       {/* 状态文字 + 主按钮：模仿 SyncV1Section 的"已配置的同步源 ... [新增同步源]"节奏 */}

@@ -431,16 +431,18 @@ export default function TaskAttachments({
               onClick={() => void pickFiles()}
               className="flex items-center justify-center gap-1 rounded border border-dashed bg-transparent text-xs opacity-60 hover:opacity-100 cursor-pointer"
               style={{
-                height: tile,
-                minWidth: tile,
-                padding: count === 0 && size !== "small" ? "0 12px" : 0,
+                // 没有附件时只是一行入口，不占缩略图那么高
+                height: count === 0 ? 28 : tile,
+                minWidth: count === 0 ? undefined : tile,
+                padding: count === 0 ? "0 10px" : 0,
                 borderColor: "var(--ant-color-border, #d9d9d9)",
                 color: "inherit",
               }}
             >
-              {count === 0 && size !== "small" ? (
+              {count === 0 ? (
                 <>
-                  <Paperclip size={14} /> 添加图片 / 附件
+                  <Paperclip size={13} />{" "}
+                  {size === "small" ? "添加" : "添加图片 / 附件"}
                 </>
               ) : (
                 <Plus size={16} />

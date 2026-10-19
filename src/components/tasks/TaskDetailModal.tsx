@@ -62,6 +62,9 @@ export function TaskDetailModal({
   useEffect(() => {
     if (openTaskId == null) return;
     const onPaste = (e: ClipboardEvent) => {
+      // 子任务附件区已经接手（React onPaste 先于 document 监听执行并 preventDefault），
+      // 不判断会把同一张图同时挂到主任务上
+      if (e.defaultPrevented) return;
       const el = document.activeElement as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
       const files = Array.from(e.clipboardData?.files ?? []);
