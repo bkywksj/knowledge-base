@@ -23,7 +23,10 @@ import {
   Brain,
   ChevronRight,
   ChevronDown,
+  AlertTriangle,
+  Settings,
 } from "lucide-react";
+import { useInRouterContext, useNavigate } from "react-router-dom";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { aiWriteApi, promptApi } from "@/lib/api";
 import { splitThinking } from "@/lib/stripThinking";
@@ -50,6 +53,26 @@ const ICON_MAP: Record<string, (size: number) => React.ReactNode> = {
   Sparkles: (s) => <Sparkles size={s} />,
   Wand2: (s) => <Wand2 size={s} />,
 };
+
+/**
+ * 「去设置模型服务」按钮：跳到设置页并滚动高亮模型服务区块（与 TurnCard 同一种跳法）。
+ * 单独拆成组件是因为 useNavigate 在 Router 之外会直接抛错——编辑器理论上可能被
+ * 挂在没有 Router 的窗口里，外层用 useInRouterContext 判断后再渲染本组件。
+ */
+function GoModelSettingsButton() {
+  const navigate = useNavigate();
+  return (
+    <Button
+      size="small"
+      icon={<Settings size={12} />}
+      onClick={() =>
+        navigate("/settings", { state: { scrollTo: "settings-ai-models" } })
+      }
+    >
+      去设置模型服务
+    </Button>
+  );
+}
 
 function renderIcon(name: string | null, size: number): React.ReactNode {
   if (name && ICON_MAP[name]) return ICON_MAP[name](size);
@@ -195,6 +218,17 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
   const [streaming, setStreaming] = useState(false);
   // 模型原始输出（可能含 <think> 思考过程），展示 / 插入前一律经 splitThinking 拆分
   const [result, setResult] = useState("");
+  // 生成失败的错误信息。⚠️ 必须和 result 分开存：以前把「错误: xxx」拼进 result，
+  // 「替换」按钮照样可点，一点就把用户选中的原文替换成错误文字——丢正文。
+  // result 为空 + error 非空 = 完全失败；result 非空 + error 非空 = 生成到一半中断。
+  const [error, setError] = useState<string | null>(null);
+  // 最近一次请求（动作 + 标题 + 当时的选区），供「重试」原样再发一次
+  const lastRunRef = useRef<{
+    action: string;
+    display: PromptTemplate;
+    range: { from: number; to: number };
+  } | null>(null);
+  const inRouter = useInRouterContext();
   // 思考过程折叠区是否展开（每次新请求重置为折叠）
   const [thinkExpanded, setThinkExpanded] = useState(false);
   const [selectedText, setSelectedText] = useState("");
@@ -280,6 +314,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
         if (!streaming) {
           setVisible(false);
           setResult("");
+          setError(null);
           setTriggerPos(null);
         }
         return;
@@ -301,6 +336,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
 
       if (!streaming) {
         setResult("");
+        setError(null);
         setActivePrompt(null);
         setVisible(true);
       }
@@ -366,6 +402,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setVisible(false);
         setResult("");
+        setError(null);
       }
     }
     document.addEventListener("mousedown", handleClick);
@@ -386,7 +423,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
   // 编辑器失焦的场景下（Popover 打开 / 流式中 / 结果区可见）维持伪选区高亮，
   // 让用户视觉上仍能看到 "AI 在处理哪段文字"
   useEffect(() => {
-    const shouldShow = customOpen || streaming || !!result;
+    const shouldShow = customOpen || streaming || !!result || !!error;
     const range = selectionRangeRef.current;
     if (shouldShow && range && range.from !== range.to) {
       editor.view.dispatch(
@@ -400,7 +437,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
         editor.state.tr.setMeta(FAKE_SELECTION_KEY, "clear"),
       );
     }
-  }, [customOpen, streaming, result, editor]);
+  }, [customOpen, streaming, result, error, editor]);
 
   // Popover 打开时根据选区 + 上下文拉一条 AI 建议指令；关闭时清空
   // 失败（未配置模型 / 离线 / 限流等）静默：suggestion=undefined → UI 不渲染建议区
@@ -461,9 +498,16 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
 
     setStreaming(true);
     setResult("");
+    setError(null);
     setThinkExpanded(false);
     setActivePrompt(display);
     await cleanup();
+
+    // 记下本次请求，失败后「重试」要用同一动作、同一段选区
+    {
+      const { from, to } = editor.state.selection;
+      lastRunRef.current = { action, display, range: { from, to } };
+    }
 
     // R-016：用 extractSelectionWithMedia 替代 textBetween，把图片节点变成 [IMG_N] 占位符。
     // selectedText state 此时仍是 selectionUpdate 里算的纯文本（用于显示长度判定/Popover 上下文），
@@ -491,9 +535,11 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
       setStreaming(false);
       await cleanup();
     });
+    // 错误只进 error，不碰 result：已经流出来的部分保留（标成「生成中断」），
+    // 一个字都没出来时 result 为空，写回按钮自然不出现
     const errorUnlisten = await listen<string>("ai-write:error", async (event) => {
       setStreaming(false);
-      setResult(`错误: ${event.payload}`);
+      setError(String(event.payload || "未知错误"));
       await cleanup();
     });
 
@@ -503,9 +549,21 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
       await aiWriteApi.assist(action, promptSelectedText, context);
     } catch (e) {
       setStreaming(false);
-      setResult(`错误: ${e}`);
+      setError(String(e));
       await cleanup();
     }
+  }
+
+  /** 重试：先把选区恢复成上次请求时的那段（用户可能点到别处了），再原样重发 */
+  function handleRetry() {
+    const last = lastRunRef.current;
+    if (!last || streaming) return;
+    const size = editor.state.doc.content.size;
+    // 文档在出错后被改短时，旧选区可能越界——越界就不恢复，退回当前选区
+    if (last.range.to <= size && last.range.from < last.range.to) {
+      editor.commands.setTextSelection(last.range);
+    }
+    void runAssist(last.action, last.display);
   }
 
   function handlePrompt(prompt: PromptTemplate) {
@@ -645,6 +703,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
     mediaNodesRef.current = [];
     setVisible(false);
     setResult("");
+    setError(null);
     setThinkExpanded(false);
     setActivePrompt(null);
   }
@@ -652,6 +711,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
   function handleDiscard() {
     mediaNodesRef.current = [];
     setResult("");
+    setError(null);
     setThinkExpanded(false);
     setVisible(false);
     setActivePrompt(null);
@@ -841,7 +901,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
           按钮太多时容器内部横向滚动，永远一行不换行。
           原 sticky 横条钉工具栏下方视线要回顶部找按钮，体验差，改为跟随选区。
           系统级划词浮窗（豆包等）通常出在选区上方，本工具栏在选区下方物理错开。*/}
-      {visible && !streaming && !result && triggerPos && (
+      {visible && !streaming && !result && !error && triggerPos && (
         <div
           ref={menuRef}
           style={{
@@ -861,7 +921,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
       {/* 结果面板：保留原 sticky bar 位置（钉在 EditorToolbar 正下方）。
           理由：流式输出 + 替换/追加按钮需要稳定的容器，跟选区漂移反而难点；
           也不会和系统级浮窗冲突。 */}
-      {(streaming || result) && (
+      {(streaming || result || error) && (
         <div
           ref={menuRef}
           className="kb-ai-bar"
@@ -948,27 +1008,76 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
               </div>
             )}
 
-            {/* 结果内容：只展示剥掉思考过程后的正文，所见即所得地对应"替换"结果 */}
-            <div
-              className="px-3 py-2 text-sm whitespace-pre-wrap max-h-60 overflow-auto"
-              style={{ color: token.colorText }}
-            >
-              {applyText}
-              {streaming && !applyText && (
-                <span style={{ color: token.colorTextQuaternary }}>
-                  {thinkingOpen ? "思考中..." : "生成中..."}
-                </span>
-              )}
-              {streaming && applyText && (
-                <span
-                  className="inline-block w-1.5 h-3.5 ml-0.5 animate-pulse"
-                  style={{ background: token.colorPrimary }}
-                />
-              )}
-            </div>
+            {/* 结果内容：只展示剥掉思考过程后的正文，所见即所得地对应"替换"结果。
+                完全失败（没有正文）时不渲染空白框，只留下面的错误条 */}
+            {(streaming || applyText || !error) && (
+              <div
+                className="px-3 py-2 text-sm whitespace-pre-wrap max-h-60 overflow-auto"
+                style={{ color: token.colorText }}
+              >
+                {applyText}
+                {streaming && !applyText && (
+                  <span style={{ color: token.colorTextQuaternary }}>
+                    {thinkingOpen ? "思考中..." : "生成中..."}
+                  </span>
+                )}
+                {streaming && applyText && (
+                  <span
+                    className="inline-block w-1.5 h-3.5 ml-0.5 animate-pulse"
+                    style={{ background: token.colorPrimary }}
+                  />
+                )}
+              </div>
+            )}
 
-            {/* 操作按钮 */}
-            {!streaming && result && (
+            {/* 错误条：
+                - 没有正文 = 生成失败（红色）：只给重试 / 去设置 / 关闭，绝不出现写回按钮；
+                - 已有部分正文 = 生成中断（橙色）：保留已生成内容，写回按钮仍在下方，
+                  但明确告诉用户内容不完整，由用户自己决定要不要用。 */}
+            {!streaming && error && (
+              <div
+                className="flex items-start gap-2 px-3 py-2 text-xs"
+                style={{
+                  borderTop: `1px solid ${token.colorBorderSecondary}`,
+                  background: applyText
+                    ? token.colorWarningBg
+                    : token.colorErrorBg,
+                  color: applyText
+                    ? token.colorWarningText
+                    : token.colorErrorText,
+                }}
+              >
+                <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                <span className="flex-1 min-w-0 break-all">
+                  {applyText
+                    ? `生成中断，上面只是已生成的部分，内容不完整，写回前请核对。原因：${error}`
+                    : `生成失败：${error}`}
+                </span>
+                <span className="flex items-center gap-1.5 shrink-0">
+                  <Button
+                    size="small"
+                    icon={<RefreshCw size={12} />}
+                    onClick={handleRetry}
+                    disabled={!lastRunRef.current}
+                  >
+                    重试
+                  </Button>
+                  {!applyText && inRouter && <GoModelSettingsButton />}
+                  {!applyText && (
+                    <Button
+                      size="small"
+                      icon={<X size={12} />}
+                      onClick={handleDiscard}
+                    >
+                      关闭
+                    </Button>
+                  )}
+                </span>
+              </div>
+            )}
+
+            {/* 操作按钮：完全失败（有错误且没有正文）时整栏不出现 */}
+            {!streaming && result && !(error && !applyText) && (
               <div
                 className="flex items-center justify-end gap-2 px-3 py-1.5"
                 style={{
@@ -1000,8 +1109,12 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
                 >
                   丢弃
                 </Button>
+                {/* 生成中断时两个写回按钮都降成普通样式：不完整的内容不该是"默认动作"，
+                    用户得看过错误条、主动决定才写回 */}
                 <Button
-                  type={defaultMode === "append" ? "primary" : "default"}
+                  type={
+                    !error && defaultMode === "append" ? "primary" : "default"
+                  }
                   size="small"
                   disabled={!applyText}
                   onClick={() => applyResult("append")}
@@ -1009,7 +1122,9 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
                   追加
                 </Button>
                 <Button
-                  type={defaultMode === "append" ? "default" : "primary"}
+                  type={
+                    !error && defaultMode !== "append" ? "primary" : "default"
+                  }
                   size="small"
                   icon={<Check size={12} />}
                   disabled={!applyText}
