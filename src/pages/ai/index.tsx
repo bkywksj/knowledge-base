@@ -179,6 +179,8 @@ function DesktopAiChatPage() {
   }
   const [messages, setMessages] = useState<AiMessage[]>([]);
   const [models, setModels] = useState<AiModel[]>([]);
+  // 区分「还没加载完」和「确实没配模型」：前者不能闪出配置引导
+  const [modelsLoaded, setModelsLoaded] = useState(false);
   const [inputText, setInputText] = useState("");
   // 智能模式：默认开启 = 让 LLM 自己调 search_notes / list_tags / get_today_tasks
   // 等内置工具 + 所有外部 MCP 工具。关掉就是纯聊天（不接入任何知识库）。
@@ -464,6 +466,7 @@ function DesktopAiChatPage() {
     try {
       const list = await aiModelApi.list();
       setModels(list);
+      setModelsLoaded(true);
     } catch (e) {
       console.error("加载模型列表失败:", e);
     }
@@ -1086,7 +1089,31 @@ function DesktopAiChatPage() {
 
       {/* 右侧聊天区域 */}
       <div className="flex-1 flex flex-col min-w-0">
-        {!activeConvId ? (
+        {!activeConvId && modelsLoaded && models.length === 0 ? (
+          // 没配模型时「开始新对话」点了也只会报错，直接引导去配置
+          <div className="flex-1 flex items-center justify-center">
+            <Empty
+              description={
+                <div style={{ lineHeight: 1.8 }}>
+                  <div>还没有配置模型服务</div>
+                  <div style={{ fontSize: 12, color: token.colorTextTertiary }}>
+                    添加一个模型（在线服务或本机 Ollama）后，就能用 AI 问答、写作和识别
+                  </div>
+                </div>
+              }
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+            >
+              <Button
+                type="primary"
+                onClick={() =>
+                  navigate("/settings", { state: { scrollTo: "settings-ai-models" } })
+                }
+              >
+                去配置模型服务
+              </Button>
+            </Empty>
+          </div>
+        ) : !activeConvId ? (
           <div className="flex-1 flex items-center justify-center">
             <Empty
               description="选择或创建一个对话开始 AI 问答"
