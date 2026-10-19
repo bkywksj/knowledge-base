@@ -4,6 +4,7 @@ import { useFeatureEnabled } from "@/hooks/useFeatureEnabled";
 import { PluginKey } from "@tiptap/pm/state";
 import type { DecorationSet } from "@tiptap/pm/view";
 import { createFakeSelectionPlugin } from "./fakeSelection";
+import { SelectionFormatButtons } from "./SelectionFormatButtons";
 import { Button, Input, Popover, Tooltip, message, theme as antdTheme } from "antd";
 import {
   Sparkles,
@@ -717,7 +718,39 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
     setActivePrompt(null);
   }
 
-  if (!aiEnabled) return null;
+  const divider = (
+    <span
+      style={{
+        width: 1,
+        height: 18,
+        background: token.colorBorderSecondary,
+        margin: "0 4px",
+        flexShrink: 0,
+      }}
+    />
+  );
+
+  // AI 功能关掉时浮条只留格式按钮（选中文字改格式不该跟着 AI 开关消失）
+  if (!aiEnabled) {
+    if (!visible || !triggerPos) return null;
+    return (
+      <div
+        ref={menuRef}
+        style={{ position: "fixed", left: triggerPos.x, top: triggerPos.y, zIndex: 999 }}
+        onMouseDown={(e) => e.preventDefault()}
+      >
+        <div
+          className="kb-ai-floating-toolbar"
+          style={{
+            background: token.colorBgElevated,
+            border: `1px solid ${token.colorBorderSecondary}`,
+          }}
+        >
+          <SelectionFormatButtons editor={editor} />
+        </div>
+      </div>
+    );
+  }
 
   const defaultMode: PromptOutputMode = activePrompt?.outputMode ?? "replace";
 
@@ -730,6 +763,8 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
         border: `1px solid ${token.colorBorderSecondary}`,
       }}
     >
+      <SelectionFormatButtons editor={editor} />
+      {divider}
       {/* leading：问 AI 这段（蓝色 CTA） */}
       {onAskAi && (
         <>

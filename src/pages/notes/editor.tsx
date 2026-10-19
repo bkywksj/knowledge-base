@@ -934,6 +934,7 @@ function DesktopNoteEditorPage() {
   // 注：阅读列宽（editorReadingWidth）不再在本组件订阅 —— 正文宽度改由 global.css
   // 直接读 --editor-reading-width 计算（大纲开/关两套规则），少一份状态订阅与重渲染。
   const autoSaveEnabled = useAppStore((s) => s.autoSaveEnabled);
+  const setAutoSaveEnabled = useAppStore((s) => s.setAutoSaveEnabled);
   const autoSaveDelay = useAppStore((s) => s.autoSaveDelay);
   /**
    * 最近一次保存成功的时间戳（毫秒），手动 / 自动保存都写。
@@ -2260,7 +2261,24 @@ function DesktopNoteEditorPage() {
                 </Tooltip>
               ) : dirty ? (
                 <Text type="warning" style={{ fontSize: 11, lineHeight: 1.2 }}>
-                  {autoSaveEnabled ? "未保存" : "未保存 · Ctrl+S 保存"}
+                  {autoSaveEnabled ? (
+                    "未保存"
+                  ) : (
+                    <>
+                      未保存 · Ctrl+S 保存 ·{" "}
+                      {/* 老用户升级后保留了「关闭自动保存」，不强制改设置，
+                          但在最容易丢内容的地方给一个就地开启的入口 */}
+                      <a
+                        title="打开后停止输入片刻即自动保存，可在设置 → 自动保存里关闭"
+                        onClick={() => {
+                          setAutoSaveEnabled(true);
+                          message.success("已开启自动保存");
+                        }}
+                      >
+                        开启自动保存
+                      </a>
+                    </>
+                  )}
                 </Text>
               ) : lastAutoSavedAt ? (
                 <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.2 }}>
