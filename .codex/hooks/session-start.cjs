@@ -11,7 +11,7 @@
  *   source ∈ { startup, resume, clear }
  *
  * Codex 输出：
- *   - {additionalContext: "..."} → 加入开发者上下文
+ *   - {hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: "..."}} → 加入开发者上下文
  *   - 普通文本 → 同 additionalContext
  *   - {} → 不注入
  *
@@ -93,5 +93,12 @@ const wrapped = `## 历史经验加载（来自 ${relPath}）
 
 ${content}`;
 
-process.stdout.write(JSON.stringify({ additionalContext: wrapped }));
+// Codex 校验 SessionStart 输出 schema：顶层 additionalContext 会被判为
+// "invalid session start JSON output"，必须放进 hookSpecificOutput 嵌套结构
+process.stdout.write(JSON.stringify({
+  hookSpecificOutput: {
+    hookEventName: 'SessionStart',
+    additionalContext: wrapped,
+  },
+}));
 process.exit(0);
