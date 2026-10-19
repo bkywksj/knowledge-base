@@ -45,6 +45,7 @@ pub mod sync;
 pub mod sync_v1;
 pub mod system;
 pub mod tags;
+pub mod task_attachment;
 pub mod tasks;
 pub mod template;
 pub mod trash;

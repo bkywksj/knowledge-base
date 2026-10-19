@@ -71,7 +71,8 @@ impl super::Database {
                     t.parent_task_id, t.kanban_stage, t.project_id, t.start_date,
                     t.stable_uuid, t.is_deleted,
                     COALESCE(s.done, 0)  AS subtask_done,
-                    COALESCE(s.total, 0) AS subtask_total
+                    COALESCE(s.total, 0) AS subtask_total,
+                    (SELECT COUNT(*) FROM task_attachments a WHERE a.task_id = t.id) AS attachment_count
              FROM tasks t
              LEFT JOIN (
                  SELECT parent_task_id,
@@ -122,6 +123,7 @@ impl super::Database {
                     is_deleted: row.get::<_, i32>(25)? != 0,
                     subtask_done: row.get(26)?,
                     subtask_total: row.get(27)?,
+                    attachment_count: row.get(28)?,
                     links: Vec::new(),
                 })
             })?
@@ -180,7 +182,8 @@ impl super::Database {
                         t.stable_uuid, t.is_deleted,
                         COALESCE((SELECT SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END)
                                   FROM tasks WHERE parent_task_id = t.id AND is_deleted = 0), 0) AS subtask_done,
-                        COALESCE((SELECT COUNT(*) FROM tasks WHERE parent_task_id = t.id AND is_deleted = 0), 0) AS subtask_total
+                        COALESCE((SELECT COUNT(*) FROM tasks WHERE parent_task_id = t.id AND is_deleted = 0), 0) AS subtask_total,
+                        (SELECT COUNT(*) FROM task_attachments a WHERE a.task_id = t.id) AS attachment_count
                  FROM tasks t WHERE t.id = ?1 AND t.is_deleted = 0",
                 params![id],
                 |row| {
@@ -213,6 +216,7 @@ impl super::Database {
                         is_deleted: row.get::<_, i32>(25)? != 0,
                         subtask_done: row.get(26)?,
                         subtask_total: row.get(27)?,
+                        attachment_count: row.get(28)?,
                         links: Vec::new(),
                     })
                 },
@@ -259,7 +263,8 @@ impl super::Database {
                     repeat_kind, repeat_interval, repeat_weekdays, repeat_until,
                     repeat_count, repeat_done_count, source_batch_id, category_id,
                     parent_task_id, kanban_stage, project_id, start_date,
-                    stable_uuid, is_deleted
+                    stable_uuid, is_deleted,
+                    (SELECT COUNT(*) FROM task_attachments a WHERE a.task_id = tasks.id) AS attachment_count
              FROM tasks WHERE parent_task_id = ?1 AND is_deleted = 0
              ORDER BY status ASC, created_at ASC, id ASC",
         )?;
@@ -294,6 +299,7 @@ impl super::Database {
                     is_deleted: row.get::<_, i32>(25)? != 0,
                     subtask_done: 0,
                     subtask_total: 0,
+                    attachment_count: row.get(26)?,
                     links: Vec::new(),
                 })
             })?
@@ -843,6 +849,7 @@ impl super::Database {
                     is_deleted: false,
                     subtask_done: 0,
                     subtask_total: 0,
+                    attachment_count: 0,
                     links: Vec::new(),
                 })
             })?
@@ -1061,6 +1068,7 @@ impl super::Database {
                     is_deleted: row.get::<_, i32>(25)? != 0,
                     subtask_done: 0,
                     subtask_total: 0,
+                    attachment_count: 0,
                     links: Vec::new(),
                 })
             })?

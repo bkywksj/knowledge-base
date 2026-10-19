@@ -91,6 +91,7 @@ pub mod sync_v1;
 pub mod sync_v1_scheduler;
 pub mod tag;
 pub mod task_reminder;
+pub mod task_attachment;
 pub mod tasks;
 pub mod template;
 pub mod trash;

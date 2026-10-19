@@ -939,14 +939,14 @@ pub struct AttachmentInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrphanItem {
-    /// 素材类型：image / video / attachment / pdf / source
+    /// 素材类型：image / video / attachment / pdf / source / task_file
     pub kind: String,
     /// 绝对路径
     pub path: String,
     /// 按 note_id 分目录的素材有；纯平铺的 images 没有
     pub note_id: Option<i64>,
     pub size: u64,
-    /// 孤儿原因：notePurged / unreferenced
+    /// 孤儿原因：notePurged / taskPurged / unreferenced
     pub reason: String,
 }
 
@@ -972,6 +972,8 @@ pub struct OrphanAssetScan {
     pub attachments: OrphanGroup,
     pub pdfs: OrphanGroup,
     pub sources: OrphanGroup,
+    /// 待办附件（v65）
+    pub task_files: OrphanGroup,
 }
 
 /// 孤儿素材清理结果
@@ -1287,7 +1289,25 @@ pub struct Task {
     /// 总子任务数（同上）
     #[serde(default)]
     pub subtask_total: i32,
+    /// 附件数（v65；列表 / 子任务列表填充，用于显示回形针角标；其它查询恒为 0）
+    #[serde(default)]
+    pub attachment_count: i32,
     pub links: Vec<TaskLink>,
+}
+
+/// 任务附件（v65 `task_attachments`）：图片显示缩略图，其它文件显示文件条
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskAttachment {
+    pub id: i64,
+    pub task_id: i64,
+    /// 相对 data_dir 的 POSIX 路径，如 `kb_assets/task_files/12/pasted-1.png`
+    pub rel_path: String,
+    /// 原始文件名（展示用）
+    pub file_name: String,
+    pub mime: String,
+    pub size: i64,
+    pub sort_order: i32,
+    pub created_at: String,
 }
 
 fn default_kanban_stage() -> String {

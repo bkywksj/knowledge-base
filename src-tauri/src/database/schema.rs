@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 64;
+pub const SCHEMA_VERSION: i32 = 65;
 
 /// `ai_models.max_context` 的历史默认值。v51 把旧默认 32000 统一抬到它，此后新建也默认填它 ——
 /// 所以存量里的 128000 分不清是用户填的还是默认值，v62 一律当作「未设置」。
@@ -100,6 +100,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             61 => migrate_v61_to_v62(conn)?,
             62 => migrate_v62_to_v63(conn)?,
             63 => migrate_v63_to_v64(conn)?,
+            64 => migrate_v64_to_v65(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2454,6 +2455,41 @@ fn migrate_v63_to_v64(conn: &Connection) -> Result<(), AppError> {
     tx.commit()?;
 
     set_version(conn, 64)?;
+    Ok(())
+}
+
+/// v64 -> v65：任务附件表 `task_attachments`（图片 / 文件挂在任务、子任务上）。
+///
+/// # 为什么单独建表而不是塞进 description
+/// 描述保持纯文本，附件以缩略图条的形式独立展示 —— 不需要富文本编辑器，排序 / 删除也只动这张表。
+/// 子任务本身就是 `tasks` 行，同一张表天然覆盖。
+///
+/// # 文件放哪
+/// 文件落在 `kb_assets/task_files/<task_id>/`，表里只存相对 data_dir 的 POSIX 路径。
+/// 🔴 不能放进 `kb_assets/images/<id>/`：孤儿扫描会把「笔记 id 不存在」的目录整个当孤儿删掉。
+///
+/// 任务硬删时 `ON DELETE CASCADE` 清行；软删（is_deleted=1）保留行和文件，复活后附件还在。
+fn migrate_v64_to_v65(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v64 -> v65 (task_attachments)");
+
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS task_attachments (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id     INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            rel_path    TEXT NOT NULL,
+            file_name   TEXT NOT NULL,
+            mime        TEXT NOT NULL DEFAULT 'application/octet-stream',
+            size        INTEGER NOT NULL DEFAULT 0,
+            sort_order  INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_attachments_task
+            ON task_attachments(task_id, sort_order);
+        ",
+    )?;
+
+    set_version(conn, 65)?;
     Ok(())
 }
 

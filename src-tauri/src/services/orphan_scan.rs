@@ -1,6 +1,9 @@
 //! 孤儿素材统一扫描器
 //!
-//! 五类素材：images / videos / attachments / pdfs / sources
+//! 六类素材：images / videos / attachments / pdfs / sources / task_files
+//!
+//! task_files（待办附件）按 task_id 分目录，引用集来自 `task_attachments` 表，
+//! 与笔记 content 无关，单独走 `scan_task_files`。
 //!
 //! 两种存储拓扑各自一套扫描算法：
 //!
@@ -38,6 +41,7 @@ use crate::services::attachment::AttachmentService;
 use crate::services::image::ImageService;
 use crate::services::pdf::PdfService;
 use crate::services::source_file::SourceFileService;
+use crate::services::task_attachment::TaskAttachmentService;
 use crate::services::video::VideoService;
 
 /// 单组孤儿明细上限（防止 UI 卡死 / 过大 IPC 包体）
@@ -129,6 +133,7 @@ impl OrphanScanService {
                 &note_ids,
                 &referenced_source_abs,
             )?,
+            task_files: scan_task_files(db, app_data_dir)?,
         })
     }
 
@@ -157,6 +162,10 @@ impl OrphanScanService {
         roots.insert(
             "source",
             normalize_path_for_compare(&SourceFileService::sources_dir(app_data_dir)),
+        );
+        roots.insert(
+            "task_file",
+            normalize_path_for_compare(&TaskAttachmentService::root_dir(app_data_dir)),
         );
 
         let mut deleted = 0usize;
@@ -563,6 +572,85 @@ fn scan_flat_sources(
 }
 
 // ─── 工具函数 ───────────────────────────────────
+
+// ─── 待办附件（task_files/<task_id>/）──────────────────
+
+/// 目录名不是任何任务行（含软删）的 id → 整目录孤儿（reason = taskPurged）；
+/// 任务还在但文件不在 `task_attachments.rel_path` 里 → 文件级孤儿。
+/// 软删任务的文件保留：同步 / 复活时附件还要用。
+fn scan_task_files(db: &Database, app_data_dir: &Path) -> Result<OrphanGroup, AppError> {
+    let root = TaskAttachmentService::root_dir(app_data_dir);
+    let mut group = OrphanGroup::default();
+    if !root.exists() {
+        return Ok(group);
+    }
+    let task_ids: HashSet<i64> = db
+        .list_all_task_ids_for_orphan_scan()?
+        .into_iter()
+        .collect();
+    let referenced: HashSet<String> = db
+        .list_all_task_attachment_paths()?
+        .into_iter()
+        .map(|rel| normalize_path_for_compare(&app_data_dir.join(rel)))
+        .collect();
+
+    for entry in std::fs::read_dir(&root)? {
+        let entry = entry?;
+        let path = entry.path();
+        let id = entry.file_name().to_string_lossy().parse::<i64>().ok();
+        if !entry.file_type()?.is_dir() || id.is_none() {
+            let size = if path.is_dir() {
+                dir_total_size(&path)
+            } else {
+                entry.metadata().map(|m| m.len()).unwrap_or(0)
+            };
+            push_orphan(
+                &mut group,
+                OrphanItem {
+                    kind: "task_file".into(),
+                    path: path.to_string_lossy().into_owned(),
+                    note_id: None,
+                    size,
+                    reason: "unreferenced".into(),
+                },
+            );
+            continue;
+        }
+        let id = id.unwrap_or_default();
+        if !task_ids.contains(&id) {
+            push_orphan(
+                &mut group,
+                OrphanItem {
+                    kind: "task_file".into(),
+                    path: path.to_string_lossy().into_owned(),
+                    note_id: None,
+                    size: dir_total_size(&path),
+                    reason: "taskPurged".into(),
+                },
+            );
+            continue;
+        }
+        for f in WalkDir::new(&path).into_iter().filter_map(|e| e.ok()) {
+            if !f.file_type().is_file() {
+                continue;
+            }
+            if referenced.contains(&normalize_path_for_compare(f.path())) {
+                continue;
+            }
+            push_orphan(
+                &mut group,
+                OrphanItem {
+                    kind: "task_file".into(),
+                    path: f.path().to_string_lossy().into_owned(),
+                    note_id: None,
+                    size: f.metadata().map(|m| m.len()).unwrap_or(0),
+                    reason: "unreferenced".into(),
+                },
+            );
+        }
+    }
+    Ok(group)
+}
 
 fn push_orphan(group: &mut OrphanGroup, item: OrphanItem) {
     group.count += 1;

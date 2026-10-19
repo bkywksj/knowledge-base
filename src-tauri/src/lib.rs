@@ -1596,6 +1596,12 @@ pub fn run() {
             commands::cards::review_card,
             commands::cards::get_card_stats,
             commands::cards::list_card_review_logs,
+            // 待办附件
+            commands::task_attachment::list_task_attachments,
+            commands::task_attachment::add_task_attachment,
+            commands::task_attachment::add_task_attachment_from_path,
+            commands::task_attachment::delete_task_attachment,
+            commands::task_attachment::reorder_task_attachments,
             // 待办模块
             commands::tasks::list_tasks,
             commands::tasks::get_task,
