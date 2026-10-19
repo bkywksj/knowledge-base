@@ -1011,10 +1011,10 @@ export interface OpenMarkdownResult {
 }
 
 /** 孤儿素材类型 */
-export type OrphanKind = "image" | "video" | "attachment" | "pdf" | "source";
+export type OrphanKind = "image" | "video" | "attachment" | "pdf" | "source" | "task_file";
 
 /** 孤儿原因 */
-export type OrphanReason = "notePurged" | "unreferenced";
+export type OrphanReason = "notePurged" | "taskPurged" | "unreferenced";
 
 /** 单条孤儿素材 */
 export interface OrphanItem {
@@ -1043,6 +1043,8 @@ export interface OrphanAssetScan {
   attachments: OrphanGroup;
   pdfs: OrphanGroup;
   sources: OrphanGroup;
+  /** 待办附件（v65） */
+  taskFiles: OrphanGroup;
 }
 
 /** 孤儿素材清理结果 */
@@ -1328,6 +1330,19 @@ export interface TaskLink {
   label: string | null;
 }
 
+/** 任务附件（v65 task_attachments）：图片显示缩略图，其它文件显示文件条 */
+export interface TaskAttachment {
+  id: number;
+  task_id: number;
+  /** 相对数据目录的 POSIX 路径；显示时拼 kb-asset:// 走 resolveAssetSrc */
+  rel_path: string;
+  file_name: string;
+  mime: string;
+  size: number;
+  sort_order: number;
+  created_at: string;
+}
+
 export interface Task {
   id: number;
   title: string;
@@ -1366,6 +1381,8 @@ export interface Task {
   subtask_done: number;
   /** 总子任务数 */
   subtask_total: number;
+  /** 附件数（v65；列表 / 子任务列表才填，其它接口恒为 0） */
+  attachment_count?: number;
   links: TaskLink[];
   /** 工作流看板列归属：'todo' / 'doing' / 'done'（v40 引入） */
   kanban_stage: KanbanStage;

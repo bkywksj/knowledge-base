@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Modal, Button, Tag, Typography, theme as antdTheme } from "antd";
 import { Star, Edit3 } from "lucide-react";
 import type { Project, Task } from "@/types";
@@ -6,6 +6,7 @@ import { projectApi, taskApi } from "@/lib/api";
 import { taskTimeLines } from "@/lib/taskTimestamps";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { SubtaskList } from "./SubtaskList";
+import TaskAttachments, { type TaskAttachmentsHandle } from "./TaskAttachments";
 
 const { Text, Paragraph } = Typography;
 
@@ -34,6 +35,8 @@ interface Props {
    * 未传时不渲染编辑按钮。
    */
   onEdit?: (task: Task) => void;
+  /** 附件增删后回调（带最新数量），父级用来局部 patch 列表里的回形针角标 */
+  onAttachmentsChanged?: (taskId: number, count: number) => void;
 }
 
 /**
@@ -48,8 +51,27 @@ export function TaskDetailModal({
   onToggleStatus,
   onSubtaskChanged,
   onEdit,
+  onAttachmentsChanged,
 }: Props) {
   const { token } = antdTheme.useToken();
+  const attachmentsRef = useRef<TaskAttachmentsHandle>(null);
+
+  // 详情弹窗里没有描述输入框，粘贴截图挂在 document 上：只在弹窗打开、且焦点不在
+  // 输入框（子任务编辑框要正常粘文本）时接管带文件的粘贴
+  const openTaskId = task?.id ?? null;
+  useEffect(() => {
+    if (openTaskId == null) return;
+    const onPaste = (e: ClipboardEvent) => {
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      const files = Array.from(e.clipboardData?.files ?? []);
+      if (files.length === 0) return;
+      e.preventDefault();
+      void attachmentsRef.current?.addFiles(files);
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [openTaskId]);
   const isMain = task && task.parent_task_id == null;
 
   // 任务有 project_id 时拉项目名展示（按需，只在打开 Modal 时拉一次全量）
@@ -122,6 +144,36 @@ export function TaskDetailModal({
               <CopyButton text={task.title} title="复制标题" />
             </div>
           </div>
+
+          <div>
+            <div className="flex items-center gap-1">
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                备注
+              </Text>
+              {task.description?.trim() && (
+                <CopyButton text={task.description} title="复制备注" />
+              )}
+            </div>
+            <Paragraph
+              style={{
+                marginTop: 4,
+                marginBottom: 0,
+                fontSize: 13,
+                whiteSpace: "pre-wrap",
+                color: task.description?.trim()
+                  ? token.colorText
+                  : token.colorTextQuaternary,
+              }}
+            >
+              {task.description?.trim() || "暂无备注"}
+            </Paragraph>
+          </div>
+          {/* 附件：详情里也能直接粘贴截图 / 拖入 / 删除，不必进编辑弹窗 */}
+          <TaskAttachments
+            ref={attachmentsRef}
+            taskId={task.id}
+            onCountChange={(n) => onAttachmentsChanged?.(task.id, n)}
+          />
 
           <div className="flex gap-6">
             <div>
@@ -204,30 +256,6 @@ export function TaskDetailModal({
                 </div>
               </div>
             )}
-          </div>
-
-          <div>
-            <div className="flex items-center gap-1">
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                备注
-              </Text>
-              {task.description?.trim() && (
-                <CopyButton text={task.description} title="复制备注" />
-              )}
-            </div>
-            <Paragraph
-              style={{
-                marginTop: 4,
-                marginBottom: 0,
-                fontSize: 13,
-                whiteSpace: "pre-wrap",
-                color: task.description?.trim()
-                  ? token.colorText
-                  : token.colorTextQuaternary,
-              }}
-            >
-              {task.description?.trim() || "暂无备注"}
-            </Paragraph>
           </div>
 
           {/* 子任务（仅主任务显示） */}

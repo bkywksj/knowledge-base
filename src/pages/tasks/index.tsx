@@ -35,6 +35,7 @@ import {
   Circle,
   Check as IconCheck,
   Ban,
+  Paperclip,
 } from "lucide-react";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import {
@@ -1046,6 +1047,9 @@ function DesktopTasksPage() {
         onSubtaskChanged={(id, done, total) => {
           patchTask(id, { subtask_done: done, subtask_total: total });
         }}
+        onAttachmentsChanged={(id, count) => {
+          patchTask(id, { attachment_count: count });
+        }}
         onEdit={(t) => setEditing(t)}
       />
       {/* AI 规划 / 添加待办的三个 Modal 已封装进 NewTodoButton；本页面不再单独挂 */}
@@ -1540,6 +1544,16 @@ function TaskRow({
               title={`子任务进度：${task.subtask_done}/${task.subtask_total}`}
             >
               {task.subtask_done}/{task.subtask_total}
+            </span>
+          )}
+          {(task.attachment_count ?? 0) > 0 && (
+            <span
+              className="text-[10px] inline-flex items-center gap-0.5"
+              style={{ color: token.colorTextTertiary }}
+              title={`${task.attachment_count} 个附件`}
+            >
+              <Paperclip size={10} />
+              {task.attachment_count}
             </span>
           )}
           {category && (

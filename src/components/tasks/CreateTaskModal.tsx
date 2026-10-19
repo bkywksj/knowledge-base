@@ -36,6 +36,12 @@ import type {
 import { SubtaskList } from "./SubtaskList";
 import { ProjectManageModal } from "./ProjectManageModal";
 import { MicButton } from "@/components/MicButton";
+import TaskAttachments, {
+  filesFromClipboard,
+  flushDraftAttachments,
+  type DraftAttachment,
+  type TaskAttachmentsHandle,
+} from "./TaskAttachments";
 
 type RepeatMode = "none" | "daily" | "weekdays" | "weekly" | "monthly" | "custom";
 type EndMode = "never" | "until" | "count";
@@ -145,6 +151,9 @@ export function CreateTaskModal({
   /** 新建态尚无主任务 id，子任务先在本地草稿数组里堆着；保存时拿到 newId 后批量 create */
   const [draftSubtasks, setDraftSubtasks] = useState<string[]>([]);
   const [draftSubInput, setDraftSubInput] = useState("");
+  /** 新建态的附件同理：先暂存 File，主任务落库后再上传 */
+  const [draftAttachments, setDraftAttachments] = useState<DraftAttachment[]>([]);
+  const attachmentsRef = useRef<TaskAttachmentsHandle>(null);
   /** 回车追加草稿子任务后，保持焦点在输入框（连续录入体验） */
   const draftSubInputRef = useRef<InputRef>(null);
 
@@ -282,6 +291,7 @@ export function CreateTaskModal({
     setNoteQuery("");
     setNoteOptions([]);
     setDraftSubtasks([]);
+    setDraftAttachments([]);
     setDraftSubInput("");
     setProjectCreating(false);
     setNewProjectName("");
@@ -471,6 +481,11 @@ export function CreateTaskModal({
           links,
           ...repeatPayload.create,
         });
+        if (draftAttachments.length > 0) {
+          const failedAtt = await flushDraftAttachments(newTaskId, draftAttachments);
+          setDraftAttachments([]);
+          if (failedAtt > 0) message.warning(`${failedAtt} 个附件上传失败`);
+        }
         // 草稿子任务：主任务落库后顺序创建，失败也不阻断主任务（仅 warn）
         if (draftSubtasks.length > 0) {
           let failed = 0;
@@ -606,6 +621,40 @@ export function CreateTaskModal({
                 }
               />
             </span>
+          </div>
+        </div>
+
+        {/* 描述 + 附件：紧跟标题，读任务时先看到「做什么」再看「细节」 */}
+        <div>
+          <div
+            className="text-[11px] mb-1 flex items-center justify-between"
+            style={{ color: token.colorTextSecondary }}
+          >
+            <span>描述（可选，可直接粘贴截图）</span>
+            <MicButton
+              onTranscribed={(text) =>
+                setDescription((prev) => (prev ? `${prev}\n${text}` : text))
+              }
+            />
+          </div>
+          <Input.TextArea
+            autoSize={{ minRows: 2, maxRows: 8 }}
+            placeholder="备注 / 上下文"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            // 粘贴图片 / 文件 → 进附件条，不往描述里塞文件名；纯文本粘贴照常
+            onPaste={(e) => {
+              const files = filesFromClipboard(e);
+              if (files.length > 0) void attachmentsRef.current?.addFiles(files);
+            }}
+          />
+          <div className="mt-2">
+            <TaskAttachments
+              ref={attachmentsRef}
+              taskId={editing?.id ?? null}
+              drafts={draftAttachments}
+              onDraftsChange={setDraftAttachments}
+            />
           </div>
         </div>
 
@@ -1078,27 +1127,6 @@ export function CreateTaskModal({
               需先选择截止时间才能设置重复
             </div>
           )}
-        </div>
-
-        {/* 描述 */}
-        <div>
-          <div
-            className="text-[11px] mb-1 flex items-center justify-between"
-            style={{ color: token.colorTextSecondary }}
-          >
-            <span>描述（可选）</span>
-            <MicButton
-              onTranscribed={(text) =>
-                setDescription((prev) => (prev ? `${prev}\n${text}` : text))
-              }
-            />
-          </div>
-          <Input.TextArea
-            rows={2}
-            placeholder="备注 / 上下文"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
         </div>
 
         {/* 关联 */}

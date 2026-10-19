@@ -75,6 +75,7 @@ import type {
   RemoteSnapshot,
   RestoreBatchResult,
   Task,
+  TaskAttachment,
   TaskLinkInput,
   CreateTaskInput,
   UpdateTaskInput,
@@ -1481,6 +1482,21 @@ export const dataDirApi = {
 };
 
 /** 待办任务 API */
+/** 任务附件（图片 / 文件，主任务与子任务通用） */
+export const taskAttachmentApi = {
+  list: (taskId: number) =>
+    invoke<TaskAttachment[]>("list_task_attachments", { taskId }),
+  /** 粘贴截图 / 浏览器 File：base64 不带 data: 前缀 */
+  add: (taskId: number, fileName: string, base64Data: string) =>
+    invoke<TaskAttachment>("add_task_attachment", { taskId, fileName, base64Data }),
+  /** 文件选择框 / OS 拖放：后端直接复制，不经 IPC 传字节 */
+  addFromPath: (taskId: number, sourcePath: string) =>
+    invoke<TaskAttachment>("add_task_attachment_from_path", { taskId, sourcePath }),
+  remove: (id: number) => invoke<boolean>("delete_task_attachment", { id }),
+  reorder: (taskId: number, ids: number[]) =>
+    invoke<void>("reorder_task_attachments", { taskId, ids }),
+};
+
 export const taskApi = {
   list: (query?: TaskQuery) => invoke<Task[]>("list_tasks", { query }),
   get: (id: number) => invoke<Task>("get_task", { id }),

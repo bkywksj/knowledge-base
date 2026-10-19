@@ -1,7 +1,7 @@
 /**
  * 孤儿素材清理面板（替代旧的"孤儿图片清理"）
  *
- * - 一次扫描覆盖 5 类素材：images / videos / attachments / pdfs / sources
+ * - 一次扫描覆盖 6 类素材：images / videos / attachments / pdfs / sources / taskFiles（待办附件）
  * - Tabs 分组展示，徽章显示每类孤儿数
  * - 单类一键清理 + 全部一键清理
  * - 图片类预览缩略图，其他类只显示路径列表
@@ -43,6 +43,7 @@ const TAB_DEFS: { key: OrphanKind; label: string; description: string }[] = [
   { key: "attachment", label: "附件", description: "已不被任何笔记引用的附件" },
   { key: "pdf", label: "PDF", description: "已 purge 的笔记残留的 PDF" },
   { key: "source", label: "源文件", description: "已不被引用的 Word / 源文件" },
+  { key: "task_file", label: "待办附件", description: "待办已被删除或附件已移除后残留的文件" },
 ];
 
 const KIND_TO_GROUP: Record<OrphanKind, keyof OrphanAssetScan> = {
@@ -51,6 +52,7 @@ const KIND_TO_GROUP: Record<OrphanKind, keyof OrphanAssetScan> = {
   attachment: "attachments",
   pdf: "pdfs",
   source: "sources",
+  task_file: "taskFiles",
 };
 
 function fmtMB(bytes: number): string {
@@ -61,6 +63,7 @@ function fmtMB(bytes: number): string {
 
 function reasonLabel(reason: string): string {
   if (reason === "notePurged") return "笔记已被永久删除";
+  if (reason === "taskPurged") return "待办已被永久删除";
   return "未被引用";
 }
 
@@ -82,7 +85,8 @@ export default function OrphanAssetsPanel() {
       scan.videos.count +
       scan.attachments.count +
       scan.pdfs.count +
-      scan.sources.count
+      scan.sources.count +
+      scan.taskFiles.count
     );
   }, [scan]);
 
@@ -93,7 +97,8 @@ export default function OrphanAssetsPanel() {
       scan.videos.totalBytes +
       scan.attachments.totalBytes +
       scan.pdfs.totalBytes +
-      scan.sources.totalBytes
+      scan.sources.totalBytes +
+      scan.taskFiles.totalBytes
     );
   }, [scan]);
 

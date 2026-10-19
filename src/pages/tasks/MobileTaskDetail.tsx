@@ -15,6 +15,8 @@ import { Drawer, Modal, message } from "antd";
 import { taskApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import type { Task } from "@/types";
+import TaskAttachments from "@/components/tasks/TaskAttachments";
+import { AttachmentPreviewModal } from "@/components/preview/AttachmentPreviewModal";
 
 /**
  * 移动端任务详情页（设计稿：12-task-edit.html）
@@ -385,6 +387,10 @@ export function MobileTaskDetail() {
                 rows={2}
                 className="mt-1 w-full resize-none bg-transparent text-sm text-slate-500 outline-none placeholder:text-slate-300"
               />
+              {/* 附件：点缩略图全屏预览，「＋」从相册 / 文件选 */}
+              <div className="mt-2">
+                <TaskAttachments taskId={taskId} />
+              </div>
             </div>
           </div>
         </div>
@@ -633,6 +639,8 @@ export function MobileTaskDetail() {
           })}
         </div>
       </Drawer>
+      {/* 本页是独立路由、不挂 AppLayout，附件条点开非图片文件要自己挂预览弹窗 */}
+      <AttachmentPreviewModal />
     </div>
   );
 }
