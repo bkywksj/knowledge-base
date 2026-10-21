@@ -16,7 +16,7 @@ import {
   PenLine,
 } from "lucide-react";
 import { revealItemInDir, openPath } from "@tauri-apps/plugin-opener";
-import { writeImage } from "@tauri-apps/plugin-clipboard-manager";
+import { copyImageBytes } from "@/lib/copyImage";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useFeatureEnabled } from "@/hooks/useFeatureEnabled";
 import { findWikiLinkAtPos, type WikiLinkRange } from "./WikiLinkDecoration";
@@ -385,34 +385,6 @@ export function useEditorContextMenu(
     };
 
     /**
-     * 把图片字节转成 PNG Blob。
-     *
-     * `createImageBitmap` 的 source 是 Blob（同源数据），canvas 不会被污染，
-     * 所以 toBlob 不会抛 SecurityError。ClipboardItem 在 Chromium 上只稳定支持
-     * image/png，统一转 PNG 最保险。
-     */
-    const toPngBlob = async (bytes: Uint8Array): Promise<Blob> => {
-      const bitmap = await createImageBitmap(new Blob([bytes as BlobPart]));
-      try {
-        const canvas = document.createElement("canvas");
-        canvas.width = bitmap.width;
-        canvas.height = bitmap.height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) throw new Error("Canvas 2D 上下文不可用");
-        ctx.drawImage(bitmap, 0, 0);
-        return await new Promise<Blob>((resolve, reject) => {
-          canvas.toBlob(
-            (b) =>
-              b ? resolve(b) : reject(new Error("canvas.toBlob 返回 null")),
-            "image/png",
-          );
-        });
-      } finally {
-        bitmap.close();
-      }
-    };
-
-    /**
      * 把图片复制到系统剪贴板，三级降级。
      *
      * 之所以不直接用 `navigator.clipboard.write()`：WebView 的 Async Clipboard API 要求
@@ -443,15 +415,7 @@ export function useEditorContextMenu(
           message.error("无法获取图片数据");
           return;
         }
-        const pngBlob = await toPngBlob(bytes);
-        try {
-          await writeImage(new Uint8Array(await pngBlob.arrayBuffer()));
-        } catch {
-          // 插件不可用（移动端）→ 最后回退 Web Clipboard；此路径受手势限制，可能仍失败
-          await navigator.clipboard.write([
-            new ClipboardItem({ "image/png": pngBlob }),
-          ]);
-        }
+        await copyImageBytes(bytes);
         message.success("已复制图片");
       } catch (err) {
         message.error(`复制图片失败：${err}`);

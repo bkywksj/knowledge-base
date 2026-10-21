@@ -15,20 +15,25 @@
  * 图片自动识别成附件 —— 见 `parseClipboard`。
  */
 import {
+  Children,
+  cloneElement,
   useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
   useState,
   type DragEvent,
+  type ReactElement,
+  type ReactNode,
   type Ref,
 } from "react";
 import { App as AntdApp, Image, Spin } from "antd";
-import { FileText, Paperclip, Plus, X } from "lucide-react";
+import { Copy, FileText, Paperclip, Plus, X } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import { taskAttachmentApi } from "@/lib/api";
 import { resolveAssetSrc, toKbAsset } from "@/lib/assetUrl";
+import { copyImageFromUrl } from "@/lib/copyImage";
 import { useAppStore } from "@/store";
 import { useAttachmentPreviewStore } from "@/store/attachmentPreview";
 import {
@@ -271,6 +276,42 @@ export default function TaskAttachments({
 
   const live = taskId != null;
   const tile = size === "small" ? 44 : 64;
+
+  const copyPreviewImage = async (url: string) => {
+    try {
+      await copyImageFromUrl(url);
+      message.success("已复制图片");
+    } catch (e) {
+      message.error(`复制图片失败：${e}`);
+    }
+  };
+
+  /**
+   * 预览工具栏末尾追加「复制」按钮。antd 默认工具栏只有翻转 / 旋转 / 缩放，
+   * 而预览浮层盖在页面最上层，右键也拿不到系统的「复制图片」——用户看到大图却复制不了。
+   * 沿用默认按钮的 class，样式、间距与原生按钮一致。
+   */
+  const renderPreviewActions = (
+    original: ReactElement,
+    info: { image: { url: string } },
+  ) => {
+    const children = Children.toArray(
+      (original.props as { children?: ReactNode }).children,
+    );
+    return cloneElement(
+      original,
+      undefined,
+      ...children,
+      <div
+        key="copy"
+        className="ant-image-preview-actions-action"
+        title="复制图片"
+        onClick={() => void copyPreviewImage(info.image.url)}
+      >
+        <Copy size={18} />
+      </div>,
+    );
+  };
 
   useEffect(() => {
     onBusyChange?.(busy);
@@ -577,7 +618,9 @@ export default function TaskAttachments({
     >
       <Spin spinning={loading || busy} size="small">
         <div className="flex flex-wrap items-center gap-2">
-          <Image.PreviewGroup>
+          <Image.PreviewGroup
+            preview={{ actionsRender: renderPreviewActions }}
+          >
             {images.map((a) => (
               <div
                 key={a.id}
