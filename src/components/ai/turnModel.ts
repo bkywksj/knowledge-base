@@ -193,6 +193,7 @@ const TOOL_LABELS: Record<string, string> = {
   get_today_tasks: "查看今日待办",
   list_datasets: "列出数据表",
   query_dataset: "查询数据表",
+  request_import: "请求导入本地文件",
   search_by_tag: "按标签找笔记",
   get_backlinks: "查看反向链接",
   list_daily_notes: "列出日记",

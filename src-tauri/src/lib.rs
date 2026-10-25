@@ -1472,6 +1472,7 @@ pub fn run() {
             commands::ai::set_ai_conversation_preset,
             commands::ai::archive_ai_conversation_to_note,
             commands::ai::get_or_create_companion_conversation,
+            commands::ai::ai_resolve_import,
             // 提示词库模块
             commands::prompt::list_prompts,
             commands::prompt::get_prompt,

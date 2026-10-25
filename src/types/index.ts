@@ -2095,3 +2095,25 @@ export interface PushPopupData {
   status: string;
   run_at: string;
 }
+
+/** 后端 `ai:import-request` 事件：AI 调 request_import 请求导入本地文件夹，等用户确认 */
+export interface AiImportRequest {
+  requestId: string;
+  conversationId: number;
+  /** 本地绝对路径（文件夹或单个 .md 文件） */
+  path: string;
+  isDir: boolean;
+  /** 导入到哪个文件夹；null = 根目录 */
+  folderId: number | null;
+}
+
+/** 回传给 `ai_resolve_import` 的处理结果，与 Rust `ai_import::ImportOutcome` 对齐 */
+export interface AiImportOutcome {
+  status: "done" | "cancelled" | "error";
+  imported?: number;
+  duplicated?: number;
+  skipped?: number;
+  noteIds?: number[];
+  errors?: string[];
+  message?: string;
+}

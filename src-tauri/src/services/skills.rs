@@ -294,6 +294,11 @@ fn own_db_path(state: &AppState) -> std::path::PathBuf {
 pub async fn tool_schemas_with_mcp(app: &AppHandle) -> Vec<Value> {
     let mut schemas = tool_schemas(); // 5 个高层内置 skills
 
+    // 请用户确认导入本地文件夹（仅桌面端：移动端没有本地文件夹导入）。
+    // 执行不走 dispatch —— 它要挂起等用户、还得响应「停止」，见 ai.rs 工具循环
+    #[cfg(desktop)]
+    schemas.push(crate::services::ai_import::tool_schema());
+
     let state = match app.try_state::<AppState>() {
         Some(s) => s,
         None => {

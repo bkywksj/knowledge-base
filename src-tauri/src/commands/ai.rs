@@ -758,3 +758,13 @@ pub fn archive_ai_conversation_to_note(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "归档后查询笔记失败".to_string())
 }
+
+/// 前端回传 AI 导入请求（`ai:import-request`）的处理结果，唤醒挂起中的 `request_import` 工具调用。
+/// 请求已超时 / 对话已停止时静默忽略。
+#[tauri::command]
+pub fn ai_resolve_import(
+    request_id: String,
+    outcome: crate::services::ai_import::ImportOutcome,
+) -> Result<(), String> {
+    crate::services::ai_import::resolve(&request_id, outcome).map_err(|e| e.to_string())
+}

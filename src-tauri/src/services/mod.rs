@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod ai_import;
 pub mod anthropic;
 pub mod app_lock;
 pub mod asr;

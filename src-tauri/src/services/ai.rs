@@ -547,7 +547,7 @@ fn drain_complete_lines(buffer: &mut Vec<u8>, chunk: &[u8]) -> Vec<String> {
 ///
 /// 先看当前值再等变化：信号在进入前就已经置位、或发出后 Sender 立刻被 drop 时也能识别。
 /// 同 [`send_unless_cancelled`] 的口径。
-async fn wait_cancelled(cancel_rx: &mut watch::Receiver<bool>) {
+pub(crate) async fn wait_cancelled(cancel_rx: &mut watch::Receiver<bool>) {
     if *cancel_rx.borrow() {
         return;
     }
@@ -2406,7 +2406,9 @@ impl AiService {
             3. 工具返回的内容可能有省略（标记 `…（已截断）`），必要时再次调用获取更多。\n\
             4. 最终给用户的回答用中文，简洁准确。\n\
             5. 你读不到用户电脑上的文件（除非上面有 Filesystem 类 MCP 工具）。用户给出本地路径、\
-            想把电脑里的文件放进知识库时，不要说自己能读，也不要编造是谁读到的；直接告诉他用应用自带的导入（桌面端）：\
+            想把电脑里的文件放进知识库时，不要说自己能读，也不要编造是谁读到的。\
+            有 request_import 工具时直接调用它（会弹出导入预览请用户确认，你拿到导入结果后再整理）；\
+            没有该工具时告诉他用应用自带的导入（桌面端）：\
             笔记侧栏的文件夹上右键 →「导入 Markdown 文件夹…」（保留目录层级、自动去重）或\
             「导入 Markdown / TXT 文件…」「导入 PDF…」；只想让你看一两个文件，可在输入框加附件。\
             导入完成后，你再用知识库工具按用户的规则归类、打标签、整理。";
@@ -2638,8 +2640,18 @@ impl AiService {
                 // 执行：dispatch_with_mcp 会按前缀路由（mcp__<id>__<name> → mcp_external，否则原 skills）
                 // P1: tool 失败时把错误包装为友好提示，避免部分模型遇到 "ERROR: ..." 直接放弃
                 let tool_started = std::time::Instant::now();
-                let (result_text, status) =
-                    match skills::dispatch_with_mcp(
+                // request_import 要挂起等用户在弹窗里确认，并且得响应「停止」，
+                // 所以不走 dispatch_with_mcp（那条路拿不到 cancel_rx）
+                let dispatched = if tc.name == crate::services::ai_import::TOOL_NAME {
+                    crate::services::ai_import::request(
+                        &app,
+                        conversation_id,
+                        &tc.args_json,
+                        &mut cancel_rx.clone(),
+                    )
+                    .await
+                } else {
+                    skills::dispatch_with_mcp(
                         &app,
                         db,
                         &tc.name,
@@ -2649,7 +2661,9 @@ impl AiService {
                         skills::result_limit_for(model_service::effective_context_window(&model)),
                     )
                     .await
-                    {
+                };
+                let (result_text, status) =
+                    match dispatched {
                         Ok(r) => (r, "ok"),
                         Err(e) => (
                             format!(

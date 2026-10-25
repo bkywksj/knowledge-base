@@ -6,6 +6,7 @@ import {
   isEnabled as autostartIsEnabled,
 } from "@tauri-apps/plugin-autostart";
 import type {
+  AiImportOutcome,
   Card,
   CreateCardInput,
   ReviewCardInput,
@@ -925,6 +926,12 @@ export const aiAttachmentApi = {
   /** @deprecated 用 parseAttachment；保留兼容旧调用方 */
   parseExcel: (filePath: string) =>
     invoke<ExcelPreview>("ai_parse_excel", { filePath }),
+};
+
+/** AI 发起的导入请求（request_import 工具）：用户在弹窗里处理完后回传结果 */
+export const aiImportApi = {
+  resolve: (requestId: string, outcome: AiImportOutcome) =>
+    invoke<void>("ai_resolve_import", { requestId, outcome }),
 };
 
 /** 导入 API */

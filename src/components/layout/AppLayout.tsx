@@ -38,6 +38,7 @@ import { targetFromFolderParam } from "@/lib/newNoteTarget";
 import { UpdateBadge } from "@/components/ui/UpdateBadge";
 import { UpdateModal } from "@/components/ui/UpdateModal";
 import { AttachmentPreviewModal } from "@/components/preview/AttachmentPreviewModal";
+import { AiImportRequestHost } from "@/components/ai/AiImportRequestHost";
 import { useUpdater } from "@/components/updater/UpdaterProvider";
 import { SyncStatusButton } from "./SyncStatusButton";
 import { syncV1Api } from "@/lib/api";
@@ -869,6 +870,7 @@ export function AppLayout() {
         onInstall={updateInstallAndRelaunch}
       />
       <AttachmentPreviewModal />
+      <AiImportRequestHost />
       <AsrToggleController />
     </Layout>
   );
