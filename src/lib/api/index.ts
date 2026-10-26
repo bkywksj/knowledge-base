@@ -268,6 +268,11 @@ export const windowApi = {
    * （尤其是从多屏挪到单屏、或外接屏拔掉之后）。
    */
   resetSize: () => invoke<void>("reset_window_size"),
+  /**
+   * 唤回主窗口（还原 + 显示 + 聚焦）。与托盘 / 快捷键同一入口，
+   * 会把主窗口纠回用户上次所在的显示器（插拔副屏后不再跑到别的屏）。
+   */
+  showMain: () => invoke<void>("show_main_window"),
 };
 
 export const configApi = {

@@ -407,12 +407,8 @@ fn start_md_deliver_watcher(handle: tauri::AppHandle, app_data_dir: PathBuf) {
             last_mtime = std::fs::metadata(&path)
                 .and_then(|m| m.modified())
                 .unwrap_or(last_mtime);
-            // mtime 变化即视为"有人想唤起这个窗口"——把主窗前置
-            if let Some(win) = handle.get_webview_window("main") {
-                let _ = win.unminimize();
-                let _ = win.show();
-                let _ = win.set_focus();
-            }
+            // mtime 变化即视为"有人想唤起这个窗口"——把主窗前置（含显示器纠偏）
+            services::main_window_placement::show_main(&handle, "投递 md");
         }
     });
 }
@@ -592,11 +588,8 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             // 第二次启动：把已有主窗口唤到前台（被最小化 / 缩到托盘时也能拉回来），
             // 而不是无声无息地退出——否则用户双击图标"没反应"，会以为程序坏了。
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.unminimize();
-                let _ = win.show();
-                let _ = win.set_focus();
-            }
+            // 顺带把窗口纠回用户上次所在的显示器（见 services/main_window_placement.rs）。
+            services::main_window_placement::show_main(app, "双开唤回");
         }));
     }
 
@@ -732,6 +725,11 @@ pub fn run() {
                     let _ = window.set_size(tauri::LogicalSize::new(target_w, target_h));
                 }
 
+                // 显示器记忆：插件还原的是虚拟桌面**绝对坐标**，换了主屏 / 插拔过副屏就可能落到
+                // 别的屏。这里按「上次所在的屏 + 相对偏移」纠回去（只动位置），必须在 fit 之前：
+                // fit 按「窗口当前所在屏」的工作区 clamp，屏要先选对。
+                services::main_window_placement::init(&window);
+
                 // 🔴 兜底一律走这里，两条路径都要过：
                 // - 还原路径：插件存的是**物理**尺寸且不做任何 clamp，显示器拓扑一变
                 //   （拔掉外接屏 / 改分辨率 / 改缩放）还原出来的窗口就可能比屏幕还大、
@@ -757,6 +755,8 @@ pub fn run() {
                 services::win_msg_guard::install(&window);
 
                 let _ = window.show();
+                // 首次显示后补记一次所在屏（没有历史记录时，这就是第一条）
+                services::main_window_placement::capture_now(app.handle(), "启动显示后");
             }
 
             // framework 默认 app_data_dir：单实例锁 + 指针文件 + 迁移 marker 永远在这里。
@@ -1639,6 +1639,8 @@ pub fn run() {
             // 窗口尺寸（仅桌面端；移动端窗口由系统管理）
             #[cfg(desktop)]
             commands::window::reset_window_size,
+            #[cfg(desktop)]
+            commands::window::show_main_window,
             // 待办分类
             commands::tasks::list_task_categories,
             commands::tasks::create_task_category,
@@ -1680,6 +1682,12 @@ pub fn run() {
             // 各自由 builder 决定，不该被基准机制接管。
             #[cfg(desktop)]
             if window.label() == "main" {
+                // 显示器记忆：位置记录 / 拓扑变化 / 最小化恢复纠偏 + [winpos] 诊断日志
+                // （只处理 Moved / Resized / ScaleFactorChanged；只动位置，尺寸仍归下面的基准机制）
+                {
+                    use tauri::Manager;
+                    services::main_window_placement::on_main_window_event(window.app_handle(), event);
+                }
                 // on_window_event 给的是 `&Window`，而几何工具函数统一收 `&WebviewWindow`
                 // （与 fit_into_work_area 同口径），这里按 label 取一次。
                 let resolve = || {
@@ -1749,11 +1757,7 @@ pub fn run() {
                         for p in &paths {
                             let _ = handle.emit("open-md-file", p.clone());
                         }
-                        if let Some(win) = handle.get_webview_window("main") {
-                            let _ = win.unminimize();
-                            let _ = win.show();
-                            let _ = win.set_focus();
-                        }
+                        services::main_window_placement::show_main(handle, "macOS 打开文件");
                     }
                 }
                 #[cfg(not(target_os = "macos"))]

@@ -249,10 +249,9 @@ fn tick_once(app: &AppHandle) -> Result<(), AppError> {
 /// 仅桌面端：移动端无最小化/任务栏概念，且 WebviewWindow 不提供这些方法。
 #[cfg(desktop)]
 fn surface_main_window(app: &AppHandle) {
+    // 唤回走统一入口：顺带把窗口纠回用户上次所在的显示器（见 services/main_window_placement.rs）
+    crate::services::main_window_placement::show_main(app, "待办提醒");
     if let Some(win) = app.get_webview_window("main") {
-        let _ = win.unminimize();
-        let _ = win.show();
-        let _ = win.set_focus();
         let _ = win.request_user_attention(Some(tauri::UserAttentionType::Critical));
     }
 }

@@ -3,10 +3,9 @@ import { useParams } from "react-router-dom";
 import { Button, Spin, message } from "antd";
 import { BellRing, Copy, ExternalLink, NotebookPen, X } from "lucide-react";
 import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { PhysicalSize } from "@tauri-apps/api/dpi";
 import { MarkdownContent } from "@/components/ai/MarkdownContent";
-import { pushApi, dailyApi } from "@/lib/api";
+import { pushApi, dailyApi, windowApi } from "@/lib/api";
 import type { PushPopupData } from "@/types";
 
 // 窗口尺寸常量
@@ -121,15 +120,11 @@ export default function PushPopupPage() {
     }
   }
 
-  /** 唤起主窗：show + 取消最小化 + 抢焦点（不关闭本弹窗，用户可继续看内容） */
+  /** 唤起主窗：show + 取消最小化 + 抢焦点（不关闭本弹窗，用户可继续看内容）。
+   *  走后端统一入口，顺带把主窗纠回用户上次所在的显示器。 */
   async function openMain() {
     try {
-      const main = await WebviewWindow.getByLabel("main");
-      if (main) {
-        await main.unminimize();
-        await main.show();
-        await main.setFocus();
-      }
+      await windowApi.showMain();
     } catch (e) {
       console.error("[push-popup] open main failed:", e);
     }

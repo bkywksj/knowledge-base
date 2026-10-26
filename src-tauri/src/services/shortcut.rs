@@ -263,13 +263,9 @@ fn dispatch_action(app: AppHandle, id: &str) {
     }
 }
 
-/// 把主窗口前置 + 取消最小化 + 抢焦点
+/// 把主窗口前置 + 取消最小化 + 抢焦点（含显示器纠偏，见 services/main_window_placement.rs）
 fn focus_main(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.unminimize();
-        let _ = win.show();
-        let _ = win.set_focus();
-    }
+    crate::services::main_window_placement::show_main(app, "全局快捷键");
 }
 
 /// 剪贴板 → 新笔记的具体动作（从 lib.rs 的 handle_quick_capture 迁移过来）

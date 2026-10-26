@@ -650,3 +650,13 @@ pub fn reset_window_size(app: tauri::AppHandle) -> Result<(), String> {
         Err("移动端窗口由系统管理，不支持调整".to_string())
     }
 }
+
+/// 唤回主窗口（推送弹窗「打开主窗」等子窗口用）。
+///
+/// 与托盘 / 双开 / 快捷键走同一个入口 `services::main_window_placement::show_main`：
+/// 还原 + 显示 + 聚焦，并把主窗口纠回用户上次所在的显示器。仅桌面端注册。
+#[cfg(desktop)]
+#[tauri::command]
+pub fn show_main_window(app: tauri::AppHandle) {
+    crate::services::main_window_placement::show_main(&app, "子窗口唤回");
+}
