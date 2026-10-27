@@ -10,6 +10,17 @@
 #   - TAURI_SIGNING_PRIVATE_KEY       签名私钥内容
 #   - TAURI_SIGNING_PRIVATE_KEY_PASSWORD  私钥密码（通常为空）
 #
+# 可选（GitHub Secrets）—— macOS Developer ID 签名 + 公证，配了就签，没配就出 ad-hoc 版（不报错）：
+#   - APPLE_CERTIFICATE             Developer ID Application 证书 .p12 的 base64
+#   - APPLE_CERTIFICATE_PASSWORD    .p12 导出密码
+#   - APPLE_SIGNING_IDENTITY        如 "Developer ID Application: XXX (TEAMID)"
+#   - APPLE_ID / APPLE_PASSWORD     公证用 Apple ID + App 专用密码
+#   - APPLE_TEAM_ID                 团队 ID
+#   本仓是开源公开仓：证书 / 密码只进 Secrets，永不入库；fork 发起的 PR 拿不到 Secrets，
+#   且本 workflow 只在推 tag 时触发。入库的只有非机密配置（Entitlements.plist、Info.plist、
+#   tauri.conf.json 的 bundle.macOS 段）。signingIdentity 故意不写进 tauri.conf.json，
+#   这样别人 clone 下来本地构建时没证书会自动退回 ad-hoc，照常能编。
+#
 # 使用前须修改（搜索 TODO 标记）：
 #   1. releaseName: 修改为你的应用名称
 #   2. 构建矩阵: 根据 .claude/release-config.json 的 platforms 配置
@@ -166,6 +177,18 @@ jobs:
           # 两个 mac job 齐刷刷 "FATAL ERROR: Reached heap limit"（exit 134）而
           # Linux / Windows runner 默认上限更高才侥幸通过。显式设 8GB 覆盖全平台。
           NODE_OPTIONS: '--max-old-space-size=8192'
+          # macOS 代码签名 + 公证（Developer ID，仅 macos-latest runner 生效，Win/Linux 忽略）。
+          # tauri-action 检测到 APPLE_CERTIFICATE 会自动导入临时 keychain 并签 .app / sidecar / dmg；
+          # APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID 触发 notarytool 公证 + staple。
+          # 为什么必须签：ad-hoc 签名下 macOS「本地网络」授权不稳定（每次打包都像新应用），
+          # 导致 WebDAV 填内网 NAS 地址时 Mac 端瞬间失败、Windows 正常（2026-10 用户实录）。
+          # 🔴 job success ≠ 公证通过：签了没公证也会 success，需看 run 日志里 notarytool 的 Accepted。
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: '知识库 ${{ github.ref_name }}'

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      macOS 硬化运行时（hardenedRuntime）下的能力声明。Developer ID 签名 + 公证要求开启硬化运行时，
+      而硬化运行时默认收紧了下面这些能力，必须显式放行。参照 tauri-cc 的同名文件。
+      本文件不含任何机密，可入库。签错这里的后果是"公证能过、运行时 WebView 白屏 / 麦克风失效"，改动后务必真机验。
+    -->
+
+    <!-- WKWebView 的 JavaScript JIT 在硬化运行时下必须显式放行，否则前端白屏 -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- 允许加载/拉起签名不同的嵌套二进制与动态库（kb-mcp sidecar、后续可能随包的 libpdfium.dylib 等） -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- 语音输入：硬化运行时下访问麦克风必须有此项（配合 Info.plist 的 NSMicrophoneUsageDescription） -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!-- 发起网络请求（WebDAV/S3 同步、AI 服务、更新检查等）。非沙盒应用不强制，声明以与 tauri-cc 对齐、为将来开沙盒留底 -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>

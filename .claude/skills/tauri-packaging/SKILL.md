@@ -86,16 +86,40 @@ pnpm tauri build --debug
 }
 ```
 
-### macOS 配置
+### macOS 配置：Developer ID 签名 + 公证（可选，配了 CI 自动签+公证）
+
+> 与 tauri-cc 同一套做法。配了 6 个 `APPLE_*` secret 就签+公证，没配则 tauri-action 出 ad-hoc 版（不报错）。
+> Apple 工具链只在 mac 上跑 → 走 CI 的 macos runner，本地无需 Mac。
+
+**入库（非机密）**：
+- `tauri.conf.json` 的 `bundle.macOS`：`hardenedRuntime: true` + `entitlements: "./Entitlements.plist"`
+- `src-tauri/Entitlements.plist`：allow-jit / allow-unsigned-executable-memory（WKWebView 必需，缺了白屏）、
+  disable-library-validation（kb-mcp sidecar / 动态库）、device.audio-input（语音输入）、network.client
+- `src-tauri/Info.plist`（Tauri 2 自动合并）：`NSLocalNetworkUsageDescription`、`NSMicrophoneUsageDescription`
+- `release.yml` 的 `Build Tauri app` 步骤 env 引用 6 个 `APPLE_*` secret
+
+**永不入库**：`.p12`、证书密码、Apple ID 密码（只进 GitHub Secrets）。`signingIdentity` **不写进** tauri.conf.json，
+走 `APPLE_SIGNING_IDENTITY` 环境变量 —— 否则外部贡献者没证书本地构建会失败。开源仓安全性：fork PR 拿不到 Secrets，
+release workflow 只在推 tag 时触发。
+
+**为什么必须签（2026-10 实录）**：WebDAV 填群晖内网地址，Windows 通、Mac 瞬间失败 `error sending request`
+（终端 curl 正常）。根因是 macOS「本地网络」隐私权限：ad-hoc 签名 + 缺 `NSLocalNetworkUsageDescription` 时
+系统可能不弹授权框直接静默拒绝，且授权绑定签名，ad-hoc 每次重打包都像新应用。签名 + plist key 两者缺一不可。
+
+**坑**：① entitlements 写错 → 公证能过但运行时白屏 / 麦克风无效，改完必须真机验；② job success ≠ 公证过，
+看 run 日志 notarytool `Accepted`；③ `.p12` 用 OpenSSL 3.x 读要加 `-legacy`；④ 公证会让 mac job 明显变长；
+⑤ 用户从 ad-hoc 版升级到签名版后首次访问内网会弹一次「本地网络」授权，此前被静默拒绝过的需到
+「系统设置 → 隐私与安全性 → 本地网络」手动打开。
+
+Windows 代码签名是另一套（evsign 本地签名，overlay 在 `.git/info/exclude`，不入公开仓），见下文与 `.claude/EVSIGN-LOCAL.md`。
 
 ```json
 {
   "bundle": {
     "macOS": {
-      "entitlements": null,
-      "frameworks": [],
       "minimumSystemVersion": "10.15",
-      "signingIdentity": null
+      "hardenedRuntime": true,
+      "entitlements": "./Entitlements.plist"
     }
   }
 }

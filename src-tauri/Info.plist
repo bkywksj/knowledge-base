@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Tauri 2 会把本文件合并进打包后 .app 的 Info.plist（仅 macOS 生效，Win/Linux 忽略）。
+      本文件不含任何机密，可放心入库（开源仓）。
+    -->
+
+    <!--
+      macOS「本地网络」隐私权限的用途说明（macOS 15+ 必需）。
+
+      背景（2026-10 用户实录，macOS 27 / v2.0.0 ad-hoc 签名）：WebDAV 填群晖内网地址
+      http://192.168.x.x:5005/... 时，Windows 正常，Mac 上测试连接与自动同步全部瞬间失败
+      "error sending request for url"；同机终端 curl 带同一凭据 200 / PROPFIND 207。
+      根因：访问局域网设备需用户授权「本地网络」，缺这条 key 时系统可能不弹授权框、直接静默拒绝
+      （底层 EHOSTUNREACH / os error 65）。授权记录绑定代码签名，所以还需配合 Developer ID 签名
+      （见 tauri.conf.json bundle.macOS + Entitlements.plist + release.yml 的 APPLE_*），
+      否则 ad-hoc 签名每次重新打包都可能被当成新应用、授权失效。
+
+      影响范围：WebDAV / S3 兼容存储（MinIO 等）/ Ollama / 自建 ASR 等一切填内网地址的功能。
+    -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>知识库需要访问本地网络，以便连接你在局域网内的 WebDAV/NAS、自建存储或本地 AI 服务进行同步与问答</string>
+
+    <!--
+      麦克风用途说明。WKWebView 在 Info.plist 缺这条 key 时不暴露 navigator.mediaDevices，
+      语音输入（MicButton / QuickCaptureAsrModal）会走到"当前环境不支持录音"分支。
+      硬化运行时下还需 Entitlements.plist 的 com.apple.security.device.audio-input。
+    -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>知识库需要使用麦克风进行语音输入和语音转文字</string>
+</dict>
+</plist>
