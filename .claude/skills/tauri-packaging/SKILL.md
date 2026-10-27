@@ -106,8 +106,9 @@ release workflow 只在推 tag 时触发。
 （终端 curl 正常）。根因是 macOS「本地网络」隐私权限：ad-hoc 签名 + 缺 `NSLocalNetworkUsageDescription` 时
 系统可能不弹授权框直接静默拒绝，且授权绑定签名，ad-hoc 每次重打包都像新应用。签名 + plist key 两者缺一不可。
 
-**坑**：① entitlements 写错 → 公证能过但运行时白屏 / 麦克风无效，改完必须真机验；② job success ≠ 公证过，
-看 run 日志 notarytool `Accepted`；③ `.p12` 用 OpenSSL 3.x 读要加 `-legacy`；④ 公证会让 mac job 明显变长；
+**坑**：① entitlements 写错 → 公证能过但运行时白屏 / 麦克风无效，改完必须真机验；② tauri-action 签了但公证失败
+时 job 仍 success —— release.yml 的「Verify macOS signature & notarization」步骤会用 codesign / spctl / stapler
+卡住（配了 APPLE_* 才校验，没配只出警告）；③ `.p12` 用 OpenSSL 3.x 读要加 `-legacy`；④ 公证会让 mac job 明显变长；
 ⑤ 用户从 ad-hoc 版升级到签名版后首次访问内网会弹一次「本地网络」授权，此前被静默拒绝过的需到
 「系统设置 → 隐私与安全性 → 本地网络」手动打开。
 

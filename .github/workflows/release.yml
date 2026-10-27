@@ -182,7 +182,7 @@ jobs:
           # APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID 触发 notarytool 公证 + staple。
           # 为什么必须签：ad-hoc 签名下 macOS「本地网络」授权不稳定（每次打包都像新应用），
           # 导致 WebDAV 填内网 NAS 地址时 Mac 端瞬间失败、Windows 正常（2026-10 用户实录）。
-          # 🔴 job success ≠ 公证通过：签了没公证也会 success，需看 run 日志里 notarytool 的 Accepted。
+          # tauri-action 签了但公证失败时 job 仍会 success —— 由下一步「Verify macOS signature & notarization」卡住。
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -196,6 +196,51 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }} ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+
+      # 公证校验：配了 APPLE_* 就必须真的「Developer ID 签名 + 公证 + 钉票」成功，否则让 job 失败，
+      # 而不是把一个 Gatekeeper 拦截 / 本地网络授权不稳的包悄悄发出去。
+      # 没配 APPLE_*（如新开的备用 CI 仓忘了灌 Secrets）只出警告、不失败 —— 与改动前行为一致，
+      # 但警告会出现在 run 的 Annotations 里，发版步骤 6 会检查它。
+      - name: Verify macOS signature & notarization
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+        run: |
+          set -uo pipefail
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::warning title=macOS 未签名::本仓未配置 APPLE_* secrets，${{ matrix.target }} 产物为 ad-hoc 签名（未公证）。用户首次打开会被 Gatekeeper 拦截，且「本地网络」授权不稳定（内网 WebDAV 同步会失败）。"
+            exit 0
+          fi
+
+          BUNDLE="src-tauri/target/${{ matrix.target }}/release/bundle"
+          APP=$(find "$BUNDLE/macos" -maxdepth 1 -name '*.app' | head -1)
+          if [ -z "$APP" ]; then
+            echo "::error::在 $BUNDLE/macos 下找不到 .app"; exit 1
+          fi
+          echo "检查: $APP"
+
+          echo "== 1/3 签名完整性（含 kb-mcp sidecar 等嵌套二进制）=="
+          codesign --verify --deep --strict --verbose=2 "$APP" || { echo "::error::codesign 校验失败"; exit 1; }
+          codesign -dv "$APP" 2>&1 | grep -E "^(Authority|TeamIdentifier|Runtime)"
+          codesign -dv "$APP" 2>&1 | grep -q "Authority=Developer ID Application" \
+            || { echo "::error::.app 不是 Developer ID 签名（证书未导入或 APPLE_SIGNING_IDENTITY 不对）"; exit 1; }
+
+          if [ -z "$APPLE_ID" ]; then
+            echo "::warning title=macOS 未公证::已 Developer ID 签名，但未配 APPLE_ID，未公证。"
+            exit 0
+          fi
+
+          echo "== 2/3 Gatekeeper（公证通过才会是 source=Notarized Developer ID）=="
+          GK=$(spctl --assess --type execute -vv "$APP" 2>&1); echo "$GK"
+          echo "$GK" | grep -q "source=Notarized Developer ID" \
+            || { echo "::error::.app 未通过公证（到 tauri-action 步骤日志里搜 notarytool 查看拒绝原因）"; exit 1; }
+
+          echo "== 3/3 公证票据已钉入（离线首次打开也不被拦）=="
+          xcrun stapler validate "$APP" || { echo "::error::.app 未钉入公证票据"; exit 1; }
+
+          echo "✓ ${{ matrix.target }}：Developer ID 签名 + 公证 + 票据均通过"
 
   # ===========================================================================
   # 注意：CI 只负责构建和上传到 GitHub Release（草稿）。

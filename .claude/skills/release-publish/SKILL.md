@@ -158,8 +158,13 @@ cup_watch 首发在这上面烧了约 10 轮反复误判。**事实固定如下�
 >      且启用不回溯已推 tag（要删远端 tag 重推）
 > 3. mcp__sigil__github_repo_secret_set(credential_name=<githubN>, repo=…,
 >      secret_name=TAURI_SIGNING_PRIVATE_KEY, value_from_file=src-tauri/keys/tauri-updater.key)
->    ↑ 桌面端弹一次确认；私钥不进对话。桌面 release.yml 只需这一个 secret
->      （PASSWORD 在 workflow 里写死空串）。要跑 android.yml 才需另配 4 个 ANDROID_* secret
+>    ↑ 桌面端弹一次确认；私钥不进对话。（PASSWORD 在 workflow 里写死空串）
+>    要跑 android.yml 才需另配 4 个 ANDROID_* secret
+>    3b. mcp__sigil__codesign_push_apple_secrets(credential_name=codesign_keroro,
+>          github_credential_name=<githubN>, repo=<owner>/knowledge-base)
+>    ↑ 一次灌 6 个 APPLE_*（mac Developer ID 签名 + 公证），值由 Sigil 用仓库公钥加密、AI 看不到。
+>      不灌也能构建，但 mac 产物是 ad-hoc 签名：首次打开被 Gatekeeper 拦、「本地网络」授权不稳
+>      （内网 WebDAV 同步失败，2026-10 实录）。每次发版还会在步骤 5b 幂等复查。
 > 4. git remote add <githubN> <https url> → mcp__sigil__git_push(credential_name=<githubN>, …)
 >    tag 用 mcp__sigil__workspace_register + workspace_push_tag（git_push 只推分支不推 tag）
 > ```
@@ -172,7 +177,7 @@ cup_watch 首发在这上面烧了约 10 轮反复误判。**事实固定如下�
 >
 > **github3 推送注意**：elginbolds-cell 账号的凭证**不要**存进 git credential（会覆盖 github.com 默认凭证 bkywksj，导致推 release 仓库时认证错乱）。github3 的 remote URL 已内嵌 token，正常 `git push github3 ...` 即可。
 >
-> **github3 Actions Secrets**：首次切到 github3 前，必须在 `elginbolds-cell/knowledge-base` 仓库的 Settings → Secrets and variables → Actions 手动配齐 `TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（空）、`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`（与 github 一致）。未配齐 CI 会失败。
+> **github3 Actions Secrets**：首次切到 github3 前，必须在 `elginbolds-cell/knowledge-base` 仓库的 Settings → Secrets and variables → Actions 手动配齐 `TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（空）、`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`（与 github 一致）。未配齐 CI 会失败。mac 签名用的 6 个 `APPLE_*` 不必手配，发版步骤 5b 会自动检查并补齐。
 >
 > **API 调用切换**：CI 监控 / 产物下载脚本里的 owner/repo 路径需要跟着改：`bkywksj/knowledge-base` → `elginbolds-cell/knowledge-base` → …；token 也要跟着切到对应的 `~/.gh_token*` 文件。
 
@@ -291,6 +296,27 @@ gh variable set RELEASE_WINDOWS --repo <owner/repo> -b skip
 > 本机是否属于"本地构建档"由 `.claude/signing.local.json` 是否存在判定；存在时按
 > `.claude/EVSIGN-LOCAL.md`（git-excluded，仅本机可见）执行本地构建，并把 `RELEASE_WINDOWS` 设为 `skip`。
 
+#### 🔴 5b. 推 tag 前：确认当次 CI 仓有 mac 签名 Secrets（缺就补，幂等）
+
+CI 会在 bkywksj / elginbolds / … 等备用仓之间轮换，Secrets 是**每个仓各自一份**，换了仓就可能没有。
+所以每次发版都对「当次选定的 CI 仓」查一遍：
+
+```
+# 1) 只读核对（只返回名字，不返回值）
+mcp__sigil__github_repo_secret_list(credential_name=<CI仓凭据>, repo=<owner/repo>)
+
+# 2) 下面 6 个缺任意一个 → 整套重灌（右下角通知，值不进对话）
+#    APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY /
+#    APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
+mcp__sigil__codesign_push_apple_secrets(
+  credential_name=codesign_keroro, github_credential_name=<CI仓凭据>, repo=<owner/repo>)
+```
+
+> 证书续期 / 换了 App 专用密码后，先更新 Sigil 里的 `codesign_keroro`，再对每个 CI 仓重灌一次（此时名字
+> 都在，核对发现不了，要主动灌）。证书 / 密码只存在 Sigil 与 GitHub Secrets，**永不入库**（本仓是开源公开仓）。
+>
+> Windows 的 evsign 签名走本地构建档（见 5a），不需要 CI 仓有 `EVSIGN_*`。
+
 ### 步骤 6：用 ScheduleWakeup 监控 CI 构建（15–30 分钟，零干预）
 
 CI 构建期间不要 sleep / 不要让用户手动等。用 **ScheduleWakeup 自醒**：每 ~5 分钟检查一次 workflow run 状态，未完成就再睡，完成就推进到步骤 7。
@@ -324,6 +350,11 @@ else:
 - `status="queued"` 或 `"in_progress"` → 用 ScheduleWakeup 睡 270 秒（保持缓存温热），继续轮询
 - `status="completed"` + `conclusion="success"` → 推进到步骤 7
 - `conclusion="failure"` → 提示用户去 Actions 页面看 log，停止流程
+- 🔴 **mac job 失败在「Verify macOS signature & notarization」步骤** → 签名或公证没成功（step 日志里有
+  `::error::` 写明是哪一项：不是 Developer ID 签名 / 未通过公证 / 未钉票据）。公证被拒的具体原因在前一步
+  tauri-action 日志里搜 `notarytool`。**不要**为了出包去掉校验或清空 APPLE_* 绕过 —— 那等于发 ad-hoc 版。
+- `success` 但 run 的 Annotations 里有 **「macOS 未签名」警告** → 当次 CI 仓没有 APPLE_*（5b 漏做）。
+  产物能用但是 ad-hoc 签名，**先告诉用户再决定**是否继续：继续就照常发；否则补 5b 后删远端 tag 重推。
 
 **ScheduleWakeup 调用模板**（在自己 prompt 里）：
 
