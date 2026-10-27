@@ -223,8 +223,11 @@ jobs:
 
           echo "== 1/3 签名完整性（含 kb-mcp sidecar 等嵌套二进制）=="
           codesign --verify --deep --strict --verbose=2 "$APP" || { echo "::error::codesign 校验失败"; exit 1; }
-          codesign -dv "$APP" 2>&1 | grep -E "^(Authority|TeamIdentifier|Runtime)"
-          codesign -dv "$APP" 2>&1 | grep -q "Authority=Developer ID Application" \
+          # 🔴 必须 -dvv：单个 -v 的输出里没有 Authority 行（v2.1.0 首发时因此误报失败，实际签名 + 公证均成功）。
+          # 先存变量再 grep：pipefail 下直接管道给 grep -q，grep 提前退出可能让上游 SIGPIPE、整条管道判失败。
+          SIG=$(codesign -dvv "$APP" 2>&1)
+          echo "$SIG" | grep -E "^(Authority|TeamIdentifier|Runtime)" || true
+          echo "$SIG" | grep -q "Authority=Developer ID Application" \
             || { echo "::error::.app 不是 Developer ID 签名（证书未导入或 APPLE_SIGNING_IDENTITY 不对）"; exit 1; }
 
           if [ -z "$APPLE_ID" ]; then
