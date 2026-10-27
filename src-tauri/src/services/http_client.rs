@@ -5,13 +5,19 @@
 //! 热路径原先每次调用都 `Client::new()`，单次请求多出几百毫秒延迟。
 //!
 //! 用 `OnceLock` 做进程级单例：
-//! - `shared()`：普通用途（OpenAI / Claude / WebDAV 等外网 HTTPS），自动走系统代理（环境变量）
+//! - `shared()`：普通用途（OpenAI / Claude / WebDAV 等外网 HTTPS），走系统代理（见 [`with_system_proxy`]）
 //! - `shared_no_proxy()`：本地 / 内网服务（Ollama），强制绕过系统代理 + 带空闲读超时
+//!
+//! 🔴 新建 reqwest Client 一律套 [`with_system_proxy`]（或明确 `.no_proxy()`），不要直接
+//! `Client::new()`：Cargo.toml 开了 hyper-util 的 `client-proxy-system`，feature 全局合并后
+//! 裸 `Client::new()` 也会读系统代理，但**没有**内网直连保护，连 NAS / 本机服务会被发给代理。
 
-use std::sync::OnceLock;
-use std::time::Duration;
+use std::net::IpAddr;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
-use reqwest::Client;
+use base64::Engine;
+use reqwest::{Client, ClientBuilder, Proxy, Url};
 
 static SHARED: OnceLock<Client> = OnceLock::new();
 static SHARED_NO_PROXY: OnceLock<Client> = OnceLock::new();
@@ -44,19 +50,23 @@ const WEBDAV_READ_TIMEOUT: Duration = Duration::from_secs(60);
 /// 只是慢"的请求误掐断。前端始终有"停止"按钮，所以这里取宁可等久点也别误杀。
 const OLLAMA_READ_TIMEOUT: Duration = Duration::from_secs(600);
 
-/// 全局复用的 reqwest Client，自动走系统代理（reqwest 默认读 `HTTP_PROXY` 等环境变量）。
+/// 全局复用的 reqwest Client，走系统代理（内网 / 本机直连，见 [`with_system_proxy`]）。
 pub fn shared() -> &'static Client {
-    SHARED.get_or_init(Client::new)
+    SHARED.get_or_init(|| {
+        with_system_proxy(Client::builder())
+            .build()
+            .unwrap_or_else(|_| Client::new())
+    })
 }
 
 /// WebDAV 同步专用 Client：带 connect / read 空闲超时，避免移动端弱网下同步请求永久挂起。
 ///
 /// 独立于 `shared()`：`shared()` 供 AI 流式回复等场景用（那里不能设总超时、也不该被 WebDAV 的
-/// 超时策略影响），故 WebDAV 单开一个池。自动走系统代理（reqwest 默认读环境变量），
-/// 与 `shared()` 行为一致，只是多了超时约束。构建失败时降级回退到无超时 Client（不至于让同步不可用）。
+/// 超时策略影响），故 WebDAV 单开一个池。代理规则与 `shared()` 一致（系统代理 + 内网直连，
+/// 群晖 / 威联通等内网 NAS 靠后者保证不被发给代理），只是多了超时约束。构建失败时降级回退到无超时 Client（不至于让同步不可用）。
 pub fn shared_webdav() -> &'static Client {
     SHARED_WEBDAV.get_or_init(|| {
-        Client::builder()
+        with_system_proxy(Client::builder())
             .connect_timeout(WEBDAV_CONNECT_TIMEOUT)
             .read_timeout(WEBDAV_READ_TIMEOUT)
             .build()
@@ -76,7 +86,7 @@ pub fn shared_webdav() -> &'static Client {
 /// 见 [`crate::services::url_safety`]。
 pub fn shared_guarded() -> &'static Client {
     SHARED_GUARDED.get_or_init(|| {
-        Client::builder()
+        with_system_proxy(Client::builder())
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(GUARDED_CONNECT_TIMEOUT)
             .build()
@@ -97,6 +107,126 @@ pub fn shared_no_proxy() -> &'static Client {
             .build()
             .unwrap_or_else(|_| Client::new())
     })
+}
+
+// ─── 系统代理 + 内网直连 ────────────────────────────────────────────────────────────────────
+
+/// 系统代理设置的重新读取间隔。
+///
+/// 客户端是进程级单例，如果只在构建时读一次，用户启动应用后再开 / 关 Clash 就必须重启应用才生效。
+/// 30 秒重读一次：读取本身只是查注册表 / SCDynamicStore，很轻；又不至于每个请求都查。
+const SYSTEM_PROXY_REFRESH: Duration = Duration::from_secs(30);
+
+static SYSTEM_PROXY: OnceLock<Mutex<(Instant, hyper_util::client::proxy::matcher::Matcher)>> =
+    OnceLock::new();
+
+/// 给 ClientBuilder 装上「系统代理 + 内网 / 本机直连」规则。新建的 reqwest Client 都应套这一层。
+///
+/// 代理来源（优先级从高到低）：`HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` 环境变量 →
+/// Windows 注册表 / macOS 网络设置里的系统代理。`NO_PROXY` 环境变量、Windows 代理例外里的域名
+/// 照常生效。
+///
+/// 为什么不直接用 reqwest 的自动系统代理：底层 hyper-util **没有任何默认直连规则**—— Mac 上
+/// 不读系统例外列表，Windows 上 `192.168.*` 这种常见例外写法也匹配不上。结果是连局域网 NAS、
+/// 本机 LM Studio 也被发给 Clash；用户退出 Clash 但系统代理设置残留时，连内网都不通。
+/// 所以这里先按目标地址判断 [`is_local_destination`]，是内网 / 本机就直连，其余交给系统代理。
+///
+/// 注：调用 `.proxy()` 会关掉 reqwest 的自动系统代理，所以不会出现两套规则叠加。
+pub fn with_system_proxy(builder: ClientBuilder) -> ClientBuilder {
+    builder.proxy(Proxy::custom(system_proxy_for))
+}
+
+/// 为一个请求目标选代理：`None` = 直连。
+fn system_proxy_for(url: &Url) -> Option<Url> {
+    let host = url.host_str()?;
+    if is_local_destination(host) {
+        return None;
+    }
+    let uri: http::Uri = url.as_str().parse().ok()?;
+
+    let cell = SYSTEM_PROXY.get_or_init(|| {
+        Mutex::new((
+            Instant::now(),
+            hyper_util::client::proxy::matcher::Matcher::from_system(),
+        ))
+    });
+    // 锁中毒只可能来自别处 panic；里面只是一份可重建的代理快照，继续用无害
+    let mut guard = cell.lock().unwrap_or_else(|p| p.into_inner());
+    if guard.0.elapsed() >= SYSTEM_PROXY_REFRESH {
+        *guard = (
+            Instant::now(),
+            hyper_util::client::proxy::matcher::Matcher::from_system(),
+        );
+    }
+    let hit = guard.1.intercept(&uri)?;
+    drop(guard);
+
+    let mut proxy = Url::parse(&hit.uri().to_string()).ok()?;
+    // hyper-util 把代理 URL 里的账号密码拆成了 Basic 头（只会出现在环境变量代理里），
+    // 拼回 URL 交给 reqwest，否则带认证的代理会 407
+    if let Some((user, pass)) = hit.basic_auth().and_then(decode_basic_auth) {
+        let _ = proxy.set_username(&user);
+        let _ = proxy.set_password(Some(&pass));
+    }
+    Some(proxy)
+}
+
+/// `Basic base64(user:pass)` → (user, pass)
+fn decode_basic_auth(header: &http::HeaderValue) -> Option<(String, String)> {
+    let encoded = header.to_str().ok()?.strip_prefix("Basic ")?;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(encoded.trim())
+        .ok()?;
+    let text = String::from_utf8(raw).ok()?;
+    let (user, pass) = text.split_once(':')?;
+    Some((user.to_string(), pass.to_string()))
+}
+
+/// 目标是否为本机 / 局域网地址 —— 是则必须直连，不走代理。
+///
+/// - IP：回环、私有网段（10/8、172.16/12、192.168/16）、链路本地、CGNAT 100.64/10
+///   （Tailscale 等 overlay 网络用这段）、IPv6 ULA fc00::/7 与链路本地 fe80::/10
+/// - 域名：`localhost`、单段主机名（如 `nas`，对应 Windows 的 `<local>`）以及
+///   `.local` / `.lan` / `.home.arpa` / `.internal` / `.localhost` 等内网专用后缀
+///
+/// 局限：解析到内网 IP 的普通域名（如自建 DNS 的 `nas.example.com`）判断不出来，仍会走代理；
+/// 这类可在系统代理例外（Windows）或 `NO_PROXY` 环境变量里加上。
+pub(crate) fn is_local_destination(host: &str) -> bool {
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return is_local_ip(ip);
+    }
+    let h = host.trim_end_matches('.').to_ascii_lowercase();
+    if h.is_empty() || h == "localhost" || !h.contains('.') {
+        return true;
+    }
+    [".localhost", ".local", ".lan", ".home.arpa", ".internal"]
+        .iter()
+        .any(|suffix| h.ends_with(suffix))
+}
+
+fn is_local_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                // CGNAT 100.64.0.0/10（Tailscale）
+                || (o[0] == 100 && (o[1] & 0xc0) == 64)
+        }
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_local_ip(IpAddr::V4(v4));
+            }
+            let first = v6.segments()[0];
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || (first & 0xfe00) == 0xfc00 // ULA fc00::/7
+                || (first & 0xffc0) == 0xfe80 // 链路本地 fe80::/10
+        }
+    }
 }
 
 /// 把 reqwest 错误展开成「顶层信息 → 底层原因链」，并在能判断时附一句可操作的提示。
@@ -155,4 +285,84 @@ fn error_hint(e: &reqwest::Error, chain_lower: &str) -> Option<&'static str> {
         return Some("域名解析失败，请检查地址拼写与 DNS");
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lan_and_loopback_go_direct() {
+        for h in [
+            "127.0.0.1",
+            "localhost",
+            "LOCALHOST.",
+            "192.168.3.16", // 诊断报告里的群晖 NAS
+            "10.0.0.5",
+            "172.16.1.1",
+            "172.31.255.255",
+            "169.254.10.1",
+            "100.100.1.1", // Tailscale CGNAT
+            "[::1]",
+            "::1",
+            "fd12:3456::1",
+            "fe80::1",
+            "::ffff:192.168.1.2",
+            "nas",
+            "my-nas.local",
+            "router.lan",
+            "box.home.arpa",
+            "svc.internal",
+        ] {
+            assert!(is_local_destination(h), "{h} 应直连");
+        }
+    }
+
+    #[test]
+    fn public_hosts_use_proxy_rules() {
+        for h in [
+            "api.openai.com",
+            "dav.jianguoyun.com",
+            "8.8.8.8",
+            "172.32.0.1", // 172.16/12 之外
+            "100.128.0.1", // CGNAT 之外
+            "2001:4860::8888",
+            "local.example.com", // 只是前缀像，不是 .local 后缀
+        ] {
+            assert!(!is_local_destination(h), "{h} 不应被当成内网");
+        }
+    }
+
+    #[test]
+    fn local_targets_never_proxied_even_with_proxy_configured() {
+        // 不依赖本机实际代理设置：内网目标在读系统代理之前就已返回直连
+        let url = Url::parse("http://192.168.3.16:5005/webdav_sync/manifest.json").unwrap();
+        assert!(system_proxy_for(&url).is_none());
+    }
+
+    /// 真机诊断：打印本机当前实际生效的代理选择（依赖本机设置，故默认不跑）。
+    /// 用法：`cargo test --lib http_client::tests::print_effective_proxy -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn print_effective_proxy() {
+        for u in [
+            "https://api.openai.com/v1/models",
+            "http://example.com/",
+            "http://192.168.3.16:5005/webdav_sync/",
+            "http://localhost:11434/",
+        ] {
+            let url = Url::parse(u).unwrap();
+            println!("{u}  =>  {:?}", system_proxy_for(&url).map(|p| p.to_string()));
+        }
+    }
+
+    #[test]
+    fn basic_auth_roundtrip() {
+        let v = http::HeaderValue::from_static("Basic dXNlcjpwQHNzOndvcmQ="); // user:p@ss:word
+        assert_eq!(
+            decode_basic_auth(&v),
+            Some(("user".to_string(), "p@ss:word".to_string()))
+        );
+        assert_eq!(decode_basic_auth(&http::HeaderValue::from_static("Bearer x")), None);
+    }
 }

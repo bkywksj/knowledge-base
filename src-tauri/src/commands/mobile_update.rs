@@ -74,7 +74,7 @@ fn is_newer(latest: &str, current: &str) -> bool {
 
 /// 拉一个 endpoint 的 update.json，解析失败 / 网络失败都返回 None（让上层试下一个）。
 async fn fetch_update_json(url: &str) -> Option<serde_json::Value> {
-    let resp = reqwest::Client::new()
+    let resp = crate::services::http_client::shared()
         .get(url)
         .header("User-Agent", "knowledge-base-mobile")
         .timeout(std::time::Duration::from_secs(8))
@@ -221,7 +221,7 @@ pub async fn download_mobile_update(
     // 断点续传：.part 已有多少字节就从那儿接着要
     let resume_from = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
 
-    let client = reqwest::Client::builder()
+    let client = crate::services::http_client::with_system_proxy(reqwest::Client::builder())
         .timeout(std::time::Duration::from_secs(1800))
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;

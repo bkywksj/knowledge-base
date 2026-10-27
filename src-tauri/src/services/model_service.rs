@@ -93,6 +93,9 @@ fn verifier(local: bool) -> Result<&'static Verifier, AppError> {
     let mut builder = ai_profile::reqwest::Client::builder();
     if local {
         builder = builder.no_proxy();
+    } else {
+        // 云端服务走系统代理（内网 / 本机地址自动直连），与 http_client::shared() 同一套规则
+        builder = crate::services::http_client::with_system_proxy(builder);
     }
     let v = Verifier::from_builder(builder)
         .map_err(|e| AppError::Custom(format!("初始化验证客户端失败: {e}")))?;

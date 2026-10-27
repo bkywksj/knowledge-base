@@ -769,7 +769,7 @@ pub async fn rewrite_external_images(
     }
 
     // 30s 超时，避免单张大图卡死整个导入流程
-    let client = reqwest::Client::builder()
+    let client = crate::services::http_client::with_system_proxy(reqwest::Client::builder())
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| AppError::Custom(format!("HTTP client 初始化失败: {}", e)))?;

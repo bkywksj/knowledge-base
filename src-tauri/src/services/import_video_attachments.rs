@@ -412,7 +412,7 @@ pub async fn rewrite_external_videos(
     // 同 URL 多处出现时去重，按位置升序后再倒序应用替换
     matches.sort_by_key(|t| t.0);
 
-    let client = reqwest::Client::builder()
+    let client = crate::services::http_client::with_system_proxy(reqwest::Client::builder())
         .timeout(std::time::Duration::from_secs(REMOTE_TIMEOUT_SECS))
         .build()
         .map_err(|e| AppError::Custom(format!("HTTP client 初始化失败: {}", e)))?;

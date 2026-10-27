@@ -47,6 +47,15 @@ tauri-plugin-process = "2"
 # reqwest：移动端 NDK 不带 OpenSSL，统一用 rustls-tls（桌面端也能用，行为一致；
 # 系统证书池靠 rustls-native-certs 加载，避免迁移成本）
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "rustls-tls-native-roots"] }
+# 系统代理（Windows 注册表 / macOS 网络设置）：reqwest 0.12.2x 起读系统代理改由 hyper-util 的
+# client-proxy-system 实现，上面 default-features = false 把它连带关掉了 → Windows 和 Mac 都只认
+# HTTP_PROXY 等环境变量，Clash「设为系统代理」对本应用无效（2026-10 排查 WebDAV 问题时发现）。
+# 这里显式打开，由 services::http_client::with_system_proxy 读取；内网 / 本机直连规则也在那里补上
+# （hyper-util 在 Mac 上不读系统例外列表，Windows 上 `192.168.*` 这类例外也匹配不上）。
+# 🔴 feature 全局合并：开启后，任何没显式设置 proxy 的 reqwest 客户端都会自动走系统代理且没有内网直连。
+#    新建 Client 一律经 http_client::with_system_proxy（或明确 .no_proxy()），不要直接 Client::new()。
+hyper-util = { version = "0.1.20", default-features = false, features = ["client-proxy", "client-proxy-system"] }
+http = "1"
 # ai-profile：模型服务的预置、协议拼写、端点拼接、零成本验证、限额、ai.profile 协议（同级公共库）。
 # 按 crates.io 版本引用；升级流程见 ai-profile 仓库的 docs/downstream.md 与本项目技能 ai-profile-integration。
 # client feature 用的是 rustls（与上面 reqwest 同一套 TLS），不会把 OpenSSL 带进 Android 构建。
