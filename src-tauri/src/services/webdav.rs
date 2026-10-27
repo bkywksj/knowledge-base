@@ -1,6 +1,8 @@
 //! WebDAV 客户端：用于云同步 ZIP 上传/下载
 //!
-//! 密码存储走 OS keyring（避免 DB 明文），详见 services::sync::get_webdav_password
+//! 密码不经过本模块持久化：调用方传入明文。落盘时由各自的存储层加密（`crate::crypto` 的
+//! `enc:v1:` 字段加密，密钥由本机派生）—— V0 存 app_config，V1 存 sync_backends.config_json
+//! （v68 起，见 database::sync_v1::seal_config_json）。注意：项目并未接入 OS keyring。
 
 use std::path::Path;
 

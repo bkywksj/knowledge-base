@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 67;
+pub const SCHEMA_VERSION: i32 = 68;
 
 /// `ai_models.max_context` 的历史默认值。v51 把旧默认 32000 统一抬到它，此后新建也默认填它 ——
 /// 所以存量里的 128000 分不清是用户填的还是默认值，v62 一律当作「未设置」。
@@ -103,6 +103,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             64 => migrate_v64_to_v65(conn)?,
             65 => migrate_v65_to_v66(conn)?,
             66 => migrate_v66_to_v67(conn)?,
+            67 => migrate_v67_to_v68(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -982,7 +983,7 @@ fn migrate_v22_to_v23(conn: &Connection) -> Result<(), AppError> {
 ///   - `id` 自增主键
 ///   - `kind`：local / webdav / s3 / git
 ///   - `name`：用户起的名字（如"我的坚果云"）
-///   - `config_json`：backend 专属配置（路径 / endpoint / bucket / 凭据等，凭据已用 vault 加密）
+///   - `config_json`：backend 专属配置（路径 / endpoint / bucket / 凭据等；凭据 v68 起以 `enc:v1:` 密文落盘）
 ///   - `enabled` / `auto_sync` / `created_at`
 ///
 /// 新表 `sync_remote_state`：每条笔记 × 每个 backend 的同步状态
@@ -2536,6 +2537,58 @@ fn migrate_v66_to_v67(conn: &Connection) -> Result<(), AppError> {
     Ok(())
 }
 
+/// v67 -> v68：同步后端的可见性与凭据安全（2026-10 Mac WebDAV 诊断报告）。
+///
+/// 1. `sync_backends` 加 `last_error` / `last_error_at`：V1 同步失败此前不落任何持久化状态，
+///    toast 一消失设置页就看不到失败。
+/// 2. `config_json` 里的明文凭据（WebDAV `password`、S3 `secretKey`）加密为 `enc:v1:`。
+///    之后的读写由 DAO 自动加解密（`database::sync_v1::{seal,open}_config_json`）。
+///
+/// 幂等：列已存在则跳过；已是密文的字段 `encrypt_field` 不会再套一层。
+/// 单行加密失败只告警、保持明文（DAO 读取兼容明文），不让整个迁移失败导致库打不开。
+/// 整库恢复后 `Database::reopen` 会重跑迁移，恢复进来的旧库同样被处理。
+fn migrate_v67_to_v68(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v67 -> v68 (同步后端 last_error + 凭据加密)");
+
+    let cols = list_columns(conn, "sync_backends")?;
+    if !cols.iter().any(|c| c == "last_error") {
+        conn.execute_batch("ALTER TABLE sync_backends ADD COLUMN last_error TEXT;")?;
+    }
+    if !cols.iter().any(|c| c == "last_error_at") {
+        conn.execute_batch("ALTER TABLE sync_backends ADD COLUMN last_error_at TEXT;")?;
+    }
+
+    let rows: Vec<(i64, String, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, kind, config_json FROM sync_backends WHERE kind IN ('webdav', 's3')",
+        )?;
+        let mapped = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        mapped.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut sealed_count = 0usize;
+    for (id, kind, config) in rows {
+        match super::sync_v1::seal_config_json(&kind, &config) {
+            Ok(sealed) if sealed != config => {
+                conn.execute(
+                    "UPDATE sync_backends SET config_json = ?1 WHERE id = ?2",
+                    rusqlite::params![sealed, id],
+                )?;
+                sealed_count += 1;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                log::warn!("[migrate v68] 同步后端 #{} 凭据加密失败，保持明文: {}", id, e);
+            }
+        }
+    }
+    if sealed_count > 0 {
+        log::info!("[migrate v68] 已加密 {} 个同步后端的凭据", sealed_count);
+    }
+
+    set_version(conn, 68)?;
+    Ok(())
+}
+
 /// v61 -> v62：模型服务改由 ai-profile crate 提供。
 ///
 /// 三件事，都是「把旧语义写进数据」，让切换到 crate 后行为不变：
@@ -2976,6 +3029,51 @@ mod tests {
         }
         // 失败也不能顺手把版本号改掉
         assert_eq!(get_version(&conn).unwrap(), SCHEMA_VERSION + 1);
+    }
+
+    /// v68：老库里明文的 WebDAV 密码 / S3 secretKey 迁移后变为 `enc:v1:` 密文，
+    /// 其它字段与 local 后端不受影响；重跑幂等（不会套第二层）。
+    #[test]
+    fn v68_encrypts_plaintext_sync_credentials() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        // 复现 v67 时代的明文行（直接 INSERT，绕过会自动加密的 DAO）
+        conn.execute_batch(
+            r#"INSERT INTO sync_backends (id, kind, name, config_json) VALUES
+                 (1, 'webdav', 'nas', '{"url":"http://n","username":"u","password":"plain-pw"}'),
+                 (2, 's3', 'r2', '{"endpoint":"e","bucket":"b","accessKey":"AK","secretKey":"plain-sk"}'),
+                 (3, 'local', 'disk', '{"path":"/d"}');"#,
+        )
+        .unwrap();
+        set_version(&conn, 67).unwrap();
+        migrate(&conn).unwrap();
+        assert_eq!(get_version(&conn).unwrap(), SCHEMA_VERSION);
+
+        let cfg = |id: i64| -> serde_json::Value {
+            let s: String = conn
+                .query_row("SELECT config_json FROM sync_backends WHERE id = ?1", [id], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            serde_json::from_str(&s).unwrap()
+        };
+        let webdav_pw = cfg(1)["password"].as_str().unwrap().to_string();
+        assert!(crate::crypto::is_encrypted_field(&webdav_pw), "{}", webdav_pw);
+        assert_eq!(crate::crypto::decrypt_field(&webdav_pw).unwrap(), "plain-pw");
+        assert_eq!(cfg(1)["url"], "http://n");
+        assert!(crate::crypto::is_encrypted_field(cfg(2)["secretKey"].as_str().unwrap()));
+        assert_eq!(cfg(2)["accessKey"], "AK");
+        assert_eq!(cfg(3)["path"], "/d");
+
+        // 新列可用
+        conn.execute("UPDATE sync_backends SET last_error = 'x', last_error_at = 'y' WHERE id = 1", [])
+            .unwrap();
+
+        // 幂等：再跑一遍不变
+        set_version(&conn, 67).unwrap();
+        migrate(&conn).unwrap();
+        assert_eq!(cfg(1)["password"].as_str().unwrap(), webdav_pw);
     }
 
     /// v64：补齐 MCP 建的笔记 / 任务缺失的 stable_uuid。

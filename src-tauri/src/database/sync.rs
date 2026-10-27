@@ -139,6 +139,27 @@ impl Database {
         Ok(n as usize)
     }
 
+    /// 把"只有开始、没有结束"的同步记录标为失败，返回处理条数。应在启动时、任何同步开始前调用。
+    ///
+    /// 为什么：`begin` 之后若应用被关闭 / 崩溃 / 系统睡眠被杀，`finish` 永远不会执行，留下
+    /// `finished_at` 为空、`success = 0`、`error` 为空的行 —— 设置页上既不像成功也看不出原因
+    /// （2026-10 诊断报告：一条 export 就停在这种状态）。启动时不可能有同步在跑，故可安全收尾。
+    pub fn sync_history_close_orphans(&self) -> Result<usize, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let n = conn.execute(
+            "UPDATE sync_history
+             SET finished_at = started_at, -- 真实结束时间不可知，用开始时间占位，别伪造成「刚刚」
+                 success = 0,
+                 error = COALESCE(error, '操作未完成：应用在执行过程中被关闭或意外退出，结果未知')
+             WHERE finished_at IS NULL",
+            [],
+        )?;
+        Ok(n)
+    }
+
     /// 列出最近的同步历史
     pub fn list_sync_history(&self, limit: usize) -> Result<Vec<SyncHistoryItem>, AppError> {
         let conn = self

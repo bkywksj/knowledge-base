@@ -160,6 +160,17 @@ pub fn parse_auth(
     use crate::models::SyncBackendKind as K;
     let v: serde_json::Value = serde_json::from_str(config_json)
         .map_err(|e| AppError::Custom(format!("config_json 解析失败: {}", e)))?;
+    // DAO 解不开凭据密文（换机器 / 改主机名）时会打这个标记并把凭据置空。在这里直接给出可操作的
+    // 提示，而不是拿空密码去请求、最后报一个让人摸不着头脑的「认证失败」
+    if v.get(crate::database::sync_v1::SECRET_UNREADABLE_KEY)
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false)
+    {
+        return Err(AppError::InvalidInput(
+            "保存的同步密码无法解密（更换电脑或修改主机名后会出现），请在同步设置里编辑该后端、重新填写密码后保存"
+                .into(),
+        ));
+    }
     let get_str = |k: &str| -> Result<String, AppError> {
         v.get(k)
             .and_then(|x| x.as_str())

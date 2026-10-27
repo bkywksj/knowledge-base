@@ -254,10 +254,43 @@ async fn run_backend_sync(app: &AppHandle, backend_id: i64) {
 ///
 /// **必须在 `spawn_blocking` 上下文里调用**：内部是同步阻塞 IO（网络 + SQLite），
 /// 直接在 tokio worker / 主线程上跑会卡住整个 UI。
+///
+/// 结果会写进 `sync_backends.last_error`（失败记录、成功清空），手动与自动同步都经过这里，
+/// 设置页卡片据此展示"上次同步失败"。
 pub(crate) fn run_pull_blocking(
     app: &AppHandle,
     backend_id: i64,
 ) -> Result<SyncPullResult, String> {
+    let result = pull_inner(app, backend_id);
+    record_outcome(app, backend_id, "pull", result.as_ref().err());
+    result
+}
+
+/// 同步阻塞 push（约束同 [`run_pull_blocking`]：只能在 `spawn_blocking` 上下文里调）
+pub(crate) fn run_push_blocking(
+    app: &AppHandle,
+    backend_id: i64,
+) -> Result<SyncPushResult, String> {
+    let result = push_inner(app, backend_id);
+    record_outcome(app, backend_id, "push", result.as_ref().err());
+    result
+}
+
+/// 把本次 pull / push 的成败写进 backend 的 last_error。写失败只记日志：
+/// 这是展示用的附加状态，不能反过来让一次成功的同步报错。
+fn record_outcome(app: &AppHandle, backend_id: i64, op: &str, err: Option<&String>) {
+    let state = app.state::<AppState>();
+    let msg = err.map(|e| format!("{} 失败: {}", op, e));
+    if let Err(e) = state.db.set_sync_backend_error(backend_id, msg.as_deref()) {
+        log::warn!(
+            "[sync-v1] backend #{} 记录同步结果失败: {}",
+            backend_id,
+            e
+        );
+    }
+}
+
+fn pull_inner(app: &AppHandle, backend_id: i64) -> Result<SyncPullResult, String> {
     let state = app.state::<AppState>();
     let cfg = state
         .db
@@ -291,11 +324,7 @@ pub(crate) fn run_pull_blocking(
     Ok(r)
 }
 
-/// 同步阻塞 push（约束同 [`run_pull_blocking`]：只能在 `spawn_blocking` 上下文里调）
-pub(crate) fn run_push_blocking(
-    app: &AppHandle,
-    backend_id: i64,
-) -> Result<SyncPushResult, String> {
+fn push_inner(app: &AppHandle, backend_id: i64) -> Result<SyncPushResult, String> {
     let state = app.state::<AppState>();
     let cfg = state
         .db

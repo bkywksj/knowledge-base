@@ -47,6 +47,16 @@ pub fn check_push_safety(local_notes: usize, last_pushed: Option<usize>) -> Resu
 pub async fn run_scheduler(app: AppHandle) {
     log::info!("[sync-scheduler] 启动");
 
+    // 启动时收尾上次异常退出遗留的「只有开始没有结束」的历史记录（此刻不可能有同步在跑）
+    {
+        let state = app.state::<AppState>();
+        match state.db.sync_history_close_orphans() {
+            Ok(0) => {}
+            Ok(n) => log::info!("[sync-scheduler] 已收尾 {} 条未完成的同步历史记录", n),
+            Err(e) => log::warn!("[sync-scheduler] 收尾未完成的同步历史失败: {}", e),
+        }
+    }
+
     loop {
         let (enabled, interval_min) = read_schedule_config(&app);
 

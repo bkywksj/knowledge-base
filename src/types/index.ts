@@ -1673,6 +1673,10 @@ export interface SyncBackend {
   lastPullTs: string | null;
   createdAt: string;
   updatedAt: string;
+  /** 最近一次同步（pull / push）失败的错误，成功后由后端清空（schema v68） */
+  lastError?: string | null;
+  /** lastError 发生时间（本地时间 YYYY-MM-DD HH:MM:SS） */
+  lastErrorAt?: string | null;
 }
 
 export interface SyncBackendInput {

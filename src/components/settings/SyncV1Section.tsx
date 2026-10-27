@@ -259,6 +259,8 @@ export function SyncV1Section() {
         void loadConflictCount();
       } else {
         message.warning(`自动同步失败 (backend #${backendId})：${error ?? "未知错误"}`);
+        // 失败也刷新：列表里的「上次同步失败」来自后端 last_error，toast 消失后仍可见
+        void loadBackends();
       }
       if ((encryptedSkipped ?? 0) > 0) {
         message.warning(
@@ -465,6 +467,7 @@ export function SyncV1Section() {
       void loadBackends();
     } catch (e) {
       message.error(`推送失败: ${e}`);
+      void loadBackends();
     } finally {
       setBusyBackendId(null);
       setBusyOp(null);
@@ -502,6 +505,7 @@ export function SyncV1Section() {
       void loadConflictCount();
     } catch (e) {
       message.error(`拉取失败: ${e}`);
+      void loadBackends();
     } finally {
       setBusyBackendId(null);
       setBusyOp(null);
@@ -637,6 +641,23 @@ export function SyncV1Section() {
                 <Text type="secondary">
                   ↓ {b.lastPullTs ?? "—"}
                 </Text>
+                {/* 最近一次同步失败（后端成功后会自动清空）。错误可能很长（含底层原因链 + 提示），
+                    列里只占一行摘要，全文放 Tooltip */}
+                {b.lastError && (
+                  <Tooltip
+                    title={
+                      <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                        {b.lastErrorAt ? `${b.lastErrorAt}\n` : ""}
+                        {b.lastError}
+                      </div>
+                    }
+                    styles={{ root: { maxWidth: 480 } }}
+                  >
+                    <Text type="danger" ellipsis style={{ fontSize: 12, maxWidth: 200 }}>
+                      ✕ 上次同步失败{b.lastErrorAt ? `（${b.lastErrorAt.slice(5, 16)}）` : ""}
+                    </Text>
+                  </Tooltip>
+                )}
               </Space>
             ),
           },

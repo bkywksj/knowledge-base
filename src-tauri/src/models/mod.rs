@@ -2001,8 +2001,12 @@ pub enum SyncBackendKind {
 ///
 /// `config_json` 内的字段随 `kind` 不同：
 /// - `Local`：`{"path": "..."}`
-/// - `Webdav`：`{"url": "...", "username": "...", "password_encrypted": "..."}`
-/// - `S3`：`{"endpoint": "...", "region": "...", "bucket": "...", "access_key": "...", "secret_key_encrypted": "..."}`
+/// - `Webdav`：`{"url": "...", "username": "...", "password": "..."}`
+/// - `S3`：`{"endpoint": "...", "region": "...", "bucket": "...", "accessKey": "...", "secretKey": "...", "prefix": "..."}`
+///
+/// 凭据字段（`password` / `secretKey`）落盘时是 `enc:v1:` 密文（v68 起），由 DAO 在读写边界
+/// 自动加解密 —— 本结构体里的 `config_json` 始终是明文。解不开时字段为空且带
+/// `_secretUnreadable: true`，详见 `database::sync_v1::open_config_json`。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncBackend {
@@ -2017,6 +2021,12 @@ pub struct SyncBackend {
     pub last_pull_ts: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// 最近一次同步（pull / push）失败的错误；成功后清空（v68）
+    #[serde(default)]
+    pub last_error: Option<String>,
+    /// `last_error` 的发生时间（本地时间 `YYYY-MM-DD HH:MM:SS`）
+    #[serde(default)]
+    pub last_error_at: Option<String>,
 }
 
 /// 创建/更新同步后端配置入参

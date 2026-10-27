@@ -283,6 +283,7 @@ export function MobileSync() {
       await load();
     } catch (e) {
       message.error(`推送失败: ${e}`);
+      void load(); // 刷新卡片上的「上次同步失败」（后端 last_error）
     } finally {
       setBusyId(null);
       setProgress(null);
@@ -307,6 +308,7 @@ export function MobileSync() {
       await load();
     } catch (e) {
       message.error(`拉取失败: ${e}`);
+      void load();
     } finally {
       setBusyId(null);
       setProgress(null);
@@ -352,6 +354,7 @@ export function MobileSync() {
       const reason = String(e);
       message.error(`同步失败: ${reason}`);
       void notifySystem("同步失败", reason.slice(0, 120));
+      void load();
     } finally {
       setBusyId(null);
       setProgress(null);
@@ -635,6 +638,14 @@ function BackendCard({
             <span>↑ 推送 · {lastPush}</span>
             <span>↓ 拉取 · {lastPull}</span>
           </div>
+          {/* 最近一次同步失败（后端成功后自动清空）。移动端没有 hover，直接展示两行摘要 */}
+          {backend.lastError && (
+            <div className="mt-1.5 rounded-md bg-red-50 px-2 py-1 text-[11px] leading-snug text-red-600 line-clamp-2 break-all">
+              上次同步失败
+              {backend.lastErrorAt ? `（${relativeTime(backend.lastErrorAt)}）` : ""}：
+              {backend.lastError}
+            </div>
+          )}
         </div>
       </div>
 
