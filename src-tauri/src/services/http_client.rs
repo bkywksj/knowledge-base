@@ -98,3 +98,61 @@ pub fn shared_no_proxy() -> &'static Client {
             .unwrap_or_else(|_| Client::new())
     })
 }
+
+/// 把 reqwest 错误展开成「顶层信息 → 底层原因链」，并在能判断时附一句可操作的提示。
+///
+/// 为什么需要：reqwest 的 `Display` 只给顶层 `error sending request for url (...)`，
+/// 真正的原因（连接被拒 / 超时 / 证书 / `No route to host`）藏在 `source()` 链里。
+/// 2026-10 Mac 用户 WebDAV 同步失败时日志只有这一行，无法区分是服务端、网络还是本机权限，
+/// 排查绕了一大圈 —— 根因其实是 macOS「本地网络」权限拦截（底层 os error 65）。
+///
+/// 输出示例：`error sending request for url (http://…) → client error (Connect) → No route to host (os error 65)。
+/// macOS 可能拦截了…`。链上与前文重复的消息会被去重，避免一句话说三遍。
+///
+/// 只用于展示 / 日志，不要拿返回值做逻辑分支（措辞随 reqwest/hyper 版本可能变化）。
+pub fn describe_error(e: &reqwest::Error) -> String {
+    use std::error::Error as _;
+
+    let mut parts: Vec<String> = vec![e.to_string()];
+    let mut src = e.source();
+    while let Some(s) = src {
+        let msg = s.to_string();
+        if !msg.is_empty() && !parts.iter().any(|p| p.contains(&msg)) {
+            parts.push(msg);
+        }
+        src = s.source();
+    }
+    let mut out = parts.join(" → ");
+    if let Some(hint) = error_hint(e, &out.to_lowercase()) {
+        out.push('。');
+        out.push_str(hint);
+    }
+    out
+}
+
+/// 按错误类型给一句用户能照着做的提示；判断不出就不加（宁缺毋滥，别误导）。
+fn error_hint(e: &reqwest::Error, chain_lower: &str) -> Option<&'static str> {
+    if e.is_timeout() {
+        return Some("连接或读取超时，请确认服务器在线、网络通畅");
+    }
+    // os error 65 = macOS 的 EHOSTUNREACH。macOS 15+ 未授权「本地网络」时访问局域网就是这个错误，
+    // 且是瞬间返回（不等超时）—— 与真正的网络不可达表现不同，单独提示
+    if chain_lower.contains("no route to host") || chain_lower.contains("os error 65") {
+        return Some(if cfg!(target_os = "macos") {
+            "目标主机不可达。若地址是局域网设备（NAS 等），macOS 可能拦截了本应用访问本地网络：\
+             请到「系统设置 → 隐私与安全性 → 本地网络」允许「Knowledge Base」后重试"
+        } else {
+            "目标主机不可达，请确认本机与服务器在同一网络、地址正确"
+        });
+    }
+    if chain_lower.contains("connection refused") {
+        return Some("目标端口拒绝连接，请确认服务已开启、端口号正确");
+    }
+    if chain_lower.contains("certificate") || chain_lower.contains("unknownissuer") {
+        return Some("TLS 证书不受信任：自签证书需先在系统中设为信任，或改用受信证书");
+    }
+    if chain_lower.contains("dns error") || chain_lower.contains("failed to lookup address") {
+        return Some("域名解析失败，请检查地址拼写与 DNS");
+    }
+    None
+}

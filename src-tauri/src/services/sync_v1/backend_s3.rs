@@ -99,7 +99,7 @@ impl S3Backend {
             .body(bytes)
             .send()
             .await
-            .map_err(|e| AppError::Custom(format!("S3 网络错误: {}", e)))?;
+            .map_err(|e| AppError::Custom(format!("S3 网络错误: {}", crate::services::http_client::describe_error(&e))))?;
         let st = resp.status();
         if !st.is_success() {
             let body = resp.text().await.unwrap_or_default();
@@ -121,7 +121,7 @@ impl S3Backend {
             .get(url)
             .send()
             .await
-            .map_err(|e| AppError::Custom(format!("S3 网络错误: {}", e)))?;
+            .map_err(|e| AppError::Custom(format!("S3 网络错误: {}", crate::services::http_client::describe_error(&e))))?;
         let st = resp.status();
         if st == StatusCode::NOT_FOUND {
             return Ok(None);
@@ -146,7 +146,7 @@ impl S3Backend {
             .delete(url)
             .send()
             .await
-            .map_err(|e| AppError::Custom(format!("S3 网络错误: {}", e)))?;
+            .map_err(|e| AppError::Custom(format!("S3 网络错误: {}", crate::services::http_client::describe_error(&e))))?;
         let st = resp.status();
         // DELETE 幂等：对象不存在（404）也当成功
         if st.is_success() || st == StatusCode::NOT_FOUND {
@@ -166,7 +166,7 @@ impl S3Backend {
             .head(url)
             .send()
             .await
-            .map_err(|e| AppError::Custom(format!("S3 网络错误: {}", e)))?;
+            .map_err(|e| AppError::Custom(format!("S3 网络错误: {}", crate::services::http_client::describe_error(&e))))?;
         Ok(resp.status().as_u16())
     }
 }
@@ -271,7 +271,7 @@ impl SyncBackendImpl for S3Backend {
                     .get(url)
                     .send()
                     .await
-                    .map_err(|e| AppError::Custom(format!("S3 list 网络错误: {}", e)))?;
+                    .map_err(|e| AppError::Custom(format!("S3 list 网络错误: {}", crate::services::http_client::describe_error(&e))))?;
                 let st = resp.status();
                 if !st.is_success() {
                     return Err(AppError::Custom(format!("S3 list 失败 ({})", st)));

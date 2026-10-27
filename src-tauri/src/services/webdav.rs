@@ -12,6 +12,9 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
 
 use crate::error::AppError;
+// 网络错误统一用 describe_error 展开 source 链（含 os error / 证书 / 超时等底层原因），
+// 别直接 format!("{}", e) —— 那只剩一句 "error sending request"，排查无从下手
+use crate::services::http_client::describe_error;
 
 /// WebDAV 客户端
 ///
@@ -56,7 +59,7 @@ impl WebDavClient {
             .header("Depth", "0")
             .send()
             .await
-            .map_err(|e| AppError::Custom(format!("网络错误: {}", e)))?;
+            .map_err(|e| AppError::Custom(format!("网络错误: {}", describe_error(&e))))?;
 
         let status = resp.status();
         if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
@@ -103,7 +106,7 @@ impl WebDavClient {
             .body(body)
             .send()
             .await
-            .map_err(|e| AppError::Custom(format!("上传失败: {}", e)))?;
+            .map_err(|e| AppError::Custom(format!("上传失败: {}", describe_error(&e))))?;
 
         Self::check_put_status(resp).await
     }
@@ -133,7 +136,7 @@ impl WebDavClient {
         let bytes = resp
             .bytes()
             .await
-            .map_err(|e| AppError::Custom(format!("读取响应失败: {}", e)))?;
+            .map_err(|e| AppError::Custom(format!("读取响应失败: {}", describe_error(&e))))?;
         Ok(bytes.to_vec())
     }
 
@@ -147,7 +150,7 @@ impl WebDavClient {
 
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| AppError::Custom(format!("下载过程中断: {}", e)))?;
+            let chunk = chunk.map_err(|e| AppError::Custom(format!("下载过程中断: {}", describe_error(&e))))?;
             file.write_all(&chunk)
                 .await
                 .map_err(|e| AppError::Custom(format!("写入本地文件失败: {}", e)))?;
@@ -169,7 +172,7 @@ impl WebDavClient {
             .headers(headers.clone())
             .send()
             .await
-            .map_err(|e| AppError::Custom(format!("下载失败: {}", e)))?;
+            .map_err(|e| AppError::Custom(format!("下载失败: {}", describe_error(&e))))?;
 
         let status = resp.status();
         if status == StatusCode::NOT_FOUND {
@@ -211,7 +214,7 @@ impl WebDavClient {
             .body(bytes)
             .send()
             .await
-            .map_err(|e| AppError::Custom(format!("上传失败: {}", e)))?;
+            .map_err(|e| AppError::Custom(format!("上传失败: {}", describe_error(&e))))?;
 
         Self::check_put_status(resp).await
     }
@@ -238,7 +241,7 @@ impl WebDavClient {
                 .headers(self.headers())
                 .send()
                 .await
-                .map_err(|e| AppError::Custom(format!("创建目录失败: {}", e)))?;
+                .map_err(|e| AppError::Custom(format!("创建目录失败: {}", describe_error(&e))))?;
             let status = resp.status();
             // 201 Created 或 405（已存在）都视为成功
             if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
@@ -267,7 +270,7 @@ impl WebDavClient {
             .headers(self.headers())
             .send()
             .await
-            .map_err(|e| AppError::Custom(format!("删除失败: {}", e)))?;
+            .map_err(|e| AppError::Custom(format!("删除失败: {}", describe_error(&e))))?;
 
         let status = resp.status();
         if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
@@ -306,7 +309,7 @@ impl WebDavClient {
             .header("Overwrite", "T")
             .send()
             .await
-            .map_err(|e| AppError::Custom(format!("MOVE 失败: {}", e)))?;
+            .map_err(|e| AppError::Custom(format!("MOVE 失败: {}", describe_error(&e))))?;
         let status = resp.status();
         if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
             return Err(AppError::Custom("认证失败，请检查用户名/密码".into()));
@@ -333,7 +336,7 @@ impl WebDavClient {
             .headers(self.headers())
             .send()
             .await
-            .map_err(|e| AppError::Custom(format!("下载失败: {}", e)))?;
+            .map_err(|e| AppError::Custom(format!("下载失败: {}", describe_error(&e))))?;
         let status = resp.status();
         if status == StatusCode::NOT_FOUND {
             return Ok(None);
@@ -347,7 +350,7 @@ impl WebDavClient {
         let bytes = resp
             .bytes()
             .await
-            .map_err(|e| AppError::Custom(format!("读取响应失败: {}", e)))?;
+            .map_err(|e| AppError::Custom(format!("读取响应失败: {}", describe_error(&e))))?;
         Ok(Some(bytes.to_vec()))
     }
 
@@ -374,7 +377,7 @@ impl WebDavClient {
             .headers(self.headers())
             .send()
             .await
-            .map_err(|e| AppError::Custom(format!("HEAD 探测失败: {}", e)))?;
+            .map_err(|e| AppError::Custom(format!("HEAD 探测失败: {}", describe_error(&e))))?;
         let status = resp.status();
         if status.is_success() {
             return Ok(true);
@@ -407,7 +410,7 @@ impl WebDavClient {
             .header(CONTENT_TYPE, "application/xml")
             .send()
             .await
-            .map_err(|e| AppError::Custom(format!("列目录失败: {}", e)))?;
+            .map_err(|e| AppError::Custom(format!("列目录失败: {}", describe_error(&e))))?;
 
         let status = resp.status();
         if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
@@ -426,7 +429,7 @@ impl WebDavClient {
         let body = resp
             .text()
             .await
-            .map_err(|e| AppError::Custom(format!("读取响应失败: {}", e)))?;
+            .map_err(|e| AppError::Custom(format!("读取响应失败: {}", describe_error(&e))))?;
 
         // 扫描所有 href 标签的内容（大小写 + 命名空间不敏感）
         // 常见格式：<D:href>/dav/folder/kb-sync-ye.zip</D:href>
@@ -493,7 +496,7 @@ impl WebDavClient {
             .header(CONTENT_TYPE, "application/xml")
             .send()
             .await
-            .map_err(|e| AppError::Custom(format!("PROPFIND {} 失败: {}", rel_path, e)))?;
+            .map_err(|e| AppError::Custom(format!("PROPFIND {} 失败: {}", rel_path, describe_error(&e))))?;
 
         let status = resp.status();
         if status == StatusCode::NOT_FOUND {
@@ -517,7 +520,7 @@ impl WebDavClient {
         let body = resp
             .text()
             .await
-            .map_err(|e| AppError::Custom(format!("读取响应失败: {}", e)))?;
+            .map_err(|e| AppError::Custom(format!("读取响应失败: {}", describe_error(&e))))?;
 
         // 扫描所有 <...href>...</...href>，保留 raw（含完整路径），URL decode
         let mut hrefs = Vec::new();
