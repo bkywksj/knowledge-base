@@ -1760,6 +1760,14 @@ pub fn run() {
                         services::main_window_placement::show_main(handle, "macOS 打开文件");
                     }
                 }
+                // macOS：点 Dock 图标 → 唤回主窗口。
+                // 关窗时主窗口被 hide() 收进托盘，macOS 只会自动还原「最小化」的窗口、不管隐藏的 ——
+                // 不接这个事件，点 Dock 图标毫无反应，只能去顶部菜单栏的托盘图标唤回。
+                // 不看 has_visible_windows：别的子窗口开着时它也是 true，但用户点 Dock 要的是主窗口。
+                #[cfg(target_os = "macos")]
+                if let tauri::RunEvent::Reopen { .. } = &event {
+                    services::main_window_placement::show_main(handle, "Dock 图标");
+                }
                 #[cfg(not(target_os = "macos"))]
                 let _ = (handle, event);
             });
