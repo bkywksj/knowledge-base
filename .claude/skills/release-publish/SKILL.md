@@ -587,8 +587,9 @@ curl -s -o /dev/null -w "R2 update.json HTTP %{http_code}\n" \
 
 ### 步骤 9.5：更新 R2 versions.json（文档站下载页依赖此文件）
 
-文档站 `knowledge-base-docs` 的 `DownloadSection.vue` 在**构建时**（`config.ts` 顶层 await）
-从 R2 拉取 `versions.json` 并嵌入 bundle（浏览器直连 R2 受 CORS 限制，运行时 fetch 会失败）。
+文档站 `knowledge-base-docs`（2026-11-03 起是 Astro 站）在**构建前**跑 `scripts/sync/run.mjs releases mobile-releases`，
+从 R2 拉取 `versions.json` / `mobile-versions.json` 写进 `src/data/releases.json` / `mobile-releases.json`（拉不到时沿用仓库里已提交的那份，构建不失败），
+下载页、首页的版本号与安装包大小都取自它（构建期取数，浏览器不直连 R2，没有 CORS 问题）。
 所以每次发布新版本后，必须更新 R2 的 `versions.json`，文档站重建时才能拿到最新快照。
 
 `versions.json` 格式（对象数组，含 notes/pub_date）：
@@ -773,31 +774,31 @@ if target and target['draft']:
 
 ### 步骤 11.5：触发文档站重建（同步 R2 versions.json 到下载页）
 
-> **为什么需要这步**：文档站 `knowledge-base-docs` 的 `DownloadSection.vue` 在**构建时**
-> 从 R2 拉取 `versions.json` 并嵌入 bundle（避免运行时 CORS + GitHub 限流/国内慢）。
-> 所以每次发布新版本更新 R2 后，必须触发文档站重新构建（腾讯 EdgeOne Pages 会在 git push
-> 检测到 diff 时自动重建），让下载页拿到最新快照。
+> **为什么需要这步**：文档站 `knowledge-base-docs`（2026-11-03 起是 Astro 站）在**构建前**跑 `scripts/sync/run.mjs releases mobile-releases`，
+从 R2 拉取 `versions.json` / `mobile-versions.json` 写进 `src/data/releases.json` / `mobile-releases.json`（拉不到时沿用仓库里已提交的那份，构建不失败），
+下载页、首页的版本号与安装包大小都取自它（构建期取数，浏览器不直连 R2，没有 CORS 问题）。
+> 所以每次发布新版本更新 R2 后，必须触发文档站重新构建（腾讯 EdgeOne Pages 在 git push 检测到 diff 时自动重建），让下载页拿到最新版本。
 
 ⚠️ 文档站仓库 remote 名是 **`gitee` + `github`**（**没有 `origin`**），两个都要推。
+🔴 触发文件在 **`public/.last-release.json`**（2026-11-03 迁 Astro 前在 `docs/public/`，旧路径已不存在）。
+🔴 推送只走 Sigil（全局规则）：不跑本地 `git push` / `git pull`，会弹凭据窗卡住。
 
-用 Edit 工具改 `.last-release.json`（用 `cat > ... << EOF` 在 Git Bash 也行，但 heredoc 容易踩 cd 持久化坑）：
+1. 用 Edit 工具把 `E:/my/桌面软件tauri/knowledge-base-docs/public/.last-release.json` 改成：
+   ```json
+   { "version": "vX.Y.Z", "published_at": "<当前 UTC，如 2026-11-03T08:00:00Z>" }
+   ```
+2. 提交（只 add 这一个文件）：
+   ```bash
+   cd "E:/my/桌面软件tauri/knowledge-base-docs" && git add public/.last-release.json && \
+     git commit -m "chore: 同步 v${VERSION} 发布（触发下载页快照重建）"
+   ```
+3. 推送（Sigil `git_push`，两个远程各一次）：
+   - `repo_path=E:/my/桌面软件tauri/knowledge-base-docs`、`branch=master`、`remote=gitee`、`credential_name=gitee`
+   - 同上，`remote=github`、`credential_name=github1`（配额 / 权限问题按全局规则换账号）
+   - 任一失败：停下报告，不回退本地 `git push`
 
-```bash
-DOCS_DIR="E:/my/桌面软件tauri/knowledge-base-docs"
-# 1. 用 Edit 工具把 docs/public/.last-release.json 的 version 改成 vX.Y.Z，published_at 改成当前 UTC
-# 2. 提交并双推
-cd "$DOCS_DIR" && git add docs/public/.last-release.json && \
-  git commit -m "chore: 同步 v${VERSION} 发布（触发下载页快照重建）" && \
-  git push gitee master && git push github master
-
-# 如果任一 push 超时，不要重试，让用户手动执行：
-#   cd "E:/my/桌面软件tauri/knowledge-base-docs" && git push gitee master
-#   cd "E:/my/桌面软件tauri/knowledge-base-docs" && git push github master
-```
-
-推送后腾讯 EdgeOne Pages 会自动重新构建文档站，`config.ts` 里的顶层 await 重新拉取
-R2 versions.json，新版本会作为构建时快照嵌入到 `download.html`。用户打开下载页
-一瞬间就能看到最新版本（无需等待运行时 fetch，也不受 CORS 限制）。
+推送后 EdgeOne Pages 自动重新构建文档站（约 1.5–2 分钟），构建前的同步脚本重新拉 R2 versions.json，
+下载页与首页显示新版本。核对：`curl -s https://kb.ruoyi.plus/download.html | grep -o "v${VERSION}" | head -1`。
 
 ### 步骤 12：完成报告
 
@@ -984,10 +985,10 @@ curl -I "https://pub-9d9e6c0cb6934fb0a0c505e3c64f39b2.r2.dev/knowledge-base/vX.Y
 | M7 上传 R2 | `~/bin/rclone.exe copy "releases/mobile-vx.y.z/Knowledge.Base_x.y.z_android-arm64.apk" r2:downloads/knowledge-base/mobile-vx.y.z/`；`.aab` 同样 |
 | M8 生成 `update-mobile.json` + `update-mobile-r2.json` | 扁平结构（无 minisign signature，Android 自己验 APK 签名）：`{"version":"x.y.z","notes":"...","pub_date":"...","url":"<base>/Knowledge.Base_x.y.z_android-arm64.apk"}`。两份只有 `url` 的 base 不同：GitHub 版 base = `https://github.com/bkywksj/knowledge-base-release/raw/main/releases/mobile-vx.y.z`，R2 版 base = `https://pub-...r2.dev/knowledge-base/mobile-vx.y.z`。写到 release 仓根目录 |
 | M9 上传 R2 `update-mobile.json` | `~/bin/rclone.exe copy update-mobile-r2.json r2:downloads/knowledge-base/` → `~/bin/rclone.exe moveto r2:downloads/knowledge-base/update-mobile-r2.json r2:downloads/knowledge-base/update-mobile.json`；curl 验证 200 |
-| M9.5 更新 R2 `mobile-versions.json` | 文档站下载页的 📱 banner 读这个（构建时由 docs 的 `config.ts` 拉，类似桌面 `versions.json`）。curl 拉 `https://pub-...r2.dev/knowledge-base/mobile-versions.json`（不存在则初始化 `{"versions":[]}`）→ 去重后头部插入 `{version:"mobile-vx.y.z", notes:..., pub_date:now UTC, apk_url:".../mobile-vx.y.z/Knowledge.Base_x.y.z_android-arm64.apk", aab_url:".../...aab"}`（apk_url/aab_url 用 R2 base）→ `~/bin/rclone.exe copyto` 覆盖 `r2:downloads/knowledge-base/mobile-versions.json`；顺手 `~/bin/rclone.exe copyto` 把 APK 也覆盖到 `r2:downloads/knowledge-base/mobile-latest.apk`（稳定链接，mobile.md 指向它）|
+| M9.5 更新 R2 `mobile-versions.json` | 文档站下载页的 Android 卡与历史版本读这个（构建前由文档站 `scripts/sync/sources/mobile-releases.mjs` 拉，写进 `src/data/mobile-releases.json`）。curl 拉 `https://pub-...r2.dev/knowledge-base/mobile-versions.json`（不存在则初始化 `{"versions":[]}`）→ 去重后头部插入 `{version:"mobile-vx.y.z", notes:..., pub_date:now UTC, apk_url:".../mobile-vx.y.z/Knowledge.Base_x.y.z_android-arm64.apk", aab_url:".../...aab"}`（apk_url/aab_url 用 R2 base）→ `~/bin/rclone.exe copyto` 覆盖 `r2:downloads/knowledge-base/mobile-versions.json`；顺手 `~/bin/rclone.exe copyto` 把 APK 也覆盖到 `r2:downloads/knowledge-base/mobile-latest.apk`（稳定链接，mobile.md 指向它）|
 | M10 更新 README + 推 release 仓 | 在 README 的「移动端（Android）」区块加下载行 + 移动端版本历史条目（**下载链接写 R2 绝对直链**，历史版本尤其不能用 `releases/...` 相对路径）；全量仓 `git add -A && git commit -m "release(mobile): vx.y.z" && git pull --rebase origin main && git push origin main`（只推 GitHub）。**Gitee 走精简仓**：按「步骤 10.1」把 `releases/` 换成最新桌面版 + 本次移动版 → orphan 塌缩 → force 推 → gc |
 | M11 publish GitHub Release | 把 `mobile-vx.y.z` 的 draft Release 改 `draft:false`（PATCH，name=`知识库 移动端 vx.y.z`，body=更新说明）。注意 CI 在哪个仓就 publish 哪个仓的 |
-| M12 触发文档站重建 | 改 docs 仓 `docs/public/.last-release-mobile.json`（`{version:"mobile-vx.y.z", published_at:now UTC}`）→ `git add docs/public/.last-release-mobile.json && git commit -m "chore: 同步移动端 vx.y.z" && git push gitee master && git push github master`（docs 仓 remote 只有 gitee+github），EdgeOne 自动重建 → `config.ts` 重新拉 R2 `mobile-versions.json` → 📱 banner 显示新版本 |
+| M12 触发文档站重建 | 改 docs 仓 `public/.last-release-mobile.json`（2026-11-03 迁 Astro 前在 `docs/public/`；`{version:"mobile-vx.y.z", published_at:now UTC}`）→ `git add public/.last-release-mobile.json && git commit -m "chore: 同步移动端 vx.y.z"` → Sigil `git_push` 推 `remote=gitee`（`gitee`）与 `remote=github`（`github1`）（docs 仓没有 origin；不跑本地 git push），EdgeOne 自动重建 → 构建前同步脚本重新拉 R2 `mobile-versions.json` → 下载页 Android 卡显示新版本 |
 | M13 完成报告 | 移动版本 / 源码 commit / tag / CI / release 仓 commit / R2（含 mobile-versions.json + mobile-latest.apk）/ 自动更新（update-mobile.json）/ 文档站 |
 
 > 移动端在 R2 上的 3 个关键文件：`update-mobile.json`（App 内检查更新读它，单条最新）/ `mobile-versions.json`（文档站下载页 📱 banner 读它，历史数组带 apk_url/aab_url）/ `mobile-latest.apk`（稳定下载链接，mobile.md 指向它）。三个每发一次移动端都要更新。

@@ -382,8 +382,9 @@ curl -s -o /dev/null -w "R2 update.json HTTP %{http_code}\n" \
 
 ### 步骤 9.5：更新 R2 versions.json（文档站下载页依赖此文件）
 
-文档站 `knowledge-base-docs` 的 `DownloadSection.vue` 在**构建时**（`config.ts` 顶层 await）
-从 R2 拉取 `versions.json` 并嵌入 bundle（浏览器直连 R2 受 CORS 限制，运行时 fetch 会失败）。
+文档站 `knowledge-base-docs`（2026-11-03 起是 Astro 站）在**构建前**跑 `scripts/sync/run.mjs releases mobile-releases`，
+从 R2 拉取 `versions.json` / `mobile-versions.json` 写进 `src/data/releases.json` / `mobile-releases.json`（拉不到时沿用仓库里已提交的那份，构建不失败），
+下载页、首页的版本号与安装包大小都取自它（构建期取数，浏览器不直连 R2，没有 CORS 问题）。
 所以每次发布新版本后，必须更新 R2 的 `versions.json`，文档站重建时才能拿到最新快照。
 
 `versions.json` 格式（对象数组，含 notes/pub_date）：
@@ -482,37 +483,31 @@ if target and target['draft']:
 
 ### 步骤 11.5：触发文档站重建（同步 R2 versions.json 到下载页）
 
-> **为什么需要这步**：文档站 `knowledge-base-docs` 的 `DownloadSection.vue` 在**构建时**
-> 从 R2 拉取 `versions.json` 并嵌入 bundle（避免运行时 CORS + GitHub 限流/国内慢）。
-> 所以每次发布新版本更新 R2 后，必须触发文档站重新构建（腾讯 EdgeOne Pages 会在 git push
-> 检测到 diff 时自动重建），让下载页拿到最新快照。
+> **为什么需要这步**：文档站 `knowledge-base-docs`（2026-11-03 起是 Astro 站）在**构建前**跑 `scripts/sync/run.mjs releases mobile-releases`，
+从 R2 拉取 `versions.json` / `mobile-versions.json` 写进 `src/data/releases.json` / `mobile-releases.json`（拉不到时沿用仓库里已提交的那份，构建不失败），
+下载页、首页的版本号与安装包大小都取自它（构建期取数，浏览器不直连 R2，没有 CORS 问题）。
+> 所以每次发布新版本更新 R2 后，必须触发文档站重新构建（腾讯 EdgeOne Pages 在 git push 检测到 diff 时自动重建），让下载页拿到最新版本。
 
-```bash
-DOCS_DIR="E:/my/桌面软件tauri/knowledge-base-docs"
-cd "$DOCS_DIR"
+⚠️ 文档站仓库 remote 名是 **`gitee` + `github`**（**没有 `origin`**），两个都要推。
+🔴 触发文件在 **`public/.last-release.json`**（2026-11-03 迁 Astro 前在 `docs/public/`，旧路径已不存在）。
+🔴 推送只走 Sigil（全局规则）：不跑本地 `git push` / `git pull`，会弹凭据窗卡住。
 
-# 更新版本标记文件（有真实 diff 才会触发 EdgeOne Pages 重建，比空 commit 更稳）
-cat > docs/public/.last-release.json << JSONEOF
-{
-  "version": "v$VERSION",
-  "published_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-}
-JSONEOF
+1. 用 Edit 工具把 `E:/my/桌面软件tauri/knowledge-base-docs/public/.last-release.json` 改成：
+   ```json
+   { "version": "vX.Y.Z", "published_at": "<当前 UTC，如 2026-11-03T08:00:00Z>" }
+   ```
+2. 提交（只 add 这一个文件）：
+   ```bash
+   cd "E:/my/桌面软件tauri/knowledge-base-docs" && git add public/.last-release.json && \
+     git commit -m "chore: 同步 v${VERSION} 发布（触发下载页快照重建）"
+   ```
+3. 推送（Sigil `git_push`，两个远程各一次）：
+   - `repo_path=E:/my/桌面软件tauri/knowledge-base-docs`、`branch=master`、`remote=gitee`、`credential_name=gitee`
+   - 同上，`remote=github`、`credential_name=github1`（配额 / 权限问题按全局规则换账号）
+   - 任一失败：停下报告，不回退本地 `git push`
 
-git add docs/public/.last-release.json
-git commit -m "chore: 同步 v$VERSION 发布（触发下载页快照重建）
-
-Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
-git pull --rebase origin master
-git push origin master
-
-# 如果推送超时，不要重试，提示用户手动执行：
-#   cd "E:/my/桌面软件tauri/knowledge-base-docs" && git push origin master
-```
-
-推送后腾讯 EdgeOne Pages 会自动重新构建文档站，`config.ts` 里的顶层 await 重新拉取
-R2 versions.json，新版本会作为构建时快照嵌入到 `download.html`。用户打开下载页
-一瞬间就能看到最新版本（无需等待运行时 fetch，也不受 CORS 限制）。
+推送后 EdgeOne Pages 自动重新构建文档站（约 1.5–2 分钟），构建前的同步脚本重新拉 R2 versions.json，
+下载页与首页显示新版本。核对：`curl -s https://kb.ruoyi.plus/download.html | grep -o "v${VERSION}" | head -1`。
 
 ### 步骤 12：完成报告
 
