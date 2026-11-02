@@ -44,6 +44,10 @@ import {
   PenTool,
   FolderOutput,
   FileDown,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpToLine,
+  ArrowDownToLine,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderFilled } from "@ant-design/icons";
@@ -123,6 +127,27 @@ const NOTES_PER_FOLDER_LIMIT = 100;
 const MORE_NODE_PREFIX = "__more_";
 function isMoreKey(key: string): boolean {
   return key.startsWith(MORE_NODE_PREFIX);
+}
+
+/** 拖拽悬停「空文件夹」满 HOVER_EXPAND_DELAY 后临时挂上的占位子节点 key 前缀，后接文件夹 id。
+ *  空文件夹没有子节点，rc-tree 不会走「已展开节点 → 放进里面」分支，只能靠鼠标右偏判 inside，
+ *  而 allowDrop 又把未展开文件夹的 inside 关掉了（防误入）；挂一个占位子节点让它变成
+ *  「已展开且有子节点」，落点判定就和普通展开文件夹一致，同时给用户一个「可以松手了」的提示。 */
+const DROP_HINT_PREFIX = "__drophint_";
+function isDropHintKey(key: string): boolean {
+  return key.startsWith(DROP_HINT_PREFIX);
+}
+
+/** 在树数据里按 key 找节点（拖拽占位注入用） */
+function findTreeNode(nodes: EnrichedNode[], key: string): EnrichedNode | null {
+  for (const n of nodes) {
+    if (String(n.key) === key) return n;
+    if (n.children?.length) {
+      const found = findTreeNode(n.children as EnrichedNode[], key);
+      if (found) return found;
+    }
+  }
+  return null;
 }
 
 /** 已加载条数 < 总数时生成「加载更多」叶子（之前超过 100 篇的直接看不到，也没有任何提示） */
@@ -597,6 +622,11 @@ export function NotesPanel() {
     }
     hoverExpandKeyRef.current = null;
   };
+  // 悬停满 HOVER_EXPAND_DELAY 的文件夹 key：若它没有子节点，treeData 给它临时挂一个
+  // DROP_HINT 占位子节点，使其可被「放进里面」（见 DROP_HINT_PREFIX 说明）。拖拽结束即清空。
+  const [dropHintFolderKey, setDropHintFolderKey] = useState<string | null>(null);
+  // 树内拖拽进行中（onDragStart 置位）。悬停展开只对树内拖拽生效，OS 文件拖入不触发
+  const treeDraggingRef = useRef(false);
 
   useEffect(() => {
     loadFolders();
@@ -1153,16 +1183,123 @@ export function NotesPanel() {
     dropToGap: boolean;
   };
 
+  /**
+   * 拖拽落点白名单（rc-tree 每次 dragover 都会问一遍，返回 false 的落点不显示指示线、不触发 onDrop）。
+   *
+   * 为什么要它：rc-tree 判「放进节点里面」靠鼠标相对起拖点的右偏量 / indent，侧栏把
+   * indent 压到了 10px（global.css），右偏约 3px 就会把同级排序判成「放进上一个节点」——
+   * 文件夹被塞进隔壁文件夹、笔记被塞进上方的子文件夹。这里不改缩进，改成：
+   *   - 未展开（或展开了但没子节点）的文件夹不接受「放进里面」，rc-tree 自动退化成「排在它后面」；
+   *     想放进去就悬停 HOVER_EXPAND_DELAY 等它展开（空文件夹会挂 DROP_HINT 占位子节点）
+   *   - 笔记不接受「放进里面」，退化成「排在它后面」
+   *   - 拖文件夹：笔记、「未分类」都不是合法目标
+   *   - 拖笔记：根级文件夹之间的缝隙不是合法目标（根级不能放笔记，原先会被归到「未分类」）
+   *   - 「未分类」对笔记任何落点都表示归入未分类（与 handleDrop 语义一致）
+   */
+  function allowTreeDrop({
+    dragNode,
+    dropNode,
+    dropPosition,
+  }: {
+    dragNode: DataNode;
+    dropNode: DataNode;
+    dropPosition: number;
+  }): boolean {
+    const dragKey = String(dragNode.key);
+    const dropKey = String(dropNode.key);
+    if (dropKey.startsWith(NEW_NODE_PREFIX) || isMoreKey(dropKey)) return false;
+    const draggingNote = isNoteKey(dragKey);
+    // 占位子节点：只当「排在它后面」用（= 放进它所在的文件夹），由 handleDrop 改写
+    if (isDropHintKey(dropKey)) return dropPosition !== 0;
+    if (dropKey === UNCATEGORIZED_KEY) return draggingNote;
+    if (isNoteKey(dropKey)) return draggingNote && dropPosition !== 0;
+    // 下面 dropNode 是真实文件夹
+    if (dropPosition === 0) {
+      const expanded = expandedKeys.some((k) => String(k) === dropKey);
+      return expanded && (dropNode.children?.length ?? 0) > 0;
+    }
+    if (draggingNote) {
+      const folderId = Number(dropKey);
+      if (!Number.isFinite(folderId)) return false;
+      return findFolderParentId(folders, folderId) !== null;
+    }
+    return true;
+  }
+
+  /** 树内拖拽结束（松手 / 取消）：清计时、清占位、清拖拽标记 */
+  function endTreeDrag() {
+    treeDraggingRef.current = false;
+    cancelHoverExpand();
+    setDropHintFolderKey(null);
+  }
+
+  /**
+   * 拖拽悬停展开（spring-loaded）：悬停文件夹 HOVER_EXPAND_DELAY 才展开，路过不展开
+   * （与 Finder / VS Code 一致；一进入就展开会让一路经过的文件夹全炸开、目标位置乱跳）。
+   * 由容器 onDragOverCapture 每次 dragover 调用，同一行重复调用直接返回。
+   */
+  function springLoadHover(k: string) {
+    // 离开了挂占位的文件夹（及其占位行）→ 撤掉占位
+    if (
+      dropHintFolderKey &&
+      k !== dropHintFolderKey &&
+      k !== `${DROP_HINT_PREFIX}${dropHintFolderKey}`
+    ) {
+      setDropHintFolderKey(null);
+    }
+    // 已经在为同一行计时（或计时已触发），无需重置
+    if (hoverExpandKeyRef.current === k) return;
+    cancelHoverExpand();
+    hoverExpandKeyRef.current = k;
+    // 叶子 / 占位节点：只记下「当前在哪一行」以取消上一个计时，不展开
+    if (
+      k.startsWith(NEW_NODE_PREFIX) ||
+      isNoteKey(k) ||
+      isMoreKey(k) ||
+      isDropHintKey(k)
+    ) {
+      return;
+    }
+    hoverExpandTimerRef.current = setTimeout(() => {
+      hoverExpandTimerRef.current = null;
+      if (k === UNCATEGORIZED_KEY) {
+        if (!uncategorizedExpanded) {
+          setUncategorizedExpanded(true);
+          if (uncategorizedNotes.length === 0) {
+            void loadUncategorizedNotes();
+          }
+        }
+        return;
+      }
+      const id = Number(k);
+      if (!Number.isFinite(id)) return;
+      const collapsed = collapsedFolderKeys.includes(k);
+      if (collapsed) {
+        useAppStore.getState().setNotesFolderCollapsed(k, false);
+        if (!notesByFolder.has(id)) void loadNotesForFolder(id);
+      }
+      // 没有子节点的文件夹由 treeData 挂上占位子节点，之后才可「放进里面」
+      setDropHintFolderKey(k);
+    }, HOVER_EXPAND_DELAY);
+  }
+
   async function handleDrop(info: DropInfo) {
     // 拖拽落下：清掉可能仍在计时的悬停展开，避免松手后目标文件夹又被延迟展开
-    cancelHoverExpand();
+    endTreeDrag();
     // 防御：OS 文件拖入时 antd Tree 的 onDrop 理论上不会触发（内部无 dragNode），
     // 但不同版本行为有差异，保底校验避免 undefined.key 抛错
     if (!info.dragNode || info.dragNode.key == null) return;
     const dragKey = String(info.dragNode.key);
-    const dropKey = String(info.node.key);
+    let dropKey = String(info.node.key);
+    // 下面各分支用的「是否落在缝隙」以这个变量为准（占位节点要改写成「放进文件夹」）
+    let dropToGap = info.dropToGap;
     if (dragKey.startsWith(NEW_NODE_PREFIX) || dropKey.startsWith(NEW_NODE_PREFIX)) return;
     if (isMoreKey(dragKey) || isMoreKey(dropKey)) return;
+    // 落在空文件夹的占位子节点旁 = 放进该文件夹
+    if (isDropHintKey(dropKey)) {
+      dropKey = dropKey.slice(DROP_HINT_PREFIX.length);
+      dropToGap = false;
+    }
 
     // ── 笔记拖动 → 跨 folder 改 folder_id；同 folder 内调 reorder 改 sort_order ──
     // Why: 跨 folder 时改 sort_order 没意义（用户肯定还要再拖到目标位置），保持原行为；
@@ -1173,9 +1310,9 @@ export function NotesPanel() {
       if (!note) return;
 
       // 计算目标 folderId：
-      //   - 落在文件夹节点上（!dropToGap） → 目标 = 该文件夹
-      //   - 落在文件夹之间的 gap → 目标 = 该文件夹的父
-      //   - 落在另一篇笔记上/旁 → 目标 = 那篇笔记所在的文件夹
+      //   - 落在文件夹节点上（!dropToGap，allowDrop 只对已展开的文件夹放行） → 目标 = 该文件夹
+      //   - 落在文件夹之间的 gap（allowDrop 已拦掉根级缝隙） → 目标 = 该文件夹的父
+      //   - 落在另一篇笔记旁（allowDrop 不允许放进笔记里面，只会是其后） → 目标 = 那篇笔记所在的文件夹
       let targetFolderId: number | null;
       let dropNoteId: number | null = null;
       if (isNoteKey(dropKey)) {
@@ -1188,7 +1325,7 @@ export function NotesPanel() {
       } else {
         const dropFolderId = Number(dropKey);
         if (!Number.isFinite(dropFolderId)) return;
-        targetFolderId = info.dropToGap
+        targetFolderId = dropToGap
           ? findFolderParentId(folders, dropFolderId)
           : dropFolderId;
       }
@@ -1222,9 +1359,9 @@ export function NotesPanel() {
         return;
       }
 
-      // 同 folder + dropNode 是文件夹（不是笔记叶子）
-      // → 用户视觉是"拖到笔记列表头部上方的 gap"（子文件夹在前、笔记在后）
-      // → 把 dragNote 插到笔记列表最前
+      // 同 folder + dropNode 是文件夹（不是笔记叶子）：放进自己所在的已展开文件夹顶部，
+      // 或落在它的子文件夹之间 / 最后一个子文件夹之后（子文件夹在前、笔记在后）
+      // → 视觉上都是"笔记列表头部上方"，把 dragNote 插到笔记列表最前
       if (dropNoteId == null) {
         const siblings: Note[] =
           targetFolderId == null
@@ -1260,7 +1397,7 @@ export function NotesPanel() {
         }
         return;
       }
-      // 同 folder + 落在另一笔记叶子上/旁 → 计算精确插入位置
+      // 同 folder + 落在另一笔记叶子之后 → 计算精确插入位置
       if (dropNoteId === noteId) return;
       const dropNote = findNoteById(dropNoteId);
       if (!dropNote) return;
@@ -1287,11 +1424,11 @@ export function NotesPanel() {
       } else {
         const dropIdx = withoutDrag.findIndex((n) => n.id === dropNoteId);
         if (dropIdx < 0) return;
-        // antd Tree 的 dropPosition 相对父级位置；diff 出 dropOffset 判断"落在前/后"
-        const posArr = info.node.pos.split("-");
-        const dropOffset =
-          info.dropPosition - Number(posArr[posArr.length - 1]);
-        insertIdx = dropOffset > 0 ? dropIdx + 1 : dropIdx;
+        // allowDrop 不让笔记放进另一篇笔记「里面」，rc-tree 会退化成「排在它后面」；
+        // 排到某篇之前的视觉位置，rc-tree 报的是「排在上一篇之后」或「放进所在文件夹顶部」，
+        // 所以这里只会是"插到 dropNote 之后"。
+        // （之前 dropToGap=false 被当成"插到它前面"，与指示线差一位）
+        insertIdx = dropIdx + 1;
       }
       const newOrder = [...withoutDrag];
       newOrder.splice(insertIdx, 0, note);
@@ -1325,18 +1462,20 @@ export function NotesPanel() {
       return;
     }
 
-    // 拖动文件夹时：目标若是笔记，忽略
-    if (isNoteKey(dropKey)) return;
+    // 拖动文件夹时：目标是笔记 / 「未分类」都已被 allowDrop 拦下（不显示指示线），这里仅兜底。
+    // 「未分类」不是真实文件夹，Number() 出来是 NaN，放过去会拿 NaN 调 move / reorder。
+    if (isNoteKey(dropKey) || dropKey === UNCATEGORIZED_KEY) return;
 
     const dragId = Number(dragKey);
     const dropId = Number(dropKey);
+    if (!Number.isFinite(dragId) || !Number.isFinite(dropId)) return;
     const currentParentId = findFolderParentId(folders, dragId);
 
     const posArr = info.node.pos.split("-");
     const dropOffset = info.dropPosition - Number(posArr[posArr.length - 1]);
 
     try {
-      if (!info.dropToGap) {
+      if (!dropToGap) {
         if (currentParentId === dropId) {
           const siblings = getChildIds(folders, dropId);
           const withoutDrag = siblings.filter((id) => id !== dragId);
@@ -1515,6 +1654,141 @@ export function NotesPanel() {
         startRename(selectedKey, name);
       }
     }
+  }
+
+  // ─── 同级排序（右键「上移 / 下移 / 移到最前 / 移到最后」）────────
+  // 拖拽之外的精确排序入口：拖拽判定再收紧，也总有手抖的时候，菜单一步到位。
+
+  type SiblingMove = "up" | "down" | "top" | "bottom";
+
+  /** from 在 [lo, hi) 区间内按方向挪动后的下标 */
+  function siblingMoveTarget(from: number, lo: number, hi: number, dir: SiblingMove): number {
+    switch (dir) {
+      case "up":
+        return Math.max(lo, from - 1);
+      case "down":
+        return Math.min(hi - 1, from + 1);
+      case "top":
+        return lo;
+      case "bottom":
+        return hi - 1;
+    }
+  }
+
+  function loadedSiblingNotes(note: Note): Note[] {
+    return note.folder_id == null
+      ? uncategorizedNotes
+      : (notesByFolder.get(note.folder_id) ?? []);
+  }
+
+  /** 笔记在本档（置顶档 / 普通档）里能否上移 / 下移，用于菜单置灰 */
+  function noteMoveBounds(note: Note): { canUp: boolean; canDown: boolean } {
+    const siblings = loadedSiblingNotes(note);
+    const tier = siblings.filter((n) => n.is_pinned === note.is_pinned);
+    const idx = tier.findIndex((n) => n.id === note.id);
+    // 普通档排在最后：文件夹还有没加载出来的笔记时，它们都在已加载的普通笔记之后
+    const folderKey = note.folder_id == null ? UNCATEGORIZED_KEY : String(note.folder_id);
+    const total = folderTotals.get(folderKey) ?? siblings.length;
+    const hasUnloadedAfter = !note.is_pinned && siblings.length < total;
+    return {
+      canUp: idx > 0,
+      canDown: idx >= 0 && (idx < tier.length - 1 || hasUnloadedAfter),
+    };
+  }
+
+  /**
+   * 笔记同级移动。列表恒按 is_pinned DESC 分档，sort_order 只在档内生效
+   * （与 handleDrop 的吸附逻辑同口径），所以只在本档内挪。
+   * 用后端全量 id（不分页）重排：只拿已加载的前 100 篇 reorder 会和未加载的 sort_order 撞车。
+   */
+  async function moveNoteAmongSiblings(note: Note, dir: SiblingMove) {
+    try {
+      const fullIds = await noteApi.listIdsForReorder(
+        note.folder_id == null
+          ? { uncategorized: true, sort_by: "custom" }
+          : { folder_id: note.folder_id, include_descendants: false, sort_by: "custom" },
+      );
+      // 置顶笔记是全量序列的前缀；置顶的都在第一页里，用已加载的数据认出前缀长度
+      const pinnedIds = new Set(
+        loadedSiblingNotes(note).filter((n) => n.is_pinned).map((n) => n.id),
+      );
+      let pinnedCount = 0;
+      while (pinnedCount < fullIds.length && pinnedIds.has(fullIds[pinnedCount])) {
+        pinnedCount++;
+      }
+      const [lo, hi] = note.is_pinned ? [0, pinnedCount] : [pinnedCount, fullIds.length];
+      const from = fullIds.indexOf(note.id);
+      if (from < lo || from >= hi) return;
+      const to = siblingMoveTarget(from, lo, hi, dir);
+      if (to === from) return;
+      const next = [...fullIds];
+      next.splice(from, 1);
+      next.splice(to, 0, note.id);
+      await noteApi.reorder(next);
+      if (note.folder_id == null) {
+        loadingUncategorizedRef.current = false;
+        void loadUncategorizedNotes();
+      } else {
+        loadingNotesRef.current.delete(note.folder_id);
+        void loadNotesForFolder(note.folder_id);
+      }
+      useAppStore.getState().bumpNotesRefresh();
+    } catch (e) {
+      message.error(String(e));
+    }
+  }
+
+  function folderMoveBounds(folderId: number): { canUp: boolean; canDown: boolean } {
+    const siblings = getChildIds(folders, findFolderParentId(folders, folderId));
+    const idx = siblings.indexOf(folderId);
+    return { canUp: idx > 0, canDown: idx >= 0 && idx < siblings.length - 1 };
+  }
+
+  async function moveFolderAmongSiblings(folderId: number, dir: SiblingMove) {
+    const siblings = getChildIds(folders, findFolderParentId(folders, folderId));
+    const from = siblings.indexOf(folderId);
+    if (from < 0) return;
+    const to = siblingMoveTarget(from, 0, siblings.length, dir);
+    if (to === from) return;
+    const next = [...siblings];
+    next.splice(from, 1);
+    next.splice(to, 0, folderId);
+    try {
+      await folderApi.reorder(next);
+      loadFolders();
+      useAppStore.getState().bumpFoldersRefresh();
+    } catch (e) {
+      message.error(String(e));
+    }
+  }
+
+  /** 四个同级排序菜单项；已在顶 / 底的方向置灰 */
+  function siblingMoveEntries(
+    bounds: { canUp: boolean; canDown: boolean },
+    onMove: (dir: SiblingMove) => Promise<void>,
+  ): ContextMenuEntry[] {
+    const item = (
+      key: string,
+      dir: SiblingMove,
+      label: string,
+      icon: React.ReactNode,
+      enabled: boolean,
+    ): ContextMenuEntry => ({
+      key,
+      icon,
+      label,
+      disabled: !enabled,
+      onClick: () => {
+        setContextMenu(null);
+        void onMove(dir);
+      },
+    });
+    return [
+      item("move-up", "up", "上移", <ArrowUp size={14} />, bounds.canUp),
+      item("move-down", "down", "下移", <ArrowDown size={14} />, bounds.canDown),
+      item("move-first", "top", "移到最前", <ArrowUpToLine size={14} />, bounds.canUp),
+      item("move-last", "bottom", "移到最后", <ArrowDownToLine size={14} />, bounds.canDown),
+    ];
   }
 
   // ─── 右键菜单 ─────────────────────────────
@@ -1696,6 +1970,12 @@ export function NotesPanel() {
             }
           },
         },
+        // 同级排序只针对右键的这一篇；多选时语义不明（整批挪？逐个挪？），不展示
+        ...(!inMultiSelect && note
+          ? siblingMoveEntries(noteMoveBounds(note), (dir) =>
+              moveNoteAmongSiblings(note, dir),
+            )
+          : []),
         { type: "divider" },
         {
           key: "soft-delete",
@@ -1861,6 +2141,10 @@ export function NotesPanel() {
           </div>
         ),
       },
+      { type: "divider" },
+      ...siblingMoveEntries(folderMoveBounds(folderId), (dir) =>
+        moveFolderAmongSiblings(folderId, dir),
+      ),
       { type: "divider" },
       {
         key: "rename",
@@ -2103,6 +2387,17 @@ export function NotesPanel() {
       );
     }
 
+    if (isDropHintKey(key)) {
+      return (
+        <span
+          className="truncate"
+          style={{ fontSize: 12, color: token.colorTextTertiary, fontStyle: "italic" }}
+        >
+          {String(node.title ?? "")}
+        </span>
+      );
+    }
+
     if (isMoreKey(key)) {
       const folderKey = key.slice(MORE_NODE_PREFIX.length);
       const listUrl =
@@ -2293,6 +2588,16 @@ export function NotesPanel() {
       showOnlyFolders,
       folderTotals,
     );
+    // 拖拽悬停过的空文件夹挂一个占位子节点（见 DROP_HINT_PREFIX）；
+    // folderTree 是本次新建的对象，可以就地改
+    if (dropHintFolderKey) {
+      const target = findTreeNode(folderTree, dropHintFolderKey);
+      if (target && !target.children?.length) {
+        target.children = [
+          { key: `${DROP_HINT_PREFIX}${dropHintFolderKey}`, title: "松手放入此文件夹", isLeaf: true },
+        ];
+      }
+    }
     // showOnlyFolders 开启时不挂"未分类"——它本质只装笔记，留着是空壳，会让纯文件夹视图变脏。
     // 另外：已加载完且确实为空 → 也隐藏，让侧栏更清爽；只有"未加载"或"非空"才挂上去。
     const hideEmptyUncat = uncategorizedLoaded && uncategorizedNotes.length === 0;
@@ -2319,7 +2624,7 @@ export function NotesPanel() {
       });
     }
     return folderTree;
-  }, [folders, creatingUnderKey, notesByFolder, tabTitleByNoteId, uncategorizedNotes, uncategorizedLoaded, showOnlyFolders, folderTotals]);
+  }, [folders, creatingUnderKey, notesByFolder, tabTitleByNoteId, uncategorizedNotes, uncategorizedLoaded, showOnlyFolders, folderTotals, dropHintFolderKey]);
 
   // 当前 treeData 里所有笔记 key 的「展示顺序」扁平列表，供 Shift 连选按顺序取区间。
   // 含折叠文件夹下未渲染的笔记也无妨：Shift 连选基于逻辑顺序，与是否展开无关。
@@ -2668,6 +2973,13 @@ export function NotesPanel() {
           outlineOffset: -2,
           transition: "outline 0.15s",
         }}
+        onDragOverCapture={(e) => {
+          // 捕获阶段：rc-tree 的 TreeNode 在冒泡阶段 stopPropagation，且落点被拒时不回调
+          if (!treeDraggingRef.current) return;
+          const row = (e.target as HTMLElement).closest?.(".ant-tree-treenode");
+          const k = row?.querySelector("[data-tree-key]")?.getAttribute("data-tree-key");
+          if (k) springLoadHover(k);
+        }}
         onDragOver={(e) => {
           if (!hasOsFiles(e.dataTransfer)) return;
           e.preventDefault();
@@ -2881,6 +3193,7 @@ export function NotesPanel() {
                   },
                 }}
                 onDragStart={({ event, node }) => {
+                  treeDraggingRef.current = true;
                   // 笔记叶子拖出树外（如拖进编辑器正文）时，写入自定义 mime 负载，
                   // 供 TiptapEditor 的 drop 处理识别 → 在落点插入 [[标题|ID]] wiki 链接。
                   // 仅对笔记生效；文件夹拖拽仍是 Tree 内部移动（handleDrop），二者互不干扰。
@@ -2903,46 +3216,18 @@ export function NotesPanel() {
                     // 个别环境 dataTransfer 只读，安静失败，不影响树内拖动
                   }
                 }}
+                allowDrop={allowTreeDrop}
                 onDrop={handleDrop}
-                onDragEnd={cancelHoverExpand}
-                onDragEnter={({ node }) => {
-                  // 拖拽 hover 到折叠文件夹时自动展开，避免用户拖到一半还要先点开。
-                  // 仅对真实文件夹节点生效；笔记叶子 / 新建占位 / 未分类逻辑各自独立处理。
-                  //
-                  // spring-loaded：不立即展开，而是悬停 HOVER_EXPAND_DELAY 才展开。
-                  // 进入新节点 → 重置计时；路过（很快又进别的节点）不会触发展开。
-                  const k = String(node.key);
-                  // 进入的是叶子/占位节点：取消任何待展开计时（路过即取消）
-                  if (k.startsWith(NEW_NODE_PREFIX) || isNoteKey(k)) {
-                    cancelHoverExpand();
-                    return;
-                  }
-                  // 已经在为同一个目标计时，无需重置
-                  if (hoverExpandKeyRef.current === k) return;
-                  // 切到了新目标：清掉上一个计时，重新计时
-                  cancelHoverExpand();
-                  hoverExpandKeyRef.current = k;
-                  hoverExpandTimerRef.current = setTimeout(() => {
-                    hoverExpandTimerRef.current = null;
-                    hoverExpandKeyRef.current = null;
-                    if (k === UNCATEGORIZED_KEY) {
-                      if (!uncategorizedExpanded) {
-                        setUncategorizedExpanded(true);
-                        if (uncategorizedNotes.length === 0) {
-                          void loadUncategorizedNotes();
-                        }
-                      }
-                      return;
-                    }
-                    const id = Number(k);
-                    if (!Number.isFinite(id)) return;
-                    const collapsed = collapsedFolderKeys.includes(k);
-                    if (collapsed) {
-                      useAppStore.getState().setNotesFolderCollapsed(k, false);
-                      if (!notesByFolder.has(id)) void loadNotesForFolder(id);
-                    }
-                  }, HOVER_EXPAND_DELAY);
-                }}
+                onDragEnd={endTreeDrag}
+                // 悬停展开不挂 onDragEnter：rc-tree 在落点被 allowDrop 拒绝时不回调 onDragEnter /
+                // onDragOver，而「未展开文件夹不接受放进里面」恰恰会让悬停折叠文件夹时被拒，
+                // 计时就永远不启动。改由外层容器的 onDragOverCapture 驱动（springLoadHover）。
+                titleRender={(node) => (
+                  // display:contents 不参与布局，只给容器级 dragover 一个找到节点 key 的锚点
+                  <span data-tree-key={String(node.key)} style={{ display: "contents" }}>
+                    {renderTitle(node)}
+                  </span>
+                )}
                 selectedKeys={
                   isUncategorizedActive
                     ? [UNCATEGORIZED_KEY]
@@ -2952,7 +3237,6 @@ export function NotesPanel() {
                 }
                 expandedKeys={expandedKeys}
                 onExpand={handleExpand}
-                titleRender={renderTitle}
                 switcherIcon={({ expanded }) =>
                   expanded ? (
                     <ChevronDown size={11} strokeWidth={2.2} />
