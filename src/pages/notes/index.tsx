@@ -101,6 +101,30 @@ const { Title, Text, Paragraph } = Typography;
 
 type ViewMode = "list" | "card" | "timeline";
 
+/** localStorage：选中文件夹时列表是否连子文件夹的笔记一起列（"all" 默认 = 老行为 / "direct" 仅本级） */
+const FOLDER_SCOPE_KEY = "kb.notes.folderScope";
+type FolderScope = "all" | "direct";
+
+function readFolderScope(): FolderScope {
+  try {
+    return localStorage.getItem(FOLDER_SCOPE_KEY) === "direct" ? "direct" : "all";
+  } catch {
+    return "all";
+  }
+}
+
+/** 在文件夹树里按 id 找节点 */
+function findFolderById(list: Folder[], id: number): Folder | null {
+  for (const f of list) {
+    if (f.id === id) return f;
+    if (f.children?.length) {
+      const found = findFolderById(f.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 /**
  * 从笔记正文取第一张图片并解析成可直接喂 `<img>` 的 URL（卡片缩略图用）。
  * - `kb-asset://` 明文图 → resolveAssetSrc 拼 asset 协议 URL
@@ -716,6 +740,27 @@ function DesktopNoteListPage() {
   // 原始文件夹树，供"目录"列的 Popover 选择器用
   const [folders, setFolders] = useState<Folder[]>([]);
 
+  // 选中某个真实文件夹时才有「含子文件夹 / 仅本级」之分（未分类、全部笔记不递归）
+  const [folderScope, setFolderScope] = useState<FolderScope>(readFolderScope);
+  const realFolderId =
+    folderId && folderId !== "uncategorized" ? Number(folderId) : null;
+  const hasSubfolders = useMemo(() => {
+    if (realFolderId == null) return false;
+    return (findFolderById(folders, realFolderId)?.children?.length ?? 0) > 0;
+  }, [folders, realFolderId]);
+  /** 传给后端的 include_descendants。没有子文件夹时两种口径结果一样，只是不显示切换；
+   *  这里不依赖异步加载的 folders，免得 folders 到达前后各查一次、两次结果乱序覆盖 */
+  const includeDescendants = folderScope === "all";
+
+  function changeFolderScope(next: FolderScope) {
+    setFolderScope(next);
+    try {
+      localStorage.setItem(FOLDER_SCOPE_KEY, next);
+    } catch {
+      // localStorage 不可用只是记不住偏好，不影响本次切换
+    }
+  }
+
   // 卡片缩略图把 kb-asset:// 相对路径拼成 asset URL 需要 data_dir
   const dataDir = useAppStore((s) => s.instanceInfo?.dataDir ?? null);
 
@@ -736,9 +781,21 @@ function DesktopNoteListPage() {
     });
   }, [foldersRefreshTick]);
 
+  // 切「含子文件夹 / 仅本级」与切文件夹同样从第 1 页重拉
   useEffect(() => {
     loadNotes(1);
-  }, [folderId]);
+  }, [folderId, includeDescendants]);
+
+  // 勾选只保留当前可见的笔记：切到「仅本级」后，子文件夹里的已选笔记看不见了，
+  // 留着会被批量移动 / 删除一起带走
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.length === 0) return prev;
+      const visible = new Set(data.items.map((n) => n.id));
+      const next = prev.filter((id) => visible.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [data.items]);
 
   // sortBy 切换时重新拉取（排序由后端决定）
   useEffect(() => {
@@ -780,6 +837,8 @@ function DesktopNoteListPage() {
               ? Number(folderId)
               : undefined,
           uncategorized: isUncategorized || undefined,
+          // 仅对 folder_id 生效（后端未分类不递归）；拖拽排序的 listIdsForReorder 必须同口径
+          include_descendants: includeDescendants,
           // 只 list 视图才让用户切换 sort_by；卡片/时间线沿用默认
           sort_by: viewMode === "list" ? sortBy : undefined,
         });
@@ -790,7 +849,7 @@ function DesktopNoteListPage() {
         setLoading(false);
       }
     },
-    [viewMode, keyword, folderId, listPageSize, sortBy],
+    [viewMode, keyword, folderId, listPageSize, sortBy, includeDescendants],
   );
 
   const handleDelete = useCallback(
@@ -1117,6 +1176,8 @@ function DesktopNoteListPage() {
               ? Number(folderId)
               : undefined,
           uncategorized: isUncategorized || undefined,
+          // 必须与 loadNotes 同口径：可见集合与全量集合不一致时 indexOf 会串位
+          include_descendants: includeDescendants,
           sort_by: sortBy,
         });
         const fullOldIdx = fullIds.indexOf(Number(active.id));
@@ -1136,7 +1197,7 @@ function DesktopNoteListPage() {
         loadNotes(data.page);
       }
     },
-    [data.items, data.page, loadNotes, sortBy, keyword, folderId],
+    [data.items, data.page, loadNotes, sortBy, keyword, folderId, includeDescendants],
   );
 
   // ─── 列表行右键菜单 ──────────────────────────
@@ -1554,6 +1615,18 @@ function DesktopNoteListPage() {
           笔记
         </Title>
         <Space align="center">
+          {/* 选中有子文件夹的文件夹时：切换是否连子文件夹的笔记一起列（方便挑出直属笔记批量移走） */}
+          {realFolderId != null && hasSubfolders && (
+            <Segmented
+              size="small"
+              value={folderScope}
+              onChange={(v) => changeFolderScope(v as FolderScope)}
+              options={[
+                { value: "all", label: "含子文件夹" },
+                { value: "direct", label: "仅本级" },
+              ]}
+            />
+          )}
           <Segmented
             value={viewMode}
             onChange={handleViewChange}
