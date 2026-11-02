@@ -1,14 +1,1 @@
-<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Officia">
-  <defs>
-    <linearGradient id="officiaBg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#5b8cff"/>
-      <stop offset="1" stop-color="#1e57e6"/>
-    </linearGradient>
-  </defs>
-  <rect x="8" y="8" width="104" height="104" rx="26" fill="url(#officiaBg)"/>
-  <circle cx="60" cy="60" r="39" fill="none" stroke="#ffffff" stroke-width="6"/>
-  <path d="M46.5 39 H65 L77 51 V77.5 Q77 81 73.5 81 H46.5 Q43 81 43 77.5 V42.5 Q43 39 46.5 39 Z" fill="#ffffff"/>
-  <path d="M65 39 V51 H77 Z" fill="rgba(0,0,0,.12)"/>
-  <rect x="50" y="58" width="20" height="3.4" rx="1.7" fill="#5b8cff"/>
-  <rect x="50" y="67" width="14.4" height="3.4" rx="1.7" fill="#5b8cff"/>
-</svg>
+<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Officia"><defs><linearGradient id="ofBg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4F95FF"/><stop offset="1" stop-color="#0B6EF0"/></linearGradient></defs><rect x="8" y="8" width="104" height="104" rx="26" fill="url(#ofBg)"/><path d="M35 26H59L74 41V81Q74 86 69 86H35Q30 86 30 81V31Q30 26 35 26Z" fill="#fff"/><path d="M59 26V38Q59 41 62 41H74Z" fill="#0B6EF0" opacity=".18"/><circle cx="79" cy="79" r="17" fill="#04AEF6" stroke="#fff" stroke-width="4"/><path d="M71 79H87M81 73L87 79L81 85" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>
