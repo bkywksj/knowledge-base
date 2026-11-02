@@ -224,7 +224,7 @@ export function RecommendCards() {
           </Text>
           <br />
           <Text type="secondary" style={{ fontSize: 11 }}>
-            零依赖 · 支持 JDK 8 · Office 无损转 PDF + 在线编辑
+            零依赖 · 支持 JDK 8u161+ · Office 无损转 PDF + 在线编辑
           </Text>
         </div>
         <RightOutlined style={{ fontSize: 11, color: "var(--ant-color-text-quaternary)" }} />
@@ -915,13 +915,13 @@ export function RecommendCards() {
             Officia · Java 文档处理套件
           </Title>
           <Paragraph type="secondary" style={{ marginBottom: 12 }}>
-            Word/Excel/PPT ↔ PDF 双向转换、浏览器在线编辑；另含 PDF 加密 · 图像 · 条码 · 邮件 · OCR
+            Word/Excel/PPT ↔ PDF 双向转换、浏览器在线编辑；另含 OFD · PDF 加密 · 图像 · 条码 · 邮件 · OCR
           </Paragraph>
           <div style={{ display: "flex", justifyContent: "center", gap: 24 }}>
             {[
               ["124/124", "Word 样本转换成功"],
-              ["JDK 8+", "仅需 JDK 标准库"],
-              ["8 大", "能力模块门面"],
+              ["JDK 8u161+", "仅需 JDK 标准库"],
+              ["10 大", "能力模块门面"],
             ].map(([num, label]) => (
               <div key={label} style={{ textAlign: "center" }}>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "var(--ant-color-primary)" }}>
@@ -940,7 +940,7 @@ export function RecommendCards() {
             <Tag color="red">无损转 PDF</Tag>
             <Tag color="volcano">PDF 转 Word</Tag>
             <Tag color="green">在线编辑</Tag>
-            <Tag color="orange">JDK 8+</Tag>
+            <Tag color="orange">JDK 8u161+</Tag>
             <Tag color="blue">零依赖</Tag>
             <Tag color="purple">离线授权</Tag>
           </div>
@@ -955,12 +955,12 @@ export function RecommendCards() {
               "Officia.Editor 在浏览器里直接编辑 Word / Excel，不用另外部署 Document Server；PDF 转 Word 流式还原表格、跨页续表与多栏",
             ],
             [
-              "零依赖 · JDK 8 起",
-              "只依赖 JDK 标准库，引入不带任何传递依赖；JDK 8 即可运行，老项目也能直接接入，避开 POI + iText 那套依赖冲突与体积膨胀",
+              "零依赖 · JDK 8u161 起",
+              "只依赖 JDK 标准库，引入不带任何传递依赖；JDK 8u161 起即可运行，老项目也能直接接入，避开 POI + iText 那套依赖冲突与体积膨胀",
             ],
             [
               "对齐 Aspose · 洁净室自研",
-              "OfficiaWords.toPdf(docx) 一行出 PDF；Words / Cells / Slides / Pdf / Email / Imaging / BarCode / OCR 八大门面；只依据公开规范实现，可闭源商用，officia.lic 离线验签、不联网不锁机器",
+              "OfficiaWords.toPdf(docx) 一行出 PDF；Words / Cells / Slides / Pdf / Ofd / Email / Imaging / BarCode / OCR / Editor 十大门面；只依据公开规范实现，可闭源商用，officia.lic 离线验签、不联网不锁机器",
             ],
           ].map(([title, desc]) => (
             <div
