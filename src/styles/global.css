@@ -5600,3 +5600,37 @@ body.sidebar-resizing .kb-panel-resizer {
   gap: 8px;
   margin-top: 12px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 AI 问答 · 会话列表（T3-11a）—— 原型 .conv-list：分组小标题、行 = 标题 + 时间，选中白底细描边
+   ═══════════════════════════════════════════════════════════ */
+.kb-conv-group {
+  padding: 12px 10px 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--kb-text-tertiary);
+}
+.kb-conv-item {
+  margin-bottom: 2px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  color: var(--kb-text-primary);
+  transition: background-color 0.12s ease;
+}
+.kb-conv-item:hover {
+  background: var(--kb-bg-hover);
+}
+.kb-conv-item.is-active {
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+}
+.kb-conv-item.is-active .text-sm {
+  color: var(--kb-primary);
+  font-weight: 600;
+}
+.kb-ai-convs {
+  padding-top: 6px;
+  background: var(--kb-bg-panel);
+  border-right: 1px solid var(--kb-border);
+}

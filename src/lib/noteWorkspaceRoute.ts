@@ -36,7 +36,7 @@ export function isNoteWorkspacePath(pathname: string): boolean {
  * 当前路由是否是「撑满型」页面 —— 页面根节点用 `.editor-page`
  * （`position:absolute; inset:0`）铺满整个 Content。
  *
- * 目前四处（v4 起加了 `/graph` 知识图谱，画布要贴满纸张）：`/daily`（日记）、`/notes/:id`（笔记编辑器）、`/whiteboard/:id`（白板，v4 起
+ * 目前五处（v4 起加了 `/graph` 知识图谱、`/ai` AI 问答，要贴满纸张）：`/daily`（日记）、`/notes/:id`（笔记编辑器）、`/whiteboard/:id`（白板，v4 起
  * 根节点也是 `.editor-page`，顶栏要贴满纸张；画布由 Excalidraw 自己处理滚动 / 平移）。
  *
  * 为什么需要单独判定：Content 上挂了 `scrollbar-gutter: stable both-edges`，
@@ -57,6 +57,7 @@ export function isFullBleedPath(pathname: string): boolean {
     pathname === "/daily" ||
     pathname.startsWith("/notes/") ||
     pathname.startsWith("/whiteboard/") ||
-    pathname === "/graph"
+    pathname === "/graph" ||
+    pathname === "/ai"
   );
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   Button,
   Input,
@@ -20,7 +20,7 @@ import {
   Trash2,
   StopCircle,
   BookOpen,
-  MessageSquare,
+  Search,
   MoreHorizontal,
   Edit3,
   Wrench,
@@ -147,6 +147,8 @@ function showAiError(err: unknown) {
 }
 
 function DesktopAiChatPage() {
+  /** 会话列表的搜索词（只按标题过滤） */
+  const [convKw, setConvKw] = useState("");
   const { token } = antdTheme.useToken();
   const navigate = useNavigate();
   const location = useLocation();
@@ -891,23 +893,39 @@ function DesktopAiChatPage() {
 
   const activeConv = conversations.find((c) => c.id === activeConvId);
 
+  // ─── 会话列表：搜索 + 分组（v4 原型 .conv-list）────────────
+  // 搜索只按标题在前端过滤；分组按最后活动时间（updated_at）落到 今天 / 本周 / 更早
+  const convKwTrim = convKw.trim().toLowerCase();
+  const convGroups = (() => {
+    const list = convKwTrim
+      ? conversations.filter((c) => c.title.toLowerCase().includes(convKwTrim))
+      : conversations;
+    const now = new Date();
+    const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startWeek = startToday - 6 * 86400000;
+    const groups: { label: string; items: typeof conversations }[] = [
+      { label: "今天", items: [] },
+      { label: "本周", items: [] },
+      { label: "更早", items: [] },
+    ];
+    for (const c of list) {
+      const t = new Date(c.updated_at.replace(" ", "T")).getTime();
+      groups[t >= startToday ? 0 : t >= startWeek ? 1 : 2].items.push(c);
+    }
+    return groups.filter((g) => g.items.length > 0);
+  })();
+
   return (
     // kb-surface 挂在最外层：整页是「会话列表 + 顶栏/消息区/输入区」四块拼的，
     // 四块各自当独立玻璃面板会拼出硬接缝、且半透明叠加把不透明度乘上去。
     // 外层统一承载底色，内部四块走 kb-surface-clear 透明化。
     // borderRadius 让它在 Content 的 24px 留白里收成一张卡片，
     // 跟笔记列表（同样 borderRadius: 8）口径一致，不再是贴边的硬矩形。
-    <div
-      className="flex h-full kb-surface"
-      style={{ overflow: "hidden", borderRadius: 8 }}
-    >
+    // v4：撑满纸张（同编辑页 / 图谱），左侧会话列表贴边做成面板底色，右侧聊天区是纸张白
+    <div className="editor-page kb-ai-page" style={{ flexDirection: "row", overflow: "hidden" }}>
       {/* 左侧对话列表 */}
       <div
-        className="w-60 shrink-0 flex flex-col h-full kb-surface-clear"
-        style={{
-          borderRight: `1px solid ${token.colorBorderSecondary}`,
-          background: token.colorBgContainer,
-        }}
+        className="w-64 shrink-0 flex flex-col h-full kb-ai-convs"
       >
         <div className="p-3 shrink-0 flex items-center gap-2">
           <Button
@@ -948,17 +966,30 @@ function DesktopAiChatPage() {
             </Tooltip>
           </Dropdown>
         </div>
+        {/* 搜索会话（新增）：只按标题过滤 */}
+        <div className="px-3 pb-2 shrink-0">
+          <Input
+            allowClear
+            prefix={<Search size={14} />}
+            placeholder="搜索会话"
+            value={convKw}
+            onChange={(e) => setConvKw(e.target.value)}
+          />
+        </div>
 
         <div className="flex-1 overflow-auto px-2 pb-2">
-          {conversations.length === 0 ? (
+          {convGroups.length === 0 ? (
             <div
               className="text-center py-8 text-xs"
               style={{ color: token.colorTextQuaternary }}
             >
-              暂无对话
+              {conversations.length === 0 ? "暂无对话" : "没有匹配的会话"}
             </div>
           ) : (
-            conversations.map((conv) => {
+            convGroups.map((g) => (
+              <Fragment key={g.label}>
+              <div className="kb-conv-group">{g.label}</div>
+              {g.items.map((conv) => {
               const isActive = activeConvId === conv.id;
               // 同一组卡片操作复用给两处 trigger：右键整条 + 点击 MoreHorizontal
               // 阻止 e.domEvent 冒泡，避免触发 div 的 onClick 切换会话
@@ -991,29 +1022,13 @@ function DesktopAiChatPage() {
                 trigger={["contextMenu"]}
               >
               <div
-                className="ai-conv-item flex items-center gap-2 px-3 py-2 cursor-pointer group mb-1"
-                style={{
-                  background: isActive ? token.colorPrimaryBg : "transparent",
-                  color: token.colorText,
-                  borderRadius: 10,
-                  transition: "background 0.15s ease",
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive) {
-                    (e.currentTarget as HTMLDivElement).style.background = token.colorFillTertiary;
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive) {
-                    (e.currentTarget as HTMLDivElement).style.background = "transparent";
-                  }
-                }}
+                // v4 原型：选中白底细描边 + 标题主色加粗（样式见 global.css .kb-conv-item）
+                className={
+                  "ai-conv-item kb-conv-item flex items-center gap-2 cursor-pointer group" +
+                  (isActive ? " is-active" : "")
+                }
                 onClick={() => setActiveConvId(conv.id)}
               >
-                <MessageSquare
-                  size={14}
-                  style={{ flexShrink: 0, color: token.colorTextSecondary }}
-                />
                 <div className="flex-1 min-w-0">
                   {editingConvId === conv.id ? (
                     // 重命名输入框：Enter / 失焦提交；Esc 放弃；点击不冒泡到 div 切换会话
@@ -1082,7 +1097,9 @@ function DesktopAiChatPage() {
               </div>
               </Dropdown>
               );
-            })
+            })}
+              </Fragment>
+            ))
           )}
         </div>
       </div>
