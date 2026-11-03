@@ -56,6 +56,8 @@ describe("撑满型页面判定：Content 要不要留 scrollbar-gutter", () => 
     expect(isFullBleedPath("/notes/12345")).toBe(true);
     // v4：白板根节点改成 .editor-page，顶栏贴满纸张
     expect(isFullBleedPath("/whiteboard/7")).toBe(true);
+    // v4：知识图谱画布贴满纸张
+    expect(isFullBleedPath("/graph")).toBe(true);
   });
 
   it("🔴 /notes 列表页不算 —— 它内容在 Content 里流动，去掉 gutter 会让整页横向抖", () => {
@@ -68,7 +70,6 @@ describe("撑满型页面判定：Content 要不要留 scrollbar-gutter", () => 
       "/tasks",
       "/settings",
       "/about",
-      "/graph",
       "/ai",
       "/tags",
       "/trash",

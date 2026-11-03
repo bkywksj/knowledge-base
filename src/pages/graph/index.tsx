@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Spin, Empty, theme as antdTheme, Segmented, Tooltip } from "antd";
+import { Spin, Empty, theme as antdTheme, Segmented, Button, Input, AutoComplete } from "antd";
 import {
   Maximize2,
-  Minimize2,
   RotateCcw,
   ExternalLink,
   Crosshair,
+  Search,
 } from "lucide-react";
 import { Graph } from "@antv/g6";
 import { linkApi } from "@/lib/api";
@@ -17,6 +17,26 @@ import {
   type ContextMenuEntry,
 } from "@/components/ui/ContextMenuOverlay";
 
+/** 节点种类（决定颜色 / 大小 / 标签权重），与图例一一对应 */
+type NodeKind = "normal" | "hot" | "daily" | "pinned" | "folder";
+/** 链接数超过它算「热门笔记」 */
+const HOT_LINKS = 3;
+const LEGEND: { key: NodeKind; label: string }[] = [
+  { key: "normal", label: "普通笔记" },
+  { key: "hot", label: "热门笔记" },
+  { key: "daily", label: "日记" },
+  { key: "pinned", label: "置顶笔记" },
+  { key: "folder", label: "文件夹" },
+];
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function kindOf(d: any): NodeKind {
+  if (d?.nodeType === "folder") return "folder";
+  if (d?.isPinned) return "pinned";
+  if (d?.isDaily) return "daily";
+  if ((d?.linkCount || 0) > HOT_LINKS) return "hot";
+  return "normal";
+}
+
 export default function GraphPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<Graph | null>(null);
@@ -26,6 +46,24 @@ export default function GraphPage() {
   const [loading, setLoading] = useState(true);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [layout, setLayout] = useState<string>("d3-force");
+  /** 当前选中的节点（G6 id，带 n/f 前缀）→ 右上角节点卡片 */
+  const [selectedGid, setSelectedGid] = useState<string | null>(null);
+  const [locateText, setLocateText] = useState("");
+
+  /**
+   * 原型配色（v4）：普通笔记 = 主色半透明、热门 = 主色 + 光晕、日记 = 蓝、置顶 = 琥珀、文件夹 = 绿。
+   * 日记蓝主题里没有现成令牌（colorInfo 跟主色一样），单独给一个两套主题都看得清的蓝。
+   */
+  const palette: Record<NodeKind, string> = useMemo(
+    () => ({
+      normal: token.colorPrimary,
+      hot: token.colorPrimary,
+      daily: "#7A9CE6",
+      pinned: token.colorWarning,
+      folder: token.colorSuccess,
+    }),
+    [token],
+  );
 
   // ─── 节点右键菜单 ────────────────────────────
   // gid = G6 节点 id（带 n/f 前缀）；realId = 数据库真实 id；nodeType 决定菜单项
@@ -147,60 +185,68 @@ export default function GraphPage() {
       },
       data: { nodes, edges },
       node: {
-        // 文件夹用方形（rect）、笔记用圆形（circle）——形状先于颜色区分两类节点
-        type: (d: any) => (d.data?.nodeType === "folder" ? "rect" : "circle"),
+        // v4 原型：全部圆形，靠颜色区分（文件夹绿、日记蓝、置顶琥珀、热门深紫带光晕）
+        type: "circle",
         style: {
           size: (d: any) => {
-            // 文件夹固定尺寸；笔记按链接数放大
-            if (d.data?.nodeType === "folder") return 30;
+            const k = kindOf(d.data);
+            if (k === "folder") return 26;
+            // 笔记按链接数放大
             const linkCount = d.data?.linkCount || 0;
-            return Math.max(20, Math.min(52, 20 + linkCount * 6));
+            return Math.max(12, Math.min(44, 12 + linkCount * 5));
           },
           fill: (d: any) => {
-            // 文件夹优先用自定义颜色，否则中性填充
-            if (d.data?.nodeType === "folder")
-              return d.data?.folderColor || token.colorFillSecondary;
-            if (d.data?.isDaily) return token.colorWarning;
-            if (d.data?.isPinned) return token.colorError;
-            if ((d.data?.linkCount || 0) > 3) return token.colorPrimary;
-            return token.colorPrimaryBg;
+            const k = kindOf(d.data);
+            // 文件夹自定义颜色仍然优先
+            if (k === "folder") return d.data?.folderColor || palette.folder;
+            return palette[k];
           },
-          stroke: (d: any) => {
-            if (d.data?.nodeType === "folder")
-              return d.data?.folderColor || token.colorBorder;
-            if (d.data?.isDaily) return token.colorWarningBorder;
-            if (d.data?.isPinned) return token.colorErrorBorder;
-            return token.colorPrimaryBorder;
-          },
-          // 文件夹方块加圆角；圆形节点 radius 无副作用
-          radius: (d: any) => (d.data?.nodeType === "folder" ? 6 : 0),
-          lineWidth: 2,
+          fillOpacity: (d: any) => (kindOf(d.data) === "normal" ? 0.55 : 1),
+          lineWidth: 0,
+          // 热门笔记一圈柔光（原型里的「热门」）
+          halo: (d: any) => kindOf(d.data) === "hot",
+          haloFill: palette.hot,
+          haloStroke: palette.hot,
+          haloLineWidth: 16,
+          haloStrokeOpacity: 0.16,
           labelText: (d: any) => {
             const raw = d.data?.label || "";
-            const label = d.data?.nodeType === "folder" ? `📁 ${raw}` : raw;
-            return label.length > 12 ? label.slice(0, 12) + "..." : label;
+            return raw.length > 12 ? raw.slice(0, 12) + "..." : raw;
           },
-          labelFontSize: 13,
-          labelFontWeight: (d: any) =>
-            d.data?.nodeType === "folder" ? 600 : 500,
-          labelFill: token.colorText,
+          // 标签不隐藏，只分轻重：文件夹 / 热门 / 置顶 / 日记 醒目，普通笔记小号浅色，减轻拥挤
+          labelFontSize: (d: any) => (kindOf(d.data) === "normal" ? 11 : 13),
+          labelFontWeight: (d: any) => (kindOf(d.data) === "normal" ? 400 : 600),
+          labelFill: (d: any) =>
+            kindOf(d.data) === "normal" ? token.colorTextTertiary : token.colorText,
           labelPlacement: "bottom",
-          labelOffsetY: 6,
+          labelOffsetY: 4,
+        },
+        // 选中态：主色描边 + 柔光（G6 默认是粗黑圈，和主题不搭）
+        state: {
+          selected: {
+            stroke: token.colorPrimary,
+            lineWidth: 3,
+            halo: true,
+            haloStroke: token.colorPrimary,
+            haloLineWidth: 14,
+            haloStrokeOpacity: 0.22,
+            labelFontWeight: 700,
+            labelFill: token.colorText,
+          },
         },
       },
       edge: {
         style: {
           // wiki 双链：实线带箭头、主题色；层级边：浅色虚线无箭头
+          // wiki 双链：主色实线 + 小箭头（箭头表示链接方向，保留）；文件夹归属：绿色虚线（原型）
           stroke: (d: any) =>
-            d.data?.edgeType === "link"
-              ? token.colorPrimary
-              : token.colorTextQuaternary,
-          strokeOpacity: (d: any) => (d.data?.edgeType === "link" ? 0.45 : 0.7),
-          lineWidth: (d: any) => (d.data?.edgeType === "link" ? 1.5 : 1),
+            d.data?.edgeType === "link" ? token.colorPrimary : palette.folder,
+          strokeOpacity: (d: any) => (d.data?.edgeType === "link" ? 0.35 : 0.75),
+          lineWidth: (d: any) => (d.data?.edgeType === "link" ? 1.2 : 1.2),
           lineDash: (d: any) =>
-            d.data?.edgeType === "link" ? undefined : [4, 4],
+            d.data?.edgeType === "link" ? undefined : [5, 4],
           endArrow: (d: any) => d.data?.edgeType === "link",
-          endArrowSize: 8,
+          endArrowSize: 6,
           endArrowFill: token.colorPrimary,
         },
       },
@@ -240,8 +286,18 @@ export default function GraphPage() {
       );
       if (node && node.node_type === "note") {
         navigate(`/notes/${node.id}`);
+      } else if (node) {
+        // 文件夹节点：双击打开该文件夹的笔记列表（原来忽略）
+        navigate(`/notes?folder=${node.id}`);
       }
     });
+
+    // 单击节点 → 右上角节点卡片；点画布空白 → 收起
+    graph.on("node:click", (evt: any) => {
+      const gid = String(evt.target?.id ?? "");
+      if (gid) setSelectedGid(gid);
+    });
+    graph.on("canvas:click", () => setSelectedGid(null));
 
     // 节点右键弹自定义菜单
     graph.on("node:contextmenu", (evt: any) => {
@@ -270,13 +326,111 @@ export default function GraphPage() {
 
     graphRef.current = graph;
 
+    // 画布跟着容器尺寸走：G6 只在创建时量一次容器（首帧可能还没撑开 → 只画了上半截），
+    // autoResize 又只听窗口 resize，拖侧栏 / 首帧布局变化都漏掉，这里直接盯容器
+    const host = containerRef.current;
+    const ro = new ResizeObserver(() => {
+      const g = graphRef.current;
+      if (!g || !host) return;
+      const { clientWidth: w, clientHeight: h } = host;
+      if (w > 0 && h > 0) g.resize(w, h);
+    });
+    ro.observe(host);
+    // 换布局 / 刷新会重建画布，旧的选中态已不存在，卡片一起收起
+    setSelectedGid(null);
+
     return () => {
+      ro.disconnect();
       if (graphRef.current) {
         graphRef.current.destroy();
         graphRef.current = null;
       }
     };
-  }, [graphData, layout, token]);
+  }, [graphData, layout, token, palette]);
+
+  /** 定位：放大到看得清（缩得太小时回到 100%）+ 平移到节点 + 设为选中 + 打开卡片 */
+  async function locate(gid: string) {
+    const graph = graphRef.current;
+    if (!graph) return;
+    try {
+      // 先清掉其它节点的选中态，再选中目标
+      for (const n of graph.getElementDataByState("node", "selected")) {
+        graph.setElementState(String(n.id), []);
+      }
+      graph.setElementState(gid, "selected");
+      // 「适应画布」后整张图可能缩得只剩小点，光平移找不到节点在哪
+      if (graph.getZoom() < 1) await graph.zoomTo(1, false);
+      await graph.focusElement(gid);
+    } catch {
+      graph.fitCenter();
+    }
+    setSelectedGid(gid);
+  }
+
+  /** 「定位节点」下拉：按标题模糊匹配，最多 20 条 */
+  const locateOptions = useMemo(() => {
+    const kw = locateText.trim().toLowerCase();
+    if (!graphData || !kw) return [];
+    return graphData.nodes
+      .filter((n) => n.title.toLowerCase().includes(kw))
+      .slice(0, 20)
+      .map((n) => ({
+        value: (n.node_type === "folder" ? "f" : "n") + n.id,
+        label: (n.node_type === "folder" ? "📁 " : "") + n.title,
+      }));
+  }, [graphData, locateText]);
+
+  /** 节点卡片内容：标题 · 所在文件夹路径（从图里的归属边推）· 链接数 · 类型 */
+  const selectedInfo = useMemo(() => {
+    if (!graphData || !selectedGid) return null;
+    const isFolder = selectedGid.startsWith("f");
+    const realId = Number(selectedGid.slice(1));
+    const node = graphData.nodes.find(
+      (n) => n.id === realId && n.node_type === (isFolder ? "folder" : "note"),
+    );
+    if (!node) return null;
+    const folderName = new Map(
+      graphData.nodes.filter((n) => n.node_type === "folder").map((n) => [n.id, n.title]),
+    );
+    // 父文件夹：folder_child 边 source=父 target=子；笔记所在文件夹：folder_note 边 source=文件夹 target=笔记
+    const parentOfFolder = new Map<number, number>();
+    const folderOfNote = new Map<number, number>();
+    for (const e of graphData.edges) {
+      if (e.edge_type === "folder_child") parentOfFolder.set(e.target, e.source);
+      else if (e.edge_type === "folder_note") folderOfNote.set(e.target, e.source);
+    }
+    const chain: string[] = [];
+    let cur = isFolder ? parentOfFolder.get(realId) : folderOfNote.get(realId);
+    const seen = new Set<number>();
+    while (cur != null && !seen.has(cur)) {
+      seen.add(cur);
+      chain.unshift(folderName.get(cur) ?? "");
+      cur = parentOfFolder.get(cur);
+    }
+    const parts: string[] = [chain.length ? chain.join(" / ") : isFolder ? "顶层文件夹" : "未分类"];
+    if (isFolder) {
+      const count = graphData.edges.filter(
+        (e) => e.edge_type === "folder_note" && e.source === realId,
+      ).length;
+      parts.push(`${count} 篇笔记`);
+    } else {
+      parts.push(`${node.link_count} 条链接`);
+      const k = kindOf({
+        nodeType: "note",
+        isPinned: node.is_pinned,
+        isDaily: node.is_daily,
+        linkCount: node.link_count,
+      });
+      parts.push(LEGEND.find((l) => l.key === k)?.label ?? "");
+    }
+    return {
+      gid: selectedGid,
+      realId,
+      nodeType: node.node_type,
+      title: node.title,
+      meta: parts.filter(Boolean).join(" · "),
+    };
+  }, [graphData, selectedGid]);
 
   function handleFitView() {
     graphRef.current?.fitView();
@@ -307,36 +461,17 @@ export default function GraphPage() {
   }
 
   return (
+    // v4：撑满纸张（同编辑页 / 白板），顶栏一行 + 画布；图例、节点卡片浮在画布上
     <div
-      className="flex flex-col h-full"
+      className="editor-page"
       // 顶层兜底：节点右键由 G6 监听并自管 preventDefault；其他位置（画布空白 /
-      // 工具栏 / 图例）右键不弹 WebView 默认菜单。本页无 input
+      // 工具栏 / 图例）右键不弹 WebView 默认菜单
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* 顶部工具栏 */}
-      <div
-        className="flex items-center justify-between px-4 py-2 shrink-0 kb-surface"
-        style={{
-          borderBottom: `1px solid ${token.colorBorderSecondary}`,
-          background: token.colorBgContainer,
-        }}
-      >
-        <div className="flex items-center gap-3">
-          <span
-            className="font-semibold text-base"
-            style={{ color: token.colorText }}
-          >
-            知识图谱
-          </span>
-          <span
-            className="text-xs"
-            style={{ color: token.colorTextSecondary }}
-          >
-            {graphData.nodes.length} 个节点 / {graphData.edges.length} 条连线
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2">
+      {/* 顶栏（原型 .bar）：知识图谱 · 布局 · 说明 ｜ 定位节点 · 适应画布 · 居中 · 刷新数据 */}
+      <div className="editor-topbar kb-ebar kb-graph-bar">
+        <div className="kb-ebar-left">
+          <span className="kb-graph-title">知识图谱</span>
           <Segmented
             size="small"
             value={layout}
@@ -348,93 +483,80 @@ export default function GraphPage() {
             ]}
             onChange={(v) => setLayout(v as string)}
           />
-
-          <div className="flex items-center gap-1 ml-2">
-            <Tooltip title="适应画布">
-              <button
-                className="p-1.5 rounded hover:bg-black/5 transition-colors"
-                onClick={handleFitView}
-              >
-                <Maximize2 size={14} />
-              </button>
-            </Tooltip>
-            <Tooltip title="居中">
-              <button
-                className="p-1.5 rounded hover:bg-black/5 transition-colors"
-                onClick={handleFitCenter}
-              >
-                <Minimize2 size={14} />
-              </button>
-            </Tooltip>
-            <Tooltip title="刷新数据">
-              <button
-                className="p-1.5 rounded hover:bg-black/5 transition-colors"
-                onClick={handleRefresh}
-              >
-                <RotateCcw size={14} />
-              </button>
-            </Tooltip>
-          </div>
+          <span className="kb-graph-hint">
+            {graphData.nodes.length} 个节点 · {graphData.edges.length} 条连线 · 单击看详情 · 双击打开 · 虚线为文件夹归属
+          </span>
+        </div>
+        <div className="kb-ebar-right">
+          {/* 定位节点（新增）：按标题找节点 → 平移过去 + 选中 + 弹节点卡片 */}
+          <AutoComplete
+            className="kb-graph-locate"
+            value={locateText}
+            options={locateOptions}
+            onSearch={setLocateText}
+            onChange={setLocateText}
+            onSelect={(gid: string) => {
+              setLocateText("");
+              void locate(gid);
+            }}
+          >
+            <Input allowClear prefix={<Search size={14} />} placeholder="定位节点" />
+          </AutoComplete>
+          <Button icon={<Maximize2 size={14} />} onClick={handleFitView}>
+            适应画布
+          </Button>
+          <Button icon={<Crosshair size={14} />} onClick={handleFitCenter}>
+            居中
+          </Button>
+          <Button icon={<RotateCcw size={14} />} onClick={handleRefresh}>
+            刷新数据
+          </Button>
         </div>
       </div>
 
-      {/* 图例 */}
-      <div
-        className="flex items-center gap-4 px-4 py-1.5 text-xs shrink-0"
-        style={{
-          borderBottom: `1px solid ${token.colorBorderSecondary}`,
-          color: token.colorTextSecondary,
-        }}
-      >
-        <span className="flex items-center gap-1">
-          <span
-            className="inline-block w-2.5 h-2.5 rounded-full"
-            style={{ background: token.colorPrimaryBg }}
-          />
-          普通笔记
-        </span>
-        <span className="flex items-center gap-1">
-          <span
-            className="inline-block w-2.5 h-2.5 rounded-full"
-            style={{ background: token.colorPrimary }}
-          />
-          热门笔记
-        </span>
-        <span className="flex items-center gap-1">
-          <span
-            className="inline-block w-2.5 h-2.5 rounded-full"
-            style={{ background: token.colorWarning }}
-          />
-          日记
-        </span>
-        <span className="flex items-center gap-1">
-          <span
-            className="inline-block w-2.5 h-2.5 rounded-full"
-            style={{ background: token.colorError }}
-          />
-          置顶笔记
-        </span>
-        <span className="flex items-center gap-1">
-          <span
-            className="inline-block w-2.5 h-2.5 rounded-sm"
-            style={{
-              background: token.colorFillSecondary,
-              border: `1px solid ${token.colorBorder}`,
-            }}
-          />
-          文件夹
-        </span>
-        <span style={{ marginLeft: "auto" }}>
-          双击笔记打开 · 虚线为文件夹归属
-        </span>
-      </div>
+      {/* 画布 + 浮层 */}
+      <div className="kb-graph-stage">
+        <div ref={containerRef} className="kb-graph-canvas" />
 
-      {/* 图谱画布 */}
-      <div
-        ref={containerRef}
-        className="flex-1"
-        style={{ minHeight: 0, background: token.colorBgLayout }}
-      />
+        {/* 图例（原型 .legend）：颜色与节点配色一一对应 */}
+        <div className="kb-graph-legend">
+          {LEGEND.map((l) => (
+            <span key={l.label}>
+              <i style={{ background: palette[l.key], opacity: l.key === "normal" ? 0.55 : 1 }} />
+              {l.label}
+            </span>
+          ))}
+        </div>
+
+        {/* 节点卡片（新增）：单击节点出现，点画布空白关闭 */}
+        {selectedInfo && (
+          <div className="kb-graph-card">
+            <div className="kb-graph-card-title" title={selectedInfo.title}>
+              {selectedInfo.title || "未命名"}
+            </div>
+            <div className="kb-graph-card-meta">{selectedInfo.meta}</div>
+            <div className="kb-graph-card-actions">
+              <Button
+                type="primary"
+                size="small"
+                icon={<ExternalLink size={13} />}
+                onClick={() =>
+                  navigate(
+                    selectedInfo.nodeType === "note"
+                      ? `/notes/${selectedInfo.realId}`
+                      : `/notes?folder=${selectedInfo.realId}`,
+                  )
+                }
+              >
+                {selectedInfo.nodeType === "note" ? "打开笔记" : "打开文件夹"}
+              </Button>
+              <Button size="small" icon={<Crosshair size={13} />} onClick={() => void locate(selectedInfo.gid)}>
+                居中此节点
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
 
       <ContextMenuOverlay
         open={!!ctx.state.payload}

@@ -5510,3 +5510,93 @@ body.sidebar-resizing .kb-panel-resizer {
   text-align: center;
   color: var(--kb-text-tertiary);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 知识图谱（T3-10）—— 原型 .bar / .legend / .gcard：顶栏一行、画布贴满、图例与节点卡片浮在画布上
+   ═══════════════════════════════════════════════════════════ */
+.kb-graph-bar .kb-ebar-left {
+  gap: 12px;
+}
+.kb-graph-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--kb-text-primary);
+  white-space: nowrap;
+}
+.kb-graph-hint {
+  font-size: 12.5px;
+  color: var(--kb-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-graph-bar .kb-ebar-right {
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+.kb-graph-locate {
+  width: 220px;
+}
+.kb-graph-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+/* 不能用 absolute + inset：G6 会往容器上写内联 position:relative 把它冲掉，容器高度就退成画布默认 480 */
+.kb-graph-canvas {
+  width: 100%;
+  height: 100%;
+}
+.kb-graph-legend {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: 0 0 0 1px var(--kb-border), 0 4px 14px rgba(0, 0, 0, 0.05);
+  font-size: 12.5px;
+  color: var(--kb-text-secondary);
+  pointer-events: none;
+}
+.kb-graph-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.kb-graph-legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.kb-graph-card {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 290px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: 0 0 0 1px var(--kb-border), 0 10px 30px rgba(0, 0, 0, 0.08);
+}
+.kb-graph-card-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--kb-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-graph-card-meta {
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--kb-text-tertiary);
+}
+.kb-graph-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
