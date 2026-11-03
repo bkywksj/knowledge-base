@@ -5634,3 +5634,237 @@ body.sidebar-resizing .kb-panel-resizer {
   background: var(--kb-bg-panel);
   border-right: 1px solid var(--kb-border);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 AI 问答 · 顶栏 / 消息区 / 回答卡片（T3-11b）—— 原型 .bar / .msgs / .turn / .refs
+   ═══════════════════════════════════════════════════════════ */
+.kb-ai-bar .kb-ebar-left,
+.kb-ai-bar > div:first-child {
+  gap: 10px;
+}
+.kb-ai-title {
+  min-width: 0;
+  max-width: 38%;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--kb-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 胶囊下拉（模型 / 角色） */
+.kb-pill-select.ant-select .ant-select-selector,
+.kb-pill-select.ant-select {
+  border-radius: 999px !important;
+}
+.kb-pill-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ant-color-success);
+}
+/* 消息区：纸张白，内容居中一列 */
+.kb-ai-thread {
+  background: transparent;
+}
+.kb-ai-thread-inner {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 20px 24px 16px;
+}
+.kb-user-bubble {
+  padding: 10px 16px;
+  border-radius: 14px 14px 4px 14px;
+  background: var(--kb-grad, var(--kb-primary));
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.6;
+  box-shadow: 0 6px 18px -8px color-mix(in srgb, var(--kb-primary) 60%, transparent);
+}
+/* 回答卡片 */
+.kb-turn {
+  border-radius: 14px;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: 0 4px 18px -10px rgba(40, 30, 90, 0.18);
+}
+.kb-turn-head {
+  background: color-mix(in srgb, var(--kb-primary) 4%, transparent);
+  border-bottom: 1px solid var(--kb-border);
+}
+.kb-turn-ico {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 7px;
+  color: #fff;
+  background: var(--kb-grad, var(--kb-primary));
+}
+.kb-turn-refs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 16px 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--kb-border);
+}
+.kb-turn-sub {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--kb-text-tertiary);
+}
+/* 出处编号卡片 */
+.kb-refs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+.kb-ref {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 10px;
+  background: var(--kb-primary-light);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.kb-ref:hover {
+  background: color-mix(in srgb, var(--kb-primary) 16%, transparent);
+}
+.kb-ref-no {
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--kb-primary);
+  background: var(--kb-bg-raised, #fff);
+}
+.kb-ref-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.kb-ref-main > b {
+  font-size: 13px;
+  color: var(--kb-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-ref-main > span {
+  font-size: 12px;
+  color: var(--kb-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 复用 .editor-topbar 的外观，但不要它的 sticky top:40px（那是编辑页的，放在这里会把顶栏往下推出一条空白） */
+.editor-topbar.kb-ai-bar {
+  position: relative;
+  top: 0;
+  flex-shrink: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   v4 AI 问答 · 输入区（T3-11c）—— 原型 .composer：大圆角卡片、顶部小标签、底栏带文字按钮 + 圆形发送
+   ═══════════════════════════════════════════════════════════ */
+.kb-composer-wrap {
+  flex-shrink: 0;
+  width: 100%;
+  max-width: 1028px;
+  margin: 0 auto;
+  padding: 8px 24px 18px;
+}
+.kb-composer {
+  padding: 10px 12px 8px;
+  border-radius: 16px;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: inset 0 0 0 1px var(--kb-border), 0 8px 24px -14px rgba(40, 30, 90, 0.25);
+  transition: box-shadow 0.15s ease;
+}
+.kb-composer:focus-within {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kb-primary) 55%, transparent),
+    0 0 0 3px var(--kb-primary-light), 0 8px 24px -14px rgba(40, 30, 90, 0.25);
+}
+.kb-composer-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.kb-cchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 280px;
+  height: 26px;
+  padding: 0 8px 0 9px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--kb-text-secondary);
+  background: var(--kb-bg-hover);
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+}
+.kb-cchip.is-scope {
+  max-width: none;
+}
+.kb-cchip-x {
+  flex: none;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.kb-cchip-x:hover {
+  opacity: 1;
+}
+.kb-composer-input.ant-input {
+  padding: 6px 28px 4px 4px !important;
+  font-size: 14px;
+  line-height: 1.65;
+  resize: none;
+}
+.kb-composer-clear {
+  position: absolute;
+  top: 8px;
+  right: 4px;
+  font-size: 14px;
+  color: var(--kb-text-tertiary);
+  cursor: pointer;
+}
+.kb-composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 4px;
+}
+.kb-composer-bar > .ant-btn {
+  color: var(--kb-text-secondary);
+}
+.kb-composer-hint {
+  margin-right: 8px;
+  font-size: 12px;
+  color: var(--kb-text-tertiary);
+  white-space: nowrap;
+}
+.kb-composer-send.ant-btn:not(:disabled) {
+  background: var(--kb-grad, var(--kb-primary)) !important;
+  border: none;
+}
+/* 无边框输入框在暗色主题下自带一层底色，融进输入卡片 */
+.kb-composer-input.ant-input,
+.kb-composer-input.ant-input:focus,
+.kb-composer-input.ant-input:hover {
+  background: transparent !important;
+  box-shadow: none !important;
+}

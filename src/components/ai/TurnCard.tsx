@@ -18,11 +18,13 @@ import {
   Loader2,
   RotateCcw,
   Settings,
+  Sparkles,
   Square,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { MarkdownContent as Markdown } from "@/components/ai/MarkdownContent";
 import { NoteImageRefs } from "@/components/ai/NoteImageRefs";
+import { RefSourceCards } from "@/components/ai/RefSourceCards";
 import { noteApi } from "@/lib/api";
 import type { AiMessage } from "@/types";
 import { TurnProcess } from "./TurnProcess";
@@ -113,8 +115,8 @@ export function TurnCard({
 
   return (
     <div
-      className="w-full max-w-[860px] rounded-lg overflow-hidden text-sm"
-      style={{ background: token.colorBgContainer, border: `1px solid ${borderColor}` }}
+      className="kb-turn w-full overflow-hidden text-sm"
+      style={{ border: `1px solid ${borderColor}` }}
       onContextMenu={
         onContextMenu && view.message
           ? (e) => {
@@ -159,13 +161,15 @@ export function TurnCard({
       />
 
       {view.refs.length > 0 && (
-        <div className="px-4 pb-3 flex flex-col gap-1.5">
-          <div className="text-xs flex items-center gap-1" style={{ color: token.colorTextTertiary }}>
+        <div className="kb-turn-refs">
+          {/* v4：出处改成编号卡片（标题 · 所在文件夹，点开跳笔记），原来只写「参考了 N 篇笔记」 */}
+          <div className="kb-turn-sub">
             <BookOpen size={11} />
             参考了 {view.refs.length} 篇笔记
           </div>
+          <RefSourceCards noteIds={view.refs} />
           {/* 溯源图片：把引用笔记里的图片挂出来，点击可放大 */}
-          <NoteImageRefs noteIds={view.refs} />
+          <NoteImageRefs noteIds={view.refs} title="出处笔记中的图片" />
         </div>
       )}
 
@@ -252,13 +256,11 @@ function CardHeader({ view, toolCount, onStop }: { view: TurnView; toolCount: nu
     .join(" · ");
 
   return (
-    <div className="flex items-center gap-2 px-4 py-2">
-      <div
-        className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold"
-        style={{ background: token.colorPrimaryBg, color: token.colorPrimary }}
-      >
-        AI
-      </div>
+    <div className="kb-turn-head flex items-center gap-2 px-4 py-2">
+      {/* v4 原型：渐变图标块（原来是「AI」小圆标） */}
+      <span className="kb-turn-ico">
+        <Sparkles size={13} />
+      </span>
       <span
         className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded"
         style={{ color: color[view.status], background: token.colorFillQuaternary }}

@@ -21,6 +21,7 @@ import {
   StopCircle,
   BookOpen,
   Search,
+  UserRound,
   MoreHorizontal,
   Edit3,
   Wrench,
@@ -1143,29 +1144,21 @@ function DesktopAiChatPage() {
           </div>
         ) : (
           <>
-            {/* 顶部栏 */}
-            <div
-              className="flex items-center justify-between px-4 py-2 shrink-0 kb-surface-clear"
-              style={{
-                borderBottom: `1px solid ${token.colorBorderSecondary}`,
-                background: token.colorBgContainer,
-              }}
-            >
+            {/* 顶部栏（v4 原型 .bar）：标题 · 模型 · 角色 ｜ 智能模式 · AI 写权限 · 收起过程 · 存为笔记 */}
+            <div className="editor-topbar kb-ebar kb-ai-bar">
               <div className="flex items-center gap-2 min-w-0 flex-1">
-                {/* flex-1 + min-w-0 + truncate：标题占满左侧剩余空间但窄屏时优先省略号截断，
-                    不再把右侧的模型选择 / 智能模式 / 存为笔记等控件挤出去 */}
-                <span
-                  className="font-medium truncate flex-1 min-w-0"
-                  style={{ color: token.colorText }}
-                  title={activeConv?.title || "对话"}
-                >
+                {/* 标题按内容宽、过长省略号截断；模型 / 角色胶囊紧跟其后（原型），右侧开关不会被挤出去 */}
+                <span className="kb-ai-title" title={activeConv?.title || "对话"}>
                   {activeConv?.title || "对话"}
                 </span>
                 <Tooltip title="切换当前会话使用的模型服务">
                   <Select
                     size="small"
+                    className="kb-pill-select"
+                    prefix={<span className="kb-pill-dot" />}
+                    popupMatchSelectWidth={false}
                     value={activeConv?.model_id}
-                    style={{ width: 180, flexShrink: 0 }}
+                    style={{ minWidth: 150, maxWidth: 240, flexShrink: 0 }}
                     disabled={streaming || models.length === 0}
                     onChange={handleChangeConvModel}
                     options={models.map((m) => ({
@@ -1175,6 +1168,38 @@ function DesktopAiChatPage() {
                     placeholder="选择模型"
                   />
                 </Tooltip>
+                {/* 角色预设（原在输入区上方）：给本会话套一个身份（复用提示词库），换角色不影响已有消息 */}
+                {activeConvId != null && presets.length > 0 && (
+                  <Tooltip title="给本会话套一个角色；角色只影响语气与视角，不改变检索与工具使用规则">
+                    <Select
+                      size="small"
+                      allowClear
+                      className="kb-pill-select"
+                      prefix={<UserRound size={12} />}
+                      popupMatchSelectWidth={false}
+                      placeholder="默认助手"
+                      style={{ minWidth: 120, maxWidth: 200, flexShrink: 0 }}
+                      value={
+                        conversations.find((c) => c.id === activeConvId)?.preset_id ??
+                        undefined
+                      }
+                      onChange={async (v) => {
+                        try {
+                          await aiChatApi.setPreset(activeConvId, v ?? null);
+                          await loadConversations();
+                        } catch (e) {
+                          message.error(`设置角色失败：${e}`);
+                        }
+                      }}
+                      options={presets.map((p) => ({
+                        value: p.id,
+                        label: p.title,
+                        title: p.description || p.prompt.slice(0, 60),
+                      }))}
+                    />
+                  </Tooltip>
+                )}
+                <span className="flex-1" />
               </div>
               <div className="flex items-center gap-3 shrink-0">
                 <Tooltip
@@ -1275,10 +1300,8 @@ function DesktopAiChatPage() {
             </div>
 
             {/* 消息列表 */}
-            <div
-              className="flex-1 overflow-auto px-4 py-4 kb-surface-clear"
-              style={{ background: token.colorBgLayout }}
-            >
+            <div className="flex-1 overflow-auto kb-ai-thread">
+              <div className="kb-ai-thread-inner">
               {messages.length === 0 && !streaming && (
                 <div className="flex items-center justify-center h-full">
                   <div className="text-center">
@@ -1336,16 +1359,12 @@ function DesktopAiChatPage() {
               )}
 
               <div ref={messagesEndRef} />
+              </div>
             </div>
 
-            {/* 输入区域（上方为附加笔记 chip 区，强制塞进上下文） */}
-            <div
-              className="shrink-0 px-4 py-3 kb-surface-clear"
-              style={{
-                borderTop: `1px solid ${token.colorBorderSecondary}`,
-                background: token.colorBgContainer,
-              }}
-            >
+            {/* 输入区（v4 原型 .composer）：一张大卡片 = 顶部小标签行（限定文件夹 / 已附加笔记 / 本次附件，各带 ×）
+                · 无框输入框 · 底栏「附加笔记 · 限定文件夹 · 附件 · 语音 ｜ 快捷键提示 · 圆形发送」 */}
+            <div className="kb-composer-wrap">
               {editingFrom && (
                 <div
                   className="flex items-center gap-2 mb-2 text-xs px-2 py-1 rounded"
@@ -1365,211 +1384,128 @@ function DesktopAiChatPage() {
                   </Button>
                 </div>
               )}
-              {/* 文件夹范围标识：scope_folder_id 不为空时提示本会话已限定检索范围
-                  （由侧边栏「对此文件夹问 AI」发起；会话标题里的 📁 文件夹名进一步指明是哪个）*/}
-              {conversations.find((c) => c.id === activeConvId)?.scope_folder_id != null && (
-                <div className="flex items-center gap-1.5 mb-2">
-                  <span
-                    className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full"
-                    style={{ background: token.colorInfoBg, color: token.colorInfo }}
-                    title="本会话只在该文件夹及其子文件夹的笔记里检索作答"
-                  >
-                    🔍 已限定在此文件夹（含子文件夹）范围内检索
-                    <X
-                      size={11}
-                      style={{ cursor: "pointer", flexShrink: 0 }}
-                      onClick={handleClearScope}
-                    />
-                  </span>
-                </div>
-              )}
-
-              {/* 角色预设：给本会话套一个身份（复用提示词库），换角色不影响已有消息 */}
-              {activeConvId != null && presets.length > 0 && (
-                <div className="flex items-center gap-1.5 mb-2">
-                  <span
-                    className="text-xs shrink-0"
-                    style={{ color: token.colorTextSecondary }}
-                  >
-                    🎭 角色
-                  </span>
-                  <Select
-                    size="small"
-                    allowClear
-                    placeholder="默认助手"
-                    style={{ minWidth: 160 }}
-                    value={
-                      conversations.find((c) => c.id === activeConvId)?.preset_id ??
-                      undefined
-                    }
-                    onChange={async (v) => {
-                      try {
-                        await aiChatApi.setPreset(activeConvId, v ?? null);
-                        await loadConversations();
-                      } catch (e) {
-                        message.error(`设置角色失败：${e}`);
-                      }
-                    }}
-                    options={presets.map((p) => ({
-                      value: p.id,
-                      label: p.title,
-                      title: p.description || p.prompt.slice(0, 60),
-                    }))}
-                    title="给本会话套一个角色；角色只影响语气与视角，不改变检索与工具使用规则"
-                  />
-                </div>
-              )}
-
-              {/* 附加笔记 chip 区：仅在挂载了笔记时显示 */}
-              {attachedNotes.length > 0 && (
-                <div
-                  className="flex flex-wrap items-center gap-1.5 mb-2 pb-2"
-                  style={{
-                    borderBottom: `1px dashed ${token.colorBorderSecondary}`,
-                  }}
-                >
-                  <span
-                    className="text-xs shrink-0"
-                    style={{ color: token.colorTextSecondary }}
-                  >
-                    📎 已附加：
-                  </span>
-                  {attachedNotes.map((n) => (
-                    <span
-                      key={n.id}
-                      className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full"
-                      style={{
-                        background: token.colorPrimaryBg,
-                        color: token.colorPrimary,
-                        maxWidth: 180,
-                      }}
-                    >
-                      <span className="truncate">{n.title || "未命名"}</span>
-                      <X
-                        size={11}
-                        style={{ cursor: "pointer", flexShrink: 0 }}
-                        onClick={() => handleRemoveAttached(n.id)}
+              <div className="kb-composer">
+                {/* 顶部小标签行：有任一项才出现 */}
+                {(conversations.find((c) => c.id === activeConvId)?.scope_folder_id != null ||
+                  attachedNotes.length > 0 ||
+                  pendingAttachments.length > 0) && (
+                  <div className="kb-composer-chips">
+                    {/* 文件夹范围：由侧边栏「对此文件夹问 AI」或「限定文件夹」设置；会话标题里的 📁 指明是哪个 */}
+                    {conversations.find((c) => c.id === activeConvId)?.scope_folder_id != null && (
+                      <span
+                        className="kb-cchip is-scope"
+                        title="本会话只在该文件夹及其子文件夹的笔记里检索作答"
+                      >
+                        <FolderOpen size={12} />
+                        已限定在此文件夹（含子文件夹）范围内检索
+                        <X size={11} className="kb-cchip-x" onClick={handleClearScope} />
+                      </span>
+                    )}
+                    {/* 附加笔记：整个对话共享，强制塞进上下文 */}
+                    {attachedNotes.map((n) => (
+                      <span key={n.id} className="kb-cchip" title={n.title || "未命名"}>
+                        <Paperclip size={12} />
+                        <span className="truncate">已附加：{n.title || "未命名"}</span>
+                        <X size={11} className="kb-cchip-x" onClick={() => handleRemoveAttached(n.id)} />
+                      </span>
+                    ))}
+                    {/* 本次发送的附件（每条消息独立，发送后清空） */}
+                    {pendingAttachments.map((a) => (
+                      <AttachmentChip
+                        key={a.filePath}
+                        attachment={a}
+                        onRemove={() => handleRemoveAttachment(a.filePath)}
                       />
-                    </span>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
 
-              {/* 路线 A：本次发送的附件 chip 区（每条消息独立，发送后清空） */}
-              {pendingAttachments.length > 0 && (
-                <div
-                  className="flex flex-wrap items-center gap-1.5 mb-2 pb-2"
-                  style={{
-                    borderBottom: `1px dashed ${token.colorBorderSecondary}`,
-                  }}
-                >
-                  <span
-                    className="text-xs shrink-0"
-                    style={{ color: token.colorTextSecondary }}
-                  >
-                    📊 本次附件（{pendingAttachments.length}）：
-                  </span>
-                  {pendingAttachments.map((a) => (
-                    <AttachmentChip
-                      key={a.filePath}
-                      attachment={a}
-                      onRemove={() => handleRemoveAttachment(a.filePath)}
-                    />
-                  ))}
-                </div>
-              )}
-
-              <div className="flex gap-2 items-end">
-                <Tooltip title="附加笔记到本对话上下文（整对话共享）">
-                  <Button
-                    icon={<BookOpen size={16} />}
-                    onClick={() => setAttachOpen(true)}
-                    disabled={streaming}
-                  />
-                </Tooltip>
-                <Tooltip title="附加文件夹：限定本对话只在某文件夹（含子文件夹）范围内检索作答">
-                  <Button
-                    icon={<FolderOpen size={16} />}
-                    onClick={openScopeModal}
-                    disabled={streaming || !activeConvId}
-                  />
-                </Tooltip>
-                <Tooltip title="附加文件作为本次提问的上下文（支持 Excel / PDF / Markdown / TXT 等，可多选）">
-                  <Button
-                    icon={<Paperclip size={16} />}
-                    loading={attachingFile}
-                    onClick={handleAddAttachment}
-                    disabled={streaming}
-                  />
-                </Tooltip>
-                {/* TextArea 包一层 relative，mic + clear 绝对定位浮在右下角，
-                    与各处带边框输入框「× 在 mic 左侧」的视觉规则一致。 */}
-                <div style={{ position: "relative", flex: 1 }}>
+                {/* 输入框：清空 × 浮在右上角 */}
+                <div style={{ position: "relative" }}>
                   <TextArea
+                    variant="borderless"
                     value={inputText}
                     onChange={(e) => setInputText(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder="输入问题… (Enter 发送，Shift+Enter 换行)"
-                    autoSize={{ minRows: 1, maxRows: 4 }}
+                    placeholder="输入问题开始对话，AI 会参考你的笔记内容回答"
+                    autoSize={{ minRows: 2, maxRows: 8 }}
                     disabled={streaming}
-                    style={{ paddingRight: 64 }}
+                    className="kb-composer-input"
                   />
-                  <div
-                    style={{
-                      position: "absolute",
-                      right: 8,
-                      bottom: 6,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                    }}
-                  >
-                    {inputText && !streaming && (
-                      <CloseCircleFilled
-                        onClick={() => setInputText("")}
-                        title="清空"
-                        style={{
-                          cursor: "pointer",
-                          fontSize: 14,
-                          color: "rgba(0, 0, 0, 0.25)",
-                          transition: "color 0.2s",
-                        }}
-                        onMouseEnter={(e) => {
-                          (e.currentTarget as unknown as HTMLElement).style.color =
-                            "rgba(0, 0, 0, 0.45)";
-                        }}
-                        onMouseLeave={(e) => {
-                          (e.currentTarget as unknown as HTMLElement).style.color =
-                            "rgba(0, 0, 0, 0.25)";
-                        }}
-                      />
-                    )}
-                    <MicButton
-                      disabled={streaming}
-                      onTranscribed={(text) =>
-                        setInputText((prev) => (prev ? `${prev} ${text}` : text))
-                      }
+                  {inputText && !streaming && (
+                    <CloseCircleFilled
+                      onClick={() => setInputText("")}
+                      title="清空"
+                      className="kb-composer-clear"
                     />
-                  </div>
+                  )}
                 </div>
-                {streaming ? (
-                  <Button
-                    danger
-                    icon={<StopCircle size={16} />}
-                    onClick={handleCancel}
-                  >
-                    停止
-                  </Button>
-                ) : (
-                  <Button
-                    type="primary"
-                    icon={<Send size={16} />}
-                    onClick={() => handleSend()}
-                    disabled={!inputText.trim()}
-                  >
-                    发送
-                  </Button>
-                )}
+
+                <div className="kb-composer-bar">
+                  <Tooltip title="附加笔记到本对话上下文（整对话共享）">
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<BookOpen size={14} />}
+                      onClick={() => setAttachOpen(true)}
+                      disabled={streaming}
+                    >
+                      附加笔记
+                    </Button>
+                  </Tooltip>
+                  <Tooltip title="限定文件夹：只在某文件夹（含子文件夹）范围内检索作答">
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<FolderOpen size={14} />}
+                      onClick={openScopeModal}
+                      disabled={streaming || !activeConvId}
+                    >
+                      限定文件夹
+                    </Button>
+                  </Tooltip>
+                  <Tooltip title="附加文件作为本次提问的上下文（支持 Excel / PDF / Markdown / TXT 等，可多选）">
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<Paperclip size={14} />}
+                      loading={attachingFile}
+                      onClick={handleAddAttachment}
+                      disabled={streaming}
+                    >
+                      附件
+                    </Button>
+                  </Tooltip>
+                  <MicButton
+                    disabled={streaming}
+                    onTranscribed={(text) =>
+                      setInputText((prev) => (prev ? `${prev} ${text}` : text))
+                    }
+                  />
+                  <span className="flex-1" />
+                  <span className="kb-composer-hint">Enter 发送 · Shift+Enter 换行</span>
+                  {streaming ? (
+                    <Tooltip title="停止生成">
+                      <Button
+                        danger
+                        shape="circle"
+                        icon={<StopCircle size={16} />}
+                        onClick={handleCancel}
+                      />
+                    </Tooltip>
+                  ) : (
+                    <Tooltip title="发送">
+                      <Button
+                        type="primary"
+                        shape="circle"
+                        icon={<Send size={15} />}
+                        onClick={() => handleSend()}
+                        disabled={!inputText.trim()}
+                        className="kb-composer-send"
+                      />
+                    </Tooltip>
+                  )}
+                </div>
               </div>
             </div>
           </>
@@ -1813,10 +1749,9 @@ function UserBubble({
     >
       {/* min-w-0 + overflowWrap: anywhere：无空格的长串（URL / DOI）也能断行，不撑破聊天区 */}
       <div
-        className="max-w-[75%] min-w-0 px-3 py-2 rounded-lg text-sm whitespace-pre-wrap break-words"
+        // v4 原型：主题渐变气泡
+        className="kb-user-bubble max-w-[75%] min-w-0 whitespace-pre-wrap break-words"
         style={{
-          background: token.colorPrimary,
-          color: "#fff",
           overflowWrap: "anywhere",
           outline: contextActive || editing ? `2px solid ${token.colorPrimaryBorder}` : "none",
           outlineOffset: 2,

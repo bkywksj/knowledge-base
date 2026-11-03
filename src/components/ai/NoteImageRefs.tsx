@@ -30,9 +30,11 @@ interface ResolvedImage {
 interface Props {
   /** 引用的笔记 id 列表（一般来自 message.references 解析）*/
   noteIds: number[];
+  /** 可选小标题（AI 回答卡片里用「出处笔记中的图片」）；没有图片时连标题一起不渲染 */
+  title?: string;
 }
 
-export function NoteImageRefs({ noteIds }: Props) {
+export function NoteImageRefs({ noteIds, title }: Props) {
   const dataDir = useAppStore((s) => s.instanceInfo?.dataDir ?? null);
   const [images, setImages] = useState<ResolvedImage[]>([]);
 
@@ -90,6 +92,8 @@ export function NoteImageRefs({ noteIds }: Props) {
   if (images.length === 0) return null;
 
   return (
+    <>
+    {title && <div className="kb-turn-sub">{title}</div>}
     <div className="mt-1 flex flex-wrap items-center gap-1.5">
       <Image.PreviewGroup>
         {images.map((img) => (
@@ -98,13 +102,14 @@ export function NoteImageRefs({ noteIds }: Props) {
             src={img.url}
             alt={img.title}
             title={img.title}
-            width={56}
-            height={56}
+            width={76}
+            height={76}
             rootClassName="rounded overflow-hidden"
             style={{ objectFit: "cover", borderRadius: 6 }}
           />
         ))}
       </Image.PreviewGroup>
     </div>
+    </>
   );
 }
