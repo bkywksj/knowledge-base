@@ -79,6 +79,8 @@ function DragRegion() {
       onMouseDown={handleMouseDown}
       style={{
         flex: 1,
+        // 标签多时标签区会占满中间，这里保底 40px 一定能抓住窗口拖
+        minWidth: 40,
         height: "100%",
         cursor: "default",
         userSelect: "none",
@@ -648,6 +650,9 @@ export function AppLayout() {
                 onClick={() => navigate(1)}
               />
             </Tooltip>
+            {/* 笔记标签：v4 起嵌在标题栏里（原型 .tabs），只在笔记工作区挂载——挂载条件的理由见下方 row 形态处的注释。
+                标题栏只在非专注模式出现，所以这里天然就是「!focusMode」分支 */}
+            {isNoteWorkspacePath(location.pathname) && <TabBar variant="titlebar" />}
             <DragRegion />
             <div className="kb-tb-actions">
               <UpdateBadge
@@ -821,9 +826,11 @@ export function AppLayout() {
             pop-out 是"单篇笔记的独立窗口"，给它挂一条全局标签栏是错的，
             所以 popout 一律不显示；而真正的专注模式则听用户的
             focusModeKeepTabs（默认开，否则专注模式下没有任何切换笔记的入口）。 */}
+        {/* v4：平时标签在标题栏里；只有专注模式（标题栏隐藏）且用户开了「保留标签栏」时，才在这里单独占一行 */}
         {!isPopoutWindow &&
-          (!focusModeRaw || focusModeKeepTabs) &&
-          isNoteWorkspacePath(location.pathname) && <TabBar />}
+          focusModeRaw &&
+          focusModeKeepTabs &&
+          isNoteWorkspacePath(location.pathname) && <TabBar variant="row" />}
         <Content
           // v4「纸张」：右 / 下各留 8px、圆角 12、淡投影（样式见 global.css .kb-sheet）；
           // 专注模式与 pop-out 窗口铺满，不做纸张

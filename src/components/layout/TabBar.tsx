@@ -1,13 +1,23 @@
 import { useNavigate, useLocation } from "react-router-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { theme as antdTheme, Dropdown, Tooltip, Modal, Button, App as AntdApp, type MenuProps } from "antd";
-import { X, ListTree } from "lucide-react";
+import { Dropdown, Tooltip, Modal, Button, App as AntdApp, type MenuProps } from "antd";
+import { X, ListTree, Plus } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTabsStore, type NoteTab } from "@/store/tabs";
 import { FileTypeIcon } from "@/components/FileTypeIcon";
 import { noteApi } from "@/lib/api";
 import { useAppStore } from "@/store";
+import { createBlankAndOpen } from "@/lib/noteCreator";
+import { targetFromFolderParam } from "@/lib/newNoteTarget";
 
-export function TabBar() {
+/**
+ * 笔记标签栏。
+ * - variant="titlebar"（默认）：嵌在 v4 通栏标题栏里，后退 / 前进之后（原型 .tabs / .tab）；
+ *   标签条的空白处可拖动窗口、双击最大化——标签多了会把标题栏的拖动区挤没，这里补上
+ * - variant="row"：专注模式（标题栏隐藏）且开了「专注模式保留标签栏」时，单独占一行
+ * 样式在 global.css 的 .kb-tabs / .kb-tab
+ */
+export function TabBar({ variant = "titlebar" }: { variant?: "titlebar" | "row" }) {
   const {
     tabs,
     activeId,
@@ -20,7 +30,6 @@ export function TabBar() {
   } = useTabsStore();
   const navigate = useNavigate();
   const location = useLocation();
-  const { token } = antdTheme.useToken();
   const { message } = AntdApp.useApp();
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -165,48 +174,33 @@ export function TabBar() {
     else if (key === "close-all") handleCloseAll();
   }
 
+  /** 新建空白笔记：与 Ctrl+N 同一套落点规则（跟随 URL 的 ?folder，没有就用全局默认） */
+  function handleNewNote() {
+    const target = targetFromFolderParam(new URLSearchParams(location.search).get("folder"));
+    void createBlankAndOpen(target.folderId, navigate, { useDefaults: target.useDefaults });
+  }
+
+  /** 标签条空白处：单击拖动窗口、双击最大化（只在标题栏形态下，且只响应空白处，不抢标签 / 按钮的点击） */
+  function handleStripMouseDown(e: React.MouseEvent) {
+    if (variant !== "titlebar" || e.button !== 0) return;
+    if (e.target !== e.currentTarget) return;
+    try {
+      const win = getCurrentWindow();
+      if (e.detail === 2) void win.toggleMaximize();
+      else void win.startDragging();
+    } catch {
+      // 非 Tauri 环境（浏览器预览）没有窗口 API，忽略
+    }
+  }
+
   return (
     <div
-      className="kb-surface"
-      style={{
-        display: "flex",
-        alignItems: "flex-end",
-        height: 38,
-        borderBottom: `1px solid ${token.colorBorderSecondary}`,
-        background: token.colorBgLayout,
-        flexShrink: 0,
-        paddingLeft: 4,
-      }}
+      className={variant === "titlebar" ? "kb-tabs kb-tabs-titlebar" : "kb-tabs kb-tabs-row kb-surface"}
+      onMouseDown={handleStripMouseDown}
     >
       {/* 左侧固定：回到笔记列表 */}
       <Tooltip title="笔记列表">
-        <button
-          type="button"
-          onClick={() => navigate("/notes")}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 32,
-            height: 28,
-            marginBottom: 4,
-            marginRight: 4,
-            border: "none",
-            background: "transparent",
-            borderRadius: 6,
-            cursor: "pointer",
-            color: token.colorTextSecondary,
-            flexShrink: 0,
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = token.colorFillSecondary;
-            e.currentTarget.style.color = token.colorText;
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "transparent";
-            e.currentTarget.style.color = token.colorTextSecondary;
-          }}
-        >
+        <button type="button" className="kb-tab-home" onClick={() => navigate("/notes")}>
           <ListTree size={16} />
         </button>
       </Tooltip>
@@ -236,17 +230,8 @@ export function TabBar() {
       {/* 中间可滚动 tab 容器 */}
       <div
         ref={scrollerRef}
-        style={{
-          flex: 1,
-          display: "flex",
-          alignItems: "flex-end",
-          gap: 2,
-          overflowX: "auto",
-          overflowY: "hidden",
-          scrollbarWidth: "none", // Firefox
-          minWidth: 0,
-        }}
-        className="tabbar-scroller"
+        className="kb-tabs-scroller tabbar-scroller"
+        onMouseDown={handleStripMouseDown}
       >
         {tabs.map((tab) => {
           const isActive = tab.id === activeId;
@@ -259,6 +244,8 @@ export function TabBar() {
               }}
               trigger={["contextMenu"]}
             >
+              {/* 宽度：禁止收缩 + 下限 140 / 上限 200（原型 200）。标签一多就被压到 minWidth，
+                  中文只剩一两个字看不出是哪篇，所以宁可横向滚动（切换 tab 会 scrollIntoView） */}
               <div
                 ref={(el) => {
                   if (el) tabRefs.current.set(tab.id, el);
@@ -272,76 +259,17 @@ export function TabBar() {
                   }
                 }}
                 title={tab.title}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "0 8px 0 12px",
-                  height: 28,
-                  marginBottom: 4,
-                  cursor: "pointer",
-                  background: "transparent",
-                  color: isActive ? token.colorPrimary : token.colorTextSecondary,
-                  fontSize: 13,
-                  whiteSpace: "nowrap",
-                  // tab 在 flex 容器里默认可收缩，标签一多就被压到 minWidth，
-                  // 中文只剩一两个字看不出是哪篇。改成禁止收缩 + 抬高下限：
-                  // 宽度只由标题内容在 [160, 240] 之间决定，超出总宽由外层横向滚动
-                  // （容器已是 overflowX:auto，且切换 tab 会 scrollIntoView）。
-                  flexShrink: 0,
-                  maxWidth: 240,
-                  minWidth: 160,
-                  borderRadius: 8,
-                  border: `1px solid ${isActive ? token.colorPrimary : "transparent"}`,
-                  userSelect: "none",
-                  transition: "background 0.15s ease, color 0.15s ease, border-color 0.15s ease",
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive) {
-                    e.currentTarget.style.background = token.colorFillQuaternary;
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive) {
-                    e.currentTarget.style.background = "transparent";
-                  }
-                }}
+                className={isActive ? "kb-tab is-active" : "kb-tab"}
               >
                 <FileTypeIcon type={tab.sourceFileType} size={14} />
-                <span
-                  style={{
-                    flex: 1,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    fontWeight: isActive ? 500 : 400,
-                  }}
-                >
-                  {tab.title || "未命名"}
-                  {tab.dirty ? " •" : ""}
-                </span>
+                <span className="kb-tab-title">{tab.title || "未命名"}</span>
+                {/* 未保存：紫色小圆点（代替原来标题后的「•」） */}
+                {tab.dirty && <span className="kb-tab-mod" aria-label="未保存" />}
                 <button
                   type="button"
+                  className="kb-tab-x"
                   onClick={(e) => handleClose(tab.id, e)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    width: 18,
-                    height: 18,
-                    border: "none",
-                    background: "transparent",
-                    borderRadius: 4,
-                    cursor: "pointer",
-                    color: token.colorTextTertiary,
-                    flexShrink: 0,
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = token.colorFillSecondary;
-                    e.stopPropagation();
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "transparent";
-                  }}
+                  aria-label="关闭"
                 >
                   <X size={12} />
                 </button>
@@ -350,6 +278,12 @@ export function TabBar() {
           );
         })}
       </div>
+      {/* 放在滚动区外面：标签多到横向滚动时「+」也始终可见 */}
+      <Tooltip title="新建笔记 (Ctrl+N)">
+        <button type="button" className="kb-tab-add" onClick={handleNewNote} aria-label="新建笔记">
+          <Plus size={15} />
+        </button>
+      </Tooltip>
     </div>
   );
 }

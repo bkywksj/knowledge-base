@@ -3246,3 +3246,121 @@ body.sidebar-resizing .kb-tb-left {
 body.sidebar-resizing .kb-panel-resizer {
   background: color-mix(in srgb, var(--kb-primary) 40%, transparent);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 笔记标签（T2-4）—— 原型 .tabs / .tab / .tab-add
+   标题栏形态：透明底、垂直居中；专注模式单独一行形态：38px 高、底色 + 底边线
+   ═══════════════════════════════════════════════════════════ */
+.kb-tabs {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 4px;
+}
+.kb-tabs-titlebar {
+  flex: 0 1 auto;
+  height: 100%;
+  padding-left: 6px;
+}
+.kb-tabs-row {
+  height: 38px;
+  flex-shrink: 0;
+  padding: 0 8px;
+  background: var(--kb-bg-app);
+  border-bottom: 1px solid var(--kb-border);
+}
+.kb-tabs-scroller {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.kb-tab-home,
+.kb-tab-add {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--kb-text-tertiary);
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.kb-tab-home:hover,
+.kb-tab-add:hover {
+  background: var(--kb-bg-hover);
+  color: var(--kb-text-primary);
+}
+.kb-tab {
+  height: 30px;
+  flex-shrink: 0;
+  min-width: 140px;
+  max-width: 200px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 6px 0 11px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--kb-text-tertiary);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.14s ease, color 0.14s ease, box-shadow 0.14s ease;
+}
+.kb-tab:hover:not(.is-active) {
+  background: var(--kb-bg-hover);
+  color: var(--kb-text-secondary);
+}
+.kb-tab.is-active {
+  background: var(--kb-bg-raised, #fff);
+  color: var(--kb-text-primary);
+  font-weight: 500;
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+}
+.kb-tab-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kb-tab-mod {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--kb-primary);
+  opacity: 0.7;
+}
+/* 关闭 ×：平时隐藏，悬停 / 当前标签才出现 */
+.kb-tab-x {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: none;
+  padding: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--kb-text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background-color 0.12s ease;
+}
+.kb-tab:hover .kb-tab-x,
+.kb-tab.is-active .kb-tab-x {
+  opacity: 1;
+}
+.kb-tab-x:hover {
+  background: var(--kb-bg-active);
+  color: var(--kb-text-primary);
+}
