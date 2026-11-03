@@ -779,6 +779,8 @@ function DesktopNoteEditorPage() {
   const initialSearch = (searchParams.get("q") ?? "").trim() || undefined;
   // 上下文感知的 message / notification（避免静态方法丢主题、偶发不显示）
   const { message, notification, modal } = AntdApp.useApp();
+  /** 格式工具栏的外部插槽（callback ref → state，挂载后才把 DOM 交给 TiptapEditor 做 portal） */
+  const [toolbarSlot, setToolbarSlot] = useState<HTMLDivElement | null>(null);
   /** 正文实时统计（TiptapEditor 回传），显示在底部状态栏 */
   const [editorStats, setEditorStats] = useState<{ words: number; chars: number; readingTime: string } | null>(null);
   // 逐字段订阅：useAppStore() 订阅整个 store，任何 tick（如待办统计刷新）都会让整个编辑页重渲染
@@ -2625,6 +2627,10 @@ function DesktopNoteEditorPage() {
         </div>
       </div>
 
+      {/* 格式工具栏插槽（v4 原型 .fmt：顶部条下方通栏一行，不随正文滚动）；TiptapEditor 通过 portal 渲染进来。
+          阅读 / 源码模式下没有工具栏，插槽为空不占高度 */}
+      <div ref={setToolbarSlot} className="kb-fmt-slot" />
+
       {/* 编辑器 + 思维导图 横向分栏容器（mindMapOpen=true 时变两栏，否则编辑器独占） */}
       <div
         style={{
@@ -2662,9 +2668,12 @@ function DesktopNoteEditorPage() {
               不直接用 antd Input.suffix / allowClear——两者都会包一层
               .ant-input-affix-wrapper 把 borderless 大标题撑成白底大框。 */}
           <div style={{ position: "relative" }}>
-            <Input
+            {/* v4：大号标题会超出一行，改成自动长高的多行输入（最多 4 行）；仍是「单行语义」——
+                回车跳正文、换行字符在 onChange 里压成空格，存进去的标题不会带换行 */}
+            <Input.TextArea
               value={title}
-              onChange={(e) => handleTitleChange(e.target.value)}
+              autoSize={{ minRows: 1, maxRows: 4 }}
+              onChange={(e) => handleTitleChange(e.target.value.replace(/[\r\n]+/g, " "))}
               onPaste={(e) => {
                 // 仅清洗空白：去换行/Tab/多余空格，免得从来源复制标题时把日期/来源
                 // 连带的杂乱空白塞进标题。无可清洗的空白则放行原生粘贴，保留光标行为。
@@ -2697,14 +2706,14 @@ function DesktopNoteEditorPage() {
               placeholder="笔记标题"
               variant="borderless"
               className="editor-title"
-              style={{ paddingRight: 64 }}
+              style={{ paddingRight: 64, resize: "none" }}
             />
             <div
               style={{
                 position: "absolute",
                 right: 4,
-                top: "50%",
-                transform: "translateY(-50%)",
+                // 多行标题：按钮贴第一行，不再垂直居中到整块中间
+                top: 18,
                 display: "flex",
                 alignItems: "center",
                 gap: 6,
@@ -2797,17 +2806,20 @@ function DesktopNoteEditorPage() {
               onEditorReady={setEditorInstance}
               showFooterStats={false}
               onStats={setEditorStats}
+              toolbarSlot={toolbarSlot}
             />
           )}
 
-          {/* 反向链接 */}
-          <BacklinksPanel
-            backlinks={backlinks}
-            onNavigate={async (id) => {
-              await ensureSavedBeforeNavigate();
-              navigate(`/notes/${id}`);
-            }}
-          />
+          {/* 反向链接：v4 原型放在右侧栏大纲下面；大纲关着时仍留在正文底部，习惯从底部看的用户不受影响 */}
+          {!effectiveOutlineVisible && (
+            <BacklinksPanel
+              backlinks={backlinks}
+              onNavigate={async (id) => {
+                await ensureSavedBeforeNavigate();
+                navigate(`/notes/${id}`);
+              }}
+            />
+          )}
         </div>
 
         {/* 大纲左侧拖拽分隔条：6px 宽，col-resize；与思维导图分隔条同模式：
@@ -2868,6 +2880,15 @@ function DesktopNoteEditorPage() {
               scrollRoot={editorBodyEl}
               onHide={toggleOutline}
             />
+            <div className="kb-aside-backlinks">
+              <BacklinksPanel
+                backlinks={backlinks}
+                onNavigate={async (id) => {
+                  await ensureSavedBeforeNavigate();
+                  navigate(`/notes/${id}`);
+                }}
+              />
+            </div>
           </aside>
         )}
       </div>

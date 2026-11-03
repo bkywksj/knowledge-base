@@ -224,6 +224,7 @@ const TableWithMarkdown = Table.extend({
 import { common, createLowlight } from "lowlight";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useRef, useCallback, useState } from "react";
+import { createPortal } from "react-dom";
 import { message, Modal, Input } from "antd";
 import { theme as antdTheme } from "antd";
 import { SUPPORTED_PROVIDERS } from "./embedVideoProviders";
@@ -905,6 +906,12 @@ interface TiptapEditorProps {
   /** 统计（字数 / 字符 / 阅读时长）变化时回调：笔记页把它放进底部状态栏（v4），同时传 showFooterStats={false} */
   onStats?: (stats: { words: number; chars: number; readingTime: string }) => void;
   /**
+   * v4：把格式工具栏渲染到外部容器里（笔记页放在顶部条下方、滚动区之外，通栏一行，原型 .fmt）。
+   * 用 portal，React 事件仍沿组件树冒泡，工具栏的「点按钮不丢选区」等逻辑不受影响。
+   * 不传（日记页等）则照旧渲染在编辑器内部、吸顶。
+   */
+  toolbarSlot?: HTMLElement | null;
+  /**
    * 外部预填查询词（搜索结果点进笔记时携带的关键词）。设置后编辑器就绪即
    * 自动展开查找浮条、定位到首个命中——省去用户进笔记后再 Ctrl+F 搜一遍。
    */
@@ -923,6 +930,7 @@ export function TiptapEditor({
   onEditorReady,
   showFooterStats = true,
   onStats,
+  toolbarSlot,
   initialSearch,
 }: TiptapEditorProps) {
   const isExternalUpdate = useRef(false);
@@ -2563,15 +2571,20 @@ export function TiptapEditor({
       {/* 阅读模式下隐藏工具栏与 AI 划词条；selection / 复制 / 滚动均正常 */}
       {!readingMode && (
         <>
-          <EditorToolbar
-            editor={editor}
-            noteId={noteId}
-            ensureNoteId={ensureNoteId}
-            onOpenSearch={() => {
-              setSearchShowReplace(false);
-              setSearchOpen(true);
-            }}
-          />
+          {(() => {
+            const toolbar = (
+              <EditorToolbar
+                editor={editor}
+                noteId={noteId}
+                ensureNoteId={ensureNoteId}
+                onOpenSearch={() => {
+                  setSearchShowReplace(false);
+                  setSearchOpen(true);
+                }}
+              />
+            );
+            return toolbarSlot ? createPortal(toolbar, toolbarSlot) : toolbar;
+          })()}
           {/* 「问 AI 这段」与续写/总结/改写等：钉在 EditorToolbar 正下方的次级 sticky bar。
               位置完全静态，跟豆包/划词翻译这类系统级浮窗物理错开（它们贴选区，咱贴顶部）。
               选区状态控制可见性，无选区时 max-height:0 折叠，有选区时滑下来。 */}

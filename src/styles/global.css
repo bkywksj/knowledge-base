@@ -4291,3 +4291,72 @@ body.sidebar-resizing .kb-panel-resizer {
   white-space: nowrap;
   gap: 3px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 编辑页正文区（T3-3c）—— 工具栏插槽 / 大标题 / 元数据小标签 / 侧栏反链
+   ═══════════════════════════════════════════════════════════ */
+/* 工具栏插槽：顶部条下方通栏，不随正文滚动；空插槽（阅读 / 源码模式）不占高度 */
+.kb-fmt-slot {
+  flex-shrink: 0;
+}
+.kb-fmt-slot:empty {
+  display: none;
+}
+.kb-fmt-slot .tiptap-toolbar.kb-fmt {
+  position: static;
+  margin: 8px 14px;
+}
+/* 纸张观感开着时，工具栏已经不在卡片里了，去掉原来跟随卡片的圆角补丁的影响 */
+:root[data-editor-paper="1"] .kb-fmt-slot .tiptap-toolbar {
+  border-radius: 11px;
+}
+/* 标题：大号粗体、无框（原型 .doc-title 30px / 700） */
+.editor-title.ant-input,
+.editor-title .ant-input {
+  font-size: 28px !important;
+  font-weight: 700 !important;
+  line-height: 1.3 !important;
+  letter-spacing: -0.01em;
+  color: var(--kb-text-primary) !important;
+  padding: 6px 0 !important;
+}
+/* 元数据行：文件夹 / 标签做成小标签，去掉下划线分隔（原型 .doc-meta） */
+.editor-meta {
+  border-bottom: none !important;
+  margin-bottom: 18px !important;
+  font-size: 12px;
+}
+.editor-meta .ant-tag {
+  border-radius: 999px !important;
+  padding: 0 9px !important;
+  line-height: 22px !important;
+  border: none !important;
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+  background: var(--kb-bg-raised, #fff) !important;
+  color: var(--kb-text-secondary) !important;
+}
+/* 侧栏反向链接（原型 .ah + .bl）：放在大纲下方，小标题 + 紧凑列表 */
+.kb-aside-backlinks {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--kb-border);
+}
+.kb-aside-backlinks #backlinks-panel {
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+}
+.kb-aside-backlinks #backlinks-panel > div:first-child .ant-typography {
+  font-size: 12px !important;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--kb-text-tertiary) !important;
+}
+.kb-aside-backlinks #backlinks-panel .px-3 {
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+  border-radius: 8px;
+}
+.kb-aside-backlinks #backlinks-panel .px-3:hover {
+  background: var(--kb-bg-hover) !important;
+}
