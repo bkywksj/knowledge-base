@@ -911,8 +911,10 @@ const DEFAULT_MOBILE_DASHBOARD_ITEMS: Set<MobileDashboardItem> = new Set(
 );
 
 export const useAppStore = create<AppStore>((set, get) => ({
-  lightTheme: "light-glass",
-  darkTheme: "dark-starry",
+  // v4 界面重设计：默认亮色淡紫 / 暗色暖炭。没选过主题的老用户也一并换成新默认（设计决定，
+  // 不做旧默认的迁移补写）；主动选过其它主题的，持久化值会在 loadThemeFromStore 里覆盖这里
+  lightTheme: "light-lilac",
+  darkTheme: "dark-ember",
   themeCategory: "light",
   sidebarCollapsed: false,
   focusMode: false,
