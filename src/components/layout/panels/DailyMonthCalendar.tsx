@@ -99,13 +99,14 @@ export function DailyMonthCalendar({
           const isSelected = ymd === selectedDate;
           const hasEntry = datesWithEntry.has(ymd);
 
+          // v4 原型：今天 = 主题渐变色块；选中 = 主色描边；有日记 = 日期下方一颗小圆点（不再整格染色）
           let bg = "transparent";
           let color = sameMonth ? token.colorText : token.colorTextQuaternary;
           let outline: string | undefined;
           let weight = 400;
 
           if (isToday) {
-            bg = token.colorPrimary;
+            bg = "var(--kb-grad, " + token.colorPrimary + ")";
             color = "#fff";
             weight = 600;
           } else if (isSelected) {
@@ -113,8 +114,6 @@ export function DailyMonthCalendar({
             color = token.colorPrimary;
             weight = 600;
           } else if (hasEntry) {
-            bg = `${token.colorPrimary}1a`;
-            color = token.colorPrimary;
             weight = 500;
           }
 
@@ -125,8 +124,9 @@ export function DailyMonthCalendar({
               onClick={() => onSelectDate(ymd)}
               onContextMenu={(e) => onContextMenuDate?.(e, ymd, hasEntry)}
               title={ymd}
-              className="flex items-center justify-center transition"
+              className="flex items-center justify-center transition kb-cal-cell"
               style={{
+                position: "relative",
                 aspectRatio: "1 / 1",
                 minHeight: 26,
                 fontSize: 12,
@@ -142,6 +142,13 @@ export function DailyMonthCalendar({
               }}
             >
               {d.date()}
+              {hasEntry && (
+                <span
+                  aria-hidden
+                  className="kb-cal-dot"
+                  style={{ background: isToday ? "#fff" : token.colorPrimary }}
+                />
+              )}
             </button>
           );
         })}

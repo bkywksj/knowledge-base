@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button, Modal, Segmented, message, theme as antdTheme } from "antd";
-import { Calendar, ChevronLeft, ChevronRight, Copy, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Trash2 } from "lucide-react";
 import { dailyApi, trashApi } from "@/lib/api";
 import { todayYmd } from "@/lib/utils";
 import type { DailyEntry } from "@/types";
@@ -256,19 +256,13 @@ export function DailyPanel() {
       // DateRow 子级 onContextMenu 会自己 preventDefault + ctx.open 弹自定义菜单
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* 视图标题 */}
-      <div
-        className="flex items-center gap-2 px-3 py-2.5 shrink-0"
-        style={{ borderBottom: `1px solid ${token.colorBorderSecondary}` }}
-      >
-        <Calendar size={15} style={{ color: token.colorPrimary }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: token.colorText }}>
-          日记
-        </span>
-        <div style={{ flex: 1 }} />
+      {/* 视图标题栏（v4 原型 .ph，与笔记面板同款 .kb-ph） */}
+      <div className="kb-ph">
+        <span className="kb-ph-title">日记</span>
         <Button
-          type={selectedDate === today ? "primary" : "default"}
+          type="text"
           size="small"
+          className={selectedDate === today ? "kb-daily-today is-on" : "kb-daily-today"}
           onClick={goToToday}
           title="跳到今天"
         >
@@ -279,10 +273,7 @@ export function DailyPanel() {
       {/* 视图切换：月历 / 全部 */}
       <div
         className="shrink-0"
-        style={{
-          padding: "8px 12px",
-          borderBottom: `1px solid ${token.colorBorderSecondary}`,
-        }}
+        style={{ padding: "2px 12px 8px" }}
       >
         <Segmented
           block
@@ -298,14 +289,12 @@ export function DailyPanel() {
 
       {viewMode === "calendar" && (
         <>
-      {/* 月份切换 */}
-      <div
-        className="flex items-center justify-between shrink-0"
-        style={{
-          padding: "8px 12px",
-          borderBottom: `1px solid ${token.colorBorderSecondary}`,
-        }}
-      >
+      <div className="kb-cal-card">
+      {/* 月份切换：原型是「2026 年 11 月」左对齐粗体，两个箭头靠右 */}
+      <div className="kb-cal-head">
+        <span className="kb-cal-title">
+          {viewMonth.year} 年 {viewMonth.month} 月
+        </span>
         <Button
           type="text"
           size="small"
@@ -315,15 +304,6 @@ export function DailyPanel() {
           }
           style={{ width: 24, height: 24, padding: 0 }}
         />
-        <span
-          style={{
-            fontSize: 13,
-            fontWeight: 500,
-            color: token.colorText,
-          }}
-        >
-          {viewMonth.year} 年 {viewMonth.month} 月
-        </span>
         <Button
           type="text"
           size="small"
@@ -336,12 +316,7 @@ export function DailyPanel() {
       </div>
 
       {/* 月历网格：与下方列表互补——这里看月度全貌，下方列表看日期细节（星期/标签） */}
-      <div
-        style={{
-          borderBottom: `1px solid ${token.colorBorderSecondary}`,
-          paddingTop: 6,
-        }}
-      >
+      <div>
         <DailyMonthCalendar
           year={viewMonth.year}
           month={viewMonth.month}
@@ -355,6 +330,13 @@ export function DailyPanel() {
           }}
         />
       </div>
+      {/* 图例 + 本月篇数（原型 .cal 底部） */}
+      <div className="kb-cal-foot">
+        <span className="kb-cal-legend">有日记</span>
+        <span>本月 {sortedDates.length} 篇</span>
+      </div>
+      </div>
+      <div className="kb-daily-sec">{isViewingCurrentMonth ? "本月" : `${viewMonth.month} 月`}</div>
         </>
       )}
 
