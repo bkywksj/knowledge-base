@@ -7021,3 +7021,15 @@ body.sidebar-resizing .kb-panel-resizer {
   margin-left: auto;
   color: var(--kb-primary);
 }
+
+/* 淡紫：开关关闭态轨道按原型 .sw（#DCD7EC）；带文字的开关（MCP 只读 / 可写）关闭态文字改深色，
+   原来是白字压 #BFBAD4，对比度 1.88 看不清（T4-2 巡检） */
+[data-theme="light-lilac"] .ant-switch:not(.ant-switch-checked):not(.ant-switch-disabled) {
+  background: #dcd7ec;
+}
+[data-theme="light-lilac"] .ant-switch:not(.ant-switch-checked):not(.ant-switch-disabled):hover {
+  background: #cfc8e6;
+}
+[data-theme="light-lilac"] .ant-switch:not(.ant-switch-checked) .ant-switch-inner-unchecked {
+  color: var(--kb-text-secondary);
+}
