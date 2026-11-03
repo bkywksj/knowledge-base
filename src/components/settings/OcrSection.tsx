@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, Typography, Button, Space, Alert, message, Input, Tag } from "antd";
-import { FileImage, FileText } from "lucide-react";
+import { FileImage, FileText, ScanText } from "lucide-react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { ocrApi, noteApi } from "@/lib/api";
 
@@ -93,11 +93,13 @@ export function OcrSection() {
     <Card
       id="settings-ocr"
       title={
-        <Space>
-          <span>本地 OCR（图片 / 扫描件识别）</span>
+        <span className="flex items-center gap-2">
+          <ScanText size={16} />
+          本地 OCR
+          <span className="kb-set-note">图片 / 扫描件识别</span>
           {available === true && <Tag color="green">引擎就绪</Tag>}
           {available === false && <Tag>引擎未安装</Tag>}
-        </Space>
+        </span>
       }
     >
       {available === false ? (

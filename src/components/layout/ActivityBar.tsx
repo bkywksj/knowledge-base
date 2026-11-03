@@ -2,6 +2,7 @@ import { cloneElement, Fragment, isValidElement, startTransition, useEffect, use
 import { useLocation, useNavigate } from "react-router-dom";
 import { Tooltip, Badge, theme as antdTheme, message } from "antd";
 import { hiddenPinApi } from "@/lib/api";
+import { isNoActivityPath } from "@/lib/noteWorkspaceRoute";
 import { HiddenPinUnlockModal } from "@/components/hidden/HiddenPinUnlockModal";
 import {
   Home,
@@ -165,7 +166,10 @@ export function ActivityBar() {
 
   // 以 URL 为准反推当前高亮（避免 store.activeView 与 URL 漂移时 UI 不一致）
   const highlightView: ActiveView | null = useMemo(
-    () => deriveActiveViewFromPath(location.pathname) ?? activeView,
+    () =>
+      isNoActivityPath(location.pathname)
+        ? null
+        : (deriveActiveViewFromPath(location.pathname) ?? activeView),
     [location.pathname, activeView],
   );
 

@@ -6779,3 +6779,245 @@ body.sidebar-resizing .kb-panel-resizer {
   font-size: 11px;
   color: var(--kb-text-tertiary);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 设置页（T3-17）：左导航贴边 + 右滚动区；卡片外框统一，内部控件不动
+   ═══════════════════════════════════════════════════════════ */
+.kb-settings {
+  flex-direction: row;
+}
+.kb-set-nav {
+  width: 220px;
+  flex: none;
+  overflow-y: auto;
+  padding: 18px 10px;
+  border-right: 1px solid var(--kb-border);
+  background: var(--kb-bg-panel);
+}
+.kb-set-nav h1 {
+  margin: 0;
+  padding: 0 10px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--kb-text-primary);
+}
+.kb-set-nav-sub {
+  margin: 2px 0 0;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--kb-text-tertiary);
+}
+.kb-set-search {
+  margin: 12px 2px 10px;
+  width: calc(100% - 4px);
+}
+.kb-set-nav-i {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--kb-text-secondary) !important;
+  cursor: pointer;
+  user-select: none;
+}
+.kb-set-nav-i svg {
+  flex: none;
+  color: var(--kb-text-tertiary);
+}
+.kb-set-nav-i:hover {
+  background: var(--kb-bg-hover);
+}
+.kb-set-nav-i.is-on {
+  font-weight: 600;
+  color: var(--kb-primary) !important;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: var(--kb-shadow-sm);
+}
+.kb-set-nav-i.is-on svg {
+  color: var(--kb-primary);
+}
+.kb-set-nav-empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--kb-text-tertiary);
+}
+.kb-set-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px 30px 60px;
+  background: color-mix(in srgb, var(--kb-bg-panel) 55%, var(--kb-bg-raised, #fff));
+}
+.kb-set-inner {
+  max-width: 820px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+/* 卡片外框：间距统一交给 .kb-set-inner 的 gap，子组件里散落的 mb-4 / mt-4 / marginBottom 归零 */
+.kb-set-inner .ant-card,
+.kb-set-inner > div[id] {
+  margin: 0 !important;
+  scroll-margin-top: 16px;
+}
+.kb-set-inner .ant-card {
+  border: 0;
+  border-radius: 14px;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+}
+.kb-set-inner .ant-card > .ant-card-head {
+  min-height: 0;
+  padding: 16px 18px 6px;
+  border-bottom: 0;
+}
+.kb-set-inner .ant-card .ant-card-head-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+.kb-set-inner .ant-card > .ant-card-body {
+  padding: 8px 18px 16px;
+}
+/* 卡片里嵌套的子卡片（同步页签等）保持轻量，不套大卡片的样式 */
+.kb-set-inner .ant-card .ant-card {
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+}
+.kb-set-inner .ant-card .ant-card > .ant-card-head {
+  padding: 10px 14px 4px;
+}
+.kb-set-inner .ant-card .ant-card > .ant-card-body {
+  padding: 8px 14px 12px;
+}
+/* 标题前的图标 → 原型的彩色图标块（默认紫，按分区换色） */
+.kb-set-inner .ant-card > .ant-card-head .ant-card-head-title > span > svg:first-child {
+  box-sizing: content-box;
+  width: 15px;
+  height: 15px;
+  padding: 5.5px;
+  flex: none;
+  border-radius: 8px;
+  color: var(--kb-primary) !important;
+  background: var(--kb-primary-light);
+}
+#settings-startup .ant-card-head-title > span > svg:first-child,
+#settings-autosave .ant-card-head-title > span > svg:first-child,
+#settings-data-dir .ant-card-head-title > span > svg:first-child {
+  color: var(--ant-color-success) !important;
+  background: color-mix(in srgb, var(--ant-color-success) 12%, transparent);
+}
+#settings-sidebar .ant-card-head-title > span > svg:first-child,
+#settings-shortcuts .ant-card-head-title > span > svg:first-child,
+#settings-editor .ant-card-head-title > span > svg:first-child,
+#settings-export .ant-card-head-title > span > svg:first-child,
+#settings-sync .ant-card-head-title > span > svg:first-child,
+#settings-snapshots .ant-card-head-title > span > svg:first-child,
+#settings-community .ant-card-head-title > span > svg:first-child {
+  color: var(--ant-color-info) !important;
+  background: color-mix(in srgb, var(--ant-color-info) 12%, transparent);
+}
+#settings-hidden-pin .ant-card-head-title > span > svg:first-child,
+#settings-app-lock .ant-card-head-title > span > svg:first-child,
+#settings-task-reminder .ant-card-head-title > span > svg:first-child,
+#settings-asr .ant-card-head-title > span > svg:first-child,
+#settings-ocr .ant-card-head-title > span > svg:first-child {
+  color: var(--ant-color-warning) !important;
+  background: color-mix(in srgb, var(--ant-color-warning) 12%, transparent);
+}
+#settings-orphan-assets .ant-card-head-title > span > svg:first-child {
+  color: var(--ant-color-error) !important;
+  background: color-mix(in srgb, var(--ant-color-error) 10%, transparent);
+}
+/* 标题后的灰色说明（原来塞在括号里的那部分） */
+.kb-set-note {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--kb-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-set-subhead {
+  margin: 16px 0 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--kb-border);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--kb-text-tertiary);
+}
+/* 外观 → 主题：说明在上、色卡在下 */
+.kb-set-row-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0 12px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--kb-border);
+}
+.kb-theme-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.kb-theme-tile {
+  width: 150px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+  transition: box-shadow 0.15s;
+}
+.kb-theme-tile:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kb-primary) 45%, transparent);
+}
+.kb-theme-tile.is-on {
+  box-shadow: 0 0 0 2px var(--kb-primary);
+}
+.kb-theme-prev {
+  position: relative;
+  display: block;
+  height: 64px;
+}
+.kb-theme-prev i {
+  position: absolute;
+  left: 18px;
+  right: 14px;
+  top: 12px;
+  bottom: 0;
+  border-radius: 7px 7px 0 0;
+}
+.kb-theme-prev b {
+  position: absolute;
+  left: 28px;
+  top: 24px;
+  width: 64px;
+  height: 7px;
+  border-radius: 4px;
+}
+.kb-theme-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--kb-text-primary);
+}
+.kb-theme-name em {
+  font-style: normal;
+  font-weight: 400;
+  font-size: 11.5px;
+  color: var(--kb-text-tertiary);
+}
+.kb-theme-name svg {
+  margin-left: auto;
+  color: var(--kb-primary);
+}

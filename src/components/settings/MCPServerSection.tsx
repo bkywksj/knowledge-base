@@ -28,7 +28,7 @@ import {
   PlayCircleOutlined,
   PlusOutlined,
 } from "@ant-design/icons";
-import { ExternalLink, Folder, Trash2 } from "lucide-react";
+import { ExternalLink, Folder, Server, Trash2 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { McpHttpSection } from "./McpHttpSection";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -336,7 +336,9 @@ export function MCPServerSection() {
       id="settings-mcp"
       title={
         <span className="flex items-center gap-2">
-          🔌 MCP 服务器（接入 Claude Desktop / Cursor / Cherry Studio）
+          <Server size={16} />
+          MCP 服务器
+          <span className="kb-set-note">接入 Claude Desktop / Cursor / Cherry Studio</span>
         </span>
       }
       className="mb-4"

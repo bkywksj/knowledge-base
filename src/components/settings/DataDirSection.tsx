@@ -142,7 +142,8 @@ export function DataDirSection() {
       title={
         <span className="flex items-center gap-2">
           <HardDrive size={16} style={{ color: token.colorPrimary }} />
-          数据目录（数据库 + 附件存储位置）
+          数据目录
+          <span className="kb-set-note">数据库 + 附件存储位置</span>
         </span>
       }
       loading={loading}

@@ -58,6 +58,19 @@ export function isFullBleedPath(pathname: string): boolean {
     pathname.startsWith("/notes/") ||
     pathname.startsWith("/whiteboard/") ||
     pathname === "/graph" ||
-    pathname === "/ai"
+    pathname === "/ai" ||
+    // v4：设置页左导航贴边、右侧内容区自己滚动
+    pathname === "/settings"
   );
+}
+
+/**
+ * 不属于任何活动栏项的页面：活动栏一项都不高亮。
+ *
+ * ActivityBar 在路由反推不出视图时会回退到 store.activeView（上一个视图），
+ * 这对「从笔记点开的附属页」是对的；但设置页是从标题栏齿轮进的独立页，
+ * 沿用上一个视图会出现「在设置页却高亮着笔记」（v4 原型设置页 rail 为空）。
+ */
+export function isNoActivityPath(pathname: string): boolean {
+  return pathname === "/settings" || pathname.startsWith("/settings/");
 }

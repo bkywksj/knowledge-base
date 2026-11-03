@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isNoteWorkspacePath, isFullBleedPath } from "./noteWorkspaceRoute";
+import { isNoteWorkspacePath, isFullBleedPath, isNoActivityPath } from "./noteWorkspaceRoute";
 
 describe("笔记工作区路由判定：标签栏该不该出现", () => {
   it("笔记列表与编辑器 → 显示", () => {
@@ -60,6 +60,8 @@ describe("撑满型页面判定：Content 要不要留 scrollbar-gutter", () => 
     expect(isFullBleedPath("/graph")).toBe(true);
     // v4：AI 问答会话列表贴边
     expect(isFullBleedPath("/ai")).toBe(true);
+    // v4：设置页左导航贴边、内容区自己滚动
+    expect(isFullBleedPath("/settings")).toBe(true);
   });
 
   it("🔴 /notes 列表页不算 —— 它内容在 Content 里流动，去掉 gutter 会让整页横向抖", () => {
@@ -70,7 +72,6 @@ describe("撑满型页面判定：Content 要不要留 scrollbar-gutter", () => 
     for (const p of [
       "/",
       "/tasks",
-      "/settings",
       "/about",
       "/tags",
       "/trash",
@@ -79,6 +80,13 @@ describe("撑满型页面判定：Content 要不要留 scrollbar-gutter", () => 
     ]) {
       expect(isFullBleedPath(p), `${p} 应保留 gutter`).toBe(false);
     }
+  });
+
+  it("设置页不高亮活动栏；其余页面照常", () => {
+    expect(isNoActivityPath("/settings")).toBe(true);
+    expect(isNoActivityPath("/notes")).toBe(false);
+    expect(isNoActivityPath("/about")).toBe(false);
+    expect(isNoActivityPath("/settingsx")).toBe(false);
   });
 
   it("前缀相近的路径不能误命中", () => {

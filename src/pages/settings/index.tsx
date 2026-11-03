@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Card,
   Typography,
@@ -22,14 +22,16 @@ import {
   ColorPicker,
 } from "antd";
 import { SyncOutlined, PlusOutlined, CheckCircleFilled, CheckCircleOutlined } from "@ant-design/icons";
-import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate, Power, ExternalLink, Type, Zap, Share2, Download, PanelLeft, Palette, Image as ImageIcon, CalendarCheck, Maximize2, ListRestart } from "lucide-react";
+import { Trash2, Pencil, FolderInput, FolderOutput, LayoutTemplate, Power, ExternalLink, Type, Zap, Share2, Download, PanelLeft, Palette, Image as ImageIcon, CalendarCheck, Maximize2, ListRestart, Rocket, Bell, Users, ArrowRight } from "lucide-react";
 import { DailyImportModal } from "@/components/DailyImportModal";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs, { type Dayjs } from "dayjs";
 import { TimePicker } from "antd";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import { SettingsNav } from "@/components/settings/SettingsNav";
+import { ThemePicker } from "@/components/settings/ThemePicker";
 import { listen } from "@tauri-apps/api/event";
 import type { AiModel, AiModelInput, AiModelTestResult, ImportResult, ImportConflictPolicy, ScannedFile, ExportResult, ExportProgress, NoteTemplate, NoteTemplateInput } from "@/types";
 import { systemApi, aiModelApi, importApi, exportApi, folderApi, templateApi, pdfApi, sourceFileApi, autostartApi, configApi, windowApi } from "@/lib/api";
@@ -96,7 +98,7 @@ import {
 } from "@/lib/aiProviderPresets";
 import type { Folder, TokenLimits, VerifyOutcome } from "@/types";
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 /** 窗口输入框的值 → 数字；空 / 非正数 / 非数字 = null（未设置） */
 function parseContextWindow(v: unknown): number | null {
@@ -139,85 +141,10 @@ const ZSXQ_NAME = "后端转AI实战派";
 const ZSXQ_ID = "91839984";
 
 
-/**
- * 设置页左侧锚点导航。
- *
- * - 点击 → smooth scroll 到对应 section（用 id 锚定）
- * - 当前激活项用 IntersectionObserver 检测：哪个 section 进入视口顶部 30% 区域，
- *   就把对应导航项标灰底，实现"滚动同步高亮"
- * - sticky top: 16，跟随主区滚动；不依赖 Antd Anchor，省一份组件依赖
- */
-const SETTINGS_NAV_ITEMS: { id: string; label: string }[] = [
-  { id: "settings-update", label: "软件更新" },
-  { id: "settings-startup", label: "启动设置" },
-  { id: "settings-sidebar", label: "侧边栏" },
-  { id: "settings-features", label: "功能模块" },
-  { id: "settings-hidden-pin", label: "隐藏笔记 PIN" },
-  { id: "settings-shortcuts", label: "全局快捷键" },
-  { id: "settings-appearance", label: "外观自定义" },
-  { id: "settings-editor", label: "编辑器外观" },
-  { id: "settings-autosave", label: "自动保存" },
-  { id: "settings-task-reminder", label: "待办提醒" },
-  { id: "settings-import", label: "导入笔记" },
-  { id: "settings-export", label: "导出 Markdown" },
-  { id: "settings-ai-models", label: "模型服务" },
-  { id: "settings-asr", label: "语音识别" },
-  { id: "settings-templates", label: "模板管理" },
-  { id: "settings-data-dir", label: "数据目录" },
-  { id: "settings-sync", label: "同步备份" },
-  { id: "settings-mcp", label: "MCP 服务器" },
-  { id: "settings-ocr", label: "本地 OCR" },
-  { id: "settings-snapshots", label: "历史版本" },
-  { id: "settings-orphan-assets", label: "孤儿素材清理" },
-  { id: "settings-community", label: "作者 & 社区" },
-];
-
-function SettingsAnchorNav() {
-  const [activeId, setActiveId] = useState<string>(SETTINGS_NAV_ITEMS[0].id);
-
-  // 滚动监听：哪个 section 进入视口"顶部 1/3"区域 → 高亮对应导航项
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        // 取所有当前可见 entries 里 boundingClientRect.top 最小（最靠近顶部）的一个
-        const visible = entries
-          .filter((e) => e.isIntersecting)
-          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-        if (visible.length > 0) {
-          setActiveId(visible[0].target.id);
-        }
-      },
-      { rootMargin: "0px 0px -66% 0px", threshold: 0 },
-    );
-    SETTINGS_NAV_ITEMS.forEach((item) => {
-      const el = document.getElementById(item.id);
-      if (el) observer.observe(el);
-    });
-    return () => observer.disconnect();
-  }, []);
-
-  function jumpTo(id: string) {
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-
-  return (
-    <aside className="anchor-page-nav">
-      <ul>
-        {SETTINGS_NAV_ITEMS.map((item) => (
-          <li
-            key={item.id}
-            data-active={activeId === item.id || undefined}
-            onClick={() => jumpTo(item.id)}
-          >
-            {item.label}
-          </li>
-        ))}
-      </ul>
-    </aside>
-  );
-}
-
 function DesktopSettingsPage() {
+  const navigate = useNavigate();
+  /** 右侧内容滚动区：左侧导航的滚动高亮以它为 root */
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [checking, setChecking] = useState(false);
   const updater = useUpdater();
   const [appVersion, setAppVersion] = useState("0.1.0");
@@ -679,9 +606,12 @@ function DesktopSettingsPage() {
       el.scrollIntoView({ behavior: "smooth", block: "start" });
       el.classList.add("settings-target-flash");
     });
+    // 各分区数据推迟到 idle 才加载，加载完上方卡片会变高、把目标往下顶 → 稍后再对齐一次
+    const fix = setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "start" }), 900);
     const t = setTimeout(() => el.classList.remove("settings-target-flash"), 1800);
     return () => {
       cancelAnimationFrame(raf);
+      clearTimeout(fix);
       clearTimeout(t);
     };
   }, [location.state]);
@@ -1514,15 +1444,20 @@ function DesktopSettingsPage() {
   ];
 
   return (
-    <div className="anchor-page-layout">
-      <SettingsAnchorNav />
-      <div className="anchor-page-content" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <div>
-          <Title level={3}>设置</Title>
-          <Text type="secondary">应用配置与模型服务管理</Text>
-        </div>
+    <div className="editor-page kb-settings">
+      <SettingsNav scrollRef={scrollRef} />
+      <div className="kb-set-scroll" ref={scrollRef}>
+      <div className="kb-set-inner">
 
-      <Card id="settings-update" title="软件更新">
+      <Card
+        id="settings-update"
+        title={
+          <span className="flex items-center gap-2">
+            <Rocket size={16} />
+            软件更新
+          </span>
+        }
+      >
         <Space wrap>
           <Button
             icon={<SyncOutlined spin={checking} />}
@@ -1799,6 +1734,15 @@ function DesktopSettingsPage() {
         }
         style={{ marginBottom: 16 }}
       >
+        <div className="kb-set-row-col">
+          <div>
+            <div>主题</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              也可以点标题栏的调色盘切换；下方「自定义」在所选主题之上微调
+            </Text>
+          </div>
+          <ThemePicker />
+        </div>
         <div className="flex items-center justify-between py-1">
           <div>
             <div>启用自定义</div>
@@ -2588,7 +2532,14 @@ function DesktopSettingsPage() {
       </Card>
 
       <div id="settings-task-reminder">
-        <Card title="待办提醒">
+        <Card
+          title={
+            <span className="flex items-center gap-2">
+              <Bell size={16} />
+              待办提醒
+            </span>
+          }
+        >
           <div className="flex items-center justify-between py-1">
             <div>
               <div>任务默认提醒时刻</div>
@@ -3065,8 +3016,9 @@ function DesktopSettingsPage() {
         size="small"
         title={
           <span className="flex items-center gap-2">
-            <Trash2 size={16} style={{ color: "var(--ant-color-primary)" }} />
-            维护 · 孤儿素材清理
+            <Trash2 size={16} />
+            孤儿素材清理
+            <span className="kb-set-note">维护</span>
           </span>
         }
         className="mb-4"
@@ -3074,7 +3026,20 @@ function DesktopSettingsPage() {
         <OrphanAssetsPanel />
       </Card>
 
-      <Card id="settings-community" title="作者 & 社区">
+      <Card
+        id="settings-community"
+        title={
+          <span className="flex items-center gap-2">
+            <Users size={16} />
+            作者 &amp; 社区
+          </span>
+        }
+        extra={
+          <Button size="small" onClick={() => navigate("/about")}>
+            前往关于页 <ArrowRight size={13} />
+          </Button>
+        }
+      >
         <div className="flex items-center justify-between py-1">
           <div style={{ minWidth: 0, flex: 1 }}>
             <div>
@@ -3136,9 +3101,9 @@ function DesktopSettingsPage() {
             </Text>
           </div>
         </div>
+        <div className="kb-set-subhead">推荐应用</div>
+        <RecommendCards />
       </Card>
-
-      <RecommendCards />
 
       {/* 导入预览弹窗 */}
       <Modal
@@ -3580,6 +3545,7 @@ function DesktopSettingsPage() {
         open={showDailyConvert}
         onClose={() => setShowDailyConvert(false)}
       />
+      </div>
       </div>
     </div>
   );
