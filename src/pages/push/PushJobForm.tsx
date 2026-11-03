@@ -1,16 +1,8 @@
 import { useEffect, useState } from "react";
-import {
-  Checkbox,
-  Form,
-  Input,
-  Modal,
-  Select,
-  Switch,
-  TimePicker,
-  message,
-} from "antd";
+import { Button, Form, Input, Segmented, Select, Switch, TimePicker, message } from "antd";
+import { Edit3, Plus } from "lucide-react";
 import dayjs, { type Dayjs } from "dayjs";
-import { aiModelApi, pushApi } from "@/lib/api";
+import { pushApi } from "@/lib/api";
 import type {
   AiModel,
   CreatePushJobInput,
@@ -40,66 +32,99 @@ interface FormValues {
   enabled: boolean;
 }
 
-/** 投递方式选项 */
-const CHANNEL_OPTIONS = [
-  { label: "居中弹窗", value: "popup" },
-  { label: "系统通知", value: "notification" },
+/** 投递方式选项（可多选：两种可以同时开） */
+export const CHANNEL_OPTIONS = [
+  { label: "居中弹窗", value: "popup", desc: "独立小窗口弹到屏幕中央，不打扰主窗" },
+  { label: "系统通知", value: "notification", desc: "右下角系统提示" },
 ];
 
-interface Props {
-  open: boolean;
-  /** 编辑时传入；新建时为 null */
-  editing: PushJob | null;
-  onClose: () => void;
-  /** 保存成功后回调（刷新列表） */
-  onSaved: () => void;
+/** 推送的 channels 是 JSON 字符串；脏数据回退成两种都开 */
+export function parseChannels(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length) return parsed;
+  } catch {
+    /* 脏数据回退默认 */
+  }
+  return ["popup", "notification"];
 }
 
-export default function PushJobForm({ open, editing, onClose, onSaved }: Props) {
+function toValues(job: PushJob | null): FormValues {
+  if (!job) {
+    return {
+      name: "",
+      prompt: "",
+      model_id: null,
+      time: dayjs("08:00", "HH:mm"),
+      repeat_kind: "daily",
+      weekdays: [1, 2, 3, 4, 5],
+      channels: ["popup", "notification"],
+      enabled: true,
+    };
+  }
+  return {
+    name: job.name,
+    prompt: job.prompt,
+    model_id: job.model_id,
+    time: dayjs(job.schedule_time, "HH:mm"),
+    repeat_kind: job.repeat_kind,
+    // 每天重复的推送没存星期：给个周一到周五的默认，切到「每周」时不是一排空圆点
+    weekdays: job.repeat_weekdays
+      ? job.repeat_weekdays.split(",").map((x) => Number(x.trim()))
+      : [1, 2, 3, 4, 5],
+    channels: parseChannels(job.channels),
+    enabled: job.enabled,
+  };
+}
+
+interface Props {
+  /** 编辑时传入；新建时为 null */
+  editing: PushJob | null;
+  /** 切换编辑对象时自增：表单按它重挂载、吃新的初始值 */
+  formKey: number;
+  models: AiModel[];
+  dirty: boolean;
+  onDirtyChange: (dirty: boolean) => void;
+  /** 保存成功后回调（刷新列表并停在这条上）；新建时带回新 id */
+  onSaved: (id: number) => void;
+  /** 新建态点取消：交给页面回到第一条 */
+  onCancelNew: () => void;
+}
+
+/**
+ * 推送编辑表单（v4：右侧常驻面板，原为弹窗）。
+ * 字段、校验、保存逻辑与原弹窗一致；重复改分段 + 星期圆点，推送方式改两个可多选的切换块。
+ */
+export default function PushJobForm({
+  editing,
+  formKey,
+  models,
+  dirty,
+  onDirtyChange,
+  onSaved,
+  onCancelNew,
+}: Props) {
   const [form] = Form.useForm<FormValues>();
-  const [models, setModels] = useState<AiModel[]>([]);
   const [saving, setSaving] = useState(false);
   const repeatKind = Form.useWatch("repeat_kind", form);
+  const weekdays: number[] = Form.useWatch("weekdays", form) ?? [];
+  const channels: string[] = Form.useWatch("channels", form) ?? [];
 
-  // 打开时加载模型列表 + 回填表单
+  // 切换编辑对象：回填表单（formKey 变化即重填）
   useEffect(() => {
-    if (!open) return;
-    aiModelApi.list().then(setModels).catch(() => setModels([]));
-    if (editing) {
-      let channels: string[] = ["popup", "notification"];
-      try {
-        const parsed = JSON.parse(editing.channels);
-        if (Array.isArray(parsed) && parsed.length) channels = parsed;
-      } catch {
-        /* 脏数据回退默认 */
-      }
-      form.setFieldsValue({
-        name: editing.name,
-        prompt: editing.prompt,
-        model_id: editing.model_id,
-        time: dayjs(editing.schedule_time, "HH:mm"),
-        repeat_kind: editing.repeat_kind,
-        weekdays: editing.repeat_weekdays
-          ? editing.repeat_weekdays.split(",").map((x) => Number(x.trim()))
-          : [],
-        channels,
-        enabled: editing.enabled,
-      });
-    } else {
-      form.setFieldsValue({
-        name: "",
-        prompt: "",
-        model_id: null,
-        time: dayjs("08:00", "HH:mm"),
-        repeat_kind: "daily",
-        weekdays: [1, 2, 3, 4, 5],
-        channels: ["popup", "notification"],
-        enabled: true,
-      });
-    }
-  }, [open, editing, form]);
+    form.setFieldsValue(toValues(editing));
+    onDirtyChange(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formKey]);
 
-  async function handleOk() {
+  /** 多选圆点 / 切换块：从表单实时取当前值再增删（连点时不吃渲染前的旧数组） */
+  function toggleIn(k: "weekdays" | "channels", v: number | string) {
+    const cur: Array<number | string> = form.getFieldValue(k) ?? [];
+    form.setFieldValue(k, cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v]);
+    onDirtyChange(true);
+  }
+
+  async function handleSave() {
     let values: FormValues;
     try {
       values = await form.validateFields();
@@ -129,15 +154,17 @@ export default function PushJobForm({ open, editing, onClose, onSaved }: Props) 
     };
     setSaving(true);
     try {
+      let id: number;
       if (editing) {
         await pushApi.update(editing.id, input);
+        id = editing.id;
         message.success("已保存");
       } else {
-        await pushApi.create(input);
+        id = await pushApi.create(input);
         message.success("已创建");
       }
-      onSaved();
-      onClose();
+      onDirtyChange(false);
+      onSaved(id);
     } catch (e) {
       message.error(String(e));
     } finally {
@@ -145,24 +172,29 @@ export default function PushJobForm({ open, editing, onClose, onSaved }: Props) 
     }
   }
 
+  function handleCancel() {
+    if (!editing) {
+      onCancelNew();
+      return;
+    }
+    form.setFieldsValue(toValues(editing));
+    onDirtyChange(false);
+  }
+
   return (
-    <Modal
-      open={open}
-      title={editing ? "编辑推送" : "新建推送"}
-      onOk={handleOk}
-      onCancel={onClose}
-      confirmLoading={saving}
-      okText="保存"
-      cancelText="取消"
-      width={560}
-      destroyOnClose
-    >
-      <Form form={form} layout="vertical" className="mt-4">
-        <Form.Item
-          name="name"
-          label="名称"
-          rules={[{ required: true, message: "请输入名称" }]}
-        >
+    <section className="kb-cards-panel kb-qc kb-prompt-edit">
+      <div className="kb-qc-head">
+        <span className="kb-qc-ico">{editing ? <Edit3 size={14} /> : <Plus size={14} />}</span>
+        {editing ? "编辑推送" : "新建推送"}
+      </div>
+      <Form
+        form={form}
+        layout="vertical"
+        requiredMark={false}
+        initialValues={toValues(editing)}
+        onValuesChange={() => onDirtyChange(true)}
+      >
+        <Form.Item name="name" label="名称" rules={[{ required: true, message: "请输入名称" }]}>
           <Input placeholder="例如：每日励志" maxLength={60} />
         </Form.Item>
 
@@ -173,7 +205,7 @@ export default function PushJobForm({ open, editing, onClose, onSaved }: Props) 
           rules={[{ required: true, message: "请输入提示词" }]}
         >
           <Input.TextArea
-            rows={4}
+            autoSize={{ minRows: 3, maxRows: 8 }}
             placeholder="例如：用一句话给我一句今天的励志格言，简洁有力，不要解释"
             maxLength={2000}
             showCount
@@ -191,43 +223,78 @@ export default function PushJobForm({ open, editing, onClose, onSaved }: Props) 
           />
         </Form.Item>
 
-        <div className="flex gap-4">
-          <Form.Item
-            name="time"
-            label="触发时间"
-            rules={[{ required: true, message: "请选择时间" }]}
-          >
-            <TimePicker format="HH:mm" minuteStep={1} className="w-32" />
-          </Form.Item>
+        <Form.Item name="time" label="触发时间" rules={[{ required: true, message: "请选择时间" }]}>
+          <TimePicker format="HH:mm" minuteStep={1} style={{ width: "100%" }} />
+        </Form.Item>
 
-          <Form.Item name="repeat_kind" label="重复" className="flex-1">
-            <Select
-              options={[
-                { label: "每天", value: "daily" },
-                { label: "每周", value: "weekly" },
-              ]}
-            />
-          </Form.Item>
-        </div>
-
+        <Form.Item name="repeat_kind" label="重复">
+          <Segmented
+            block
+            options={[
+              { label: "每天", value: "daily" },
+              { label: "每周", value: "weekly" },
+            ]}
+          />
+        </Form.Item>
+        {/* 星期圆点（原复选框组）：只在每周时出现 */}
+        {/* 只注册字段（值是数组，由下方圆点 / 切换块写入），不渲染控件 */}
+        <Form.Item name="weekdays" noStyle />
         {repeatKind === "weekly" && (
-          <Form.Item name="weekdays" label="星期">
-            <Checkbox.Group options={WEEKDAY_OPTIONS} />
-          </Form.Item>
+          <div className="kb-weekday-row">
+            {WEEKDAY_OPTIONS.map((d) => {
+              const on = weekdays.includes(d.value);
+              return (
+                <button
+                  key={d.value}
+                  type="button"
+                  className={on ? "kb-weekday is-on" : "kb-weekday"}
+                  onClick={() => toggleIn("weekdays", d.value)}
+                >
+                  {d.label}
+                </button>
+              );
+            })}
+          </div>
         )}
 
-        <Form.Item
-          name="channels"
-          label="推送方式"
-          tooltip="居中弹窗 = 独立小窗口弹到屏幕中央，不打扰主窗；系统通知 = 右下角系统提示"
-        >
-          <Checkbox.Group options={CHANNEL_OPTIONS} />
-        </Form.Item>
+        {/* 推送方式：两种可以同时开（原型画成二选一，这里保留多选能力） */}
+        {/* 只注册字段（值是数组，由下方圆点 / 切换块写入），不渲染控件 */}
+        <Form.Item name="channels" noStyle />
+        <div className="ant-form-item-label">
+          <label>推送方式</label>
+        </div>
+        <div className="kb-channel-row">
+          {CHANNEL_OPTIONS.map((c) => {
+            const on = channels.includes(c.value);
+            return (
+              <button
+                key={c.value}
+                type="button"
+                title={c.desc}
+                className={on ? "kb-channel is-on" : "kb-channel"}
+                onClick={() => toggleIn("channels", c.value)}
+              >
+                {c.label}
+              </button>
+            );
+          })}
+        </div>
 
-        <Form.Item name="enabled" label="启用" valuePropName="checked">
-          <Switch />
-        </Form.Item>
+        <div className="kb-prompt-enable">
+          <Form.Item name="enabled" valuePropName="checked" noStyle>
+            <Switch />
+          </Form.Item>
+          <span>启用</span>
+        </div>
       </Form>
-    </Modal>
+      <div className="kb-prompt-actions">
+        <Button disabled={(!dirty && !!editing) || saving} onClick={handleCancel}>
+          取消
+        </Button>
+        <Button type="primary" loading={saving} disabled={!dirty} onClick={() => void handleSave()}>
+          {editing ? "保存" : "保存推送"}
+        </Button>
+      </div>
+    </section>
   );
 }
