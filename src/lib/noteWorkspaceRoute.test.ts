@@ -54,6 +54,8 @@ describe("撑满型页面判定：Content 要不要留 scrollbar-gutter", () => 
     expect(isFullBleedPath("/daily")).toBe(true);
     expect(isFullBleedPath("/notes/1")).toBe(true);
     expect(isFullBleedPath("/notes/12345")).toBe(true);
+    // v4：白板根节点改成 .editor-page，顶栏贴满纸张
+    expect(isFullBleedPath("/whiteboard/7")).toBe(true);
   });
 
   it("🔴 /notes 列表页不算 —— 它内容在 Content 里流动，去掉 gutter 会让整页横向抖", () => {
@@ -72,7 +74,6 @@ describe("撑满型页面判定：Content 要不要留 scrollbar-gutter", () => 
       "/trash",
       "/search",
       "/cards",
-      "/whiteboard/7",
     ]) {
       expect(isFullBleedPath(p), `${p} 应保留 gutter`).toBe(false);
     }
@@ -81,5 +82,6 @@ describe("撑满型页面判定：Content 要不要留 scrollbar-gutter", () => 
   it("前缀相近的路径不能误命中", () => {
     expect(isFullBleedPath("/dailyxxx")).toBe(false);
     expect(isFullBleedPath("/notesomething")).toBe(false);
+    expect(isFullBleedPath("/whiteboard")).toBe(false);
   });
 });

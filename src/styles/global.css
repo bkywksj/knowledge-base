@@ -4539,3 +4539,34 @@ body.sidebar-resizing .kb-panel-resizer {
   background: transparent !important;
   box-shadow: none !important;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 白板页外框（T3-5）—— 顶栏同编辑页 .kb-ebar；画布本身（Excalidraw）不动
+   ═══════════════════════════════════════════════════════════ */
+/* 标题：跟在面包屑后面，像面包屑的最后一节（可直接改名） */
+.kb-wb-title.ant-input {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 6em;
+  max-width: 360px;
+  field-sizing: content;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kb-text-primary);
+}
+.kb-wb-title.ant-input:hover,
+.kb-wb-title.ant-input:focus {
+  background: var(--kb-bg-hover) !important;
+}
+.kb-saved.is-saving::before {
+  background: var(--ant-color-warning);
+}
+.kb-saved.is-error::before {
+  background: var(--ant-color-error);
+}
+/* 画布容器：同时是演示模式的全屏目标，全屏元素默认黑底，所以必须自带背景 */
+.kb-wb-canvas {
+  background: var(--ant-color-bg-container);
+}

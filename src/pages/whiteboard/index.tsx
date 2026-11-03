@@ -1,23 +1,20 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Input,
   Button,
   Spin,
   Empty,
-  Popconfirm,
   Typography,
   Dropdown,
   Modal,
   List,
   App as AntdApp,
-  theme as antdTheme,
   type MenuProps,
 } from "antd";
 import {
   ArrowLeft,
   Trash2,
-  Check,
   Loader2,
   Download,
   Copy,
@@ -27,11 +24,14 @@ import {
   Presentation,
   Minimize2,
   StickyNote,
+  ChevronRight,
+  MoreHorizontal,
 } from "lucide-react";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store";
-import { noteApi, whiteboardApi, systemApi, searchApi } from "@/lib/api";
-import type { Note, SearchResult } from "@/types";
+import { folderApi, noteApi, whiteboardApi, systemApi, searchApi } from "@/lib/api";
+import { buildFolderPath } from "@/lib/folderPath";
+import type { Folder, Note, SearchResult } from "@/types";
 // 仅类型导入：`import type` 会被编译期擦除，不会把 Excalidraw 拉进本页面的 chunk
 import type { WhiteboardExportApi } from "@/components/whiteboard/WhiteboardCanvas";
 
@@ -58,8 +58,7 @@ export default function WhiteboardPage() {
   const { id: idParam } = useParams<{ id: string }>();
   const noteId = Number(idParam);
   const navigate = useNavigate();
-  const { message } = AntdApp.useApp();
-  const { token } = antdTheme.useToken();
+  const { message, modal } = AntdApp.useApp();
   const themeCategory = useAppStore((s) => s.themeCategory);
 
   const [note, setNote] = useState<Note | null>(null);
@@ -78,6 +77,12 @@ export default function WhiteboardPage() {
   const insertCardRef = useRef<((noteId: number) => Promise<void>) | null>(null);
   /** 选笔记弹窗 */
   const [cardPickerOpen, setCardPickerOpen] = useState(false);
+  /** 文件夹树：只给顶栏面包屑用；文件夹改名 / 移动后跟着 foldersRefreshTick 重拉 */
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const foldersRefreshTick = useAppStore((s) => s.foldersRefreshTick);
+  useEffect(() => {
+    folderApi.list().then(setFolders).catch(() => setFolders([]));
+  }, [foldersRefreshTick]);
   const [cardQuery, setCardQuery] = useState("");
   const [cardResults, setCardResults] = useState<SearchResult[]>([]);
   const [cardSearching, setCardSearching] = useState(false);
@@ -433,22 +438,30 @@ export default function WhiteboardPage() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* 顶栏：返回 / 标题 / 保存状态 / 删除。演示时整条收起，把屏幕让给画布 */}
+    <div className="editor-page">
+      {/* 顶栏（v4 原型，与笔记编辑页同款 .kb-ebar）：
+          返回 · 文件夹面包屑 › 标题（可直接改名）· 保存状态 ｜ 插入笔记卡片 · 演示 · 历史 · 导出 · ⋯（删除）。
+          演示时整条收起，把屏幕让给画布 */}
       <div
-        className="flex items-center gap-2 px-3 py-2 shrink-0 kb-surface"
-        style={{
-          borderBottom: `1px solid ${token.colorBorderSecondary}`,
-          background: token.colorBgContainer,
-          display: presenting ? "none" : undefined,
-        }}
+        className="editor-topbar kb-ebar"
+        style={{ display: presenting ? "none" : undefined }}
       >
+        <div className="kb-ebar-left">
         <Button
           type="text"
+          className="kb-ib"
           icon={<ArrowLeft size={16} />}
           onClick={() => navigate(-1)}
           title="返回"
         />
+        <div className="kb-crumb">
+          {(note?.folder_id != null ? buildFolderPath(folders, note.folder_id) : []).map((f) => (
+            <Fragment key={f.id}>
+              <a onClick={() => navigate(`/notes?folder=${f.id}`)}>{f.name}</a>
+              <ChevronRight size={12} />
+            </Fragment>
+          ))}
+        </div>
         <Input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -456,23 +469,23 @@ export default function WhiteboardPage() {
           onPressEnter={(e) => e.currentTarget.blur()}
           variant="borderless"
           placeholder="未命名白板"
-          className="font-medium"
-          style={{ maxWidth: 420 }}
+          className="kb-wb-title"
         />
+        <SaveIndicator state={saveState} />
+        </div>
 
-        <div className="flex-1" />
-
-        <SaveIndicator state={saveState} color={token.colorTextSecondary} />
-
+        <div className="kb-ebar-right">
         <Button
-          type="text"
-          icon={<StickyNote size={16} />}
+          icon={<StickyNote size={15} />}
           onClick={() => setCardPickerOpen(true)}
           title="插入笔记卡片（把笔记内容摊在画布上，笔记改了卡片跟着变）"
-        />
+        >
+          插入笔记卡片
+        </Button>
 
         <Button
           type="text"
+          className="kb-ib"
           icon={<Presentation size={16} />}
           onClick={() => void enterPresent()}
           title="演示模式（全屏 + 只读，按 Esc 退出）"
@@ -480,33 +493,50 @@ export default function WhiteboardPage() {
 
         <Button
           type="text"
+          className="kb-ib"
           icon={<History size={16} />}
           onClick={() => setHistoryOpen(true)}
           title="历史版本（画布自动保存，误删可回滚）"
         />
 
         <Dropdown menu={{ items: exportMenu }} trigger={["click"]} placement="bottomRight">
-          <Button type="text" icon={<Download size={16} />} title="导出 / 复制为图片" />
+          <Button type="text" className="kb-ib" icon={<Download size={16} />} title="导出 / 复制为图片" />
         </Dropdown>
 
-        <Popconfirm
-          title="移入回收站？"
-          description="白板会进回收站，可以再恢复。"
-          onConfirm={handleDelete}
-          okText="删除"
-          cancelText="取消"
-          okButtonProps={{ danger: true }}
+        {/* ⋯ 更多：删除挪到这里（与笔记编辑页一致），仍先确认再进回收站 */}
+        <Dropdown
+          trigger={["click"]}
+          placement="bottomRight"
+          menu={{
+            items: [
+              {
+                key: "delete",
+                danger: true,
+                icon: <Trash2 size={14} />,
+                label: "删除白板",
+                onClick: () =>
+                  modal.confirm({
+                    title: "移入回收站？",
+                    content: "白板会进回收站，可以再恢复。",
+                    okText: "删除",
+                    cancelText: "取消",
+                    okButtonProps: { danger: true },
+                    onOk: handleDelete,
+                  }),
+              },
+            ],
+          }}
         >
-          <Button type="text" danger icon={<Trash2 size={16} />} title="删除白板" />
-        </Popconfirm>
+          <Button type="text" className="kb-ib" icon={<MoreHorizontal size={16} />} title="更多" />
+        </Dropdown>
+        </div>
       </div>
 
       {/* 画布。Excalidraw 需要一个确定高度的容器，这里用 flex-1 + min-h-0 撑满剩余空间。
           这个 div 同时是演示模式的全屏目标，所以要自带背景色 —— 全屏元素默认背景是黑的 */}
       <div
         ref={canvasWrapRef}
-        className="flex-1 min-h-0 relative"
-        style={{ background: token.colorBgContainer }}
+        className="flex-1 min-h-0 relative kb-wb-canvas"
       >
         <Suspense
           fallback={
@@ -611,27 +641,28 @@ export default function WhiteboardPage() {
 }
 
 /** 顶栏右侧的保存状态指示 */
-function SaveIndicator({ state, color }: { state: SaveState; color: string }) {
-  if (state === "idle") return null;
+function SaveIndicator({ state }: { state: SaveState }) {
+  // 样式复用编辑页 .kb-saved（前面一颗状态圆点）；idle（还没动过）也显示「已自动保存」，跟原型一致
   if (state === "saving") {
     return (
-      <Text style={{ color, fontSize: 12 }}>
-        <Loader2 size={12} className="inline animate-spin mr-1" />
-        保存中
-      </Text>
+      <span className="kb-saved is-saving">
+        <Text type="secondary">
+          <Loader2 size={12} className="inline animate-spin mr-1" />
+          保存中…
+        </Text>
+      </span>
     );
   }
-  if (state === "saved") {
+  if (state === "error") {
     return (
-      <Text style={{ color, fontSize: 12 }}>
-        <Check size={12} className="inline mr-1" />
-        已保存
-      </Text>
+      <span className="kb-saved is-error">
+        <Text type="danger">保存失败</Text>
+      </span>
     );
   }
   return (
-    <Text type="danger" style={{ fontSize: 12 }}>
-      保存失败
-    </Text>
+    <span className="kb-saved">
+      <Text type="secondary">已自动保存</Text>
+    </span>
   );
 }

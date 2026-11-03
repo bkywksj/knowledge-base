@@ -107,6 +107,9 @@ const BOTTOM_ITEMS: ActivityItem[] = [
 /** 路由 → ActiveView 的反查映射（用于根据 URL 推导高亮态） */
 const ROUTE_TO_VIEW: Array<[string, ActiveView]> = [
   ["/notes", "notes"],
+  // 白板本质是 note_type=whiteboard 的笔记：高亮「笔记」、侧栏显示笔记面板（v4 原型）。
+  // 之前没登记，落到末尾的 "/" 兜底，白板页反而高亮「首页」
+  ["/whiteboard", "notes"],
   ["/search", "search"],
   ["/daily", "daily"],
   ["/tags", "tags"],

@@ -52,6 +52,7 @@ import { relativeTime, stripHtml } from "@/lib/utils";
 import { buildTagTreeSelectData } from "@/lib/tagTree";
 import { TiptapEditor, MarkdownSourceEditor } from "@/components/editor";
 import { showSourceModeIntroOnce } from "@/lib/sourceModeIntro";
+import { buildFolderPath } from "@/lib/folderPath";
 import { LinkStatusBar } from "@/components/editor/LinkStatusBar";
 import { EditorOutline } from "@/components/editor/EditorOutline";
 import { EditorStats } from "@/components/editor/EditorStats";
@@ -215,24 +216,6 @@ function formatCreatedDay(iso: string): string {
   if (Number.isNaN(d.getTime())) return "";
   const md = `${d.getMonth() + 1} 月 ${d.getDate()} 日`;
   return d.getFullYear() === new Date().getFullYear() ? md : `${d.getFullYear()} 年 ${md}`;
-}
-
-function buildFolderPath(
-  folders: Folder[],
-  targetId: number,
-): { id: number; name: string }[] {
-  for (const f of folders) {
-    if (f.id === targetId) {
-      return [{ id: f.id, name: f.name }];
-    }
-    if (f.children?.length) {
-      const sub = buildFolderPath(f.children, targetId);
-      if (sub.length > 0) {
-        return [{ id: f.id, name: f.name }, ...sub];
-      }
-    }
-  }
-  return [];
 }
 
 /** 面包屑路径 + Popover 里 TreeSelect 编辑的文件夹切换器

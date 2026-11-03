@@ -36,7 +36,8 @@ export function isNoteWorkspacePath(pathname: string): boolean {
  * 当前路由是否是「撑满型」页面 —— 页面根节点用 `.editor-page`
  * （`position:absolute; inset:0`）铺满整个 Content。
  *
- * 目前只有两处：`/daily`（日记）与 `/notes/:id`（笔记编辑器）。
+ * 目前三处：`/daily`（日记）、`/notes/:id`（笔记编辑器）、`/whiteboard/:id`（白板，v4 起
+ * 根节点也是 `.editor-page`，顶栏要贴满纸张；画布由 Excalidraw 自己处理滚动 / 平移）。
  *
  * 为什么需要单独判定：Content 上挂了 `scrollbar-gutter: stable both-edges`，
  * 它会在**左右各预留一个滚动条宽度（实测 8px）**，并把 padding box 一并缩小。
@@ -49,8 +50,12 @@ export function isNoteWorkspacePath(pathname: string): boolean {
  *
  * ⚠️ 其余页面（首页 / 待办 / 设置…）内容直接在 Content 里流动、确实会滚，
  * 必须保留 gutter，否则「内容变长冒出滚动条时整页横向抖一下」会回来。
- * 所以这里只放行这两条路径，不要图省事扩大范围。
+ * 所以这里只放行这三条路径，不要图省事扩大范围。
  */
 export function isFullBleedPath(pathname: string): boolean {
-  return pathname === "/daily" || pathname.startsWith("/notes/");
+  return (
+    pathname === "/daily" ||
+    pathname.startsWith("/notes/") ||
+    pathname.startsWith("/whiteboard/")
+  );
 }
