@@ -4,8 +4,6 @@ import {
   Button,
   DatePicker,
   Input,
-  Space,
-  Divider,
   Badge,
   message,
   Spin,
@@ -14,7 +12,6 @@ import {
 } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
 import {
-  Calendar,
   ChevronLeft,
   ChevronRight,
   Save,
@@ -339,6 +336,15 @@ function DesktopDailyPage() {
     }
   }
 
+  /** 格式工具栏的外部插槽（callback ref → state，挂载后才交给 TiptapEditor 做 portal） */
+  const [toolbarSlot, setToolbarSlot] = useState<HTMLDivElement | null>(null);
+  /** 正文实时统计（TiptapEditor 回传），显示在底部状态栏 */
+  const [editorStats, setEditorStats] = useState<{
+    words: number;
+    chars: number;
+    readingTime: string;
+  } | null>(null);
+
   function renderStatus() {
     switch (autoSave.status) {
       case "saving":
@@ -375,17 +381,14 @@ function DesktopDailyPage() {
   return (
     <div className="editor-page">
       {/* 顶部工具栏 */}
-      <div className="editor-topbar">
-        <Space align="center">
-          <Calendar size={18} />
-          <span style={{ fontWeight: 600, fontSize: 15 }}>日记</span>
-          <Divider
-            type="vertical"
-            style={{ height: 18, margin: "0 8px" }}
-          />
+      {/* 顶部条（v4 原型 .ebar）：‹ 日期 › · 今天 · 保存状态 ｜ AI 规划今日 · 导入日记 · 保存 · 大纲。
+          原来左侧的「📅 日记 |」去掉了——侧栏面板标题已经写着「日记」 */}
+      <div className="editor-topbar kb-ebar">
+        <div className="kb-ebar-left">
           <Button
-            size="small"
-            icon={<ChevronLeft size={14} />}
+            type="text"
+            className="kb-ib"
+            icon={<ChevronLeft size={16} />}
             // 跳到上一篇真实存在的日记，跳过空白日（更符合"翻日记本"直觉）
             onClick={() => neighbors.prev && goToDate(neighbors.prev)}
             disabled={!neighbors.prev}
@@ -397,9 +400,11 @@ function DesktopDailyPage() {
             allowClear={false}
             variant="borderless"
             size="small"
-            format={(v) => formatDateCN(v.format("YYYY-MM-DD"))}
+            // 原型：「2026 年 11 月 3 日 · 星期二」
+            format={(v) => `${v.year()} 年 ${v.month() + 1} 月 ${v.date()} 日 · 星期${"日一二三四五六"[v.day()]}`}
             // 允许选未来日期：支持提前给某天规划 / 预写日记（后端 validate_date 只校验格式，不拦未来）
-            style={{ fontWeight: 600, padding: "0 4px" }}
+            className="kb-daily-date"
+            suffixIcon={null}
             // 用户在日选模式下翻月 → 拉新月份的"有日记"日期集合
             onPanelChange={(d, mode) => {
               if (mode === "date") {
@@ -438,22 +443,23 @@ function DesktopDailyPage() {
             }}
           />
           <Button
-            size="small"
-            icon={<ChevronRight size={14} />}
+            type="text"
+            className="kb-ib"
+            icon={<ChevronRight size={16} />}
             onClick={() => neighbors.next && goToDate(neighbors.next)}
             disabled={!neighbors.next}
             title={neighbors.next ? `下一篇：${formatDateCN(neighbors.next)}` : "没有更晚的日记"}
           />
-          {!isToday && (
-            <Button size="small" onClick={() => goToDate(todayStr())}>
-              今天
-            </Button>
-          )}
-          {renderStatus()}
-        </Space>
-        <Space align="center">
+          {/* 原型里「今天」常驻；已经在今天时置灰，位置不跳 */}
+          <Button size="small" disabled={isToday} onClick={() => goToDate(todayStr())}>
+            今天
+          </Button>
+          <span className="kb-daily-status">{renderStatus()}</span>
+        </div>
+        <div className="kb-ebar-right">
           {isToday && planTodayAvailable && (
             <Button
+              className="kb-ask-btn"
               icon={<Sparkles size={14} />}
               onClick={() => setShowPlanModal(true)}
               title="AI 根据今日/昨日笔记 + 待办，给出 3~7 条今日建议"
@@ -463,22 +469,15 @@ function DesktopDailyPage() {
           )}
           <Tooltip title="从「日期文件夹/笔记.md」结构导入历史日记，或把已导入的普通笔记认回日记">
             <Button
-              icon={<CalendarCheck size={16} />}
+              type="text"
+              icon={<CalendarCheck size={15} />}
               onClick={() => setShowImportModal(true)}
             >
               导入日记
             </Button>
           </Tooltip>
-          <Tooltip title={outlineVisible ? "隐藏大纲" : "显示大纲"}>
-            <Button
-              type={outlineVisible ? "primary" : "default"}
-              icon={<ListTree size={16} />}
-              onClick={toggleOutline}
-            />
-          </Tooltip>
           <Button
-            type="primary"
-            icon={<Save size={16} />}
+            icon={<Save size={15} />}
             onClick={() => void autoSave.flush()}
             loading={autoSave.status === "saving"}
             disabled={
@@ -487,7 +486,15 @@ function DesktopDailyPage() {
           >
             保存
           </Button>
-        </Space>
+          <Tooltip title={outlineVisible ? "隐藏大纲" : "显示大纲"}>
+            <Button
+              type="text"
+              className={outlineVisible ? "kb-ib is-on" : "kb-ib"}
+              icon={<ListTree size={16} />}
+              onClick={toggleOutline}
+            />
+          </Tooltip>
+        </div>
       </div>
 
       <DailyImportModal
@@ -508,6 +515,9 @@ function DesktopDailyPage() {
           useAppStore.getState().refreshTaskStats();
         }}
       />
+
+      {/* 格式工具栏插槽：与笔记编辑页同款，顶部条下方通栏一行、不随正文滚动 */}
+      <div ref={setToolbarSlot} className="kb-fmt-slot" />
 
       {/* 可滚动的编辑主体（大纲打开时变 grid 两列：正文 | 6px 分隔 | 大纲） */}
       <div
@@ -614,6 +624,9 @@ function DesktopDailyPage() {
                 }}
                 onWikiLinkClick={handleWikiLinkClick}
                 onEditorReady={setEditorInstance}
+                toolbarSlot={toolbarSlot}
+                showFooterStats={false}
+                onStats={setEditorStats}
               />
             </>
           )}
@@ -683,7 +696,32 @@ function DesktopDailyPage() {
       {/* 链接状态条：与笔记编辑器同款，常驻底部不随正文滚动。
           日记同样支持 [[双链]]，之前只有笔记编辑器能看到链接情况，这里补齐。
           note 为空（当天还没落库）时组件自己返回 null，不占位。 */}
+      {/* 当天日记还没建档时 LinkStatusBar 不渲染（没有 noteId），这里补一条同款空状态栏，底边不跳 */}
+      {!note && (
+        <div className="kb-statusbar">
+          <div className="kb-statusbar-lead">
+            <span className="kb-sb-mode">富文本</span>
+            <span>{formatDateCN(date)} · 还没写</span>
+          </div>
+        </div>
+      )}
       <LinkStatusBar
+        variant="statusbar"
+        leading={
+          <>
+            <span className="kb-sb-mode">富文本</span>
+            <span>{formatDateCN(date)}</span>
+          </>
+        }
+        trailing={
+          editorStats && (
+            <>
+              <span>{editorStats.words.toLocaleString()} 字</span>
+              <span>{editorStats.chars.toLocaleString()} 字符</span>
+              <span>约 {editorStats.readingTime}</span>
+            </>
+          )
+        }
         noteId={note?.id}
         refreshKey={linkRefreshTick}
         /* 大纲列宽 + 6px 分隔条：状态条据此让出同样的空间，左右沿才对得上卡片 */

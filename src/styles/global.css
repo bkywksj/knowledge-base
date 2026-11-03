@@ -4360,3 +4360,32 @@ body.sidebar-resizing .kb-panel-resizer {
 .kb-aside-backlinks #backlinks-panel .px-3:hover {
   background: var(--kb-bg-hover) !important;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 日记页（T3-4a/b）—— 顶部条日期大号粗体（原型 .ebar .crumb b）
+   ═══════════════════════════════════════════════════════════ */
+.kb-daily-date.ant-picker {
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+.kb-daily-date.ant-picker:hover {
+  background: var(--kb-bg-hover);
+}
+.kb-daily-date.ant-picker .ant-picker-input > input {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--kb-text-primary);
+  cursor: pointer;
+  /* 按内容宽度，不再是固定输入框宽 */
+  field-sizing: content;
+  min-width: 10em;
+}
+.kb-daily-status {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+}
+.kb-daily-status .ant-badge-status-text {
+  font-size: 12px;
+  color: var(--kb-text-tertiary);
+}
