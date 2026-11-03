@@ -32,6 +32,7 @@ import { PlanTodayModal } from "@/components/ai/PlanTodayModal";
 import { DailyImportModal } from "@/components/DailyImportModal";
 import { LinkStatusBar } from "@/components/editor/LinkStatusBar";
 import { NoteAiDrawer } from "@/components/ai/NoteAiDrawer";
+import { DailyTasksAside } from "@/components/daily/DailyTasksAside";
 import type { Note } from "@/types";
 
 
@@ -689,6 +690,8 @@ function DesktopDailyPage() {
               scrollRoot={editorBodyRef.current}
               onHide={toggleOutline}
             />
+            {/* v4 原型：大纲下方「今日待办」，翻到哪天看哪天到期的 */}
+            <DailyTasksAside date={date} isToday={isToday} />
           </aside>
         )}
       </div>

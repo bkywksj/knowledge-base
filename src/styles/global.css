@@ -4389,3 +4389,70 @@ body.sidebar-resizing .kb-panel-resizer {
   font-size: 12px;
   color: var(--kb-text-tertiary);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 日记右侧栏「今日待办」（T3-4c）—— 原型 .ah + .tk
+   ═══════════════════════════════════════════════════════════ */
+.kb-aside-sec {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--kb-border);
+}
+.kb-aside-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--kb-text-tertiary);
+}
+.kb-aside-count {
+  margin-left: auto;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.kb-aside-empty {
+  font-size: 12px;
+  color: var(--kb-text-tertiary);
+  padding: 2px 0;
+}
+.kb-day-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.kb-day-task {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.kb-day-task:hover {
+  background: var(--kb-bg-hover);
+}
+.kb-day-task-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--kb-text-primary);
+  cursor: pointer;
+}
+.kb-day-task.is-done .kb-day-task-title {
+  color: var(--kb-text-tertiary);
+  text-decoration: line-through;
+}
+.kb-day-task-overdue {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--ant-color-error) !important;
+  cursor: pointer;
+}
