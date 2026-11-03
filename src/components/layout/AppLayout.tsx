@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
-import { Layout, Button, theme as antdTheme, Tooltip, Dropdown, message } from "antd";
+import { Layout, Button, Tooltip, Dropdown, message } from "antd";
 import { SettingOutlined, PushpinOutlined, PushpinFilled } from "@ant-design/icons";
 import { Search, Palette, ArrowLeft, ArrowRight, PanelLeftClose, PanelLeftOpen, FilePlus2 } from "lucide-react";
 import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
@@ -180,7 +180,6 @@ export function AppLayout() {
   /** 活动栏当前实际宽度：纯图标模式 48，带文字 64。布局各处统一取这个值。 */
   const ACTIVITY_BAR_WIDTH = activityBarWidth(activityBarShowLabels);
   const activeTheme = themeCategory === "light" ? lightTheme : darkTheme;
-  const { token } = antdTheme.useToken();
 
   // Pop-out 窗口：window label 以 `popout-` 开头则进精简模式（复用 focusMode 的隐藏逻辑：
   // 无侧边栏 / Header / Tabs，仅渲染 Outlet 的笔记编辑器）。
@@ -759,8 +758,7 @@ export function AppLayout() {
         <div
           ref={panelRef}
           // kb-surface：启用背景图时改由「内容区透明度」滑杆统一控制，
-          // 让侧栏和主区共用同一档不透明度（否则侧栏恒 50%、主区跟滑杆，两边对不上）。
-          // 不启用背景图时该类不生效，仍是下面这行 inline 的 `...80` 原样式。
+          // 让侧栏和主区共用同一档不透明度（否则两边对不上）。
           className="side-panel-enter kb-surface"
           style={{
             position: "absolute",
@@ -768,12 +766,9 @@ export function AppLayout() {
             left: effectiveSiderWidth,
             width: sidePanelWidth,
             bottom: 0,
-            // 高透明度让主区背景自然透出，视觉融入主体不显"浮层卡片"
-            // hex 后缀 80 ≈ 50% alpha；亮/暗色主题都能从 token.colorBgContainer 自动取
-            background: `${token.colorBgContainer}80`,
-            backdropFilter: "blur(10px) saturate(180%)",
-            WebkitBackdropFilter: "blur(10px) saturate(180%)",
-            borderRight: `1px solid ${token.colorBorderSecondary}`,
+            // v4：面板不再是白底毛玻璃卡片，直接透出窗口底色，与活动栏、标题栏连成一片；
+            // 右侧白色「纸张」内容区自带圆角与投影，层次由它来区分（原型 .side）
+            background: "transparent",
             overflow: "hidden",
             zIndex: 40,
           }}
@@ -801,7 +796,7 @@ export function AppLayout() {
             zIndex: 50,
             background: "transparent",
           }}
-          className="hover:bg-blue-500/20 active:bg-blue-500/40 transition-colors"
+          className="kb-panel-resizer"
         />
       )}
       <Layout
@@ -830,6 +825,9 @@ export function AppLayout() {
           (!focusModeRaw || focusModeKeepTabs) &&
           isNoteWorkspacePath(location.pathname) && <TabBar />}
         <Content
+          // v4「纸张」：右 / 下各留 8px、圆角 12、淡投影（样式见 global.css .kb-sheet）；
+          // 专注模式与 pop-out 窗口铺满，不做纸张
+          className={focusMode ? undefined : "kb-sheet"}
           style={{
             // 🔴 四边一律写 longhand，不要再混用 `padding` shorthand。
             // 曾经写成 `padding: 24` + `paddingLeft/Right: isPopoutWindow ? 16 : undefined`，
@@ -838,12 +836,12 @@ export function AppLayout() {
             // 只剩上下 24，页面左边贴着 ActivityBar、右边被滚动条顶出一条缝（看着不对称）。
             // popout 窗口用 OS 原生标题栏（decorations:true），顶部 ~32px 被系统占用，
             // 给内容让位，否则编辑器 topbar 会被系统标题栏盖住。
-            paddingTop: isPopoutWindow ? 32 : focusMode ? 0 : 24,
+            paddingTop: isPopoutWindow ? 32 : focusMode ? 0 : 20,
             paddingBottom: focusMode ? 0 : 24,
-            // 左右取上下的一半（12）：主区横向本来就被 ActivityBar / SidePanel 挤过一道，
-            // 再留 24 会让内容显窄；上下没有这层挤压，保持 24。
-            paddingLeft: isPopoutWindow ? 16 : focusMode ? 0 : 12,
-            paddingRight: isPopoutWindow ? 16 : focusMode ? 0 : 12,
+            // v4 纸张内统一 24（原型 .pg 20/24）：页面标题左边线与卡片左边线对齐。
+            // 之前是 12——内容直接贴着活动栏 / 面板时 24 显窄；现在纸张本身就是一块独立底板，按原型来
+            paddingLeft: isPopoutWindow ? 16 : focusMode ? 0 : 24,
+            paddingRight: isPopoutWindow ? 16 : focusMode ? 0 : 24,
             overflow: "auto",
             // 滚动条只占右侧，会让左右视觉留白差一个滚动条宽度；stable 让两侧都预留，
             // 顺带消掉「内容变长冒出滚动条时整页横向抖一下」。

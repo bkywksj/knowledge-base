@@ -18,6 +18,7 @@
   --kb-bg-content: #FFFFFF;
   --kb-bg-panel: #F6F3FD;
   --kb-bg-raised: #FFFFFF;
+  --kb-shadow-sheet: 0 0 0 .5px rgba(110,85,200,.10), 0 1px 2px rgba(110,85,200,.035), 0 14px 36px -14px rgba(110,85,200,.20);
   --kb-bg-hover: rgba(124,99,220,0.055);
   --kb-bg-active: rgba(124,99,220,0.1);
   --kb-text-primary: #27233B;
@@ -147,6 +148,7 @@
   --kb-bg-content: #1D1C1A;
   --kb-bg-panel: #21201E;
   --kb-bg-raised: #2D2B28;
+  --kb-shadow-sheet: 0 0 0 .5px rgba(255,245,230,.07), 0 18px 40px -16px rgba(0,0,0,.6);
   --kb-bg-hover: rgba(255,245,230,0.05);
   --kb-bg-active: rgba(169,146,250,0.14);
   --kb-text-primary: #EFEBE4;

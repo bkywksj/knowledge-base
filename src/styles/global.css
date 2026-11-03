@@ -3226,3 +3226,23 @@ body.sidebar-resizing .kb-tb-left {
 .activity-bar.icon-only .kb-rail-badge .ant-badge-count {
   transform: translate(20%, -50%);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 内容区「纸张」+ 侧栏面板拖宽手柄（T2-3）—— 原型 .sheet / .side
+   ═══════════════════════════════════════════════════════════ */
+.ant-layout-content.kb-sheet {
+  margin: 0 8px 8px 0;
+  border-radius: 12px;
+  box-shadow: var(--kb-shadow-sheet, none);
+}
+/* 面板右边缘的拖宽手柄：平时透明，悬停 / 拖动时一条主题色细线 */
+.kb-panel-resizer {
+  transition: background-color 0.15s ease;
+}
+.kb-panel-resizer:hover {
+  background: color-mix(in srgb, var(--kb-primary) 22%, transparent);
+}
+.kb-panel-resizer:active,
+body.sidebar-resizing .kb-panel-resizer {
+  background: color-mix(in srgb, var(--kb-primary) 40%, transparent);
+}
