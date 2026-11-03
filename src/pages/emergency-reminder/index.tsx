@@ -164,7 +164,7 @@ export default function EmergencyReminderPage() {
         userSelect: "none",
         overflow: "hidden",
         // 左侧红色细条 + 整窗红色边框，标识"紧急"
-        borderLeft: "4px solid #ef4444",
+        borderLeft: "4px solid var(--ant-color-error)",
         boxSizing: "border-box",
       }}
     >
@@ -183,7 +183,7 @@ export default function EmergencyReminderPage() {
         <div
           data-tauri-drag-region
           className="flex items-center gap-2"
-          style={{ color: "#dc2626", fontSize: 12, fontWeight: 600 }}
+          style={{ color: "var(--ant-color-error)", fontSize: 12, fontWeight: 600 }}
         >
           <AlertOctagon size={14} />
           <span data-tauri-drag-region>紧急待办提醒</span>
@@ -232,7 +232,7 @@ export default function EmergencyReminderPage() {
             <Spin />
           </div>
         ) : !task ? (
-          <div style={{ color: "#dc2626", fontSize: 14 }}>
+          <div style={{ color: "var(--ant-color-error)", fontSize: 14 }}>
             {errorText || "加载失败"}
           </div>
         ) : (
@@ -252,7 +252,7 @@ export default function EmergencyReminderPage() {
                 </Tag>
               )}
               {overdueText && (
-                <span style={{ fontSize: 12, color: "#dc2626", fontWeight: 600 }}>
+                <span style={{ fontSize: 12, color: "var(--ant-color-error)", fontWeight: 600 }}>
                   {overdueText}
                 </span>
               )}
@@ -295,7 +295,7 @@ export default function EmergencyReminderPage() {
             )}
 
             {errorText && (
-              <div style={{ fontSize: 12, color: "#dc2626" }}>{errorText}</div>
+              <div style={{ fontSize: 12, color: "var(--ant-color-error)" }}>{errorText}</div>
             )}
           </>
         )}

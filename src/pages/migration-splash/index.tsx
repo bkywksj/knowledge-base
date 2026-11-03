@@ -14,12 +14,10 @@
 import { useEffect, useState } from "react";
 import {
   Alert,
-  ConfigProvider,
   Progress,
   Result,
   Spin,
   Typography,
-  theme,
 } from "antd";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { dataDirApi } from "@/lib/api";
@@ -78,22 +76,17 @@ export default function MigrationSplash() {
     : 0;
 
   return (
-    <ConfigProvider
-      theme={{
-        algorithm: theme.defaultAlgorithm,
-        token: {
-          colorPrimary: "#7c3aed",
-        },
-      }}
-    >
+    // 不再套一层写死亮色算法 + #7c3aed 的 ConfigProvider：外层 App 已按用户主题配好 antd，
+    // 内层强行亮色会让暖炭下「浅灰底 + 浅色字」看不清（主题偏好存在 settings 文件里，迁移期也读得到）
+    <>
       <div
         data-tauri-drag-region
         style={{
           height: "100vh",
           width: "100vw",
           padding: 24,
-          background:
-            "linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)",
+          background: "var(--kb-bg-raised, #fff)",
+          color: "var(--kb-text-primary)",
           display: "flex",
           flexDirection: "column",
           gap: 16,
@@ -110,7 +103,7 @@ export default function MigrationSplash() {
         </div>
 
         {marker && (
-          <div style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.6 }}>
+          <div style={{ fontSize: 12, color: "var(--kb-text-secondary)", lineHeight: 1.6 }}>
             <div>
               <Text type="secondary">从：</Text>
               <Text code style={{ fontSize: 11 }}>
@@ -161,11 +154,11 @@ export default function MigrationSplash() {
               percent={percent}
               status={percent < 100 ? "active" : "success"}
               size="small"
-              strokeColor={{ from: "#7c3aed", to: "#3b82f6" }}
+              strokeColor={{ from: "#B3A3F6", to: "var(--kb-primary)" }}
             />
 
             {progress && (
-              <div style={{ fontSize: 12, color: "#374151", lineHeight: 1.7 }}>
+              <div style={{ fontSize: 12, color: "var(--kb-text-secondary)", lineHeight: 1.7 }}>
                 <Paragraph
                   style={{ margin: 0 }}
                   ellipsis={{ rows: 1, tooltip: progress.currentFile }}
@@ -203,6 +196,6 @@ export default function MigrationSplash() {
           </>
         )}
       </div>
-    </ConfigProvider>
+    </>
   );
 }

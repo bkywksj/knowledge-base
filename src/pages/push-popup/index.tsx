@@ -136,8 +136,10 @@ export default function PushPopupPage() {
     <div
       className="flex h-screen w-screen flex-col overflow-hidden"
       style={{
-        background: "var(--kb-bg-elevated, #fff)",
-        color: "var(--kb-text, #1f1f1f)",
+        // v4 主题只有 --kb-bg-raised / --kb-text-primary；原来的 --kb-bg-elevated / --kb-text
+        // 不存在，暖炭下会落回白底黑字、按钮却已是深色
+        background: "var(--kb-bg-raised, #fff)",
+        color: "var(--kb-text-primary, #1f1f1f)",
         borderRadius: 12,
         border: "1px solid var(--kb-border, #e5e7eb)",
       }}
@@ -151,13 +153,15 @@ export default function PushPopupPage() {
           cursor: "grab",
           borderBottom: "1px solid var(--kb-border, #eee)",
           // 标题色条：成功用主色，失败用红
-          borderLeft: `4px solid ${isFailed ? "#ff4d4f" : "var(--kb-primary, #6366f1)"}`,
+          borderLeft: `4px solid ${isFailed ? "var(--ant-color-error)" : "var(--kb-primary)"}`,
         }}
       >
         <BellRing
           size={16}
-          className={isFailed ? "text-red-500" : "text-indigo-500"}
-          style={{ pointerEvents: "none" }}
+          style={{
+            pointerEvents: "none",
+            color: isFailed ? "var(--ant-color-error)" : "var(--kb-primary)",
+          }}
         />
         <span
           className="flex-1 truncate text-sm font-medium"

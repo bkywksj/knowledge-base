@@ -155,14 +155,14 @@ export default function QuickCreatePage() {
         </div>
         <div className="grid grid-cols-2 gap-3 px-4 pb-3">
           <BigCard
-            gradient="from-blue-500 to-blue-700"
+            background="var(--kb-grad, var(--kb-primary))"
             icon={<PenLine size={26} />}
             title="空白笔记"
             sub="直接开始写"
             onClick={createBlank}
           />
           <BigCard
-            gradient="from-amber-500 to-orange-500"
+            background="linear-gradient(135deg, color-mix(in srgb, var(--ant-color-warning) 80%, #fff), color-mix(in srgb, var(--ant-color-warning) 55%, var(--ant-color-error)))"
             icon={<Zap size={26} />}
             title="闪念捕获"
             sub="瞬间记录"
@@ -278,13 +278,14 @@ export default function QuickCreatePage() {
 }
 
 function BigCard({
-  gradient,
+  background,
   icon,
   title,
   sub,
   onClick,
 }: {
-  gradient: string;
+  /** 卡片底色（CSS background 值）：跟随主题，不写死 Tailwind 色阶 */
+  background: string;
   icon: React.ReactNode;
   title: string;
   sub: string;
@@ -293,7 +294,8 @@ function BigCard({
   return (
     <button
       onClick={onClick}
-      className={`flex flex-col items-start rounded-2xl bg-gradient-to-br ${gradient} p-4 text-left text-white shadow-sm active:scale-[0.98] transition-transform`}
+      className="flex flex-col items-start rounded-2xl p-4 text-left text-white shadow-sm active:scale-[0.98] transition-transform"
+      style={{ background }}
     >
       <div className="mb-3">{icon}</div>
       <div className="text-base font-semibold">{title}</div>

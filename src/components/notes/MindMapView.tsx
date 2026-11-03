@@ -10,7 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { Transformer } from "markmap-lib";
-import { Markmap } from "markmap-view";
+import { Markmap, deriveOptions } from "markmap-view";
 import { save } from "@tauri-apps/plugin-dialog";
 import { toPng } from "html-to-image";
 import { noteApi, systemApi } from "@/lib/api";
@@ -59,6 +59,12 @@ export function MindMapView({
   const svgRef = useRef<SVGSVGElement | null>(null);
   const mmRef = useRef<Markmap | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * 分支配色：markmap 默认是 d3 的蓝橙绿调色板，暖炭下发灰、淡紫下跳色。
+   * 换成主题的主色 / 信息 / 成功 / 警告四色，按分支轮换（deriveOptions 生成 markmap 原生的分支着色函数）
+   */
+  const branchPalette = [token.colorPrimary, token.colorInfo, token.colorSuccess, token.colorWarning];
+  const paletteKey = branchPalette.join(",");
   /** 全屏模式（standalone 永远视作非全屏；它本来就独占窗口） */
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -87,7 +93,7 @@ export function MindMapView({
         // 首次创建：限制节点最大宽度防止 foreignObject 溢出
         mmRef.current = Markmap.create(
           svgRef.current,
-          { maxWidth: 300 },
+          { maxWidth: 300, ...deriveOptions({ color: branchPalette }) },
           root,
         );
       }
@@ -95,6 +101,14 @@ export function MindMapView({
 
     return () => cancelAnimationFrame(raf);
   }, [open, markdown, title]);
+
+  // 切主题后重新着色（只重绘，不 fit，保留用户当前的缩放 / 平移）
+  useEffect(() => {
+    const mm = mmRef.current;
+    if (!mm) return;
+    mm.setOptions(deriveOptions({ color: paletteKey.split(",") }));
+    void mm.renderData();
+  }, [paletteKey]);
 
   // 全屏切换时 markmap 容器尺寸变了——延一帧 fit 重新撑满，避免内容偏在角落
   useEffect(() => {
@@ -331,11 +345,23 @@ export function MindMapView({
       >
         <svg
           ref={svgRef}
-          style={{
-            width: "100%",
-            height: "100%",
-            display: "block",
-          }}
+          style={
+            {
+              width: "100%",
+              height: "100%",
+              display: "block",
+              // markmap 的节点文字 / 链接 / 代码 / 折叠圆点底色走这些 CSS 变量，默认是写死的深灰，
+              // 暖炭下深灰字压在深色底上看不清
+              "--markmap-text-color": token.colorText,
+              "--markmap-a-color": token.colorPrimary,
+              "--markmap-a-hover-color": token.colorPrimaryHover,
+              "--markmap-code-bg": token.colorFillTertiary,
+              "--markmap-code-color": token.colorText,
+              "--markmap-circle-open-bg": token.colorBgContainer,
+              "--markmap-highlight-bg": token.colorPrimaryBg,
+              "--markmap-table-border": token.colorBorderSecondary,
+            } as React.CSSProperties
+          }
         />
       </div>
     </div>

@@ -158,10 +158,10 @@ const OPTIONS: OptionMeta[] = [
 
 /** 把 registry 的 icon key 翻译成 Lucide 组件（移动端 Tab 网格用） */
 const TAB_ICONS: Record<MobileTabKey, React.ReactNode> = {
-  home: <HomeIcon size={20} className="text-[#1677FF]" />,
-  notes: <FileText size={20} className="text-[#1677FF]" />,
+  home: <HomeIcon size={20} className="text-[var(--kb-primary)]" />,
+  notes: <FileText size={20} className="text-[var(--kb-primary)]" />,
   ai: <SparklesIcon size={20} className="text-[#FA8C16]" />,
-  tasks: <CheckSquare size={20} className="text-[#1677FF]" />,
+  tasks: <CheckSquare size={20} className="text-[var(--kb-primary)]" />,
   daily: <CalendarDays size={20} className="text-green-600" />,
   tags: <Tag size={20} className="text-pink-600" />,
   cards: <LayersIcon size={20} className="text-purple-600" />,
@@ -291,10 +291,10 @@ export default function FeatureTogglePage() {
               <button
                 key={`${k}-${idx}`}
                 onClick={() => setPickerSlot(idx)}
-                className="flex flex-col items-center gap-1 rounded-xl border-2 border-blue-200 bg-blue-50 py-2.5 active:scale-95 transition-transform"
+                className="flex flex-col items-center gap-1 rounded-xl border-2 border-[var(--kb-border)] bg-[var(--kb-primary-light)] py-2.5 active:scale-95 transition-transform"
               >
                 {TAB_ICONS[k]}
-                <span className="text-[10px] font-medium text-[#1677FF]">
+                <span className="text-[10px] font-medium text-[var(--kb-primary)]">
                   {MOBILE_TAB_REGISTRY[k].label}
                 </span>
               </button>
@@ -382,7 +382,7 @@ export default function FeatureTogglePage() {
                 }}
                 className={`flex flex-col items-center gap-1 rounded-xl py-3 ${
                   pickerSlot !== null && mobileTabKeys[pickerSlot] === k
-                    ? "border-2 border-[#1677FF] bg-blue-50"
+                    ? "border-2 border-[var(--kb-primary)] bg-[var(--kb-primary-light)]"
                     : inOtherSlot
                       ? "border border-amber-200 bg-amber-50"
                       : "border border-slate-100 bg-white"
