@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Input, Button, Alert, Typography, theme as antdTheme } from "antd";
+import { Input, Button, Alert, theme as antdTheme } from "antd";
 import type { InputRef } from "antd";
-import { Lock } from "lucide-react";
+import { Lock, ShieldCheck } from "lucide-react";
+import { BrandLogo } from "@/components/ui/BrandLogo";
 import { appLockApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import { WindowControls } from "@/components/layout/WindowControls";
-
-const { Text, Title } = Typography;
 
 // macOS 用系统 overlay 红黄绿按钮（见 AppLayout 同款判断），不自绘 WindowControls，
 // 仅留出左侧拖拽区即可。非 Mac 自绘最小化/最大化/关闭，避免无边框窗口锁屏时无法操作。
@@ -31,6 +30,8 @@ export function AppLockScreen() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const [showHint, setShowHint] = useState(false);
+  /** 闲置自动锁定分钟数：0 = 没开，底部那行说明就不显示 */
+  const [autoMinutes, setAutoMinutes] = useState(0);
   const inputRef = useRef<InputRef>(null);
 
   useEffect(() => {
@@ -39,6 +40,10 @@ export function AppLockScreen() {
       .getHint()
       .then((h) => setHint(h && h.trim() ? h : null))
       .catch(() => setHint(null));
+    appLockApi
+      .status()
+      .then((st) => setAutoMinutes(st.autoLockMinutes ?? 0))
+      .catch(() => setAutoMinutes(0));
     return () => clearTimeout(t);
   }, []);
 
@@ -62,73 +67,26 @@ export function AppLockScreen() {
     }
   }
 
+  // v4 原型 lock：渐变底 · 品牌 Logo · 「Knowledge Base 已锁定」· 带锁图标的密码框 · 渐变解锁 · 自动锁定说明
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 3000,
-        display: "flex",
-        flexDirection: "column",
-        background: token.colorBgLayout,
-      }}
-    >
+    <div className="kb-lock">
       {/* 顶部可拖拽条 + 窗口控制（无边框窗口锁屏时仍可移动/关闭） */}
       <div
         data-tauri-drag-region
-        style={{
-          height: 48,
-          flexShrink: 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "flex-end",
-          paddingLeft: IS_MAC ? 80 : 12,
-        }}
+        className="kb-lock-drag"
+        style={{ paddingLeft: IS_MAC ? 80 : 12 }}
       >
         {!IS_MAC && <WindowControls />}
       </div>
 
       {/* 居中解锁卡片 */}
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 24,
-        }}
-      >
-        <div
-          style={{
-            width: "100%",
-            maxWidth: 360,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: 16,
-          }}
-        >
-          <div
-            style={{
-              width: 64,
-              height: 64,
-              borderRadius: "50%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: `${token.colorPrimary}1a`,
-              color: token.colorPrimary,
-            }}
-          >
-            <Lock size={30} strokeWidth={1.8} />
-          </div>
-          <Title level={4} style={{ margin: 0 }}>
-            已锁定
-          </Title>
-          <Text type="secondary" style={{ fontSize: 13, textAlign: "center" }}>
-            输入进入密码以解锁知识库
-          </Text>
+      <div className="kb-lock-center">
+        <div className="kb-lock-box">
+          <span className="kb-lock-logo">
+            <BrandLogo size={88} />
+          </span>
+          <h2>Knowledge Base 已锁定</h2>
+          <p>输入密码解锁</p>
 
           <Input.Password
             ref={inputRef}
@@ -140,6 +98,8 @@ export function AppLockScreen() {
             maxLength={64}
             size="large"
             disabled={submitting}
+            prefix={<Lock size={15} style={{ color: token.colorTextTertiary }} />}
+            className="kb-lock-input"
           />
 
           <Button
@@ -148,9 +108,17 @@ export function AppLockScreen() {
             size="large"
             loading={submitting}
             onClick={handleSubmit}
+            className="kb-lock-btn"
           >
             解锁
           </Button>
+
+          {autoMinutes > 0 && (
+            <div className="kb-lock-foot">
+              <ShieldCheck size={13} />
+              闲置 {autoMinutes} 分钟自动锁定 · 可在设置中修改
+            </div>
+          )}
 
           {/* 密码提示：默认收起，点"忘记密码？"才展开，避免旁人瞥见 */}
           {hint && !showHint && (

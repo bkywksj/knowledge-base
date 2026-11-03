@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Modal, Input, Alert, message, Typography } from "antd";
+import { Button, Modal, Input, Alert, message } from "antd";
 import type { InputRef } from "antd";
-import { EyeOff } from "lucide-react";
+import { Lock } from "lucide-react";
 import { hiddenPinApi } from "@/lib/api";
 import { useAppStore } from "@/store";
-
-const { Text } = Typography;
 
 interface Props {
   open: boolean;
@@ -66,28 +64,26 @@ export function HiddenPinUnlockModal({ open, onSuccess, onCancel }: Props) {
     }
   }
 
+  // v4 原型 .modal：居中卡片 —— 锁图标块 · 标题 · 说明 · 大号 PIN 输入 · 取消 / 解锁。
+  // PIN 长度 4~64 位不固定，不做原型的 4 个圆点格，改成居中加宽字距的密码框
   return (
     <Modal
       open={open}
-      title={
-        <span className="flex items-center gap-2">
-          <EyeOff size={18} />
-          解锁隐藏笔记
-        </span>
-      }
-      okText="解锁"
-      cancelText="取消"
-      confirmLoading={submitting}
-      onOk={handleSubmit}
+      footer={null}
+      closable={false}
+      centered
       onCancel={onCancel}
       destroyOnHidden
       mask={{ closable: false }}
-      width={420}
+      width={400}
+      className="kb-pin-modal"
     >
-      <div className="flex flex-col gap-3">
-        <Text type="secondary" style={{ fontSize: 13 }}>
-          输入 PIN 即可访问隐藏笔记列表，10 分钟内无需重复验证。
-        </Text>
+      <div className="kb-pin">
+        <span className="kb-pin-ico">
+          <Lock size={22} />
+        </span>
+        <h3>输入 PIN 解锁隐藏笔记</h3>
+        <p>输入后 10 分钟内无需重复验证 · PIN 在 设置 → 隐藏笔记 PIN 中设置</p>
         <Input.Password
           ref={inputRef}
           value={pin}
@@ -96,6 +92,8 @@ export function HiddenPinUnlockModal({ open, onSuccess, onCancel }: Props) {
           placeholder="请输入 PIN"
           autoComplete="off"
           maxLength={64}
+          size="large"
+          className="kb-pin-input"
         />
         {/* 密码提示：默认收起，点"忘记 PIN？"才展开，避免有人在屏幕旁瞥见 */}
         {hint && !showHint && (
@@ -104,7 +102,7 @@ export function HiddenPinUnlockModal({ open, onSuccess, onCancel }: Props) {
               e.preventDefault();
               setShowHint(true);
             }}
-            style={{ fontSize: 12, alignSelf: "flex-start" }}
+            className="kb-pin-hint-link"
           >
             忘记 PIN？查看提示
           </a>
@@ -113,14 +111,19 @@ export function HiddenPinUnlockModal({ open, onSuccess, onCancel }: Props) {
           <Alert
             type="info"
             showIcon
-            message={
-              <span style={{ fontSize: 13 }}>
-                提示：{hint}
-              </span>
-            }
+            style={{ width: "100%" }}
+            message={<span style={{ fontSize: 13 }}>提示：{hint}</span>}
           />
         )}
-        {errorMsg && <Alert type="error" message={errorMsg} showIcon />}
+        {errorMsg && <Alert type="error" message={errorMsg} showIcon style={{ width: "100%" }} />}
+        <div className="kb-pin-actions">
+          <Button size="large" onClick={onCancel}>
+            取消
+          </Button>
+          <Button type="primary" size="large" loading={submitting} onClick={() => void handleSubmit()}>
+            解锁
+          </Button>
+        </div>
       </div>
     </Modal>
   );

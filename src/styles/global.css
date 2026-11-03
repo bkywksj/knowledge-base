@@ -6204,3 +6204,184 @@ body.sidebar-resizing .kb-panel-resizer {
   background: var(--kb-bg-raised, #fff);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 隐藏笔记 / PIN 弹窗 / 应用锁屏（T3-14）
+   ═══════════════════════════════════════════════════════════ */
+.kb-hidden-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.kb-hidden-page > .kb-page-bar {
+  margin-bottom: 4px;
+}
+.kb-hidden-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--kb-text-tertiary);
+}
+.kb-hidden-list {
+  padding: 6px 10px 4px;
+}
+.kb-hidden-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--kb-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+.kb-hidden-row:hover {
+  background: var(--kb-bg-hover);
+}
+.kb-hidden-row.is-ctx {
+  outline: 1px solid var(--kb-primary);
+  outline-offset: -1px;
+}
+.kb-hidden-acts {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  display: flex;
+  gap: 2px;
+  padding: 2px 4px;
+  border-radius: 8px;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: 0 0 0 1px var(--kb-border), 0 2px 8px rgba(0, 0, 0, 0.06);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.kb-hidden-row:hover .kb-hidden-acts {
+  opacity: 1;
+  pointer-events: auto;
+}
+.kb-hidden-pager {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 4px 6px;
+}
+/* PIN 解锁弹窗 */
+.kb-pin-modal .ant-modal-content {
+  padding: 28px 26px 22px !important;
+  border-radius: 18px !important;
+}
+.kb-pin {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+.kb-pin-ico {
+  width: 52px;
+  height: 52px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 15px;
+  color: var(--kb-primary);
+  background: var(--kb-primary-light);
+}
+.kb-pin h3 {
+  margin: 6px 0 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--kb-text-primary);
+}
+.kb-pin p {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  color: var(--kb-text-tertiary);
+}
+.kb-pin-input.ant-input-affix-wrapper input {
+  text-align: center;
+  letter-spacing: 0.35em;
+  font-size: 18px;
+}
+.kb-pin-hint-link {
+  font-size: 12px;
+}
+.kb-pin-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  width: 100%;
+  margin-top: 6px;
+}
+/* 应用锁屏 */
+.kb-lock {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(1200px 600px at 50% 40%, color-mix(in srgb, var(--kb-primary) 10%, transparent), transparent 70%),
+    var(--ant-color-bg-layout);
+}
+.kb-lock-drag {
+  height: 48px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+.kb-lock-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.kb-lock-box {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.kb-lock-logo {
+  display: inline-flex;
+  border-radius: 22px;
+  box-shadow: 0 16px 40px -14px color-mix(in srgb, var(--kb-primary) 70%, transparent);
+}
+.kb-lock-box h2 {
+  margin: 10px 0 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--kb-text-primary);
+}
+.kb-lock-box p {
+  margin: -6px 0 8px;
+  font-size: 14px;
+  color: var(--kb-text-secondary);
+}
+.kb-lock-input.ant-input-affix-wrapper {
+  height: 48px;
+  border-radius: 12px;
+}
+.kb-lock-btn.ant-btn {
+  height: 46px;
+  border-radius: 12px;
+  border: none;
+  background: var(--kb-grad, var(--kb-primary)) !important;
+}
+.kb-lock-foot {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  color: var(--kb-text-tertiary);
+}
+.kb-pin-input.ant-input-affix-wrapper input::placeholder {
+  letter-spacing: normal;
+  font-size: 14px;
+}

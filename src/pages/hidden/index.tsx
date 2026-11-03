@@ -2,21 +2,20 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Button,
+  Input,
   Modal,
   Pagination,
   Popconfirm,
-  Space,
-  Table,
-  Typography,
+  Spin,
   message,
-  theme as antdTheme,
 } from "antd";
-import type { ColumnsType } from "antd/es/table";
 import {
   Eye,
   EyeOff,
   Folder as FolderIcon,
   ExternalLink,
+  Search,
+  ShieldAlert,
   Trash2,
 } from "lucide-react";
 import { folderApi, hiddenApi, noteApi, trashApi } from "@/lib/api";
@@ -29,7 +28,6 @@ import {
   type ContextMenuEntry,
 } from "@/components/ui/ContextMenuOverlay";
 
-const { Title, Text } = Typography;
 
 /** 把 URL 的 ?folder= 参数解析成 list API 的 opts */
 function parseFolderParam(raw: string | null): {
@@ -59,7 +57,6 @@ function parseFolderParam(raw: string | null): {
 export default function HiddenPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { token } = antdTheme.useToken();
 
   const [data, setData] = useState<PageResult<Note>>({
     items: [],
@@ -146,6 +143,30 @@ export default function HiddenPage() {
     }
   }
 
+  /** 移到回收站（先确认）：右键菜单和行上的悬停按钮共用 */
+  function confirmTrash(id: number, title: string) {
+    Modal.confirm({
+      title: `把「${title || "(无标题)"}」移到回收站？`,
+      content: "可以在回收站恢复。",
+      okText: "移入回收站",
+      okButtonProps: { danger: true },
+      async onOk() {
+        try {
+          await trashApi.softDelete(id);
+          message.success("已移到回收站");
+          // 本地从列表移除（不重拉，避免分页跳动）
+          setData((prev) => ({
+            ...prev,
+            items: prev.items.filter((n) => n.id !== id),
+            total: Math.max(0, prev.total - 1),
+          }));
+        } catch (e) {
+          message.error(`删除失败：${e}`);
+        }
+      },
+    });
+  }
+
   // ─── 右键菜单 ────────────────────────────────
   const ctx = useContextMenu<{ id: number; title: string }>();
 
@@ -179,207 +200,126 @@ export default function HiddenPage() {
         danger: true,
         onClick: () => {
           ctx.close();
-          Modal.confirm({
-            title: `把「${p.title || "(无标题)"}」移到回收站？`,
-            content: "可以在回收站恢复。",
-            okText: "移入回收站",
-            okButtonProps: { danger: true },
-            async onOk() {
-              try {
-                await trashApi.softDelete(p.id);
-                message.success("已移到回收站");
-                // 本地从列表移除（不重拉，避免分页跳动）
-                setData((prev) => ({
-                  ...prev,
-                  items: prev.items.filter((n) => n.id !== p.id),
-                  total: Math.max(0, prev.total - 1),
-                }));
-              } catch (e) {
-                message.error(`删除失败：${e}`);
-              }
-            },
-          });
+          confirmTrash(p.id, p.title);
         },
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx.state.payload, navigate]);
 
-  const columns: ColumnsType<Note> = useMemo(
-    () => [
-      {
-        title: "#",
-        key: "index",
-        width: 44,
-        align: "right" as const,
-        render: (_: unknown, __: Note, index: number) => (
-          <span style={{ color: token.colorTextTertiary, fontSize: 12 }}>
-            {(data.page - 1) * data.page_size + index + 1}
-          </span>
-        ),
-      },
-      {
-        title: "标题",
-        dataIndex: "title",
-        key: "title",
-        ellipsis: true,
-        render: (val: string, record: Note) => (
-          <a
-            onClick={(e) => {
-              e.preventDefault();
-              navigate(`/notes/${record.id}`);
-            }}
-            style={{ cursor: "pointer" }}
-          >
-            {val}
-          </a>
-        ),
-      },
-      {
-        title: "目录",
-        dataIndex: "folder_id",
-        key: "folder",
-        width: 130,
-        ellipsis: true,
-        render: (fid: number | null) => {
-          if (fid === null || fid === undefined) {
-            return (
-              <Text type="secondary" style={{ fontSize: 12, fontStyle: "italic" }}>
-                未分类
-              </Text>
-            );
-          }
-          const name = folderMap.get(fid) ?? `(已删除 #${fid})`;
-          return (
-            <span
-              style={{
-                fontSize: 12,
-                color: token.colorTextSecondary,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-              }}
-            >
-              <FolderIcon size={12} style={{ opacity: 0.6 }} />
-              {name}
-            </span>
-          );
-        },
-      },
-      {
-        title: "字数",
-        dataIndex: "word_count",
-        key: "word_count",
-        width: 70,
-        render: (val: number) => (
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {val}
-          </Text>
-        ),
-      },
-      {
-        title: "更新时间",
-        dataIndex: "updated_at",
-        key: "updated_at",
-        width: 110,
-        render: (val: string) => (
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {relativeTime(val)}
-          </Text>
-        ),
-      },
-      {
-        title: "操作",
-        key: "action",
-        width: 120,
-        render: (_: unknown, record: Note) => (
-          <Space size="small">
-            <Popconfirm
-              title="取消隐藏？"
-              description="这条笔记会重新出现在主列表 / 搜索 / 图谱中"
-              okText="取消隐藏"
-              cancelText="保留隐藏"
-              onConfirm={() => handleUnhide(record.id)}
-            >
-              <Button type="link" size="small" icon={<Eye size={14} />}>
-                取消隐藏
-              </Button>
-            </Popconfirm>
-          </Space>
-        ),
-      },
-    ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data.page, data.page_size, navigate, folderMap, token.colorTextTertiary, token.colorTextSecondary],
-  );
+  /** 只在当前页里按标题过滤：隐藏笔记列表接口不带关键词，这里不为它改后端 */
+  const [keyword, setKeyword] = useState("");
+  const shown = useMemo(() => {
+    const kw = keyword.trim().toLowerCase();
+    return kw ? data.items.filter((n) => (n.title || "").toLowerCase().includes(kw)) : data.items;
+  }, [data.items, keyword]);
 
   return (
     <div
-      // 横向留白统一交给 AppLayout Content 的 padding，不再单独限内容宽度
-      className="h-full flex flex-col min-h-0"
+      className="kb-hidden-page"
       onContextMenu={(e) => {
-        // 顶层兜底：表格行/操作有自己的 onContextMenu 会先 preventDefault；
+        // 顶层兜底：列表行有自己的 onContextMenu 会先 preventDefault；
         // 其他位置（标题、空白）走顶层吞掉默认菜单。input 白名单保留浏览器原生菜单
         const t = e.target as HTMLElement;
         if (t.closest("input, textarea, [contenteditable='true']")) return;
         e.preventDefault();
       }}
     >
-      <div className="flex items-center justify-between mb-2 flex-shrink-0">
-        <Title level={3} style={{ margin: 0, lineHeight: "32px" }}>
-          <span className="flex items-center gap-2">
-            <EyeOff size={22} />
-            隐藏笔记
-            <Text type="secondary" style={{ fontSize: 13, fontWeight: "normal" }}>
-              · {currentFilterLabel}
-            </Text>
-          </span>
-        </Title>
+      {/* 顶栏（原型 .bar）：隐藏笔记 · 当前筛选 · 说明 ｜ 搜索 */}
+      <div className="kb-page-bar">
+        <h1>隐藏笔记</h1>
+        <span className="kb-page-sub">
+          {currentFilterLabel} · 共 {data.total} 篇 · 不出现在笔记列表、搜索和图谱里
+        </span>
+        <span className="flex-1" />
+        <Input
+          className="kb-bar-search"
+          allowClear
+          prefix={<Search size={14} />}
+          placeholder="在本页搜索隐藏笔记"
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+        />
       </div>
 
-      <div className="flex-shrink-0" style={{ marginBottom: 12, lineHeight: 1.6 }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          只显示被标记为「隐藏」的笔记 —— 主界面 / 搜索 / 反链 / 图谱 / AI
-          问答都不会显示这些笔记。隐藏是弱保护，数据库里仍是明文；需要强保护请到笔记编辑器右上角点锁图标启用加密。
-        </Text>
+      <div className="kb-hidden-note">
+        <ShieldAlert size={13} />
+        隐藏是弱保护：主界面 / 搜索 / 反链 / 图谱 / AI 问答都不显示，但数据库里仍是明文；需要强保护请到笔记编辑器右上角点锁图标启用加密。
       </div>
 
       {data.total > 0 || loading ? (
-        <div
-          className="flex-1 flex flex-col min-h-0 kb-surface"
-          style={{
-            background: token.colorBgContainer,
-            borderRadius: 8,
-            overflow: "hidden",
-          }}
-        >
-          <div className="flex-1 min-h-0 overflow-auto">
-            <Table
-              columns={columns}
-              dataSource={data.items}
-              rowKey="id"
-              loading={loading}
-              size="small"
-              pagination={false}
-              sticky
-              onRow={(record) => ({
-                onContextMenu: (e) => {
-                  e.preventDefault();
-                  ctx.open(e.nativeEvent, {
-                    id: record.id,
-                    title: record.title,
-                  });
-                },
-                // 用整行背景高亮替代 outline：antd Table 的 tr 之间有 1px
-                // border-bottom，outline 会被遮挡显示不全；background 不受影响
-                style:
-                  ctx.state.payload?.id === record.id
-                    ? { background: token.colorPrimaryBg }
-                    : undefined,
-              })}
-            />
-          </div>
-          <div className="flex-shrink-0 flex justify-end items-center px-3 py-2">
+        <section className="kb-cards-panel kb-hidden-list">
+          {loading && data.items.length === 0 ? (
+            <div className="flex justify-center py-10">
+              <Spin />
+            </div>
+          ) : shown.length === 0 ? (
+            <EmptyState description="本页没有匹配的隐藏笔记" />
+          ) : (
+            shown.map((n) => {
+              const folderName =
+                n.folder_id == null ? "未分类" : folderMap.get(n.folder_id) ?? `(已删除 #${n.folder_id})`;
+              return (
+                <div
+                  key={n.id}
+                  className={
+                    "kb-hidden-row" + (ctx.state.payload?.id === n.id ? " is-ctx" : "")
+                  }
+                  onClick={() => navigate(`/notes/${n.id}`)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    ctx.open(e.nativeEvent, { id: n.id, title: n.title });
+                  }}
+                >
+                  <span className="kb-sr-ico">
+                    <EyeOff size={15} />
+                  </span>
+                  <div className="kb-sr-main">
+                    <div className="kb-sr-title">{n.title || "(无标题)"}</div>
+                    <div className="kb-sr-snippet is-one">
+                      <FolderIcon size={11} style={{ display: "inline-block", verticalAlign: -1, marginRight: 3 }} />
+                      {folderName} · {n.word_count} 字
+                    </div>
+                  </div>
+                  <span className="kb-sr-time" title={n.updated_at.slice(0, 16)}>
+                    {relativeTime(n.updated_at)}
+                  </span>
+                  {/* 悬停操作（原来只有「取消隐藏」，另两个藏在右键菜单里） */}
+                  <div className="kb-hidden-acts" onClick={(e) => e.stopPropagation()}>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<ExternalLink size={13} />}
+                      onClick={() => navigate(`/notes/${n.id}`)}
+                    >
+                      打开笔记
+                    </Button>
+                    <Popconfirm
+                      title="取消隐藏？"
+                      description="这条笔记会重新出现在主列表 / 搜索 / 图谱中"
+                      okText="取消隐藏"
+                      cancelText="保留隐藏"
+                      onConfirm={() => handleUnhide(n.id)}
+                    >
+                      <Button type="text" size="small" icon={<Eye size={13} />}>
+                        取消隐藏
+                      </Button>
+                    </Popconfirm>
+                    <Button
+                      type="text"
+                      size="small"
+                      danger
+                      icon={<Trash2 size={13} />}
+                      onClick={() => confirmTrash(n.id, n.title)}
+                    >
+                      移到回收站
+                    </Button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+          <div className="kb-hidden-pager">
             <Pagination
               current={data.page}
               pageSize={data.page_size}
@@ -389,12 +329,13 @@ export default function HiddenPage() {
               pageSizeOptions={["12", "20", "50", "100", "200"]}
               onChange={(page, size) => {
                 if (size !== pageSize) setPageSize(size);
+                setKeyword("");
                 loadList(page, size);
               }}
               size="small"
             />
           </div>
-        </div>
+        </section>
       ) : (
         <EmptyState
           description={
