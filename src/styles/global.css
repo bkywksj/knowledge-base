@@ -4631,3 +4631,50 @@ body.sidebar-resizing .kb-panel-resizer {
   color: var(--kb-text-tertiary);
   font-variant-numeric: tabular-nums;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 待办页顶栏（T3-6b）—— 视图切换带图标、「全部时间 ▾」下拉
+   ═══════════════════════════════════════════════════════════ */
+.kb-page-bar > h1 > span {
+  /* 分类筛选时标题前的色点 */
+  flex: none;
+}
+.kb-view-seg.ant-segmented {
+  margin-left: 6px;
+}
+.kb-bar-btn.is-on.ant-btn {
+  color: var(--kb-primary) !important;
+  border-color: color-mix(in srgb, var(--kb-primary) 40%, transparent);
+  background: var(--kb-primary-light);
+}
+.kb-date-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 250px;
+}
+.kb-date-opt {
+  padding: 6px 10px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--kb-text-primary);
+  cursor: pointer;
+}
+.kb-date-opt:hover {
+  background: var(--kb-bg-hover);
+}
+.kb-date-opt.is-on {
+  color: var(--kb-primary);
+  background: var(--kb-primary-light);
+  font-weight: 600;
+}
+.kb-date-custom {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px 10px 4px;
+  border-top: 1px solid var(--kb-border);
+  font-size: 12px;
+  color: var(--kb-text-tertiary);
+}

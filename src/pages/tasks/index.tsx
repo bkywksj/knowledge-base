@@ -12,6 +12,7 @@ import {
   Popconfirm,
   Segmented,
   DatePicker,
+  Popover,
   theme as antdTheme,
 } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
@@ -36,6 +37,11 @@ import {
   Check as IconCheck,
   Ban,
   Paperclip,
+  List,
+  Columns3,
+  LayoutGrid,
+  CalendarDays,
+  GanttChart,
 } from "lucide-react";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import {
@@ -63,7 +69,7 @@ import { GanttView } from "@/components/tasks/GanttView";
 import { ProjectManageModal } from "@/components/tasks/ProjectManageModal";
 import { notifyTasksDeleted } from "@/lib/undoDelete";
 
-const { Text, Paragraph } = Typography;
+const { Paragraph } = Typography;
 
 /** 紧急度颜色映射 */
 function priorityColor(p: TaskPriority, token: ReturnType<typeof antdTheme.useToken>["token"]): string {
@@ -473,6 +479,18 @@ function DesktopTasksPage() {
       { label: "上月", value: [lastMonth.startOf("month"), lastMonth.endOf("month")] },
     ];
   }, []);
+  const [dateOpen, setDateOpen] = useState(false);
+  /** 「全部时间 ▾」按钮上的字：没筛 = 全部时间；正好等于某个快捷区间 = 它的名字；否则显示起止 */
+  const dateLabel = useMemo(() => {
+    if (!dateRange || (!dateRange[0] && !dateRange[1])) return "全部时间";
+    const [a, b] = dateRange;
+    const hit = datePresets.find(
+      (p) => a && b && p.value[0].isSame(a, "day") && p.value[1].isSame(b, "day"),
+    );
+    if (hit) return hit.label;
+    const f = (d: Dayjs | null) => (d ? d.format("MM-DD") : "…");
+    return `${f(a)} ~ ${f(b)}`;
+  }, [dateRange, datePresets]);
   /** 日历 / 甘特自带时间轴，日期区间对它们没意义，也不参与过滤 */
   const dateFilterApplicable = viewMode !== "calendar" && viewMode !== "gantt";
 
@@ -601,64 +619,148 @@ function DesktopTasksPage() {
   // 全部视图统一：全宽 + 两侧 16px(px-4) 内边距，边界一致；不再按视图切窄/宽栏，
   // 避免切视图时容器宽度变化导致右上角按钮群位置跳动。
   return (
-    <div className="w-full h-full flex flex-col min-h-0 px-4">
-      {/* 标题栏：标题随 SidePanel 选择动态变化，操作栏只留视图模式 + AI + 新建
-          顶部头(标题 + 搜索) flex-shrink-0 永不滚动；下面列表区单独可滚 */}
-      <div className="flex items-end justify-between mb-2 flex-shrink-0">
-        <div>
-          <h1 className="text-lg font-semibold flex items-center gap-2">
-            <CheckSquare size={20} style={{ color: token.colorPrimary }} />
-            {(() => {
-              if (categoryParam === "none") return "未分类";
-              if (categoryParam) {
-                const c = categoryMap.get(Number(categoryParam));
-                if (c) {
-                  return (
-                    <span className="inline-flex items-center gap-2">
-                      <span
-                        style={{
-                          display: "inline-block",
-                          width: 12,
-                          height: 12,
-                          borderRadius: 999,
-                          background: c.color,
-                        }}
-                      />
-                      {c.name}
-                    </span>
-                  );
-                }
+    <div className="w-full h-full flex flex-col min-h-0">
+      {/* 顶栏（v4 原型 .bar，与笔记列表同款 .kb-page-bar）一行放下：
+          标题（随侧栏筛选变化）+ 未完成 / 紧急计数 · 视图切换 ｜ 搜索 · 全部时间 ▾ · 项目管理（甘特）· 多选（列表）· 添加待办。
+          顶栏 flex-shrink-0 永不滚动；下面列表区单独可滚 */}
+      <div className="kb-page-bar">
+        <h1 className="flex items-center gap-2">
+          {(() => {
+            if (categoryParam === "none") return "未分类";
+            if (categoryParam) {
+              const c = categoryMap.get(Number(categoryParam));
+              if (c) {
+                return (
+                  <span className="inline-flex items-center gap-2">
+                    <span
+                      style={{
+                        display: "inline-block",
+                        width: 12,
+                        height: 12,
+                        borderRadius: 999,
+                        background: c.color,
+                      }}
+                    />
+                    {c.name}
+                  </span>
+                );
               }
-              return filterTitle(filter);
-            })()}
-          </h1>
-          <Text type="secondary" className="text-xs">
-            {/* 「已放弃」/「已完成」列表里全是非待办任务，"0 条未完成 · 0 条紧急"
-                纯属噪音，改报条数 */}
-            {filter === "abandoned" || filter === "done" ? (
-              `共 ${visibleTasks.length} 条`
-            ) : (
-              <>
-                {visibleTasks.filter((t) => t.status === 0).length} 条未完成 ·{" "}
-                <span style={{ color: token.colorError }}>
-                  {visibleTasks.filter((t) => t.status === 0 && t.priority === 0).length} 条紧急
-                </span>
-              </>
-            )}
-            {dateActive && dateFilterApplicable && (
-              <span style={{ color: token.colorTextTertiary }}>
-                {" "}
-                · 已按日期筛选
+            }
+            return filterTitle(filter);
+          })()}
+        </h1>
+        <span className="kb-page-sub">
+          {/* 「已放弃」/「已完成」列表里全是非待办任务，"0 条未完成 · 0 条紧急"
+              纯属噪音，改报条数 */}
+          {filter === "abandoned" || filter === "done" ? (
+            `共 ${visibleTasks.length} 条`
+          ) : (
+            <>
+              {visibleTasks.filter((t) => t.status === 0).length} 条未完成 ·{" "}
+              <span style={{ color: token.colorError }}>
+                {visibleTasks.filter((t) => t.status === 0 && t.priority === 0).length} 条紧急
               </span>
-            )}
-          </Text>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* 视图相关的次要按钮放在 Segmented 左侧：这样 Segmented(视图切换) 与
-              添加待办 锚定在最右侧，切换视图时它们的位置不动，只有左侧的次要按钮进出。 */}
+            </>
+          )}
+          {dateActive && dateFilterApplicable && (
+            <span style={{ color: token.colorTextTertiary }}>
+              {" "}
+              · 已按日期筛选
+            </span>
+          )}
+        </span>
+        <Segmented
+          className="kb-view-seg"
+          value={viewMode}
+          onChange={(v) => setViewMode(v as ViewMode)}
+          options={[
+            { value: "list", label: <span className="kb-seg-lb"><List size={13} />列表</span> },
+            { value: "kanban", label: <span className="kb-seg-lb"><Columns3 size={13} />看板</span> },
+            { value: "quadrant", label: <span className="kb-seg-lb"><LayoutGrid size={13} />四象限</span> },
+            { value: "calendar", label: <span className="kb-seg-lb"><CalendarDays size={13} />日历</span> },
+            { value: "gantt", label: <span className="kb-seg-lb"><GanttChart size={13} />甘特图</span> },
+          ]}
+        />
+        <span className="flex-1" />
+        <Input
+          className="kb-bar-search"
+          placeholder="搜索任务标题 / 描述"
+          prefix={<Search size={14} style={{ color: token.colorTextQuaternary }} />}
+          suffix={
+            <MicButton
+              size="small"
+              stripTrailingPunctuation
+              onTranscribed={(text) =>
+                setKeyword((prev) => (prev ? `${prev} ${text}` : text))
+              }
+            />
+          }
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+          allowClear
+        />
+        {/* 日期筛选（日历 / 甘特自带时间轴，不显示）：原型「全部时间 ▾」——
+            下拉里是快捷区间 + 自定义起止日期（原 RangePicker 原样搬进来，可只填一端） */}
+        {dateFilterApplicable && (
+          <Popover
+            trigger="click"
+            placement="bottomRight"
+            arrow={false}
+            open={dateOpen}
+            onOpenChange={setDateOpen}
+            content={
+              <div className="kb-date-menu">
+                <div
+                  className={!dateActive ? "kb-date-opt is-on" : "kb-date-opt"}
+                  onClick={() => {
+                    setDateRange(null);
+                    setDateOpen(false);
+                  }}
+                >
+                  全部时间
+                </div>
+                {datePresets.map((p) => (
+                  <div
+                    key={p.label}
+                    className={dateLabel === p.label ? "kb-date-opt is-on" : "kb-date-opt"}
+                    onClick={() => {
+                      setDateRange(p.value);
+                      setDateOpen(false);
+                    }}
+                  >
+                    {p.label}
+                  </div>
+                ))}
+                <div className="kb-date-custom">
+                  <span>自定义</span>
+                  <DatePicker.RangePicker
+                    size="small"
+                    value={dateRange}
+                    onChange={(v) => setDateRange(v as [Dayjs | null, Dayjs | null] | null)}
+                    // 允许只填一端 → 「某天之前 / 之后」的开区间筛选
+                    allowEmpty={[true, true]}
+                    placeholder={["开始日期", "结束日期"]}
+                    // 弹层挂在下拉里面：挂到 body 的话，点日期会被当成「点了下拉外面」把下拉关掉
+                    getPopupContainer={(el) => el.parentElement ?? document.body}
+                    style={{ width: 230 }}
+                  />
+                </div>
+              </div>
+            }
+          >
+            <Button
+              className={dateActive ? "kb-bar-btn is-on" : "kb-bar-btn"}
+              icon={<CalendarDays size={14} />}
+              title="按日期筛选：未完成看截止日期，已完成 / 已放弃看完成日期"
+            >
+              {dateLabel}
+              <ChevronDown size={12} />
+            </Button>
+          </Popover>
+        )}
+          {/* 视图相关的次要按钮：甘特图才有项目管理，列表才有多选 */}
           {viewMode === "gantt" && (
             <Button
-              size="small"
               icon={<FolderIcon size={14} />}
               onClick={() => setProjectManageOpen(true)}
               title="项目管理"
@@ -668,7 +770,6 @@ function DesktopTasksPage() {
           )}
           {viewMode === "list" && (
             <Button
-              size="small"
               icon={multiSelect ? <IconX size={14} /> : <ListChecks size={14} />}
               onClick={() => {
                 if (multiSelect) {
@@ -684,58 +785,12 @@ function DesktopTasksPage() {
               {multiSelect ? "退出多选" : "多选"}
             </Button>
           )}
-          <Segmented
-            size="small"
-            value={viewMode}
-            onChange={(v) => setViewMode(v as ViewMode)}
-            options={[
-              { label: "列表", value: "list" },
-              { label: "看板", value: "kanban" },
-              { label: "四象限", value: "quadrant" },
-              { label: "日历", value: "calendar" },
-              { label: "甘特图", value: "gantt" },
-            ]}
-          />
           <NewTodoButton
             onSaved={() => {
               loadTasks();
               useAppStore.getState().refreshTaskStats();
             }}
           />
-        </div>
-      </div>
-
-      {/* 搜索 + 日期筛选（日历 / 甘特自带时间轴，不显示日期筛选） */}
-      <div className="flex items-center gap-2 mb-3 flex-shrink-0">
-        <Input
-          placeholder="搜索任务标题 / 描述"
-          prefix={<Search size={14} style={{ color: token.colorTextQuaternary }} />}
-          suffix={
-            <MicButton
-              size="small"
-              stripTrailingPunctuation
-              onTranscribed={(text) =>
-                setKeyword((prev) => (prev ? `${prev} ${text}` : text))
-              }
-            />
-          }
-          value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
-          allowClear
-          className="flex-1 min-w-0"
-        />
-        {dateFilterApplicable && (
-          <DatePicker.RangePicker
-            value={dateRange}
-            onChange={(v) => setDateRange(v as [Dayjs | null, Dayjs | null] | null)}
-            // 允许只填一端 → 「某天之前 / 之后」的开区间筛选
-            allowEmpty={[true, true]}
-            presets={datePresets}
-            placeholder={["开始日期", "结束日期"]}
-            title="按日期筛选：未完成看截止日期，已完成 / 已放弃看完成日期"
-            style={{ width: 250, flexShrink: 0 }}
-          />
-        )}
       </div>
 
       <div
