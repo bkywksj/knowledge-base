@@ -1,6 +1,135 @@
 /* ═══════════════════════════════════════════════════════════
-   4 套主题 CSS 变量 + 强制 Ant Design 覆盖
+   7 套主题 CSS 变量 + 强制 Ant Design 覆盖
+   （淡紫 light-lilac / 暖炭 dark-ember 为 v4 界面重设计主题，见 docs/design/ui-v4）
    ═══════════════════════════════════════════════════════════ */
+
+/* ─── 亮色 · 淡紫（v4 默认）──────────────────────────────────
+   数值来自 docs/design/ui-v4/kit.css 的设计令牌（含「提高清晰度」那轮修正）：
+   - 底色是带紫调的浅灰 #E9E4F8，内容区是白纸，层次靠底色差而不是投影
+   - 不出现黑色：最深文字是紫调深灰 #27233B
+   - 按钮无投影（antd 侧见 tokens.ts getAntdComponents） */
+[data-theme="light-lilac"] {
+  --kb-bg-app: #E9E4F8;
+  --kb-bg-card: #FFFFFF;
+  --kb-bg-card-solid: #FFFFFF;
+  --kb-bg-sidebar: #E9E4F8;
+  --kb-bg-header: #E9E4F8;
+  --kb-bg-content: #FFFFFF;
+  --kb-bg-panel: #F6F3FD;
+  --kb-bg-hover: rgba(124,99,220,0.055);
+  --kb-bg-active: rgba(124,99,220,0.1);
+  --kb-text-primary: #27233B;
+  --kb-text-secondary: #6E6888;
+  --kb-text-tertiary: #9C96B4;
+  --kb-border: rgba(110,85,200,0.14);
+  --kb-border-card: rgba(110,85,200,0.12);
+  --kb-border-sidebar: rgba(110,85,200,0.14);
+  --kb-primary: #7C63DC;
+  --kb-primary-light: rgba(124,99,220,0.08);
+  --kb-accent: #B482E8;
+  --kb-glass-blur: 0px;
+  --kb-shadow-sm: 0 0 0 .5px rgba(110,85,200,.10), 0 1px 2px rgba(110,85,200,.035);
+  --kb-shadow-md: 0 0 0 .5px rgba(110,85,200,.10), 0 8px 24px -14px rgba(110,85,200,.18);
+  --kb-scrollbar-thumb: rgba(124,99,220,0.18);
+  --kb-scrollbar-hover: rgba(124,99,220,0.32);
+  color-scheme: light;
+}
+
+/* 底色：浅紫灰 + 三处极淡的光晕，和原型 body 一致 */
+[data-theme="light-lilac"] body,
+[data-theme="light-lilac"] #root {
+  background:
+    radial-gradient(700px 420px at 0% 0%, #F3EFFD 0%, transparent 70%),
+    radial-gradient(620px 420px at 100% 0%, #EFE5FA 0%, transparent 70%),
+    radial-gradient(900px 520px at 70% 110%, #E0D7F8 0%, transparent 70%),
+    #E9E4F8 !important;
+  background-attachment: fixed !important;
+}
+
+[data-theme="light-lilac"] .ant-layout {
+  background: transparent !important;
+}
+[data-theme="light-lilac"] .ant-layout-sider {
+  background: transparent !important;
+  border-right-color: var(--kb-border-sidebar) !important;
+}
+[data-theme="light-lilac"] .ant-layout-header {
+  background: transparent !important;
+  border-bottom-color: var(--kb-border) !important;
+}
+[data-theme="light-lilac"] .ant-layout-content {
+  background: var(--kb-bg-content) !important;
+}
+
+/* Card：白底 + 半像素紫调描边，悬停不位移 */
+[data-theme="light-lilac"] .ant-card {
+  background: var(--kb-bg-card) !important;
+  border-color: var(--kb-border-card) !important;
+  box-shadow: var(--kb-shadow-sm) !important;
+  border-radius: 14px !important;
+}
+[data-theme="light-lilac"] .ant-card:hover {
+  box-shadow: var(--kb-shadow-md) !important;
+}
+
+/* Menu */
+[data-theme="light-lilac"] .ant-menu {
+  background: transparent !important;
+}
+[data-theme="light-lilac"] .ant-menu-item-selected {
+  background: var(--kb-bg-active) !important;
+}
+[data-theme="light-lilac"] .ant-menu-item:hover:not(.ant-menu-item-selected) {
+  background: var(--kb-bg-hover) !important;
+}
+
+/* Input：白底，聚焦时淡紫描边 + 光圈 */
+[data-theme="light-lilac"] .ant-input,
+[data-theme="light-lilac"] .ant-input-affix-wrapper {
+  background: #FFFFFF !important;
+  border-color: rgba(110,85,200,0.24) !important;
+}
+[data-theme="light-lilac"] .ant-input:focus,
+[data-theme="light-lilac"] .ant-input-affix-wrapper:focus,
+[data-theme="light-lilac"] .ant-input-affix-wrapper-focused {
+  border-color: var(--kb-primary) !important;
+  box-shadow: 0 0 0 3px rgba(124,99,220,0.12) !important;
+}
+
+/* Table */
+[data-theme="light-lilac"] .ant-table {
+  background: transparent !important;
+}
+[data-theme="light-lilac"] .ant-table-thead > tr > th,
+[data-theme="light-lilac"] .ant-table-thead > tr > td {
+  background: var(--kb-bg-panel) !important;
+  border-color: var(--kb-border) !important;
+}
+[data-theme="light-lilac"] .ant-table-tbody > tr > td {
+  border-color: var(--kb-border) !important;
+}
+[data-theme="light-lilac"] .ant-table-tbody > tr:hover > td {
+  background: var(--kb-bg-hover) !important;
+}
+
+/* 主按钮：淡紫渐变，无投影 */
+[data-theme="light-lilac"] .ant-btn-primary:not(:disabled):not(.ant-btn-dangerous):not(.ant-btn-background-ghost) {
+  background: linear-gradient(135deg, #B3A3F6 0%, #937BE9 45%, #7C63DC 100%) !important;
+  box-shadow: none !important;
+}
+[data-theme="light-lilac"] .ant-btn-primary:not(:disabled):not(.ant-btn-dangerous):not(.ant-btn-background-ghost):hover {
+  filter: brightness(1.05);
+}
+
+/* 编辑器 */
+[data-theme="light-lilac"] .editor-topbar {
+  background: #FBFAFF !important;
+  border-bottom-color: var(--kb-border) !important;
+}
+[data-theme="light-lilac"] .editor-body,
+[data-theme="light-lilac"] .kb-link-status-dock {
+  background: #FFFFFF !important;
+}
 
 /* ─── 亮色 A：柔光毛玻璃 ────────────────────────────────── */
 [data-theme="light-glass"] {
@@ -380,6 +509,136 @@
   background: #ffffff !important;
 }
 
+/* ─── 暗色 · 暖炭（v4 暗色）──────────────────────────────────
+   数值来自 docs/design/ui-v4/dark.css：
+   - 底色是带一点暖棕的炭灰，不用紫调底（用户试过紫调底，觉得发闷）
+   - 紫色只出现在强调处：主按钮、选中、链接 */
+[data-theme="dark-ember"] {
+  --kb-bg-app: #161514;
+  --kb-bg-card: #242321;
+  --kb-bg-card-solid: #242321;
+  --kb-bg-sidebar: #161514;
+  --kb-bg-header: #161514;
+  --kb-bg-content: #1D1C1A;
+  --kb-bg-panel: #21201E;
+  --kb-bg-hover: rgba(255,245,230,0.05);
+  --kb-bg-active: rgba(169,146,250,0.14);
+  --kb-text-primary: #EFEBE4;
+  --kb-text-secondary: #C4BEB4;
+  --kb-text-tertiary: #958F85;
+  --kb-border: rgba(255,245,230,0.09);
+  --kb-border-card: rgba(255,245,230,0.08);
+  --kb-border-sidebar: rgba(255,245,230,0.07);
+  --kb-primary: #A992FA;
+  --kb-primary-light: rgba(169,146,250,0.12);
+  --kb-accent: #E3B160;
+  --kb-glass-blur: 0px;
+  --kb-shadow-sm: 0 0 0 .5px rgba(255,245,230,.08), 0 1px 2px rgba(0,0,0,.35);
+  --kb-shadow-md: 0 0 0 .5px rgba(255,245,230,.08), 0 10px 26px -16px rgba(0,0,0,.55);
+  --kb-scrollbar-thumb: rgba(255,245,230,0.12);
+  --kb-scrollbar-hover: rgba(255,245,230,0.22);
+  color-scheme: dark;
+}
+
+[data-theme="dark-ember"] body,
+[data-theme="dark-ember"] #root {
+  background: #161514 !important;
+}
+
+[data-theme="dark-ember"] .ant-layout {
+  background: var(--kb-bg-app) !important;
+}
+[data-theme="dark-ember"] .ant-layout-sider {
+  background: var(--kb-bg-sidebar) !important;
+  border-right: 1px solid var(--kb-border-sidebar) !important;
+}
+[data-theme="dark-ember"] .ant-layout-header {
+  background: var(--kb-bg-header) !important;
+  border-bottom-color: var(--kb-border) !important;
+}
+[data-theme="dark-ember"] .ant-layout-content {
+  background: var(--kb-bg-content) !important;
+}
+
+/* Card */
+[data-theme="dark-ember"] .ant-card {
+  background: var(--kb-bg-card) !important;
+  border-color: var(--kb-border-card) !important;
+  box-shadow: var(--kb-shadow-sm) !important;
+  border-radius: 14px !important;
+}
+[data-theme="dark-ember"] .ant-card:hover {
+  box-shadow: var(--kb-shadow-md) !important;
+}
+
+/* Statistic */
+[data-theme="dark-ember"] .ant-statistic-title {
+  color: var(--kb-text-tertiary) !important;
+}
+[data-theme="dark-ember"] .ant-statistic-content-value {
+  color: var(--kb-text-primary) !important;
+}
+
+/* Menu */
+[data-theme="dark-ember"] .ant-menu {
+  background: transparent !important;
+}
+[data-theme="dark-ember"] .ant-menu-item-selected {
+  background: var(--kb-bg-active) !important;
+}
+[data-theme="dark-ember"] .ant-menu-item:hover:not(.ant-menu-item-selected) {
+  background: var(--kb-bg-hover) !important;
+}
+
+/* Input */
+[data-theme="dark-ember"] .ant-input,
+[data-theme="dark-ember"] .ant-input-affix-wrapper {
+  background: #191817 !important;
+  border-color: rgba(255,245,230,0.14) !important;
+}
+[data-theme="dark-ember"] .ant-input:focus,
+[data-theme="dark-ember"] .ant-input-affix-wrapper:focus,
+[data-theme="dark-ember"] .ant-input-affix-wrapper-focused {
+  border-color: var(--kb-primary) !important;
+  box-shadow: 0 0 0 3px rgba(169,146,250,0.16) !important;
+}
+
+/* Table */
+[data-theme="dark-ember"] .ant-table {
+  background: transparent !important;
+}
+[data-theme="dark-ember"] .ant-table-thead > tr > th,
+[data-theme="dark-ember"] .ant-table-thead > tr > td {
+  background: var(--kb-bg-panel) !important;
+  border-color: var(--kb-border) !important;
+}
+[data-theme="dark-ember"] .ant-table-tbody > tr > td {
+  border-color: var(--kb-border) !important;
+}
+[data-theme="dark-ember"] .ant-table-tbody > tr:hover > td {
+  background: var(--kb-bg-hover) !important;
+}
+
+/* 主按钮：紫色渐变配白字，无投影 */
+[data-theme="dark-ember"] .ant-btn-primary:not(:disabled):not(.ant-btn-dangerous):not(.ant-btn-background-ghost) {
+  background: linear-gradient(135deg, #9C86F2 0%, #8269E4 45%, #6C52D2 100%) !important;
+  color: #FFFFFF !important;
+  box-shadow: none !important;
+}
+[data-theme="dark-ember"] .ant-btn-primary:not(:disabled):not(.ant-btn-dangerous):not(.ant-btn-background-ghost):hover {
+  filter: brightness(1.08);
+}
+
+/* 编辑器 */
+[data-theme="dark-ember"] .editor-topbar {
+  background: var(--kb-bg-panel) !important;
+  border-bottom-color: var(--kb-border) !important;
+}
+[data-theme="dark-ember"] .editor-body,
+[data-theme="dark-ember"] .kb-link-status-dock {
+  background: var(--kb-bg-content) !important;
+}
+
 /* ─── 暗色 A：星空沉浸 ──────────────────────────────────── */
 [data-theme="dark-starry"] {
   --kb-bg-app: #0a0a12;
@@ -748,10 +1007,14 @@ body.has-custom-bg .activity-bar {
 /* 各主题的面板底色 = 该主题 --kb-bg-card 的 rgb 三元组形式。
    写成三元组而不是直接复用 --kb-bg-card：后者在 light-glass 里本身就是
    rgba(...,0.7)，再套一层 alpha 会叠加成几乎全透明。 */
+[data-theme="light-lilac"],
 [data-theme="light-glass"],
 [data-theme="light-warm"],
 [data-theme="light-jade"] {
   --kb-surface-base: 255, 255, 255;
+}
+[data-theme="dark-ember"] {
+  --kb-surface-base: 36, 35, 33;
 }
 [data-theme="dark-starry"] {
   --kb-surface-base: 18, 18, 30;
@@ -990,7 +1253,7 @@ html[data-theme-category="dark"] .tiptap-toolbar .toolbar-btn-active:hover:not(:
 
 /* ═══════════════════════════════════════════════════════════
    T-B01: 暗色主题统一文字色对比度兜底
-   覆盖 dark-starry / dark-mocha 两套主题。
+   覆盖全部暗色主题（dark-ember / dark-starry / dark-mocha）。
    修复用户反馈："黑夜星空主题下模型 ID 文字纯白看不见"——根因是某些
    themes.css 里只 override 了 background 没 override color，导致 antd 默认
    字色（理应跟 darkAlgorithm 派生）和实际容器 bg 不匹配。这里显式把所有

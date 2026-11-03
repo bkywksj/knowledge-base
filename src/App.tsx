@@ -7,7 +7,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { useAppStore } from "@/store";
 import { AppRouter } from "@/Router";
-import { getAntdTokens } from "@/theme/tokens";
+import { getAntdComponents, getAntdTokens } from "@/theme/tokens";
 import { TaskReminderListener } from "@/components/tasks/TaskReminderListener";
 import { MigrationCrashNotice } from "@/components/datadir/MigrationCrashNotice";
 import { ExitConfirmListener } from "@/components/ui/ExitConfirmListener";
@@ -171,6 +171,7 @@ function App() {
         algorithm:
           themeCategory === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm,
         token: scaledTokens,
+        components: getAntdComponents(activeTheme),
       }}
     >
       <AntdApp style={{ height: "100%" }}>
