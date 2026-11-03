@@ -10,22 +10,24 @@ import {
   TreeSelect,
   Select,
   DatePicker,
-  Checkbox,
+  Switch,
+  Popover,
   theme as antdTheme,
 } from "antd";
 import {
   Search as SearchIcon,
-  NotebookText,
   CheckSquare,
   AlertTriangle,
   Check,
-  SlidersHorizontal,
-  X as XIcon,
+  Filter as FilterIcon,
+  ChevronDown,
+  FileText,
+  PenTool,
+  Folder as FolderIcon,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import dayjs from "dayjs";
 import {
-  hasActiveFilters,
   parseSearchUrl,
   writeSearchUrl,
 } from "@/lib/searchUrlState";
@@ -33,6 +35,8 @@ import { searchApi, taskApi, folderApi, tagApi } from "@/lib/api";
 import { MicButton } from "@/components/MicButton";
 import { useAppStore } from "@/store";
 import { highlightText, highlightSnippet } from "@/lib/highlight";
+import { buildFolderPath } from "@/lib/folderPath";
+import { relativeTime } from "@/lib/utils";
 import type {
   SearchResult,
   TaskSearchHit,
@@ -45,7 +49,7 @@ import type {
 const { Text } = Typography;
 
 /** 笔记结果单行高度估算（含 title + snippet + 日期三行 + 上下 padding） */
-const ESTIMATED_ROW_HEIGHT = 92;
+const ESTIMATED_ROW_HEIGHT = 76;
 /** "全部" 模式下笔记最多展示这么多条，再多就让用户切到「笔记」Tab 看全 */
 const ALL_MODE_NOTES_PREVIEW = 20;
 
@@ -139,8 +143,6 @@ function DesktopSearchPage() {
   const lastSearchRef = useRef<{ q: string; filtersKey: string } | null>(null);
 
   // ─── 筛选（P1-2）────────────────────────────────
-  // 带着筛选条件回来时直接展开面板，让用户看到条件还在
-  const [showFilters, setShowFilters] = useState(() => hasActiveFilters(initialUrl));
   const [folders, setFolders] = useState<Folder[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [pickedFolders, setPickedFolders] = useState<number[]>(initialUrl.folders);
@@ -153,15 +155,12 @@ function DesktopSearchPage() {
     initialUrl.created ? toDayRange(initialUrl.created) : null,
   );
   const [titleOnly, setTitleOnly] = useState(initialUrl.titleOnly);
-  // RangePicker 是非受控的：清空筛选时靠换 key 重挂载，才能把选择器上残留的日期也清掉
-  const [pickerResetKey, setPickerResetKey] = useState(0);
 
-  // 展开筛选面板时才拉数据 —— 大多数搜索用不上筛选，没必要每次进页面都拉两张表
+  // v4：筛选条搜索后常驻，结果行还要显示文件夹路径 → 进页面就拉文件夹树和标签（两张小表）
   useEffect(() => {
-    if (!showFilters || folders.length > 0 || tags.length > 0) return;
     folderApi.list().then(setFolders).catch(() => {});
     tagApi.list().then(setTags).catch(() => {});
-  }, [showFilters, folders.length, tags.length]);
+  }, []);
 
   /** 组装成后端要的 filters（规则见 buildSearchFilters） */
   const filters = useMemo<SearchFilters | undefined>(
@@ -195,7 +194,6 @@ function DesktopSearchPage() {
     setDateRange(null);
     setCreatedRange(null);
     setTitleOnly(false);
-    setPickerResetKey((k) => k + 1);
   }
 
   // 筛选变化后立即用当前关键词重搜（用户改了条件却要再敲一次回车是很别扭的）
@@ -246,8 +244,6 @@ function DesktopSearchPage() {
     setDateRange(nextDate);
     setCreatedRange(nextCreated);
     setTitleOnly(next.titleOnly);
-    setPickerResetKey((k) => k + 1);
-    if (hasActiveFilters(next)) setShowFilters(true);
     doSearch(
       urlQ,
       buildSearchFilters(
@@ -365,13 +361,44 @@ function DesktopSearchPage() {
   const notesToRender =
     scope === "all" ? results.slice(0, ALL_MODE_NOTES_PREVIEW) : results;
 
+  /** 文件夹 id → 「父 / 子」路径（结果行右侧小标签用） */
+  const folderPathOf = (id: number | null) =>
+    id == null ? "未分类" : buildFolderPath(folders, id).map((f) => f.name).join(" / ") || "未分类";
+
+  /** 「时间 ▾」快捷区间（作用于修改时间）；创建时间只走下拉里的自定义 */
+  const timePresets = useMemo(() => {
+    const today = dayjs();
+    const f = (d: dayjs.Dayjs) => d.format("YYYY-MM-DD");
+    return [
+      { label: "今天", range: [f(today), f(today)] as [string, string] },
+      { label: "最近 7 天", range: [f(today.subtract(6, "day")), f(today)] as [string, string] },
+      { label: "最近 30 天", range: [f(today.subtract(29, "day")), f(today)] as [string, string] },
+      { label: "今年", range: [f(today.startOf("year")), f(today)] as [string, string] },
+    ];
+  }, []);
+  const [timeOpen, setTimeOpen] = useState(false);
+  const timeLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (dateRange) {
+      const a = dateRange[0].slice(0, 10);
+      const b = dateRange[1].slice(0, 10);
+      const hit = timePresets.find((p) => p.range[0] === a && p.range[1] === b);
+      parts.push(hit ? hit.label : `${a.slice(5)} ~ ${b.slice(5)}`);
+    }
+    if (createdRange) parts.push("按创建时间");
+    return parts.length > 0 ? parts.join(" · ") : "全部时间";
+  }, [dateRange, createdRange, timePresets]);
+  const pickerValue = (r: [string, string] | null): [dayjs.Dayjs, dayjs.Dayjs] | null =>
+    r ? [dayjs(r[0].slice(0, 10)), dayjs(r[1].slice(0, 10))] : null;
+
   return (
-    // 横向留白统一交给 AppLayout Content 的 padding，不再单独限内容宽度
-    <div>
-      {/* 搜索框：与首页 / 笔记列表搜索同款（普通 Input + 独立搜索按钮） */}
-      <div className="mb-4 flex items-stretch gap-1.5" style={{ width: "100%" }}>
+    // v4 原型：搜索卡片 · 筛选卡片 · 结果胶囊 · 结果卡片；结果区自己滚动，上面三块不动
+    <div className="kb-search-page">
+      {/* 搜索框（原型 .sbar）：输入 · 语音 · 清除 ｜ 仅搜标题 · 搜索 */}
+      <div className="kb-search-bar">
         <Input
           size="large"
+          variant="borderless"
           placeholder="搜索笔记内容 / 待办标题…"
           prefix={<SearchIcon size={18} />}
           suffix={
@@ -387,60 +414,29 @@ function DesktopSearchPage() {
           onChange={(e) => handleInputChange(e.target.value)}
           onPressEnter={() => handleInputChange(query)}
           allowClear
-          style={{ flex: 1, borderRadius: 8 }}
+          autoFocus={!query}
         />
-        <Button
-          size="large"
-          type="primary"
-          onClick={() => handleInputChange(query)}
-        >
+        <span className="kb-search-sep" />
+        {/* 原来藏在筛选面板里；放到这里随手可切（只影响笔记结果） */}
+        <label className="kb-search-titleonly" title="只匹配笔记标题，不搜正文">
+          <Switch size="small" checked={titleOnly} onChange={setTitleOnly} />
+          仅搜标题
+        </label>
+        <Button type="primary" onClick={() => handleInputChange(query)}>
           搜索
         </Button>
       </div>
 
-      {/* 范围切换：仅在已搜索时显示，免得空状态有个孤零零的切换器 */}
-      {searched && (
-        <div className="mb-4 flex items-center justify-between">
-          <Segmented
-            value={scope}
-            onChange={(v) => setScope(v as Scope)}
-            options={[
-              { value: "all", label: `全部 ${totalHits}` },
-              { value: "notes", label: `笔记 ${results.length}` },
-              { value: "tasks", label: `待办 ${taskResults.length}` },
-            ]}
-          />
-          <div className="flex items-center gap-3">
-            {!loading && totalHits > 0 && (
-              <Text type="secondary" className="text-xs">
-                共 {totalHits} 条结果
-              </Text>
-            )}
-            {/* 筛选只作用于笔记，待办 Tab 下没有意义，故隐藏 */}
-            {scope !== "tasks" && (
-              <Button
-                size="small"
-                type={activeFilterCount > 0 ? "primary" : "default"}
-                icon={<SlidersHorizontal size={14} />}
-                onClick={() => setShowFilters((v) => !v)}
-                title="按文件夹 / 标签 / 时间 / 类型筛选"
-              >
-                筛选{activeFilterCount > 0 ? ` ${activeFilterCount}` : ""}
-              </Button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 筛选栏（P1-2）：仅笔记结果生效 */}
-      {searched && showFilters && scope !== "tasks" && (
-        <div
-          className="mb-4 flex flex-wrap items-center gap-2 rounded-lg p-3"
-          style={{ background: token.colorFillQuaternary }}
-        >
+      {/* 筛选条（原型 .fbar）：搜过之后常驻；只作用于笔记，待办 Tab 下隐藏 */}
+      {searched && scope !== "tasks" && (
+        <div className="kb-filter-bar">
+          <span className="kb-filter-title">
+            <FilterIcon size={14} />
+            筛选
+          </span>
+          <span className="kb-filter-lb">文件夹</span>
           <TreeSelect
-            style={{ minWidth: 180, flex: "1 1 180px" }}
-            size="small"
+            style={{ minWidth: 160, maxWidth: 240 }}
             multiple
             treeCheckable
             showCheckedStrategy={TreeSelect.SHOW_PARENT}
@@ -449,72 +445,123 @@ function DesktopSearchPage() {
             onChange={(v) => setPickedFolders(v as number[])}
             treeData={folders as unknown as Record<string, unknown>[]}
             fieldNames={{ label: "name", value: "id", children: "children" }}
-            placeholder="文件夹"
+            placeholder="全部"
             allowClear
             treeNodeFilterProp="name"
           />
+          <span className="kb-filter-lb">标签（需同时含有）</span>
           <Select
-            style={{ minWidth: 160, flex: "1 1 160px" }}
-            size="small"
+            style={{ minWidth: 150, maxWidth: 240 }}
             mode="multiple"
             maxTagCount={1}
             value={pickedTags}
             onChange={setPickedTags}
             options={tags.map((t) => ({ label: t.name, value: t.id }))}
-            placeholder="标签（需同时含有）"
+            placeholder="全部"
             allowClear
             optionFilterProp="label"
           />
-          <Select
-            style={{ minWidth: 120 }}
-            size="small"
-            mode="multiple"
-            maxTagCount={1}
-            value={pickedTypes}
-            onChange={setPickedTypes}
-            options={[
-              { label: "笔记", value: "markdown" },
-              { label: "白板", value: "whiteboard" },
-            ]}
-            placeholder="类型"
-            allowClear
-          />
-          <DatePicker.RangePicker
-            key={`updated-${pickerResetKey}`}
-            defaultValue={
-              dateRange ? [dayjs(dateRange[0]), dayjs(dateRange[1])] : undefined
+          <span className="kb-filter-lb">时间</span>
+          <Popover
+            trigger="click"
+            placement="bottomLeft"
+            arrow={false}
+            open={timeOpen}
+            onOpenChange={setTimeOpen}
+            content={
+              <div className="kb-date-menu">
+                <div
+                  className={!dateRange && !createdRange ? "kb-date-opt is-on" : "kb-date-opt"}
+                  onClick={() => {
+                    setDateRange(null);
+                    setCreatedRange(null);
+                    setTimeOpen(false);
+                  }}
+                >
+                  全部时间
+                </div>
+                {timePresets.map((p) => (
+                  <div
+                    key={p.label}
+                    className={timeLabel.startsWith(p.label) ? "kb-date-opt is-on" : "kb-date-opt"}
+                    onClick={() => {
+                      setDateRange(toDayRange(p.range));
+                      setTimeOpen(false);
+                    }}
+                  >
+                    修改于{p.label}
+                  </div>
+                ))}
+                {/* 原来的两组自定义区间原样保留（受控：选快捷项后这里同步显示） */}
+                <div className="kb-date-custom">
+                  <span>修改时间</span>
+                  <DatePicker.RangePicker
+                    size="small"
+                    value={pickerValue(dateRange)}
+                    onChange={(_, strs) => setDateRange(toDayRange(strs))}
+                    placeholder={["从", "至"]}
+                    getPopupContainer={(el) => el.parentElement ?? document.body}
+                  />
+                  <span>创建时间</span>
+                  <DatePicker.RangePicker
+                    size="small"
+                    value={pickerValue(createdRange)}
+                    onChange={(_, strs) => setCreatedRange(toDayRange(strs))}
+                    placeholder={["从", "至"]}
+                    getPopupContainer={(el) => el.parentElement ?? document.body}
+                  />
+                </div>
+              </div>
             }
-            size="small"
-            style={{ minWidth: 220 }}
-            onChange={(_, strs) => setDateRange(toDayRange(strs))}
-            placeholder={["修改时间从", "至"]}
-          />
-          <DatePicker.RangePicker
-            key={`created-${pickerResetKey}`}
-            defaultValue={
-              createdRange ? [dayjs(createdRange[0]), dayjs(createdRange[1])] : undefined
-            }
-            size="small"
-            style={{ minWidth: 220 }}
-            onChange={(_, strs) => setCreatedRange(toDayRange(strs))}
-            placeholder={["创建时间从", "至"]}
-          />
-          <Checkbox
-            checked={titleOnly}
-            onChange={(e) => setTitleOnly(e.target.checked)}
           >
-            仅搜标题
-          </Checkbox>
-          {activeFilterCount > 0 && (
-            <Button
-              size="small"
-              type="text"
-              icon={<XIcon size={14} />}
-              onClick={clearFilters}
-              title="清空全部筛选条件"
-            >
-              清空
+            <Button className={dateRange || createdRange ? "kb-bar-btn is-on" : "kb-bar-btn"}>
+              {timeLabel}
+              <ChevronDown size={12} />
             </Button>
+          </Popover>
+          <span className="kb-filter-lb">类型</span>
+          {/* 只有笔记 / 白板两种：单选与原多选等价（两个都选 = 全部） */}
+          <Segmented
+            size="small"
+            value={pickedTypes.length === 1 ? pickedTypes[0] : "all"}
+            onChange={(v) => setPickedTypes(v === "all" ? [] : [v as NoteType])}
+            options={[
+              { value: "all", label: "全部" },
+              { value: "markdown", label: "笔记" },
+              { value: "whiteboard", label: "白板" },
+            ]}
+          />
+          <span className="flex-1" />
+          {activeFilterCount > 0 && (
+            <a className="kb-filter-clear" onClick={clearFilters}>
+              清空全部筛选条件
+            </a>
+          )}
+        </div>
+      )}
+
+      {/* 范围胶囊：仅在已搜索时显示，免得空状态有个孤零零的切换器 */}
+      {searched && (
+        <div className="kb-task-chips">
+          {(
+            [
+              ["all", "全部", totalHits],
+              ["notes", "笔记", results.length],
+              ["tasks", "待办", taskResults.length],
+            ] as const
+          ).map(([k, label, n]) => (
+            <button
+              key={k}
+              type="button"
+              className={scope === k ? "kb-task-chip is-on" : "kb-task-chip"}
+              onClick={() => setScope(k)}
+            >
+              {label}
+              <b>{n}</b>
+            </button>
+          ))}
+          {!loading && totalHits > 0 && (
+            <span className="kb-task-chips-hint">共 {totalHits} 条结果</span>
           )}
         </div>
       )}
@@ -537,47 +584,12 @@ function DesktopSearchPage() {
           image={Empty.PRESENTED_IMAGE_SIMPLE}
         />
       ) : (
-        // 单一滚动容器；笔记 Tab 下用虚拟化，其它 Tab 直接渲染
-        <div
-          ref={scrollParentRef}
-          style={{
-            height: "calc(100vh - 220px)",
-            overflowY: "auto",
-            contain: "strict",
-          }}
-        >
-          {/* 待办分组（"全部" 或 "待办" Tab 显示） */}
-          {showTasks && taskResults.length > 0 && (
-            <section className="mb-6">
-              <SectionHeader
-                icon={<CheckSquare size={14} />}
-                label="待办"
-                count={taskResults.length}
-                token={token}
-              />
-              <div>
-                {taskResults.map((task) => (
-                  <TaskRow
-                    key={task.id}
-                    task={task}
-                    token={token}
-                    keyword={query}
-                    onClick={() => navigate(`/tasks?taskId=${task.id}`)}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-
+        // 单一滚动容器（整块卡片）；笔记 Tab 下用虚拟化，其它 Tab 直接渲染
+        <div ref={scrollParentRef} className="kb-search-board">
           {/* 笔记分组 */}
           {showNotes && results.length > 0 && (
             <section>
-              <SectionHeader
-                icon={<NotebookText size={14} />}
-                label="笔记"
-                count={results.length}
-                token={token}
-              />
+              {scope === "all" && <SectionHeader label="笔记" count={results.length} />}
               {scope === "notes" ? (
                 // 笔记 Tab：虚拟滚动（千级结果不卡）
                 <div
@@ -604,8 +616,8 @@ function DesktopSearchPage() {
                       >
                         <NoteRow
                           item={item}
-                          token={token}
                           keyword={query}
+                          folderPath={folderPathOf(item.folder_id)}
                           onClick={() =>
                             navigate(
                               `/notes/${item.id}?q=${encodeURIComponent(query)}`,
@@ -623,8 +635,8 @@ function DesktopSearchPage() {
                     <NoteRow
                       key={item.id}
                       item={item}
-                      token={token}
                       keyword={query}
+                      folderPath={folderPathOf(item.folder_id)}
                       onClick={() =>
                         navigate(
                           `/notes/${item.id}?q=${encodeURIComponent(query)}`,
@@ -646,107 +658,80 @@ function DesktopSearchPage() {
               )}
             </section>
           )}
+
+          {/* 待办分组（"全部" 或 "待办" Tab 显示）；原型里排在笔记后面 */}
+          {showTasks && taskResults.length > 0 && (
+            <section>
+              {scope === "all" && <SectionHeader label="待办" count={taskResults.length} />}
+              {taskResults.map((task) => (
+                <TaskRow
+                  key={task.id}
+                  task={task}
+                  keyword={query}
+                  onClick={() => navigate(`/tasks?taskId=${task.id}`)}
+                />
+              ))}
+            </section>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-/** 分组标题 */
-function SectionHeader({
-  icon,
-  label,
-  count,
-  token,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  count: number;
-  token: ReturnType<typeof antdTheme.useToken>["token"];
-}) {
+/** 分组标题（原型 .grp：卡片内的小标题） */
+function SectionHeader({ label, count }: { label: string; count: number }) {
   return (
-    <div
-      className="flex items-center gap-2 mb-2"
-      style={{
-        fontSize: 12,
-        fontWeight: 600,
-        color: token.colorTextSecondary,
-        textTransform: "uppercase",
-        letterSpacing: 0.5,
-      }}
-    >
-      <span style={{ color: token.colorPrimary }}>{icon}</span>
-      <span>
-        {label} · {count}
+    <div className="kb-task-sec-head">
+      {label}
+      <b>{count}</b>
+    </div>
+  );
+}
+
+/** 笔记结果行（原型 .sr）：类型图标块 · 标题 + 高亮摘要 ｜ 文件夹小标签 · 相对时间 */
+function NoteRow({
+  item,
+  keyword,
+  folderPath,
+  onClick,
+}: {
+  item: SearchResult;
+  keyword: string;
+  folderPath: string;
+  onClick: () => void;
+}) {
+  const isBoard = item.note_type === "whiteboard";
+  return (
+    <div className="kb-sr-row" onClick={onClick}>
+      <span className={isBoard ? "kb-sr-ico is-info" : "kb-sr-ico"}>
+        {isBoard ? <PenTool size={15} /> : <FileText size={15} />}
+      </span>
+      <div className="kb-sr-main">
+        <div className="kb-sr-title">{highlightText(item.title, keyword)}</div>
+        {/* 2 行截断让高亮大概率落在可见区域，避免单行被截走 */}
+        <div className="kb-sr-snippet">
+          {isBoard && !item.snippet ? "白板" : highlightSnippet(item.snippet, keyword)}
+        </div>
+      </div>
+      <span className="kb-sr-folder" title={folderPath}>
+        <FolderIcon size={12} />
+        {folderPath}
+      </span>
+      <span className="kb-sr-time" title={item.updated_at.slice(0, 16)}>
+        {relativeTime(item.updated_at)}
       </span>
     </div>
   );
 }
 
-/** 笔记结果行（与原虚拟滚动样式一致） */
-function NoteRow({
-  item,
-  token,
-  keyword,
-  onClick,
-}: {
-  item: SearchResult;
-  token: ReturnType<typeof antdTheme.useToken>["token"];
-  keyword: string;
-  onClick: () => void;
-}) {
-  return (
-    <div
-      onClick={onClick}
-      style={{
-        padding: "12px 0",
-        borderBottom: `1px solid ${token.colorBorderSecondary}`,
-        cursor: "pointer",
-        display: "flex",
-        gap: 12,
-      }}
-    >
-      <NotebookText size={20} style={{ marginTop: 4, flexShrink: 0 }} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <Text
-          ellipsis
-          style={{ display: "block", maxWidth: 500, fontWeight: 500 }}
-        >
-          {highlightText(item.title, keyword)}
-        </Text>
-        <div
-          style={{
-            fontSize: 13,
-            marginTop: 4,
-            marginBottom: 4,
-            // 2 行截断让高亮大概率落在可见区域，避免单行被截走
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-            wordBreak: "break-word",
-            lineHeight: "1.5",
-          }}
-        >
-          {highlightSnippet(item.snippet, keyword)}
-        </div>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          {item.updated_at.slice(0, 10)}
-        </Text>
-      </div>
-    </div>
-  );
-}
-
-/** 待办结果行（与 CommandPalette 风格一致） */
+/** 待办结果行：状态图标块 · 标题 + 说明 ｜ 截止日期 */
 function TaskRow({
   task,
-  token,
   keyword,
   onClick,
 }: {
   task: TaskSearchHit;
-  token: ReturnType<typeof antdTheme.useToken>["token"];
   keyword: string;
   onClick: () => void;
 }) {
@@ -754,69 +739,19 @@ function TaskRow({
   const urgent = task.priority === 0;
   const due = task.dueDate?.slice(0, 10) ?? null;
   return (
-    <div
-      onClick={onClick}
-      style={{
-        padding: "10px 0",
-        borderBottom: `1px solid ${token.colorBorderSecondary}`,
-        cursor: "pointer",
-        display: "flex",
-        gap: 12,
-        alignItems: "flex-start",
-      }}
-    >
-      {done ? (
-        <Check size={18} style={{ color: token.colorSuccess, marginTop: 2, flexShrink: 0 }} />
-      ) : urgent ? (
-        <AlertTriangle
-          size={18}
-          style={{ color: token.colorError, marginTop: 2, flexShrink: 0 }}
-        />
-      ) : (
-        <CheckSquare
-          size={18}
-          style={{ color: token.colorTextSecondary, marginTop: 2, flexShrink: 0 }}
-        />
-      )}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <Text
-          ellipsis
-          style={{
-            display: "block",
-            maxWidth: 600,
-            fontWeight: 500,
-            textDecoration: done ? "line-through" : undefined,
-            color: done ? token.colorTextTertiary : undefined,
-          }}
-        >
+    <div className="kb-sr-row" onClick={onClick}>
+      <span className={done ? "kb-sr-ico is-ok" : urgent ? "kb-sr-ico is-err" : "kb-sr-ico is-ok"}>
+        {done ? <Check size={15} /> : urgent ? <AlertTriangle size={15} /> : <CheckSquare size={15} />}
+      </span>
+      <div className="kb-sr-main">
+        <div className={done ? "kb-sr-title is-done" : "kb-sr-title"}>
           {task.title ? highlightText(task.title, keyword) : "无标题"}
-        </Text>
-        {(due || task.snippet) && (
-          <div
-            style={{
-              fontSize: 12,
-              color: token.colorTextDescription,
-              marginTop: 2,
-            }}
-          >
-            {due && <span style={{ marginRight: 8 }}>📅 {due}</span>}
-            {task.snippet && (
-              <span
-                style={{
-                  display: "inline-block",
-                  maxWidth: 500,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  verticalAlign: "bottom",
-                }}
-              >
-                {task.snippet}
-              </span>
-            )}
-          </div>
-        )}
+        </div>
+        <div className="kb-sr-snippet is-one">
+          {[done ? "已完成" : urgent ? "紧急" : "", task.snippet].filter(Boolean).join(" · ") || "待办"}
+        </div>
       </div>
+      {due && <span className="kb-sr-time">{due}</span>}
     </div>
   );
 }

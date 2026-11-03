@@ -5224,3 +5224,194 @@ body.sidebar-resizing .kb-panel-resizer {
   opacity: 1;
   pointer-events: auto;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 搜索页（T3-8b）—— 原型 .sbar / .fbar / .sr：搜索卡片、常驻筛选条、结果整块卡片
+   ═══════════════════════════════════════════════════════════ */
+.kb-search-page {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.kb-search-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 6px;
+  border-radius: 14px;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+}
+.kb-search-bar:focus-within {
+  box-shadow: inset 0 0 0 1px var(--kb-primary), 0 0 0 3px var(--kb-primary-light);
+}
+.kb-search-bar > .ant-input-affix-wrapper {
+  flex: 1;
+  font-size: 16px;
+}
+.kb-search-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--kb-border);
+}
+.kb-search-titleonly {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--kb-text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.kb-filter-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  padding: 10px 16px;
+  border-radius: 14px;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+}
+.kb-filter-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--kb-text-primary);
+}
+.kb-filter-lb {
+  margin-left: 4px;
+  font-size: 12.5px;
+  color: var(--kb-text-tertiary);
+  white-space: nowrap;
+}
+.kb-filter-clear {
+  font-size: 12.5px;
+  color: var(--kb-text-secondary) !important;
+  white-space: nowrap;
+}
+.kb-filter-clear:hover {
+  color: var(--kb-primary) !important;
+}
+.kb-search-page > .kb-task-chips {
+  flex: none;
+  margin: 0;
+}
+.kb-search-board {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 10px 10px;
+  border-radius: 14px;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+}
+.kb-sr-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--kb-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+.kb-sr-row:hover {
+  background: var(--kb-bg-hover);
+}
+.kb-sr-ico {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--kb-primary);
+  background: var(--kb-primary-light);
+}
+.kb-sr-ico.is-info {
+  color: var(--ant-color-info);
+  background: color-mix(in srgb, var(--ant-color-info) 12%, transparent);
+}
+.kb-sr-ico.is-ok {
+  color: var(--ant-color-success);
+  background: color-mix(in srgb, var(--ant-color-success) 12%, transparent);
+}
+.kb-sr-ico.is-err {
+  color: var(--ant-color-error);
+  background: color-mix(in srgb, var(--ant-color-error) 10%, transparent);
+}
+.kb-sr-main {
+  flex: 1;
+  min-width: 0;
+}
+.kb-sr-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--kb-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-sr-title.is-done {
+  color: var(--kb-text-tertiary);
+  text-decoration: line-through;
+}
+.kb-sr-snippet {
+  margin-top: 3px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--kb-text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.kb-sr-snippet.is-one {
+  -webkit-line-clamp: 1;
+  color: var(--kb-text-tertiary);
+}
+/* 高亮：淡主题色底 + 主题色字（原型 mark） */
+.kb-sr-row mark {
+  padding: 0 1px !important;
+  border-radius: 3px !important;
+  background: color-mix(in srgb, var(--kb-primary) 16%, transparent) !important;
+  color: var(--kb-primary) !important;
+}
+.kb-sr-folder {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 180px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: var(--kb-bg-hover);
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-sr-time {
+  flex: none;
+  width: 76px;
+  text-align: right;
+  font-size: 12.5px;
+  color: var(--kb-text-tertiary);
+  white-space: nowrap;
+}
+/* 输入框融进搜索卡片：无边框变体在暗色主题下自带一层底色，去掉 */
+.kb-search-bar > .ant-input-affix-wrapper,
+.kb-search-bar > .ant-input-affix-wrapper:hover,
+.kb-search-bar > .ant-input-affix-wrapper-focused {
+  background: transparent !important;
+  box-shadow: none !important;
+}
