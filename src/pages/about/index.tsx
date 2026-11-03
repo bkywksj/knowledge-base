@@ -1,13 +1,30 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Card, Typography, Descriptions, Spin, message, Modal, Button, Tooltip, Tag, Image } from "antd";
-import { SyncOutlined, SettingOutlined } from "@ant-design/icons";
-import { FolderOpen, ExternalLink } from "lucide-react";
+import { Typography, Spin, message, Modal, Button, Image } from "antd";
+import {
+  Activity,
+  Database,
+  ExternalLink,
+  FolderOpen,
+  Heart,
+  Monitor,
+  Puzzle,
+  RefreshCw,
+  Settings,
+  Star,
+  Truck,
+  Tv,
+  Upload,
+  Users,
+  Video,
+} from "lucide-react";
 import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { appLogDir } from "@tauri-apps/api/path";
+import { writeText as writeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
 import type { SystemInfo } from "@/types";
 import { systemApi } from "@/lib/api";
 import { RecommendCards } from "@/components/ui/RecommendCards";
+import { BrandLogo } from "@/components/ui/BrandLogo";
 import { useUpdater } from "@/components/updater/UpdaterProvider";
 
 const OFFICIAL_SITE = "https://kb.ruoyi.plus/";
@@ -18,62 +35,7 @@ const ZSXQ_ID = "91839984";
 const QQ_GROUP_ID = "1090770702";
 const AUTHOR_CONTACT = "7704929366";
 
-const { Title, Text, Paragraph } = Typography;
-
-/**
- * 关于页左侧锚点导航。
- * 行为与 settings 页 SettingsAnchorNav 一致：点击 smooth 滚动 + IntersectionObserver 同步高亮。
- */
-const ABOUT_NAV_ITEMS: { id: string; label: string }[] = [
-  { id: "about-system", label: "系统信息" },
-  { id: "about-community", label: "作者 & 社区" },
-  { id: "about-sponsor", label: "赞赏支持" },
-  { id: "about-migration", label: "数据迁移说明" },
-  { id: "about-recommend", label: "推荐应用" },
-];
-
-function AboutAnchorNav() {
-  const [activeId, setActiveId] = useState<string>(ABOUT_NAV_ITEMS[0].id);
-
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((e) => e.isIntersecting)
-          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-        if (visible.length > 0) {
-          setActiveId(visible[0].target.id);
-        }
-      },
-      { rootMargin: "0px 0px -66% 0px", threshold: 0 },
-    );
-    ABOUT_NAV_ITEMS.forEach((item) => {
-      const el = document.getElementById(item.id);
-      if (el) observer.observe(el);
-    });
-    return () => observer.disconnect();
-  }, []);
-
-  function jumpTo(id: string) {
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-
-  return (
-    <aside className="anchor-page-nav">
-      <ul>
-        {ABOUT_NAV_ITEMS.map((item) => (
-          <li
-            key={item.id}
-            data-active={activeId === item.id || undefined}
-            onClick={() => jumpTo(item.id)}
-          >
-            {item.label}
-          </li>
-        ))}
-      </ul>
-    </aside>
-  );
-}
+const { Text, Paragraph } = Typography;
 
 export default function AboutPage() {
   const navigate = useNavigate();
@@ -208,304 +170,265 @@ export default function AboutPage() {
     }
   }
 
+  /** 复制号码（星球号 / 群号）到剪贴板：走 clipboard-manager 插件，不受 WebView 用户手势时效限制 */
+  async function copyText(text: string, label: string) {
+    try {
+      await writeClipboardText(text);
+      message.success(`${label}已复制：${text}`);
+    } catch (e) {
+      message.error(`复制失败: ${e}`);
+    }
+  }
+
   return (
-    <div className="anchor-page-layout">
-      <AboutAnchorNav />
-      <div className="anchor-page-content" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <Title level={3} style={{ marginBottom: 4 }}>关于</Title>
-          <Text type="secondary">系统信息和应用版本</Text>
+    <div className="kb-about">
+      {/* 横幅（原型顶部卡片）：Logo · 名称 · 副标题 ｜ 版本胶囊 · 检查更新 · 前往设置 */}
+      <section className="kb-cards-panel kb-about-hero">
+        <BrandLogo size={60} />
+        <div className="kb-about-hero-t">
+          <h1>Knowledge Base</h1>
+          <p>本地优先的知识库 · 系统信息和应用版本</p>
         </div>
+        {info && <span className="kb-about-ver">v{info.appVersion}</span>}
         <Button
-          icon={<SettingOutlined />}
-          onClick={() => navigate("/settings")}
+          type="primary"
+          size="large"
+          icon={<RefreshCw size={15} className={checking ? "animate-spin" : undefined} />}
+          disabled={checking || !updater}
+          onClick={handleCheckUpdate}
         >
+          检查更新
+        </Button>
+        <Button size="large" icon={<Settings size={15} />} onClick={() => navigate("/settings")}>
           前往设置
         </Button>
-      </div>
+      </section>
 
-      <Card id="about-system" title="系统信息">
-        {loading ? (
-          <div className="flex justify-center py-8">
-            <Spin />
+      <div className="kb-about-grid">
+        {/* 系统信息 */}
+        <section className="kb-cards-panel kb-qc">
+          <div className="kb-qc-head">
+            <span className="kb-qc-ico">
+              <Monitor size={15} />
+            </span>
+            系统信息
           </div>
-        ) : info ? (
-          <Descriptions column={1} bordered size="small">
-            <Descriptions.Item label="操作系统">{info.os}</Descriptions.Item>
-            <Descriptions.Item label="CPU 架构">{info.arch}</Descriptions.Item>
-            <Descriptions.Item label="应用版本">
-              <div className="flex items-center justify-between gap-2">
-                <Text style={{ fontSize: 13 }}>v{info.appVersion}</Text>
-                <Button
-                  type="link"
-                  size="small"
-                  icon={<SyncOutlined spin={checking} />}
-                  loading={checking}
-                  onClick={handleCheckUpdate}
-                >
-                  检查更新
-                </Button>
-              </div>
-            </Descriptions.Item>
-            <Descriptions.Item label="官网">
-              <div className="flex items-center justify-between gap-2">
-                <Text style={{ fontSize: 13 }}>{OFFICIAL_SITE}</Text>
-                <Tooltip title="在浏览器中打开">
-                  <Button
-                    type="link"
-                    size="small"
-                    icon={<ExternalLink size={14} />}
-                    onClick={() => openUrl(OFFICIAL_SITE)}
-                  />
-                </Tooltip>
-              </div>
-            </Descriptions.Item>
-            <Descriptions.Item label="数据目录">
-              <div className="flex items-center justify-between gap-2">
-                <Text copyable={{ text: info.dataDir }} style={{ fontSize: 13 }}>
-                  {info.dataDir}
-                </Text>
-                <Tooltip title="在文件管理器中打开">
-                  <Button
-                    type="link"
-                    size="small"
-                    icon={<FolderOpen size={14} />}
-                    onClick={handleOpenDataDir}
-                  />
-                </Tooltip>
-              </div>
-            </Descriptions.Item>
-            <Descriptions.Item label="日志与诊断">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Button
-                  size="small"
-                  icon={<FolderOpen size={14} />}
-                  onClick={handleOpenLogs}
-                >
-                  打开日志目录
-                </Button>
-                <Button
-                  size="small"
-                  type="primary"
-                  ghost
-                  loading={exporting}
-                  onClick={handleExportDiagnostics}
-                >
-                  导出诊断包
-                </Button>
-                <Button size="small" loading={dbChecking} onClick={handleCheckDbText}>
-                  数据库体检
-                </Button>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  闪退 / 异常时点「导出诊断包」生成 zip 发给开发者排查；
-                  同步报「invalid utf-8」时点「数据库体检」
-                </Text>
-              </div>
-            </Descriptions.Item>
-          </Descriptions>
-        ) : (
-          <Text type="danger">无法获取系统信息</Text>
-        )}
-      </Card>
-
-      <Card id="about-community" title="作者 & 社区">
-        <div className="flex items-start gap-3 flex-wrap" style={{ marginBottom: 12 }}>
-          <div className="flex-1 min-w-[260px]">
-            <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 6 }}>
-              <Text strong style={{ fontSize: 14 }}>抓蛙师</Text>
-              <Tag color="geekblue" style={{ marginInlineEnd: 0 }}>Java 全栈 AI 架构师</Tag>
-              <Tag color="purple" style={{ marginInlineEnd: 0 }}>Agent 架构师</Tag>
+          {loading ? (
+            <div className="flex justify-center py-8">
+              <Spin />
             </div>
-            <Typography.Paragraph
-              type="secondary"
-              style={{ fontSize: 12, marginBottom: 0, lineHeight: 1.6 }}
+          ) : info ? (
+            <div className="kb-kv">
+              <span>操作系统</span>
+              <b>{info.os}</b>
+              <i />
+              <span>CPU 架构</span>
+              <b>{info.arch}</b>
+              <i />
+              <span>应用版本</span>
+              <b>{info.appVersion}</b>
+              <i />
+              <span>官网</span>
+              <b>{OFFICIAL_SITE.replace(/^https?:\/\/|\/$/g, "")}</b>
+              <Button
+                type="text"
+                size="small"
+                icon={<ExternalLink size={13} />}
+                onClick={() => openUrl(OFFICIAL_SITE)}
+              >
+                在浏览器中打开
+              </Button>
+              <span>数据目录</span>
+              <Text className="kb-kv-path" copyable={{ text: info.dataDir }} title={info.dataDir}>
+                {info.dataDir}
+              </Text>
+              <Button type="text" size="small" icon={<FolderOpen size={13} />} onClick={handleOpenDataDir}>
+                在文件管理器中打开
+              </Button>
+            </div>
+          ) : (
+            <Text type="danger">无法获取系统信息</Text>
+          )}
+        </section>
+
+        {/* 日志与诊断（原来挤在系统信息表格最后一行） */}
+        <section className="kb-cards-panel kb-qc">
+          <div className="kb-qc-head">
+            <span className="kb-qc-ico is-warn">
+              <Activity size={15} />
+            </span>
+            日志与诊断
+          </div>
+          <div className="kb-about-acts">
+            <Button icon={<FolderOpen size={14} />} onClick={handleOpenLogs}>
+              打开日志目录
+              <span className="kb-about-act-hint">本次运行与历史日志</span>
+            </Button>
+            <Button icon={<Upload size={14} />} loading={exporting} onClick={handleExportDiagnostics}>
+              导出诊断包
+              <span className="kb-about-act-hint">闪退 / 异常时生成 zip 发给开发者</span>
+            </Button>
+            <Button icon={<Database size={14} />} loading={dbChecking} onClick={handleCheckDbText}>
+              数据库体检
+              <span className="kb-about-act-hint">同步报「invalid utf-8」时检查修复</span>
+            </Button>
+          </div>
+        </section>
+
+        {/* 作者 & 社区 */}
+        <section className="kb-cards-panel kb-qc">
+          <div className="kb-qc-head">
+            <span className="kb-qc-ico is-info">
+              <Users size={15} />
+            </span>
+            作者 &amp; 社区
+          </div>
+          <div className="kb-about-author">
+            <span className="kb-about-avatar">抓</span>
+            <div>
+              <b>抓蛙师</b>
+              <p>Java 全栈 AI 架构师 · Agent 架构师</p>
+            </div>
+          </div>
+          <p className="kb-about-bio">
+            专注于 Java 后端 + 前端全栈工程实践，深耕大模型应用与 Agent
+            架构落地（RAG、工具调用、多智能体编排、知识库工程化）。
+            这款本地知识库即源于「把 AI 真正用进自己日常工作流」的长期实验。
+          </p>
+          <div className="kb-about-links">
+            <Button icon={<Tv size={14} />} title={BILIBILI_URL} onClick={() => openUrl(BILIBILI_URL)}>
+              B 站主页
+            </Button>
+            <Button
+              icon={<Video size={14} />}
+              title="B 站使用教程 / 功能演示"
+              onClick={() => openUrl(BILIBILI_TUTORIAL_URL)}
             >
-              专注于 Java 后端 + 前端全栈工程实践，深耕大模型应用与 Agent
-              架构落地（RAG、工具调用、多智能体编排、知识库工程化）。
-              这款本地知识库即源于「把 AI 真正用进自己日常工作流」的长期实验。
-            </Typography.Paragraph>
+              视频讲解
+            </Button>
+            <Button
+              icon={<Star size={14} />}
+              title={`知识星球「${ZSXQ_NAME}」，点击复制星球号`}
+              onClick={() => copyText(ZSXQ_ID, "星球号")}
+            >
+              知识星球 · {ZSXQ_ID}
+            </Button>
+            <Button
+              icon={<Users size={14} />}
+              title="点击复制群号"
+              onClick={() => copyText(QQ_GROUP_ID, "群号")}
+            >
+              QQ 交流群 · {QQ_GROUP_ID}
+            </Button>
           </div>
-        </div>
-        <Descriptions column={1} bordered size="small">
-          <Descriptions.Item label="B 站主页">
-            <div className="flex items-center justify-between gap-2">
-              <Text style={{ fontSize: 13 }}>{BILIBILI_URL}</Text>
-              <Tooltip title="在浏览器中打开">
-                <Button
-                  type="link"
-                  size="small"
-                  icon={<ExternalLink size={14} />}
-                  onClick={() => openUrl(BILIBILI_URL)}
-                />
-              </Tooltip>
-            </div>
-          </Descriptions.Item>
-          <Descriptions.Item label="视频讲解">
-            <div className="flex items-center justify-between gap-2">
-              <Text style={{ fontSize: 13 }}>B 站使用教程 / 功能演示</Text>
-              <Tooltip title="在浏览器中打开">
-                <Button
-                  type="link"
-                  size="small"
-                  icon={<ExternalLink size={14} />}
-                  onClick={() => openUrl(BILIBILI_TUTORIAL_URL)}
-                />
-              </Tooltip>
-            </div>
-          </Descriptions.Item>
-          <Descriptions.Item label="知识星球">
-            <div className="flex items-center gap-2 flex-wrap">
-              <Text style={{ fontSize: 13 }}>{ZSXQ_NAME}</Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>·</Text>
-              <Text style={{ fontSize: 13 }}>星球号</Text>
-              <Text copyable={{ text: ZSXQ_ID }} strong style={{ fontSize: 13 }}>
-                {ZSXQ_ID}
-              </Text>
-            </div>
-          </Descriptions.Item>
-          <Descriptions.Item label="QQ 交流群">
-            <div className="flex items-center gap-2 flex-wrap">
-              <Text style={{ fontSize: 13 }}>群号</Text>
-              <Text copyable={{ text: QQ_GROUP_ID }} strong style={{ fontSize: 13 }}>
-                {QQ_GROUP_ID}
-              </Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                （Bug 反馈 / 使用交流 / 新功能讨论）
-              </Text>
-            </div>
-          </Descriptions.Item>
-          <Descriptions.Item label="联系作者">
-            <div className="flex items-center gap-2 flex-wrap">
-              <Text style={{ fontSize: 13 }}>QQ / 微信</Text>
-              <Tooltip title="点击复制">
-                <Text copyable={{ text: AUTHOR_CONTACT }} strong style={{ fontSize: 13 }}>
-                  {AUTHOR_CONTACT}
-                </Text>
-              </Tooltip>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                （添加时请备注「来自知识库」）
-              </Text>
-            </div>
-          </Descriptions.Item>
-        </Descriptions>
-      </Card>
+          <p className="kb-about-foot">
+            星球「{ZSXQ_NAME}」· QQ 群：Bug 反馈 / 使用交流 / 新功能讨论
+            <br />
+            联系作者 QQ / 微信{" "}
+            <Text copyable={{ text: AUTHOR_CONTACT }} strong>
+              {AUTHOR_CONTACT}
+            </Text>
+            ，添加时请备注「来自知识库」
+          </p>
+        </section>
 
-      {/* 赞赏支持：本应用完全开源免费，扫码请作者喝杯咖啡 ☕ */}
-      <Card id="about-sponsor" title="赞赏支持">
-        <div className="flex items-center gap-6 flex-wrap">
-          <div className="flex flex-col items-center gap-1">
+        {/* 赞赏支持：本应用完全开源免费，扫码请作者喝杯咖啡 ☕ */}
+        <section className="kb-cards-panel kb-qc">
+          <div className="kb-qc-head">
+            <span className="kb-qc-ico is-err">
+              <Heart size={15} />
+            </span>
+            赞赏支持
+          </div>
+          <div className="kb-about-donate">
             <Image
               src="/donate-qr.png"
               alt="赞赏码"
-              width={280}
-              height={280}
-              style={{
-                objectFit: "contain",
-                borderRadius: 8,
-                background: "#fff",
-                padding: 8,
-                border: "1px solid var(--ant-color-border-secondary, #f0f0f0)",
-                cursor: "zoom-in",
-              }}
+              width={120}
+              height={120}
+              className="kb-about-qr"
               // Ant Design Image 自带点击预览：点开可全屏放大 / 缩放，方便扫码
-              preview={{ mask: "点击放大扫码" }}
+              preview={{ mask: "放大扫码" }}
             />
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              点击图片可放大扫码
-            </Text>
+            <div>
+              <b>如果这款工具帮到了你 ❤️</b>
+              <p>扫码请作者喝杯咖啡，你的支持会变成下一个版本里的新功能。</p>
+              <p className="kb-about-foot">
+                本应用完全开源免费、无任何会员 / 订阅。不想赞赏也欢迎：在 B 站点个关注 /
+                在 GitHub 给项目点 Star / 把它推荐给身边需要的朋友。点击二维码可放大扫码。
+              </p>
+            </div>
           </div>
-          <div className="flex-1 min-w-[200px]">
-            <Title level={5} style={{ marginTop: 0 }}>
-              如果这款工具帮到了你 ❤️
-            </Title>
-            <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginBottom: 8 }}>
-              本应用完全开源免费、无任何会员/订阅。如果觉得对你有用，欢迎扫描左侧
-              微信赞赏码请作者喝杯咖啡 ☕，能让我有更多动力继续投入。
-            </Typography.Paragraph>
-            <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
-              💡 不想赞赏也欢迎：在 B 站点个关注 / 在 GitHub 给项目点 Star /
-              把它推荐给身边需要的朋友。
-            </Typography.Paragraph>
+        </section>
+
+        {/* 数据迁移说明（跨两列） */}
+        <section className="kb-cards-panel kb-qc kb-about-wide">
+          <div className="kb-qc-head">
+            <span className="kb-qc-ico is-ok">
+              <Truck size={15} />
+            </span>
+            数据迁移说明
+            <span className="kb-about-head-note">按使用场景从简单到专业，推荐 4 种方式</span>
           </div>
-        </div>
-      </Card>
+          <div className="kb-way">
+            <span className="kb-way-n">1</span>
+            <div>
+              <b>单台电脑换硬盘 / 搬到 D 盘</b>
+              <p>
+                设置 → 数据目录，选新路径，勾选「自动迁移」即可。应用会启动迁移引导窗口完成搬运，无需手工复制文件。
+              </p>
+            </div>
+          </div>
+          <div className="kb-way">
+            <span className="kb-way-n">2</span>
+            <div>
+              <b>一次性整包搬到另一台电脑（离线）</b>
+              <p>
+                旧电脑：设置 → 同步 → 本地 ZIP → 导出，得到一个 .zip 快照（含全部数据库 + 图片 + PDF + 附件 + 源文件）；
+                新电脑安装应用后到同位置选择「导入 ZIP」，自动解压覆盖。
+              </p>
+            </div>
+          </div>
+          <div className="kb-way">
+            <span className="kb-way-n">3</span>
+            <div>
+              <b>多端实时双向同步（推荐长期用户）</b>
+              <p>
+                设置 → 同步 → 多端同步（V1），配置 WebDAV / 坚果云 / NAS 后端；多台电脑都登录同一个账号，应用会按文件级
+                manifest 增量推拉，自动消化双端冲突。也可以只用「WebDAV 全量快照」做单向手动备份。
+              </p>
+            </div>
+          </div>
+          <div className="kb-way">
+            <span className="kb-way-n">4</span>
+            <div>
+              <b>手动复制（兜底方案，应急用）</b>
+              <p>
+                关闭应用 → 把整个数据目录复制到新电脑相同路径 → 启动即可。核心内容：<code>app.db</code>（全部元数据）、
+                <code>kb_assets/</code>（笔记内嵌图片，含 <code>videos/</code> 视频）、<code>pdfs/</code>（导入的
+                PDF）、<code>sources/</code>（导入的 Word 原文件）、<code>attachments/</code>（附件）、
+                <code>settings.json</code>（应用偏好）。<b>务必整目录一起搬</b>，单独复制 <code>app.db</code>{" "}
+                会丢图片 / PDF / 附件。
+              </p>
+            </div>
+          </div>
+          <p className="kb-about-warn">
+            ⚠ 任何方式都要在迁移前关闭应用；新旧两端版本号差距不要超过一个小版本，避免 schema 不兼容。需要给其他工具用，可在
+            设置 → 导出 Markdown 单独导出标准 .md 文件。
+          </p>
+        </section>
 
-      {info && (
-        <Card
-          id="about-migration"
-          title="数据迁移说明"
-          size="small"
-        >
-          <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginBottom: 10 }}>
-            按使用场景从简单到专业，推荐 4 种方式：
-          </Typography.Paragraph>
-
-          <Typography.Title level={5} style={{ fontSize: 13, marginBottom: 4, marginTop: 0 }}>
-            ① 单台电脑换硬盘 / 搬到 D 盘
-          </Typography.Title>
-          <Typography.Paragraph style={{ fontSize: 13, marginBottom: 12 }}>
-            <Text strong>设置 → 数据目录</Text> 选新路径，勾选「
-            <Text type="success">自动迁移</Text>
-            」即可。应用会启动迁移引导窗口完成搬运，无需手工复制文件。
-          </Typography.Paragraph>
-
-          <Typography.Title level={5} style={{ fontSize: 13, marginBottom: 4, marginTop: 0 }}>
-            ② 一次性整包搬到另一台电脑（离线）
-          </Typography.Title>
-          <Typography.Paragraph style={{ fontSize: 13, marginBottom: 12 }}>
-            旧电脑：<Text strong>设置 → 同步 → 本地 ZIP → 导出</Text>{" "}
-            得到一个 .zip 快照（含全部数据库 + 图片 + PDF + 附件 + 源文件）。
-            新电脑安装应用后到同位置选择 <Text strong>导入 ZIP</Text>，自动解压覆盖。
-          </Typography.Paragraph>
-
-          <Typography.Title level={5} style={{ fontSize: 13, marginBottom: 4, marginTop: 0 }}>
-            ③ 多端实时双向同步（推荐长期用户）
-          </Typography.Title>
-          <Typography.Paragraph style={{ fontSize: 13, marginBottom: 12 }}>
-            <Text strong>设置 → 同步 → 多端同步（V1）</Text>{" "}
-            配置 WebDAV / 坚果云 / NAS 后端；多台电脑都登录同一个账号，应用会按文件级
-            manifest 增量推拉，自动消化双端冲突。也可以只用「
-            <Text>WebDAV 全量快照</Text>」做单向手动备份。
-          </Typography.Paragraph>
-
-          <Typography.Title level={5} style={{ fontSize: 13, marginBottom: 4, marginTop: 0 }}>
-            ④ 手动复制（兜底方案，应急用）
-          </Typography.Title>
-          <Typography.Paragraph
-            type="secondary"
-            style={{ fontSize: 12, marginBottom: 6 }}
-          >
-            数据目录下的核心文件 / 子目录：
-          </Typography.Paragraph>
-          <ul style={{ fontSize: 12, paddingLeft: 20, margin: "0 0 8px", color: "rgba(0,0,0,0.45)" }}>
-            <li style={{ marginBottom: 2 }}><code>app.db</code> — 笔记 / 文件夹 / 标签 / 链接 / AI 对话 / 待办 / 加密数据等全部元数据（SQLite）</li>
-            <li style={{ marginBottom: 2 }}><code>kb_assets/</code> — 笔记内嵌图片（含 <code>kb_assets/videos/</code> 子目录的视频）</li>
-            <li style={{ marginBottom: 2 }}><code>pdfs/</code> — 导入的 PDF 原始文件</li>
-            <li style={{ marginBottom: 2 }}><code>sources/</code> — 导入的 Word（.docx/.doc）原始文件</li>
-            <li style={{ marginBottom: 2 }}><code>attachments/</code> — 笔记附件（zip / 音频等通用文件）</li>
-            <li><code>settings.json</code> — 应用偏好（主题、窗口状态、字体等）</li>
-          </ul>
-          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
-            步骤：关闭应用 → 整目录复制到新电脑相同路径（点上方「打开数据目录」定位）→
-            启动即可。<Text strong>务必整目录一起搬</Text>，单独复制 <code>app.db</code>{" "}
-            会丢图片 / PDF / 附件。
-          </Typography.Paragraph>
-
-          <Typography.Paragraph
-            type="warning"
-            style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}
-          >
-            ⚠ 任何方式都要在迁移前关闭应用；新旧两端版本号差距不要超过一个小版本，避免
-            schema 不兼容。需要给其他工具用，可在
-            <Text strong> 设置 → 导出 Markdown</Text> 单独导出标准 .md 文件。
-          </Typography.Paragraph>
-        </Card>
-      )}
-
-      <div id="about-recommend">
-        <RecommendCards />
-      </div>
+        {/* 推荐应用（跨两列，与设置页共用 RecommendCards） */}
+        <section className="kb-cards-panel kb-qc kb-about-wide">
+          <div className="kb-qc-head">
+            <span className="kb-qc-ico">
+              <Puzzle size={15} />
+            </span>
+            推荐应用
+            <span className="kb-about-head-note">9 款 · 点击查看详情</span>
+          </div>
+          <RecommendCards />
+        </section>
       </div>
     </div>
   );

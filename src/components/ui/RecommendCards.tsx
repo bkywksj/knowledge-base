@@ -20,7 +20,7 @@ import officiaLogo from "@/assets/promo/officia.svg";
 const { Title, Text, Paragraph } = Typography;
 
 /**
- * 三条推荐卡片 + 对应详情弹窗
+ * 推荐应用卡片网格 + 对应详情弹窗
  * 在 About 和 Settings 页共用
  */
 export function RecommendCards() {
@@ -36,198 +36,35 @@ export function RecommendCards() {
   const [storyloomOpen, setStoryloomOpen] = useState(false);
   const [officiaOpen, setOfficiaOpen] = useState(false);
 
-  const cardStyle: React.CSSProperties = {
-    padding: "12px 16px",
-    borderRadius: 8,
-    border: "1px solid var(--ant-color-border)",
-    background: "var(--ant-color-bg-container)",
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    transition: "border-color 0.2s",
-  };
+  /** 卡片清单：顺序 / 名称 / 副标题与 v4 原型 RECOMMEND 一一对应，open 打开各自详情弹窗 */
+  const items: { key: string; logo: string; name: string; desc: string; open: () => void }[] = [
+    { key: "ruoyi", logo: ruoyiLogo, name: "RuoYi-Plus-UniApp", desc: "业内首个适配 Claude Code 的企业级全栈框架", open: () => setPromoOpen(true) },
+    { key: "tauri", logo: tauriLogo, name: "灵动桌面应用开发框架", desc: "面向 AI 时代的桌面应用快速开发框架", open: () => setFrameworkOpen(true) },
+    { key: "workstation", logo: workstationLogo, name: "AI 全能工作站", desc: "42 集视频教程已发布，MCP 接入试用中", open: () => setWorkstationOpen(true) },
+    { key: "aicoder", logo: aicoderLogo, name: "智码 AICoder", desc: "多 AI 编码工具一站式管理 · 移动端实时联动", open: () => setAicoderOpen(true) },
+    { key: "sigil", logo: sigilLogo, name: "Sigil · AI 凭据金库", desc: "让 AI 帮你干活，但永远拿不到你的密钥", open: () => setSigilOpen(true) },
+    { key: "reeve", logo: reeveLogo, name: "Reeve · 服务器庄园总管", desc: "你持钥，AI 借道 —— AI 操作服务器却拿不到密码私钥", open: () => setReeveOpen(true) },
+    { key: "agileshot", logo: agileshotLogo, name: "AgileShot · 截图标注工具", desc: "AI 时代的桌面截图与标注工具", open: () => setAgileshotOpen(true) },
+    { key: "storyloom", logo: storyloomLogo, name: "StoryLoom · 故事织机", desc: "面向网文作者的本地 AI 创作工作台", open: () => setStoryloomOpen(true) },
+    // Officia：同生态 Java 文档处理开发套件，面向做集成的开发者
+    { key: "officia", logo: officiaLogo, name: "Officia · Java 文档处理套件", desc: "零依赖 · 支持 JDK 8u161+ · Office 无损转 PDF + 在线编辑", open: () => setOfficiaOpen(true) },
+  ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {/* 推荐：RuoYi-Plus-UniApp */}
-      <div
-        onClick={() => setPromoOpen(true)}
-        style={cardStyle}
-        onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-primary)")}
-        onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-border)")}
-      >
-        <img src={ruoyiLogo} alt="" style={{ width: 22, height: 22, objectFit: "contain" }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Text strong style={{ fontSize: 13 }}>
-            RuoYi-Plus-UniApp
-          </Text>
-          <br />
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            业内首个适配 Claude Code 的企业级全栈框架
-          </Text>
-        </div>
-        <RightOutlined style={{ fontSize: 11, color: "var(--ant-color-text-quaternary)" }} />
-      </div>
-
-      {/* 推荐：灵动桌面应用开发框架 */}
-      <div
-        onClick={() => setFrameworkOpen(true)}
-        style={cardStyle}
-        onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-primary)")}
-        onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-border)")}
-      >
-        <img src={tauriLogo} alt="" style={{ width: 22, height: 22, objectFit: "contain" }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Text strong style={{ fontSize: 13 }}>
-            灵动桌面应用开发框架
-          </Text>
-          <br />
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            面向 AI 时代的桌面应用快速开发框架
-          </Text>
-        </div>
-        <RightOutlined style={{ fontSize: 11, color: "var(--ant-color-text-quaternary)" }} />
-      </div>
-
-      {/* 推荐：AI 全能工作站 */}
-      <div
-        onClick={() => setWorkstationOpen(true)}
-        style={cardStyle}
-        onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-primary)")}
-        onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-border)")}
-      >
-        <img src={workstationLogo} alt="" style={{ width: 22, height: 22, objectFit: "contain" }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Text strong style={{ fontSize: 13 }}>
-            AI 全能工作站
-          </Text>
-          <br />
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            42 集视频教程已发布，MCP 接入试用中
-          </Text>
-        </div>
-        <RightOutlined style={{ fontSize: 11, color: "var(--ant-color-text-quaternary)" }} />
-      </div>
-
-      {/* 推荐：智码 AICoder */}
-      <div
-        onClick={() => setAicoderOpen(true)}
-        style={cardStyle}
-        onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-primary)")}
-        onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-border)")}
-      >
-        <img src={aicoderLogo} alt="" style={{ width: 22, height: 22, objectFit: "contain" }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Text strong style={{ fontSize: 13 }}>
-            智码 AICoder
-          </Text>
-          <br />
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            多 AI 编码工具一站式管理 · 移动端实时联动
-          </Text>
-        </div>
-        <RightOutlined style={{ fontSize: 11, color: "var(--ant-color-text-quaternary)" }} />
-      </div>
-
-      {/* 推荐：Sigil */}
-      <div
-        onClick={() => setSigilOpen(true)}
-        style={cardStyle}
-        onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-primary)")}
-        onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-border)")}
-      >
-        <img src={sigilLogo} alt="" style={{ width: 22, height: 22, objectFit: "contain" }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Text strong style={{ fontSize: 13 }}>
-            Sigil · AI 凭据金库
-          </Text>
-          <br />
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            让 AI 帮你干活，但永远拿不到你的密钥
-          </Text>
-        </div>
-        <RightOutlined style={{ fontSize: 11, color: "var(--ant-color-text-quaternary)" }} />
-      </div>
-
-      {/* 推荐：Reeve */}
-      <div
-        onClick={() => setReeveOpen(true)}
-        style={cardStyle}
-        onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-primary)")}
-        onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-border)")}
-      >
-        <img src={reeveLogo} alt="" style={{ width: 22, height: 22, objectFit: "contain" }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Text strong style={{ fontSize: 13 }}>
-            Reeve · 服务器庄园总管
-          </Text>
-          <br />
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            你持钥，AI 借道 —— AI 操作服务器却拿不到密码私钥
-          </Text>
-        </div>
-        <RightOutlined style={{ fontSize: 11, color: "var(--ant-color-text-quaternary)" }} />
-      </div>
-
-      {/* 推荐：AgileShot */}
-      <div
-        onClick={() => setAgileshotOpen(true)}
-        style={cardStyle}
-        onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-primary)")}
-        onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-border)")}
-      >
-        <img src={agileshotLogo} alt="" style={{ width: 22, height: 22, objectFit: "contain" }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Text strong style={{ fontSize: 13 }}>
-            AgileShot · 截图标注工具
-          </Text>
-          <br />
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            AI 时代的桌面截图与标注工具
-          </Text>
-        </div>
-        <RightOutlined style={{ fontSize: 11, color: "var(--ant-color-text-quaternary)" }} />
-      </div>
-
-      {/* 推荐：StoryLoom */}
-      <div
-        onClick={() => setStoryloomOpen(true)}
-        style={cardStyle}
-        onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-primary)")}
-        onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-border)")}
-      >
-        <img src={storyloomLogo} alt="" style={{ width: 22, height: 22, objectFit: "contain" }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Text strong style={{ fontSize: 13 }}>
-            StoryLoom · 故事织机
-          </Text>
-          <br />
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            面向网文作者的本地 AI 创作工作台
-          </Text>
-        </div>
-        <RightOutlined style={{ fontSize: 11, color: "var(--ant-color-text-quaternary)" }} />
-      </div>
-
-      {/* 推荐：Officia（同生态 Java 文档处理开发套件，面向做集成的开发者） */}
-      <div
-        onClick={() => setOfficiaOpen(true)}
-        style={cardStyle}
-        onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-primary)")}
-        onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--ant-color-border)")}
-      >
-        <img src={officiaLogo} alt="" style={{ width: 22, height: 22, objectFit: "contain" }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Text strong style={{ fontSize: 13 }}>
-            Officia · Java 文档处理套件
-          </Text>
-          <br />
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            零依赖 · 支持 JDK 8u161+ · Office 无损转 PDF + 在线编辑
-          </Text>
-        </div>
-        <RightOutlined style={{ fontSize: 11, color: "var(--ant-color-text-quaternary)" }} />
+    <>
+      <div className="kb-reco">
+        {items.map((it) => (
+          <div key={it.key} className="kb-reco-i" title={`${it.name}\n${it.desc}`} onClick={it.open}>
+            <span className="kb-reco-logo">
+              <img src={it.logo} alt="" />
+            </span>
+            <div className="kb-reco-t">
+              <b>{it.name}</b>
+              <p>{it.desc}</p>
+            </div>
+            <RightOutlined className="kb-reco-arrow" />
+          </div>
+        ))}
       </div>
 
       {/* RuoYi-Plus-UniApp 详情弹窗 */}
@@ -995,6 +832,6 @@ export function RecommendCards() {
           </Button>
         </div>
       </Modal>
-    </div>
+    </>
   );
 }
