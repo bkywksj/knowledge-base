@@ -8,17 +8,11 @@ import { SelectionFormatButtons } from "./SelectionFormatButtons";
 import { Button, Input, Popover, Tooltip, message, theme as antdTheme } from "antd";
 import {
   Sparkles,
-  ArrowRight,
-  FileText,
   RefreshCw,
-  Languages,
-  Expand,
-  Shrink,
   X,
   Check,
   Loader2,
   StopCircle,
-  Wand2,
   PenLine,
   Copy,
   Brain,
@@ -30,6 +24,7 @@ import {
 import { useInRouterContext, useNavigate } from "react-router-dom";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { aiWriteApi, promptApi } from "@/lib/api";
+import { renderPromptIcon } from "@/lib/promptIcons";
 import { splitThinking } from "@/lib/stripThinking";
 import type { PromptOutputMode, PromptTemplate } from "@/types";
 
@@ -44,17 +39,6 @@ interface AiWriteMenuProps {
 }
 
 // Lucide 图标名 → React 元素工厂，保持和管理页"图标名"字段一致
-const ICON_MAP: Record<string, (size: number) => React.ReactNode> = {
-  ArrowRight: (s) => <ArrowRight size={s} />,
-  FileText: (s) => <FileText size={s} />,
-  RefreshCw: (s) => <RefreshCw size={s} />,
-  Languages: (s) => <Languages size={s} />,
-  Expand: (s) => <Expand size={s} />,
-  Shrink: (s) => <Shrink size={s} />,
-  Sparkles: (s) => <Sparkles size={s} />,
-  Wand2: (s) => <Wand2 size={s} />,
-};
-
 /**
  * 「去设置模型服务」按钮：跳到设置页并滚动高亮模型服务区块（与 TurnCard 同一种跳法）。
  * 单独拆成组件是因为 useNavigate 在 Router 之外会直接抛错——编辑器理论上可能被
@@ -75,10 +59,8 @@ function GoModelSettingsButton() {
   );
 }
 
-function renderIcon(name: string | null, size: number): React.ReactNode {
-  if (name && ICON_MAP[name]) return ICON_MAP[name](size);
-  return <Wand2 size={size} />; // 用户自定义没填图标时的默认占位
-}
+/** 图标表与渲染挪到 lib/promptIcons，提示词库页选图标也用同一份 */
+const renderIcon = renderPromptIcon;
 
 /**
  * 修复 R-016：AI 写作处理选区时丢图片。

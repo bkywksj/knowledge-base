@@ -5868,3 +5868,185 @@ body.sidebar-resizing .kb-panel-resizer {
   background: transparent !important;
   box-shadow: none !important;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 AI 提示词库（T3-12）—— 原型 .pcard 卡片网格 + 右侧常驻编辑
+   ═══════════════════════════════════════════════════════════ */
+.kb-prompts-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.kb-prompts-page > .kb-page-bar {
+  margin-bottom: 0;
+}
+.kb-prompts-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .kb-prompts-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.kb-prompt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+  align-content: start;
+}
+.kb-prompt-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, opacity 0.15s ease;
+}
+.kb-prompt-card:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kb-primary) 35%, transparent),
+    0 6px 18px -12px rgba(40, 30, 90, 0.3);
+}
+.kb-prompt-card.is-active {
+  box-shadow: inset 0 0 0 1.5px var(--kb-primary), 0 0 0 3px var(--kb-primary-light);
+}
+.kb-prompt-card.is-ctx {
+  outline: 1px solid var(--kb-primary);
+}
+.kb-prompt-card.is-off .kb-prompt-ico,
+.kb-prompt-card.is-off .kb-prompt-title,
+.kb-prompt-card.is-off .kb-prompt-desc,
+.kb-prompt-card.is-off .kb-prompt-foot {
+  opacity: 0.5;
+}
+.kb-prompt-card-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.kb-prompt-ico {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--kb-primary);
+  background: var(--kb-primary-light);
+}
+.kb-prompt-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  color: var(--kb-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-prompt-builtin {
+  flex: none;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  line-height: 20px;
+  color: var(--kb-primary);
+  background: var(--kb-primary-light);
+}
+.kb-prompt-desc {
+  font-size: 13px;
+  color: var(--kb-text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.kb-prompt-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.kb-prompt-mode {
+  padding: 1px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+  background: var(--kb-bg-hover);
+}
+.kb-prompt-order {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--kb-text-tertiary);
+}
+/* 右侧编辑 */
+.kb-prompt-edit {
+  position: sticky;
+  top: 0;
+}
+.kb-prompt-edit .ant-form-item {
+  margin-bottom: 14px;
+}
+.kb-prompt-edit .ant-form-item-label > label {
+  font-size: 12.5px;
+  color: var(--kb-text-tertiary);
+}
+.kb-prompt-vars {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--kb-text-tertiary);
+}
+.kb-prompt-var-list {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--kb-text-tertiary);
+}
+.kb-prompt-var-list code {
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.kb-icon-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.kb-icon-opt {
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--kb-border);
+  border-radius: 9px;
+  background: var(--kb-bg-raised, #fff);
+  color: var(--kb-text-secondary);
+  cursor: pointer;
+}
+.kb-icon-opt:hover {
+  border-color: color-mix(in srgb, var(--kb-primary) 45%, transparent);
+}
+.kb-icon-opt.is-on {
+  border-color: var(--kb-primary);
+  color: var(--kb-primary);
+  background: var(--kb-primary-light);
+}
+.kb-prompt-enable {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 14px;
+  font-size: 13px;
+  color: var(--kb-text-primary);
+}
+.kb-prompt-enable-tip {
+  font-size: 12px;
+  color: var(--kb-text-tertiary);
+}
+.kb-prompt-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
