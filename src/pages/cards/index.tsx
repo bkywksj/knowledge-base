@@ -1,21 +1,16 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Tabs,
-  Card as AntCard,
   Button,
   Modal,
   Form,
   Input,
-  Space,
-  Statistic,
+  Select,
   message,
   Spin,
   Empty,
-  Table,
   Popconfirm,
   Tooltip,
-  theme as antdTheme,
 } from "antd";
 import {
   Plus,
@@ -25,6 +20,10 @@ import {
   Trash2,
   Pencil,
   FileText,
+  Layers,
+  Repeat,
+  Library,
+  Search,
 } from "lucide-react";
 import {
   fsrs,
@@ -38,7 +37,7 @@ import {
 
 /** 4 个用户面向评分（排除 Manual=0） */
 type GradeRating = Rating.Again | Rating.Hard | Rating.Good | Rating.Easy;
-import { cardApi } from "@/lib/api";
+import { cardApi, noteApi } from "@/lib/api";
 import type { Card, CardStats } from "@/types";
 
 /**
@@ -84,8 +83,12 @@ function formatNextInterval(card: FsrsCard, now: Date): string {
 }
 
 function DesktopCardsPage() {
-  const [tab, setTab] = useState<"review" | "list">("review");
   const [stats, setStats] = useState<CardStats | null>(null);
+  /** 顶栏「重新加载」/ 新建卡片后自增：复习区据此重拉待复习队列 */
+  const [reviewKey, setReviewKey] = useState(0);
+  /** 新建 / 编辑 / 删除 / 评分后自增：全部卡片列表据此重拉 */
+  const [listKey, setListKey] = useState(0);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const refreshStats = useCallback(async () => {
     try {
@@ -99,64 +102,78 @@ function DesktopCardsPage() {
     void refreshStats();
   }, [refreshStats]);
 
+  /** 卡片增删改后：统计 + 列表都要跟着变 */
+  const afterCardsChanged = useCallback(() => {
+    void refreshStats();
+    setListKey((k) => k + 1);
+  }, [refreshStats]);
+
   return (
-    // 去掉 max-w + 自带的 px-6：横向留白统一交给 AppLayout Content 的 padding，
-    // 否则这页会比别的列表页多缩进 24px
-    <div className="py-1">
-      <div className="mb-3 flex items-center gap-2">
-        <Sparkles size={18} />
-        <h1 className="text-lg font-semibold m-0">卡片复习</h1>
+    // v4 原型：不再分「今日复习 / 全部卡片」两个 Tab，一页从上到下 = 顶栏 · 统计 · 复习区 + 快速新建 · 全部卡片
+    <div className="kb-cards-page">
+      <div className="kb-page-bar">
+        <h1>卡片复习</h1>
+        <span className="flex-1" />
+        <Button
+          icon={<RotateCcw size={14} />}
+          onClick={() => {
+            setReviewKey((k) => k + 1);
+            void refreshStats();
+          }}
+          title="重新拉取今日到期的卡片（复习中途新到期的也会进来）"
+        >
+          重新加载
+        </Button>
+        <Button type="primary" icon={<Plus size={14} />} onClick={() => setCreateOpen(true)}>
+          新建卡片
+        </Button>
       </div>
 
       {stats && <StatsBar stats={stats} />}
 
-      <Tabs
-        activeKey={tab}
-        onChange={(k) => setTab(k as "review" | "list")}
-        items={[
-          {
-            key: "review",
-            label: `今日复习 ${stats?.dueToday ?? 0}`,
-            children: <ReviewTab onChanged={refreshStats} />,
-          },
-          {
-            key: "list",
-            label: `全部卡片 ${stats?.total ?? 0}`,
-            children: <ListTab onChanged={refreshStats} />,
-          },
-        ]}
+      <div className="kb-cards-main">
+        <ReviewPanel key={reviewKey} onChanged={afterCardsChanged} onReload={() => setReviewKey((k) => k + 1)} />
+        <QuickCreatePanel onCreated={afterCardsChanged} />
+      </div>
+
+      <CardListSection reloadKey={listKey} total={stats?.total} onChanged={afterCardsChanged} />
+
+      <CardEditModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onSaved={afterCardsChanged}
       />
     </div>
   );
 }
 
-// ─── 顶部统计条 ────────────────────────────────────────────
+// ─── 顶部统计（原型 .stat：四张小卡，左侧彩色图标块） ─────────────────
 
 function StatsBar({ stats }: { stats: CardStats }) {
-  const { token } = antdTheme.useToken();
+  const items = [
+    { label: "今日待复习", value: stats.dueToday, icon: <Layers size={16} />, tone: "" },
+    { label: "新卡", value: stats.newCards, icon: <Sparkles size={16} />, tone: "is-info" },
+    { label: "学习中", value: stats.learning, icon: <Repeat size={16} />, tone: "is-warn" },
+    { label: "总卡数", value: stats.total, icon: <Library size={16} />, tone: "is-ok" },
+  ];
   return (
-    <div
-      className="grid grid-cols-4 gap-3 px-5 py-3 rounded-lg mb-3 kb-surface"
-      style={{
-        background: token.colorBgContainer,
-        border: `1px solid ${token.colorBorderSecondary}`,
-      }}
-    >
-      <Statistic
-        title="今日待复习"
-        value={stats.dueToday}
-        valueStyle={{ color: token.colorPrimary, fontSize: 22 }}
-      />
-      <Statistic title="新卡" value={stats.newCards} valueStyle={{ fontSize: 22 }} />
-      <Statistic title="学习中" value={stats.learning} valueStyle={{ fontSize: 22 }} />
-      <Statistic title="总卡数" value={stats.total} valueStyle={{ fontSize: 22 }} />
+    <div className="kb-card-stats">
+      {items.map((it, i) => (
+        <div key={it.label} className="kb-card-stat">
+          <span className={`kb-card-stat-ico ${it.tone}`}>{it.icon}</span>
+          <div>
+            <div className={i === 0 ? "kb-card-stat-num is-primary" : "kb-card-stat-num"}>{it.value}</div>
+            <div className="kb-card-stat-lb">{it.label}</div>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
 
-// ─── 复习 Tab ─────────────────────────────────────────────
+// ─── 复习区 ─────────────────────────────────────────────
 
-function ReviewTab({ onChanged }: { onChanged: () => void }) {
+function ReviewPanel({ onChanged, onReload }: { onChanged: () => void; onReload: () => void }) {
   const navigate = useNavigate();
   const [queue, setQueue] = useState<Card[]>([]);
   const [idx, setIdx] = useState(0);
@@ -170,26 +187,21 @@ function ReviewTab({ onChanged }: { onChanged: () => void }) {
     [],
   );
 
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try {
-      const list = await cardApi.listDue();
-      setQueue(list);
-      setIdx(0);
-      setShowBack(false);
-      setDoneCount(0);
-    } catch (e) {
-      message.error(`加载待复习失败: ${e}`);
-    } finally {
-      setLoading(false);
-    }
+  // 只在挂载时拉一次；「重新加载」由父级换 key 整个重建本组件
+  useEffect(() => {
+    let alive = true;
+    cardApi
+      .listDue()
+      .then((list) => alive && setQueue(list))
+      .catch((e) => message.error(`加载待复习失败: ${e}`))
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  useEffect(() => {
-    void reload();
-  }, [reload]);
-
   const current = queue[idx];
+  const noteTitles = useNoteTitles(current?.note_id != null ? [current.note_id] : []);
 
   /** 用户给当前卡评分 → ts-fsrs 算新状态 → 提交后端 → 下一张 */
   async function rate(rating: GradeRating) {
@@ -237,173 +249,336 @@ function ReviewTab({ onChanged }: { onChanged: () => void }) {
     };
   }, [current, showBack, scheduler]);
 
+  let body: React.ReactNode;
   if (loading) {
-    return (
+    body = (
       <div className="flex justify-center py-16">
         <Spin size="large" />
       </div>
     );
-  }
-
-  if (queue.length === 0) {
-    return (
-      <Empty
-        className="py-16"
-        description='暂无待复习卡片，先去"全部卡片" Tab 创建几张吧'
-      />
-    );
-  }
-
-  if (idx >= queue.length) {
-    return (
-      <div className="text-center py-16">
-        <CheckCircle2 size={48} className="mx-auto mb-3" style={{ color: "#52c41a" }} />
+  } else if (queue.length === 0) {
+    body = <Empty className="py-12" description="暂无待复习卡片，可在右侧或下方「全部卡片」新建" />;
+  } else if (idx >= queue.length) {
+    body = (
+      <div className="text-center py-12">
+        <CheckCircle2 size={44} className="mx-auto mb-3" style={{ color: "var(--ant-color-success)" }} />
         <h2 className="text-lg font-semibold mb-2">今日复习完成 🎉</h2>
-        <p className="text-gray-500 mb-4">本轮共复习 {doneCount} 张卡</p>
-        <Button icon={<RotateCcw size={14} />} onClick={() => void reload()}>
+        <p className="mb-4" style={{ color: "var(--kb-text-tertiary)" }}>
+          本轮共复习 {doneCount} 张卡
+        </p>
+        <Button icon={<RotateCcw size={14} />} onClick={onReload}>
           重新加载（如有新到期卡）
         </Button>
       </div>
     );
-  }
-
-  return (
-    <div className="max-w-2xl mx-auto">
-      {/* 进度 + 笔记跳转 */}
-      <div className="flex items-center justify-between mb-2 px-1">
-        <span className="text-xs text-gray-500">
-          {idx + 1} / {queue.length}
-        </span>
-        {current.note_id != null && (
-          <Tooltip title="打开原笔记">
-            <Button
-              size="small"
-              type="text"
-              icon={<FileText size={13} />}
+  } else {
+    body = (
+      <>
+        {/* 进度：第 n / N 张 + 进度条 + 原笔记小标签（原型 .rv-head） */}
+        <div className="kb-rv-head">
+          <span>
+            第 {idx + 1} / {queue.length} 张
+          </span>
+          {current.note_id != null && (
+            <button
+              type="button"
+              className="kb-rv-src"
               onClick={() => navigate(`/notes/${current.note_id}`)}
+              title="打开原笔记"
             >
-              <span className="text-xs">原笔记</span>
-            </Button>
-          </Tooltip>
-        )}
-      </div>
-
-      {/* 卡片正反面。
-          ⚠️ 这里**不留 margin-bottom**：卡片与下方操作区的间距统一由操作区的 mt 控制。
-          两边都写外边距的话，相邻兄弟会发生外边距折叠、取两者最大值 ——
-          再去调操作区的 mt 就会出现"调小了却没反应"（被卡片的 mb 兜住）。 */}
-      <AntCard styles={{ body: { minHeight: 180, padding: "28px 24px" } }}>
-        <div className="text-center text-base whitespace-pre-wrap break-words">
-          {current.front}
+              <FileText size={12} />
+              原笔记{noteTitles.get(current.note_id) ? `：${noteTitles.get(current.note_id)}` : ""}
+            </button>
+          )}
         </div>
-        {showBack && (
+        <div className="kb-rv-progress">
+          <i style={{ width: `${(idx / queue.length) * 100}%` }} />
+        </div>
+
+        <div className="kb-rv-lb is-center">正面（问题 / 提示）</div>
+        <div className="kb-rv-front">{current.front}</div>
+
+        {showBack ? (
           <>
-            <div
-              className="my-4 border-t border-dashed"
-              style={{ borderColor: "rgba(0,0,0,0.12)" }}
-            />
-            <div className="text-center text-base whitespace-pre-wrap break-words">
-              {current.back}
+            <div className="kb-rv-lb">反面（答案）</div>
+            <div className="kb-rv-back">{current.back}</div>
+            <div className="kb-rv-rates">
+              <RateBtn k="1" label="忘了" interval={previews?.again} tone="is-again" onClick={() => rate(Rating.Again)} />
+              <RateBtn k="2" label="模糊" interval={previews?.hard} tone="is-hard" onClick={() => rate(Rating.Hard)} />
+              <RateBtn k="3" label="还行" interval={previews?.good} tone="is-good" onClick={() => rate(Rating.Good)} />
+              <RateBtn k="4" label="记牢了" interval={previews?.easy} tone="is-easy" onClick={() => rate(Rating.Easy)} />
             </div>
           </>
+        ) : (
+          <div className="flex justify-center mt-6">
+            <Button type="primary" size="large" onClick={() => setShowBack(true)}>
+              显示答案 (空格)
+            </Button>
+          </div>
         )}
-      </AntCard>
+        <div className="kb-rv-hint">空格翻面 · 翻面后数字键 1 – 4 评分</div>
 
-      {/* 操作区 —— 与卡片的间距在这里统一控制（卡片侧不留 mb，见上方注释） */}
-      {!showBack ? (
-        <div className="flex justify-center mt-6">
-          <Button type="primary" size="large" onClick={() => setShowBack(true)}>
-            显示答案 (空格)
-          </Button>
-        </div>
-      ) : (
-        <div className="grid grid-cols-4 gap-2 mt-6">
-          <RateBtn label="忘了" interval={previews?.again} color="#ff4d4f" onClick={() => rate(Rating.Again)} />
-          <RateBtn label="模糊" interval={previews?.hard} color="#fa8c16" onClick={() => rate(Rating.Hard)} />
-          <RateBtn label="还行" interval={previews?.good} color="#1677ff" onClick={() => rate(Rating.Good)} />
-          <RateBtn label="记牢了" interval={previews?.easy} color="#52c41a" onClick={() => rate(Rating.Easy)} />
-        </div>
-      )}
+        <ReviewShortcuts
+          canFlip={!showBack}
+          canRate={showBack}
+          onFlip={() => setShowBack(true)}
+          onRate={(n) =>
+            void rate(([Rating.Again, Rating.Hard, Rating.Good, Rating.Easy] as GradeRating[])[n - 1])
+          }
+        />
+      </>
+    );
+  }
 
-      {/* 空格键翻面 */}
-      <SpaceShortcut
-        enabled={!showBack && !!current}
-        onSpace={() => setShowBack(true)}
-      />
-    </div>
-  );
+  return <section className="kb-cards-panel kb-rv">{body}</section>;
 }
 
 function RateBtn({
+  k,
   label,
   interval,
-  color,
+  tone,
   onClick,
 }: {
+  k: string;
   label: string;
   interval?: string;
-  color: string;
+  tone: string;
   onClick: () => void;
 }) {
   return (
-    <Button
-      size="large"
-      onClick={onClick}
-      style={{ height: 64, borderColor: color, color }}
-    >
-      <div className="flex flex-col items-center gap-0.5">
-        <span style={{ fontWeight: 600 }}>{label}</span>
-        {interval && <span className="text-xs opacity-70">{interval}</span>}
-      </div>
-    </Button>
+    <button type="button" className={`kb-rate ${tone}`} onClick={onClick} title={`快捷键 ${k}`}>
+      <b>{label}</b>
+      {interval && <span>{interval}后</span>}
+    </button>
   );
 }
 
-/** 监听空格键翻面：仅 enabled 时生效 */
-function SpaceShortcut({ enabled, onSpace }: { enabled: boolean; onSpace: () => void }) {
+/** 复习快捷键：空格翻面；翻面后 1–4 评分。焦点在输入框里（右侧新建表单）时不响应 */
+function ReviewShortcuts({
+  canFlip,
+  canRate,
+  onFlip,
+  onRate,
+}: {
+  canFlip: boolean;
+  canRate: boolean;
+  onFlip: () => void;
+  onRate: (n: 1 | 2 | 3 | 4) => void;
+}) {
   useEffect(() => {
-    if (!enabled) return;
     function onKey(e: KeyboardEvent) {
-      if (e.code === "Space" && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
+      const t = e.target;
+      if (
+        t instanceof HTMLInputElement ||
+        t instanceof HTMLTextAreaElement ||
+        (t instanceof HTMLElement && t.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (canFlip && e.code === "Space") {
         e.preventDefault();
-        onSpace();
+        onFlip();
+      } else if (canRate && /^[1-4]$/.test(e.key)) {
+        e.preventDefault();
+        onRate(Number(e.key) as 1 | 2 | 3 | 4);
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [enabled, onSpace]);
+  }, [canFlip, canRate, onFlip, onRate]);
   return null;
 }
 
-// ─── 列表 Tab ─────────────────────────────────────────────
+/**
+ * 按笔记 id 取标题（「来自「xx」」/ 原笔记小标签用）。
+ * 进程内缓存：同一篇笔记只查一次；查不到（已删除）记成空串，不再重复查。
+ */
+const noteTitleCache = new Map<number, string>();
+function useNoteTitles(ids: number[]): Map<number, string> {
+  const [, bump] = useState(0);
+  const key = ids.join(",");
+  useEffect(() => {
+    const missing = [...new Set(ids)].filter((id) => !noteTitleCache.has(id));
+    if (missing.length === 0) return;
+    let alive = true;
+    Promise.all(
+      missing.map((id) =>
+        noteApi
+          .get(id)
+          .then((n) => noteTitleCache.set(id, n.title))
+          .catch(() => noteTitleCache.set(id, "")),
+      ),
+    ).then(() => alive && bump((n) => n + 1));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return noteTitleCache;
+}
 
-function ListTab({ onChanged }: { onChanged: () => void }) {
+// ─── 右侧快速新建（原型 .rv-side，新增；原新建弹窗仍保留在顶栏） ─────────
+
+function QuickCreatePanel({ onCreated }: { onCreated: () => void }) {
+  const [front, setFront] = useState("");
+  const [back, setBack] = useState("");
+  const [noteId, setNoteId] = useState<number | null>(null);
+  const [noteOptions, setNoteOptions] = useState<{ value: number; label: string }[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  async function searchNotes(kw: string) {
+    try {
+      const res = await noteApi.list({ keyword: kw || null, page: 1, page_size: 20 });
+      setNoteOptions(res.items.map((n) => ({ value: n.id, label: n.title || "未命名" })));
+    } catch {
+      setNoteOptions([]);
+    }
+  }
+
+  async function save() {
+    if (!front.trim() || !back.trim()) {
+      message.warning("正面和反面都要填");
+      return;
+    }
+    setSaving(true);
+    try {
+      await cardApi.create({ front: front.trim(), back: back.trim(), noteId });
+      message.success("已创建");
+      setFront("");
+      setBack("");
+      setNoteId(null);
+      onCreated();
+    } catch (e) {
+      message.error(`保存失败: ${e}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Ctrl / ⌘ + Enter 直接保存，连续录卡不用摸鼠标
+  function onKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      void save();
+    }
+  }
+
+  return (
+    <section className="kb-cards-panel kb-qc">
+      <div className="kb-qc-head">
+        <span className="kb-qc-ico">
+          <Plus size={14} />
+        </span>
+        新建卡片
+      </div>
+      <div className="kb-rv-lb">正面（问题 / 提示）</div>
+      <Input.TextArea
+        rows={3}
+        value={front}
+        onChange={(e) => setFront(e.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder="例如：TCP 三次握手第二步是？"
+      />
+      <div className="kb-rv-lb">反面（答案）</div>
+      <Input.TextArea
+        rows={3}
+        value={back}
+        onChange={(e) => setBack(e.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder="例如：服务端回 SYN+ACK"
+      />
+      <Select
+        className="kb-qc-note"
+        allowClear
+        showSearch
+        placeholder={
+          <span className="inline-flex items-center gap-1.5">
+            <FileText size={13} />
+            关联笔记（可选）
+          </span>
+        }
+        value={noteId ?? undefined}
+        onChange={(v) => setNoteId(v ?? null)}
+        onSearch={(kw) => void searchNotes(kw)}
+        onOpenChange={(o) => o && noteOptions.length === 0 && void searchNotes("")}
+        filterOption={false}
+        options={noteOptions}
+        notFoundContent="没有匹配的笔记"
+      />
+      <Button type="primary" block loading={saving} onClick={() => void save()}>
+        保存卡片
+      </Button>
+      <div className="kb-rv-hint">Ctrl + Enter 保存</div>
+    </section>
+  );
+}
+
+// ─── 全部卡片（原型 .cl：列表行 + 搜索；原表格的反面 / 状态放进悬停提示） ─────
+
+const CARD_STATE_LABEL = ["新卡", "学习中", "复习中", "重学"];
+const LIST_PAGE = 50;
+
+/** 「下次 今天 / 明天 / MM-DD」 */
+function dueLabel(due: string): string {
+  const d = due.slice(0, 10);
+  const t = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const ymd = (x: Date) => `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}`;
+  const today = ymd(t);
+  t.setDate(t.getDate() + 1);
+  const tomorrow = ymd(t);
+  if (d <= today) return "今天";
+  if (d === tomorrow) return "明天";
+  return d.slice(0, 4) === today.slice(0, 4) ? d.slice(5) : d;
+}
+
+function CardListSection({
+  reloadKey,
+  total,
+  onChanged,
+}: {
+  reloadKey: number;
+  total?: number;
+  onChanged: () => void;
+}) {
   const navigate = useNavigate();
   const [cards, setCards] = useState<Card[]>([]);
   const [loading, setLoading] = useState(true);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [keyword, setKeyword] = useState("");
+  const [limit, setLimit] = useState(LIST_PAGE);
   const [editing, setEditing] = useState<Card | null>(null);
 
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try {
-      setCards(await cardApi.list());
-    } catch (e) {
-      message.error(`加载失败: ${e}`);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    let alive = true;
+    setLoading(true);
+    cardApi
+      .list()
+      .then((list) => alive && setCards(list))
+      .catch((e) => message.error(`加载失败: ${e}`))
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, [reloadKey]);
+
+  const filtered = useMemo(() => {
+    const kw = keyword.trim().toLowerCase();
+    if (!kw) return cards;
+    return cards.filter(
+      (c) => c.front.toLowerCase().includes(kw) || c.back.toLowerCase().includes(kw),
+    );
+  }, [cards, keyword]);
+  const shown = filtered.slice(0, limit);
+  const noteTitles = useNoteTitles(
+    shown.map((c) => c.note_id).filter((id): id is number => id != null),
+  );
 
   async function handleDelete(id: number) {
     try {
       await cardApi.delete(id);
       message.success("已删除");
-      void reload();
       onChanged();
     } catch (e) {
       message.error(`删除失败: ${e}`);
@@ -411,55 +586,65 @@ function ListTab({ onChanged }: { onChanged: () => void }) {
   }
 
   return (
-    <div>
-      <div className="mb-3 flex justify-between">
-        <Space>
-          <Button
-            type="primary"
-            icon={<Plus size={14} />}
-            onClick={() => setCreateOpen(true)}
-          >
-            新建卡片
-          </Button>
-        </Space>
+    <section className="kb-cards-panel kb-cl">
+      <div className="kb-cl-head">
+        <span className="kb-card-stat-ico is-ok">
+          <Library size={14} />
+        </span>
+        <b>全部卡片</b>
+        <span className="kb-cl-count">{total ?? cards.length}</span>
+        <span className="flex-1" />
+        <Input
+          className="kb-cl-search"
+          allowClear
+          prefix={<Search size={14} />}
+          placeholder="搜索卡片（正面 / 反面）"
+          value={keyword}
+          onChange={(e) => {
+            setKeyword(e.target.value);
+            setLimit(LIST_PAGE);
+          }}
+        />
       </div>
 
-      <Table<Card>
-        rowKey="id"
-        loading={loading}
-        dataSource={cards}
-        size="small"
-        pagination={{ pageSize: 20 }}
-        columns={[
-          {
-            title: "正面",
-            dataIndex: "front",
-            ellipsis: true,
-            render: (s: string) => <span title={s}>{s}</span>,
-          },
-          {
-            title: "反面",
-            dataIndex: "back",
-            ellipsis: true,
-            render: (s: string) => <span title={s}>{s}</span>,
-          },
-          {
-            title: "状态",
-            dataIndex: "state",
-            width: 80,
-            render: (s: number) => ["新卡", "学习中", "复习中", "重学"][s] ?? s,
-          },
-          {
-            title: "下次到期",
-            dataIndex: "due",
-            width: 140,
-            render: (s: string) => s.slice(0, 16),
-          },
-          {
-            title: "操作",
-            width: 140,
-            render: (_, c) => (
-              <Space size="small">
+      {loading ? (
+        <div className="flex justify-center py-8">
+          <Spin />
+        </div>
+      ) : filtered.length === 0 ? (
+        <Empty className="py-8" description={keyword ? "没有匹配的卡片" : "还没有卡片"} />
+      ) : (
+        <>
+          {shown.map((c) => (
+            <div key={c.id} className="kb-cl-row" onDoubleClick={() => setEditing(c)}>
+              <span className="kb-card-stat-ico">
+                <Layers size={14} />
+              </span>
+              <Tooltip
+                placement="topLeft"
+                mouseEnterDelay={0.4}
+                title={
+                  <div className="whitespace-pre-wrap" style={{ maxWidth: 420 }}>
+                    <div style={{ opacity: 0.7, marginBottom: 2 }}>
+                      反面 · {CARD_STATE_LABEL[c.state] ?? c.state}
+                    </div>
+                    {c.back}
+                  </div>
+                }
+              >
+                <div className="kb-cl-main">
+                  <div className="kb-cl-front">{c.front}</div>
+                  <div className="kb-cl-sub">
+                    {c.note_id != null && noteTitles.get(c.note_id)
+                      ? `来自「${noteTitles.get(c.note_id)}」`
+                      : c.back}
+                  </div>
+                </div>
+              </Tooltip>
+              <span className="kb-cl-due" title={c.due.slice(0, 16)}>
+                下次 {dueLabel(c.due)}
+              </span>
+              <div className="kb-cl-actions">
                 {c.note_id != null && (
                   <Tooltip title="打开原笔记">
                     <Button
@@ -470,31 +655,25 @@ function ListTab({ onChanged }: { onChanged: () => void }) {
                     />
                   </Tooltip>
                 )}
-                <Tooltip title="编辑">
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<Pencil size={13} />}
-                    onClick={() => setEditing(c)}
-                  />
+                <Tooltip title="编辑（也可双击行）">
+                  <Button type="text" size="small" icon={<Pencil size={13} />} onClick={() => setEditing(c)} />
                 </Tooltip>
                 <Popconfirm title="确定删除？" onConfirm={() => handleDelete(c.id)}>
                   <Button type="text" size="small" danger icon={<Trash2 size={13} />} />
                 </Popconfirm>
-              </Space>
-            ),
-          },
-        ]}
-      />
+              </div>
+            </div>
+          ))}
+          {filtered.length > shown.length && (
+            <div className="flex justify-center pt-3">
+              <Button onClick={() => setLimit((n) => n + LIST_PAGE)}>
+                再显示 {Math.min(LIST_PAGE, filtered.length - shown.length)} 张（共 {filtered.length}）
+              </Button>
+            </div>
+          )}
+        </>
+      )}
 
-      <CardEditModal
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        onSaved={() => {
-          void reload();
-          onChanged();
-        }}
-      />
       <CardEditModal
         // key 必须落在持有 useForm 的组件上：只给内部 <Modal> 加 key 无法重建
         // form 仓库，导致打开下一张卡时仓库残留上一张的 front/back（编辑串内容）。
@@ -502,12 +681,9 @@ function ListTab({ onChanged }: { onChanged: () => void }) {
         open={!!editing}
         editing={editing}
         onClose={() => setEditing(null)}
-        onSaved={() => {
-          void reload();
-          onChanged();
-        }}
+        onSaved={onChanged}
       />
-    </div>
+    </section>
   );
 }
 
