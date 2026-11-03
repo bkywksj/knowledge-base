@@ -254,6 +254,15 @@ export default function WhiteboardCanvas({
   // 视口移动都会触发 onChange，但序列化结果不变）
   const lastSavedRef = useRef(initialScene);
   /**
+   * 是否已拿首次 onChange 的序列化结果作为基准。
+   *
+   * initialScene 是库里的原始字符串，而 serializeAsJSON 的输出格式（字段顺序、缩进、
+   * type/version/source 头）跟它永远对不上 —— 只拿它比，打开白板什么都不动也会写一次库：
+   * 修改时间被刷新、白板顶到「最近笔记」第一条、每次打开还多一份历史快照。
+   * 首次 onChange 就是 Excalidraw 刚装载完的场景，以它为基准才是「没改过」的真实样子。
+   */
+  const baselineReadyRef = useRef(false);
+  /**
    * 最近一次 onChange 给到的场景快照。
    *
    * 🔴 **保存必须走这个快照，绝不能在保存时回头去问 Excalidraw 要数据。**
@@ -493,6 +502,10 @@ export default function WhiteboardCanvas({
       // 只存引用不序列化：onChange 在拖动时逐帧触发，
       // 每次都 serializeAsJSON 会让大画布卡顿。真正序列化推迟到 flush。
       latestRef.current = { elements, appState, files };
+      if (!baselineReadyRef.current) {
+        baselineReadyRef.current = true;
+        lastSavedRef.current = serializeAsJSON(elements, appState, files, "local");
+      }
       syncRoundness(elements, appState);
       // 首次 onChange = 场景已装载完成，这时才能可靠地扫到卡片（见 refreshCards 的说明）
       void refreshCards();
