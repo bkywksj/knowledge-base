@@ -44,6 +44,7 @@ async function getConfigOrNull(key: string): Promise<string | null> {
 }
 import type { Folder, MobileUpdateInfo, SystemInfo } from "@/types";
 import type { ThemeMode, ThemeCategory } from "@/theme/tokens";
+import { normalizeThemeMode } from "@/theme/tokens";
 import { EDITOR_HIGHLIGHT_SHORTCUT_DEFAULT } from "@/lib/shortcuts/registry";
 import {
   DEFAULT_MOBILE_TAB_KEYS,
@@ -911,8 +912,7 @@ const DEFAULT_MOBILE_DASHBOARD_ITEMS: Set<MobileDashboardItem> = new Set(
 );
 
 export const useAppStore = create<AppStore>((set, get) => ({
-  // v4 界面重设计：默认亮色淡紫 / 暗色暖炭。没选过主题的老用户也一并换成新默认（设计决定，
-  // 不做旧默认的迁移补写）；主动选过其它主题的，持久化值会在 loadThemeFromStore 里覆盖这里
+  // v4 界面重设计：只剩亮色淡紫 / 暗色暖炭两套主题；旧主题 id 在 loadThemeFromStore 里归一过来
   lightTheme: "light-lilac",
   darkTheme: "dark-ember",
   themeCategory: "light",
@@ -1771,8 +1771,9 @@ export async function applyThemeOverrides(state: {
 export async function loadThemeFromStore() {
   try {
     const store = await Store.load(STORE_FILE);
-    const lt = await store.get<ThemeMode>("lightTheme");
-    const dt = await store.get<ThemeMode>("darkTheme");
+    // 旧版本可能存着已下线的主题 id（light-glass / dark-starry …），归一到同分类的新主题
+    const lt = normalizeThemeMode(await store.get<string>("lightTheme"));
+    const dt = normalizeThemeMode(await store.get<string>("darkTheme"));
     const cat = await store.get<ThemeCategory>("themeCategory");
     if (lt) useAppStore.getState().setLightTheme(lt);
     if (dt) useAppStore.getState().setDarkTheme(dt);

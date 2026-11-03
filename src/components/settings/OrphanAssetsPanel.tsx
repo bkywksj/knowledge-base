@@ -422,7 +422,7 @@ function PathList({
       style={{
         maxHeight: "60vh",
         overflow: "auto",
-        border: "1px solid #f0f0f0",
+        border: "1px solid var(--ant-color-border-secondary, #f0f0f0)",
         borderRadius: 6,
       }}
     >
@@ -430,7 +430,7 @@ function PathList({
         <div
           key={it.path}
           className="px-3 py-2 border-b last:border-b-0 cursor-pointer hover:bg-gray-50 flex items-center gap-3"
-          style={{ borderColor: "#f0f0f0" }}
+          style={{ borderColor: "var(--ant-color-border-secondary, #f0f0f0)" }}
           onClick={() => handleOpen(it.path)}
           title="点击用系统默认应用打开"
         >

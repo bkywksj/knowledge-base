@@ -405,7 +405,7 @@ export default function AboutPage() {
                 borderRadius: 8,
                 background: "#fff",
                 padding: 8,
-                border: "1px solid #f0f0f0",
+                border: "1px solid var(--ant-color-border-secondary, #f0f0f0)",
                 cursor: "zoom-in",
               }}
               // Ant Design Image 自带点击预览：点开可全屏放大 / 缩放，方便扫码

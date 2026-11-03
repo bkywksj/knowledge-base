@@ -1,18 +1,12 @@
 /**
  * 主题令牌定义
- * 7 套主题：4 亮色 + 3 暗色
- * 淡紫 / 暖炭是 v4 界面重设计（docs/design/ui-v4）的主题，数值与原型的设计令牌一一对应
+ * 2 套主题：亮色「淡紫」+ 暗色「暖炭」（v4 界面重设计，见 docs/design/ui-v4）
+ * 数值与原型的设计令牌一一对应；旧的 5 套主题（柔光毛玻璃 / 暖木书房 / 翡翠白瓷 / 星空沉浸 / 摩卡棕夜）
+ * 已在 v4 下线，老用户保存的旧主题 id 由 normalizeThemeMode 映射到同分类的新主题
  */
 
 /** 主题模式 */
-export type ThemeMode =
-  | "light-lilac"
-  | "light-glass"
-  | "light-warm"
-  | "light-jade"
-  | "dark-ember"
-  | "dark-starry"
-  | "dark-mocha";
+export type ThemeMode = "light-lilac" | "dark-ember";
 
 /** 主题分类 */
 export type ThemeCategory = "light" | "dark";
@@ -20,6 +14,16 @@ export type ThemeCategory = "light" | "dark";
 /** 判断主题分类 */
 export function getThemeCategory(mode: ThemeMode): ThemeCategory {
   return mode.startsWith("light") ? "light" : "dark";
+}
+
+/** 把持久化里读出的任意主题 id 归一成现有主题
+ *  旧版本存的是 light-glass / dark-starry 等已下线 id：按前缀落到同分类的新主题，
+ *  不认识的值返回 null（调用方保持默认值） */
+export function normalizeThemeMode(raw: unknown): ThemeMode | null {
+  if (typeof raw !== "string") return null;
+  if (raw.startsWith("light")) return "light-lilac";
+  if (raw.startsWith("dark")) return "dark-ember";
+  return null;
 }
 
 /** 主题元信息 */
@@ -41,46 +45,11 @@ export const themes: ThemeMeta[] = [
     colors: ["#E9E4F8", "#7C63DC", "#B482E8", "#27233B"],
   },
   {
-    key: "light-glass",
-    label: "柔光毛玻璃",
-    category: "light",
-    description: "紫蓝渐变底 + 毛玻璃卡片",
-    colors: ["#ede9fe", "#6366f1", "#ec4899", "#1e1b4b"],
-  },
-  {
-    key: "light-warm",
-    label: "暖木书房",
-    category: "light",
-    description: "奶油底色 + 棕橙暖色调",
-    colors: ["#faf8f5", "#c2713a", "#6b8e5e", "#e6a849"],
-  },
-  {
-    key: "light-jade",
-    label: "翡翠白瓷",
-    category: "light",
-    description: "三栏浅灰 + 翡翠绿点缀",
-    colors: ["#e2e3ea", "#e3e3e5", "#fafafa", "#07c160"],
-  },
-  {
     key: "dark-ember",
     label: "暖炭",
     category: "dark",
     description: "暖棕炭灰底 + 淡紫点缀，长时间写作不刺眼",
     colors: ["#1D1C1A", "#A992FA", "#E3B160", "#EFEBE4"],
-  },
-  {
-    key: "dark-starry",
-    label: "星空沉浸",
-    category: "dark",
-    description: "深空黑 + 紫青渐变 + 粒子",
-    colors: ["#0a0a12", "#a78bfa", "#67e8f9", "#f472b6"],
-  },
-  {
-    key: "dark-mocha",
-    label: "摩卡棕夜",
-    category: "dark",
-    description: "深紫棕 + 琥珀金 + 彩色标签",
-    colors: ["#1e1e2e", "#f5bd69", "#cba6f7", "#94e2d5"],
   },
 ];
 
@@ -90,8 +59,8 @@ export function getThemesByCategory(category: ThemeCategory): ThemeMeta[] {
 }
 
 /** Ant Design ConfigProvider token 映射
- *  老主题只派生主色 + 圆角；淡紫 / 暖炭把底色、文字、描边也一并给到 antd，
- *  否则 antd 组件（Modal / Dropdown / Select 下拉等 portal 出去的浮层）会落回默认白底灰字，跟主题对不上 */
+ *  底色、文字、描边也一并给到 antd，否则 portal 出去的浮层（Modal / Dropdown / Select 下拉等）
+ *  会落回 antd 默认的白底灰字，跟主题对不上 */
 export function getAntdTokens(mode: ThemeMode) {
   switch (mode) {
     case "light-lilac":
@@ -146,24 +115,58 @@ export function getAntdTokens(mode: ThemeMode) {
         boxShadowSecondary:
           "0 0 0 .5px rgba(255,245,230,.12),0 6px 16px rgba(0,0,0,.4),0 24px 48px -12px rgba(0,0,0,.6)",
       };
-    case "light-glass":
-      return { colorPrimary: "#6366f1", borderRadius: 12 };
-    case "light-warm":
-      return { colorPrimary: "#c2713a", borderRadius: 8 };
-    case "light-jade":
-      return { colorPrimary: "#07c160", borderRadius: 6 };
-    case "dark-starry":
-      return { colorPrimary: "#a78bfa", borderRadius: 14 };
-    case "dark-mocha":
-      return { colorPrimary: "#f5bd69", borderRadius: 10 };
   }
 }
 
-/** Ant Design 组件级覆盖
- *  v4 设计规范：按钮一律无投影（淡紫 / 暖炭）；老主题保持 antd 默认，返回 undefined 不干预 */
+/** Ant Design 组件级覆盖（v4 设计规范，原型 kit.css 的通用组件）
+ *  - 按钮一律无投影；普通按钮白底细描边，悬停浅紫底
+ *  - 分段切换选中项：白底（暗色为抬升色）+ 主色字
+ *  - 下拉 / 菜单圆角 11、菜单项圆角 6；弹窗圆角 16；卡片圆角 14
+ *  - 悬停提示用深紫灰（亮色不出现纯黑）
+ *  渐变类效果（主按钮、开关、勾选框、当前页码）antd token 表达不了，在 themes.css 里补 */
 export function getAntdComponents(mode: ThemeMode) {
-  if (mode !== "light-lilac" && mode !== "dark-ember") return undefined;
+  const light = mode === "light-lilac";
+  const raised = light ? "#FFFFFF" : "#2D2B28";
+  const hoverBg = light ? "rgba(124,99,220,0.06)" : "rgba(255,245,230,0.06)";
+  const accent = light ? "#7C63DC" : "#A992FA";
   return {
-    Button: { primaryShadow: "none", defaultShadow: "none", dangerShadow: "none" },
+    Button: {
+      primaryShadow: "none",
+      defaultShadow: "none",
+      dangerShadow: "none",
+      defaultBg: raised,
+      defaultBorderColor: light ? "rgba(110,85,200,0.24)" : "rgba(255,245,230,0.14)",
+      defaultHoverBg: hoverBg,
+      defaultHoverBorderColor: light ? "rgba(124,99,220,0.4)" : "rgba(169,146,250,0.45)",
+      defaultHoverColor: accent,
+      textHoverBg: hoverBg,
+      fontWeight: 500,
+    },
+    Segmented: {
+      trackBg: light ? "rgba(124,99,220,0.07)" : "rgba(255,245,230,0.06)",
+      itemSelectedBg: raised,
+      itemSelectedColor: accent,
+      itemHoverBg: hoverBg,
+      trackPadding: 3,
+    },
+    Checkbox: { borderRadiusSM: 4 },
+    Dropdown: { borderRadiusLG: 11, borderRadiusSM: 6, paddingBlock: 6 },
+    Menu: {
+      itemBorderRadius: 6,
+      itemSelectedBg: light ? "rgba(124,99,220,0.1)" : "rgba(169,146,250,0.16)",
+      itemSelectedColor: accent,
+      itemHoverBg: hoverBg,
+    },
+    Select: {
+      borderRadiusLG: 11,
+      optionSelectedBg: light ? "rgba(124,99,220,0.1)" : "rgba(169,146,250,0.16)",
+      optionSelectedColor: accent,
+    },
+    Modal: { borderRadiusLG: 16 },
+    Card: { borderRadiusLG: 14 },
+    Tooltip: { colorBgSpotlight: light ? "#27233B" : "#3A3733" },
+    Pagination: { itemActiveBg: "transparent" },
+    Tabs: { inkBarColor: accent, itemSelectedColor: accent, itemHoverColor: accent },
+    Tag: { defaultBg: light ? "rgba(124,99,220,0.07)" : "rgba(255,245,230,0.06)" },
   };
 }

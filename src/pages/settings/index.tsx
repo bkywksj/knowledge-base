@@ -1542,7 +1542,7 @@ function DesktopSettingsPage() {
         </Space>
         <div
           className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div>
             <div>自动更新</div>
@@ -1583,7 +1583,7 @@ function DesktopSettingsPage() {
         </div>
         <div
           className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div>
             <div>启动时最小化到托盘</div>
@@ -1600,7 +1600,7 @@ function DesktopSettingsPage() {
         </div>
         <div
           className="py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div className="flex items-start justify-between gap-3">
             <div style={{ flex: 1 }}>
@@ -1623,7 +1623,7 @@ function DesktopSettingsPage() {
         </div>
         <div
           className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div>
             <div>窗口大小</div>
@@ -1814,7 +1814,7 @@ function DesktopSettingsPage() {
 
         <div
           className="py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div className="flex items-center justify-between">
             <div>
@@ -1907,7 +1907,7 @@ function DesktopSettingsPage() {
 
         <div
           className="py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div className="flex items-center justify-between">
             <div>
@@ -1955,7 +1955,7 @@ function DesktopSettingsPage() {
 
         <div
           className="py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div className="flex items-center justify-between mb-1">
             <div>
@@ -1983,7 +1983,7 @@ function DesktopSettingsPage() {
 
         <div
           className="py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div className="flex items-center justify-between">
             <div>
@@ -2009,7 +2009,7 @@ function DesktopSettingsPage() {
 
         <div
           className="py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div className="flex items-center justify-between mb-1">
             <div>
@@ -2033,7 +2033,7 @@ function DesktopSettingsPage() {
 
         <div
           className="py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div className="flex items-center justify-between mb-1">
             <div>
@@ -2097,7 +2097,7 @@ function DesktopSettingsPage() {
 
         <div
           className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div>
             <div>正文字体</div>
@@ -2154,7 +2154,7 @@ function DesktopSettingsPage() {
 
         <div
           className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div>
             <div>标题字体</div>
@@ -2180,7 +2180,7 @@ function DesktopSettingsPage() {
 
         <div
           className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div>
             <div>正文字号</div>
@@ -2202,7 +2202,7 @@ function DesktopSettingsPage() {
 
         <div
           className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div>
             <div>代码块字号</div>
@@ -2223,7 +2223,7 @@ function DesktopSettingsPage() {
 
         <div
           className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div>
             <div>行距</div>
@@ -2245,7 +2245,7 @@ function DesktopSettingsPage() {
         {/* ─── 版面（让书写手感摆脱"像 txt"，靠拢 OneNote） ─── */}
         <div
           className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div>
             <div>阅读列宽</div>
@@ -2266,7 +2266,7 @@ function DesktopSettingsPage() {
 
         <div
           className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div>
             <div>纸张观感</div>
@@ -2279,7 +2279,7 @@ function DesktopSettingsPage() {
 
         <div
           className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div>
             <div>背景纹理</div>
@@ -2301,7 +2301,7 @@ function DesktopSettingsPage() {
 
         <div
           className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div>
             <div>首行缩进</div>
@@ -2317,7 +2317,7 @@ function DesktopSettingsPage() {
 
         <div
           className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div>
             <div>标题自动编号 + 彩虹色</div>
@@ -2335,7 +2335,7 @@ function DesktopSettingsPage() {
         {editorHeadingNumber && (
           <div
             className="mt-2 pl-3"
-            style={{ borderLeft: "2px solid #f0f0f0" }}
+            style={{ borderLeft: "2px solid var(--ant-color-border-secondary, #f0f0f0)" }}
           >
             <div className="flex items-center justify-between py-1">
               <div>
@@ -2392,7 +2392,7 @@ function DesktopSettingsPage() {
 
         <div
           className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div>
             <div>层级引线</div>
@@ -2405,7 +2405,7 @@ function DesktopSettingsPage() {
 
         <div
           className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div>
             <div>大纲位置</div>
@@ -2431,7 +2431,7 @@ function DesktopSettingsPage() {
 
         <div
           style={{
-            borderTop: "1px solid #f0f0f0",
+            borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)",
             marginTop: 12,
             paddingTop: 12,
           }}
@@ -2550,7 +2550,7 @@ function DesktopSettingsPage() {
         </div>
         <div
           className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div>
             <div>自动保存延迟</div>
@@ -2678,7 +2678,7 @@ function DesktopSettingsPage() {
         </div>
 
         {/* 历史日记：从「日期文件夹/笔记.md」直接导入，或把已导入的普通笔记认回日记 */}
-        <div className="mt-4 pt-3" style={{ borderTop: "1px solid #f0f0f0" }}>
+        <div className="mt-4 pt-3" style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)" }}>
           <div className="flex items-center justify-between">
             <div style={{ paddingRight: 16 }}>
               <div style={{ fontSize: 14 }}>导入日记</div>
@@ -2698,7 +2698,7 @@ function DesktopSettingsPage() {
         </div>
 
         {/* 文件夹自动导入：盯住一个目录，新落地的 .md 自动进库 */}
-        <div className="mt-4 pt-3" style={{ borderTop: "1px solid #f0f0f0" }}>
+        <div className="mt-4 pt-3" style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)" }}>
           <div className="flex items-center justify-between">
             <div>
               <div style={{ fontSize: 14 }}>文件夹自动导入</div>
@@ -2719,7 +2719,7 @@ function DesktopSettingsPage() {
           </div>
 
           {watchEnabled && (
-            <div className="mt-3 pl-3" style={{ borderLeft: "2px solid #f0f0f0" }}>
+            <div className="mt-3 pl-3" style={{ borderLeft: "2px solid var(--ant-color-border-secondary, #f0f0f0)" }}>
               <div className="flex items-center gap-2 py-1 flex-wrap">
                 <span className="text-xs shrink-0" style={{ color: "#8c8c8c" }}>
                   监听目录
@@ -3098,7 +3098,7 @@ function DesktopSettingsPage() {
         </div>
         <div
           className="flex items-center justify-between py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div style={{ minWidth: 0, flex: 1 }}>
             <div>
@@ -3122,7 +3122,7 @@ function DesktopSettingsPage() {
         </div>
         <div
           className="py-1 mt-2"
-          style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
         >
           <div>
             <Text strong style={{ fontSize: 13 }}>知识星球</Text>
@@ -3151,7 +3151,7 @@ function DesktopSettingsPage() {
         width={600}
         styles={{ body: { maxHeight: 400, overflow: "auto" } }}
       >
-        <div className="flex items-center justify-between mb-3 pb-2" style={{ borderBottom: "1px solid #f0f0f0" }}>
+        <div className="flex items-center justify-between mb-3 pb-2" style={{ borderBottom: "1px solid var(--ant-color-border-secondary, #f0f0f0)" }}>
           <Checkbox
             checked={selectedPaths.size === scannedFiles.length && scannedFiles.length > 0}
             indeterminate={selectedPaths.size > 0 && selectedPaths.size < scannedFiles.length}
@@ -3164,7 +3164,7 @@ function DesktopSettingsPage() {
           </Text>
         </div>
         {/* 分桶统计 + 冲突策略 */}
-        <div className="mb-3 pb-2" style={{ borderBottom: "1px solid #f0f0f0" }}>
+        <div className="mb-3 pb-2" style={{ borderBottom: "1px solid var(--ant-color-border-secondary, #f0f0f0)" }}>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2" style={{ fontSize: 12 }}>
             <span>
               🆕 全新 <strong>{matchStats.news}</strong>
@@ -3193,7 +3193,7 @@ function DesktopSettingsPage() {
         </div>
 
         {/* 保留目录层级选项 */}
-        <div className="mb-3 pb-2" style={{ borderBottom: "1px solid #f0f0f0" }}>
+        <div className="mb-3 pb-2" style={{ borderBottom: "1px solid var(--ant-color-border-secondary, #f0f0f0)" }}>
           <Checkbox
             checked={preserveRoot}
             onChange={(e) => setPreserveRoot(e.target.checked)}

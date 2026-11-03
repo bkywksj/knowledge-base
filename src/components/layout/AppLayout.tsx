@@ -32,7 +32,6 @@ import { QuickCaptureAsrModal } from "@/components/QuickCaptureAsrModal";
 import { QuickNoteCaptureModal } from "@/components/QuickNoteCaptureModal";
 import { AsrToggleController } from "@/components/AsrToggleController";
 import { ShortcutsPanel } from "@/components/ui/ShortcutsPanel";
-import { StarryBackground } from "@/components/ui/StarryBackground";
 import { createBlankAndOpen } from "@/lib/noteCreator";
 import { targetFromFolderParam } from "@/lib/newNoteTarget";
 import { UpdateBadge } from "@/components/ui/UpdateBadge";
@@ -587,7 +586,6 @@ export function AppLayout() {
         e.preventDefault();
       }}
     >
-      {activeTheme === "dark-starry" && <StarryBackground />}
       {!focusMode && !autoHideActivityBar && (
         <Sider
           width={siderWidth}

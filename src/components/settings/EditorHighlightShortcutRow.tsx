@@ -37,7 +37,7 @@ export function EditorHighlightShortcutRow() {
   return (
     <div
       className="flex items-center justify-between py-1 mt-2"
-      style={{ borderTop: "1px solid #f0f0f0", paddingTop: 12 }}
+      style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
     >
       <div>
         <div>

@@ -52,7 +52,7 @@ export function WebClipJinaKeySetting() {
   }
 
   return (
-    <div className="mt-4 pt-3" style={{ borderTop: "1px solid #f0f0f0" }}>
+    <div className="mt-4 pt-3" style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)" }}>
       <div style={{ fontSize: 14 }}>网页剪藏兜底（Jina API Key）</div>
       <Text type="secondary" style={{ fontSize: 12 }}>
         网页剪藏默认直连原网页提取正文，<b>无需配置</b>。只有遇到反爬严格、需登录或纯 JS
