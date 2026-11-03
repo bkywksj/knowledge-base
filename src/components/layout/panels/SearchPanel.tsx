@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button, Popconfirm, message, theme as antdTheme } from "antd";
-import { Search as SearchIcon, Clock, X, Trash2, Copy, MinusCircle } from "lucide-react";
+import { History, X, Trash2, Copy, MinusCircle } from "lucide-react";
 import { useAppStore } from "@/store";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import {
@@ -89,16 +89,9 @@ export function SearchPanel() {
       // 历史条目子级 onContextMenu 已自管 preventDefault + ctx.open
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* 视图标题 */}
-      <div
-        className="flex items-center gap-2 px-3 py-2.5 shrink-0"
-        style={{ borderBottom: `1px solid ${token.colorBorderSecondary}` }}
-      >
-        <SearchIcon size={15} style={{ color: token.colorPrimary }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: token.colorText }}>
-          搜索
-        </span>
-        <div style={{ flex: 1 }} />
+      {/* 视图标题栏（v4 原型 .ph，与其他面板同款 .kb-ph） */}
+      <div className="kb-ph">
+        <span className="kb-ph-title">搜索</span>
         {recentSearches.length > 0 && (
           <Popconfirm
             title="清空所有搜索历史？"
@@ -110,7 +103,6 @@ export function SearchPanel() {
               type="text"
               size="small"
               icon={<Trash2 size={14} />}
-              style={{ width: 24, height: 24, padding: 0 }}
               title="清空历史"
             />
           </Popconfirm>
@@ -118,17 +110,7 @@ export function SearchPanel() {
       </div>
 
       {/* 历史分组标题 */}
-      <div
-        className="flex items-center gap-1 shrink-0"
-        style={{
-          color: token.colorTextSecondary,
-          fontSize: 11,
-          textTransform: "uppercase",
-          letterSpacing: 0.5,
-          padding: "10px 16px 6px",
-        }}
-      >
-        <Clock size={12} />
+      <div className="kb-tp-sec" style={{ padding: "6px 4px 4px 18px" }}>
         最近搜索
       </div>
 
@@ -158,31 +140,17 @@ export function SearchPanel() {
                   e.preventDefault();
                   ctx.open(e.nativeEvent, { q });
                 }}
-                className="cursor-pointer group"
+                // v4 原型：选中白底细描边（同待办 / 笔记面板），左侧历史时钟图标
+                className={active ? "kb-tp-row is-active group" : "kb-tp-row group"}
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "6px 10px",
-                  borderRadius: 6,
-                  background: active
-                    ? `${token.colorPrimary}14`
-                    : "transparent",
-                  color: active ? token.colorPrimary : token.colorText,
-                  fontSize: 13,
                   outline: ctxActive ? `1px solid ${token.colorPrimary}` : "none",
                   outlineOffset: -1,
-                  transition: "background .15s, outline .1s",
                 }}
               >
-                <SearchIcon
-                  size={12}
-                  style={{
-                    color: active ? token.colorPrimary : token.colorTextTertiary,
-                    flexShrink: 0,
-                  }}
-                />
-                <span className="truncate" style={{ flex: 1 }}>
+                <span className="kb-tp-ic" style={{ color: active ? token.colorPrimary : undefined }}>
+                  <History size={13} />
+                </span>
+                <span className="kb-tp-lb">
                   {q}
                 </span>
                 <button
