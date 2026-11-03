@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button, Tooltip, App as AntdApp } from "antd";
+import { Tooltip, App as AntdApp } from "antd";
 import { ArrowDownUp } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { syncV1Api } from "@/lib/api";
@@ -93,14 +93,20 @@ export function SyncStatusButton() {
 
   return (
     <Tooltip title={tooltipTitle} placement="bottom">
-      <Button
-        type="text"
-        className="kb-tb-btn"
-        icon={<ArrowDownUp size={16} className={syncing ? "kb-update-float" : ""} />}
+      {/* v4 原型 .sync：「● 已同步」文字胶囊——一眼看出有没有在同步，比单个图标信息量大 */}
+      <button
+        type="button"
+        className={`kb-sync${syncing ? " is-busy" : enabled.length === 0 ? " is-off" : ""}`}
         onClick={handleClick}
-        loading={false}
         disabled={syncing}
-      />
+      >
+        {syncing ? (
+          <ArrowDownUp size={13} className="kb-update-float" />
+        ) : (
+          <i className="kb-sync-dot" />
+        )}
+        <span>{syncing ? "同步中" : enabled.length === 0 ? "未同步" : "已同步"}</span>
+      </button>
     </Tooltip>
   );
 }

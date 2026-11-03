@@ -50,7 +50,6 @@ import {
   ArrowDownToLine,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { FolderFilled } from "@ant-design/icons";
 import type { DataNode } from "antd/es/tree";
 import { NotesTagPills } from "./NotesTagPills";
 import { useAppStore } from "@/store";
@@ -2522,10 +2521,11 @@ export function NotesPanel() {
     const folderData = (node as EnrichedNode).data;
     const isChildFolder =
       folderData && folderData.isNote === false && folderData.isChild;
+    // v4：默认用主题的「文件夹淡紫」（--kb-folder-icon，原型 .row .ic.fd），用户给文件夹设过颜色则用它
     const folderColor =
       folderData && folderData.isNote === false && folderData.color
         ? folderData.color
-        : token.colorPrimary;
+        : "var(--kb-folder-icon, var(--kb-primary))";
     return (
       <span
         className="flex items-center gap-1.5 w-full"
@@ -2555,7 +2555,8 @@ export function NotesPanel() {
               alignItems: "center",
             }}
           >
-            <FolderFilled style={{ color: folderColor }} />
+            <FolderIcon size={15} strokeWidth={1.8} style={{ color: folderColor }} />
+            {/* 子文件夹标记：描边图标中央一颗同色小点（原来是实心图标上的白点） */}
             <span
               aria-hidden
               style={{
@@ -2565,14 +2566,14 @@ export function NotesPanel() {
                 width: 4,
                 height: 4,
                 borderRadius: "50%",
-                background: token.colorBgContainer,
+                background: folderColor,
                 transform: "translate(-50%, -50%)",
                 pointerEvents: "none",
               }}
             />
           </span>
         ) : (
-          <FolderFilled style={{ flexShrink: 0, color: folderColor }} />
+          <FolderIcon size={15} strokeWidth={1.8} style={{ flexShrink: 0, color: folderColor }} />
         )}
         <span className="truncate">{display}</span>
       </span>

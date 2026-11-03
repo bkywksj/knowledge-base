@@ -40,9 +40,16 @@ export interface NotesColumnPrefs {
   hidden: NotesColumnKey[];
   /** 用户拖出来的列宽；没拖过的列用默认宽度 */
   widths: Partial<Record<NotesColumnKey, number>>;
+  /** 是否显示表头。v4 原型是无表头的行列表，默认不显示；需要拖列宽时在「列」设置里打开 */
+  showHeader: boolean;
 }
 
-export const DEFAULT_NOTES_COLUMN_PREFS: NotesColumnPrefs = { hidden: [], widths: {} };
+/** v4 默认：序号 / 字数收起、不显示表头——外观对齐原型的行列表，用户可在「列」设置里逐项打开 */
+export const DEFAULT_NOTES_COLUMN_PREFS: NotesColumnPrefs = {
+  hidden: ["index", "word_count"],
+  widths: {},
+  showHeader: false,
+};
 
 export function clampColumnWidth(width: number): number {
   return Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, Math.round(width)));
@@ -55,10 +62,11 @@ export function clampColumnWidth(width: number): number {
  * 都不能让列表渲染出问题（宽度为 NaN / 0 会让整列消失）。
  */
 export function sanitizeNotesColumnPrefs(raw: unknown): NotesColumnPrefs {
-  if (!raw || typeof raw !== "object") return { hidden: [], widths: {} };
-  const obj = raw as { hidden?: unknown; widths?: unknown };
+  if (!raw || typeof raw !== "object") return { ...DEFAULT_NOTES_COLUMN_PREFS };
+  const obj = raw as { hidden?: unknown; widths?: unknown; showHeader?: unknown };
 
-  const hidden: NotesColumnKey[] = [];
+  // hidden 缺失 / 类型不对 → 用默认隐藏列；是数组（哪怕是空数组 = 用户主动全部显示）就按它来
+  const hidden: NotesColumnKey[] = Array.isArray(obj.hidden) ? [] : [...DEFAULT_NOTES_COLUMN_PREFS.hidden];
   if (Array.isArray(obj.hidden)) {
     for (const k of obj.hidden) {
       if (NOTES_COLUMN_KEYS.includes(k as NotesColumnKey) && !hidden.includes(k as NotesColumnKey)) {
@@ -76,5 +84,7 @@ export function sanitizeNotesColumnPrefs(raw: unknown): NotesColumnPrefs {
     }
   }
 
-  return { hidden, widths };
+  const showHeader = typeof obj.showHeader === "boolean" ? obj.showHeader : DEFAULT_NOTES_COLUMN_PREFS.showHeader;
+
+  return { hidden, widths, showHeader };
 }

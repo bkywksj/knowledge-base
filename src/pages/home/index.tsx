@@ -5,7 +5,6 @@ import {
   Input,
   Typography,
   Button,
-  Tag,
   Modal,
   App as AntdApp,
   theme as antdTheme,
@@ -37,6 +36,7 @@ import {
   ChevronDown,
   Inbox,
   Eye,
+  PenTool,
   EyeOff,
 } from "lucide-react";
 import { Tooltip as AntTooltip } from "antd";
@@ -526,6 +526,7 @@ function DesktopHomePage() {
       // 外层 wrapper 撑满 Content 区域 —— max-w-5xl 居中后两侧空白属于 Content
       // 不属于内层 div，事件不会冒泡。把 onContextMenu 放在撑满的 wrapper 上
       // 才能拦到这部分空白的右键
+      className="kb-home"
       style={{ width: "100%", minHeight: "100%" }}
       onContextMenu={(e) => {
         const t = e.target as HTMLElement;
@@ -656,42 +657,18 @@ function DesktopHomePage() {
         size="small"
         styles={{ body: { padding: "12px 14px" } }}
       >
-        <div className="flex items-center justify-between mb-2 gap-3">
-          <span className="flex items-center gap-2 text-sm font-medium">
-            <PencilLine size={14} style={{ color: token.colorPrimary }} />
-            快速记一笔
-            <Text type="secondary" style={{ fontSize: 11, fontWeight: "normal" }}>
-              追加到「今日笔记」
-            </Text>
+        <div className="kb-card-h">
+          <span className="kb-cico" style={{ color: token.colorPrimary }}>
+            <PencilLine size={15} />
           </span>
-          <div className="flex items-center gap-2 shrink-0">
-            {quickNote.trim() && (
-              <Text type="secondary" style={{ fontSize: 11 }}>
-                {quickNote.trim().length} 字
-              </Text>
-            )}
-            <Text type="secondary" style={{ fontSize: 11 }}>
-              Ctrl/⌘ + ↩
-            </Text>
-            <MicButton
-              onTranscribed={(text) =>
-                setQuickNote((prev) => (prev ? `${prev}\n${text}` : text))
-              }
-            />
-            <Button
-              size="small"
-              type="primary"
-              ghost
-              icon={<Check size={13} />}
-              loading={quickNoteSaving}
-              disabled={!quickNote.trim()}
-              onClick={handleQuickSaveNote}
-            >
-              保存
-            </Button>
-          </div>
+          <b>快速记一笔</b>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            追加到「今日笔记」
+          </Text>
         </div>
         <Input.TextArea
+          variant="borderless"
+          className="kb-quick-input"
           rows={2}
           placeholder="想到什么先记下来…"
           value={quickNote}
@@ -702,9 +679,33 @@ function DesktopHomePage() {
               handleQuickSaveNote();
             }
           }}
-          style={{ borderRadius: 6, fontSize: 13 }}
           autoSize={{ minRows: 2, maxRows: 5 }}
         />
+        <div className="kb-quick-foot">
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            Ctrl / ⌘ + Enter 保存
+          </Text>
+          <span className="flex-1" />
+          {quickNote.trim() && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {quickNote.trim().length} 字
+            </Text>
+          )}
+          <MicButton
+            onTranscribed={(text) =>
+              setQuickNote((prev) => (prev ? `${prev}\n${text}` : text))
+            }
+          />
+          <Button
+            type="primary"
+            icon={<Check size={14} />}
+            loading={quickNoteSaving}
+            disabled={!quickNote.trim()}
+            onClick={handleQuickSaveNote}
+          >
+            保存
+          </Button>
+        </div>
       </Card>
       )}
 
@@ -1091,16 +1092,28 @@ function DesktopHomePage() {
                       原本是「标题一行 + 时间字数另起一行」，每条 52px；笔记标题通常很短、
                       右侧全是空白，把 meta 收到同一行后降到 30px，同屏能多看好几条，
                       也和下面「置顶笔记」卡的单行排版统一了。 */}
-                  <div className="flex items-center gap-1.5">
-                    {note.is_daily && (
-                      <Tag
-                        color="blue"
-                        style={{ fontSize: 10, lineHeight: "14px", padding: "0 4px", margin: 0 }}
-                      >
-                        日记
-                      </Tag>
-                    )}
-                    <Text ellipsis style={{ fontSize: 13, flex: 1, minWidth: 0 }}>
+                  <div className="kb-nr">
+                    {/* 类型图标块：日记橙、白板蓝、普通笔记主色（代替原来的「日记」小标签，信息不减） */}
+                    <span
+                      className="kb-cico sm"
+                      title={note.is_daily ? "日记" : note.note_type === "whiteboard" ? "白板" : "笔记"}
+                      style={{
+                        color: note.is_daily
+                          ? token.colorWarning
+                          : note.note_type === "whiteboard"
+                            ? token.colorInfo
+                            : token.colorPrimary,
+                      }}
+                    >
+                      {note.is_daily ? (
+                        <CalendarDays size={14} />
+                      ) : note.note_type === "whiteboard" ? (
+                        <PenTool size={14} />
+                      ) : (
+                        <NotebookText size={14} />
+                      )}
+                    </span>
+                    <Text ellipsis style={{ fontSize: 13.5, flex: 1, minWidth: 0 }}>
                       {note.title}
                     </Text>
                     <Text
@@ -1143,15 +1156,14 @@ function DesktopHomePage() {
               {pinnedNotes.slice(0, 5).map((note) => (
                 <li
                   key={note.id}
-                  className="flex items-center gap-2 cursor-pointer"
+                  className="kb-nr cursor-pointer"
                   onClick={() => navigate(`/notes/${note.id}`)}
-                  style={{ padding: "2px 0" }}
                 >
                   <Pin size={11} style={{ color: token.colorPrimary, flexShrink: 0 }} />
-                  <Text ellipsis style={{ fontSize: 13, flex: 1, minWidth: 0 }}>
+                  <Text ellipsis style={{ fontSize: 13.5, flex: 1, minWidth: 0 }}>
                     {note.title}
                   </Text>
-                  <Text type="secondary" style={{ fontSize: 10, flexShrink: 0 }}>
+                  <Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
                     {relativeTime(note.updated_at)}
                   </Text>
                 </li>
@@ -1266,16 +1278,24 @@ function DesktopHomePage() {
             onPressEnter={handleAskAi}
             suffix={
               <Button
-                type="text"
+                type="primary"
                 size="small"
-                icon={<Send size={12} />}
+                className="kb-ask-send"
+                icon={<Send size={13} />}
                 disabled={!aiQuestion.trim()}
                 onClick={handleAskAi}
-                style={{ color: aiQuestion.trim() ? token.colorPrimary : undefined }}
               />
             }
-            style={{ borderRadius: 6, marginBottom: 8 }}
+            style={{ borderRadius: 10, marginBottom: 8, height: 42 }}
           />
+          {/* 推荐问题（v4 新增）：点一下填进输入框，用户确认 / 改一改再回车，不直接替用户发出去 */}
+          <div className="kb-ask-sugs">
+            {ASK_AI_SUGGESTIONS.map((q) => (
+              <button key={q} type="button" onClick={() => setAiQuestion(q)}>
+                {q}
+              </button>
+            ))}
+          </div>
           {recentChats.length > 0 ? (
             <>
               <Text type="secondary" style={{ fontSize: 11 }}>
@@ -1358,6 +1378,9 @@ function DesktopHomePage() {
 }
 
 /** 写作活力卡内的单指标小项 */
+/** 首页「问 AI」推荐问题：通用、不依赖具体笔记内容 */
+const ASK_AI_SUGGESTIONS = ["总结我这周写的内容", "最近有哪些没写完的笔记", "找出没有链接的孤立笔记"];
+
 /** 图标底色：主题色的 14% 透明叠加（亮暗主题都合适，替代原来写死的浅色块） */
 function tint(color: string): string {
   return `color-mix(in srgb, ${color} 14%, transparent)`;
@@ -1421,16 +1444,14 @@ function MetricItem({
   extra?: React.ReactNode;
   isText?: boolean;
 }) {
+  // v4：原型的指标是「大号数字 + 小字说明」，不再画图标块；icon / iconBg 保留在签名里，
+  // 只用作数字前的读屏说明，免得调用方大改
+  void icon;
+  void iconBg;
   return (
-    <div className="flex items-center gap-2.5">
-      <div
-        className="flex items-center justify-center rounded-lg shrink-0"
-        style={{ width: 36, height: 36, background: iconBg }}
-      >
-        {icon}
-      </div>
+    <div className="kb-metric">
       <div className="min-w-0">
-        <div className="text-base font-semibold leading-tight" style={{ fontSize: isText ? 14 : 18 }}>
+        <div className="kb-metric-v" style={{ fontSize: isText ? 17 : 24 }}>
           {value}
           {valueSuffix && (
             <span className="text-xs font-normal ml-0.5" style={{ color: "var(--kb-text-tertiary)" }}>{valueSuffix}</span>

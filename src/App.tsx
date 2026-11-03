@@ -48,7 +48,8 @@ function App() {
   // 自定义 CSS 通过 :root --ui-scale 由 store 同步（见 applyUiScale）。
   const scaledTokens = {
     ...baseTokens,
-    fontSize: Math.round(14 * uiScale),
+    // v4 设计基准字号 13（原型 body 13px）；其余档位沿用 antd 默认
+    fontSize: Math.round(13 * uiScale),
     fontSizeSM: Math.round(12 * uiScale),
     fontSizeLG: Math.round(16 * uiScale),
     fontSizeXL: Math.round(20 * uiScale),

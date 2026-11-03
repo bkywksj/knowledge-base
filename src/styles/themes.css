@@ -18,6 +18,7 @@
   --kb-bg-content: #FFFFFF;
   --kb-bg-panel: #F6F3FD;
   --kb-bg-raised: #FFFFFF;
+  --kb-folder-icon: #9C86EA;
   --kb-shadow-sheet: 0 0 0 .5px rgba(110,85,200,.10), 0 1px 2px rgba(110,85,200,.035), 0 14px 36px -14px rgba(110,85,200,.20);
   --kb-bg-hover: rgba(124,99,220,0.055);
   --kb-bg-active: rgba(124,99,220,0.1);
@@ -68,7 +69,8 @@
 /* Card：白底 + 半像素紫调描边，悬停不位移 */
 [data-theme="light-lilac"] .ant-card {
   background: var(--kb-bg-card) !important;
-  border-color: var(--kb-border-card) !important;
+  /* 原型卡片无描边，靠半像素阴影圈出轮廓 */
+  border-color: transparent !important;
   box-shadow: var(--kb-shadow-sm) !important;
   border-radius: 14px !important;
 }
@@ -148,6 +150,7 @@
   --kb-bg-content: #1D1C1A;
   --kb-bg-panel: #21201E;
   --kb-bg-raised: #2D2B28;
+  --kb-folder-icon: #A992FA;
   --kb-shadow-sheet: 0 0 0 .5px rgba(255,245,230,.07), 0 18px 40px -16px rgba(0,0,0,.6);
   --kb-bg-hover: rgba(255,245,230,0.05);
   --kb-bg-active: rgba(169,146,250,0.14);
@@ -191,7 +194,7 @@
 /* Card */
 [data-theme="dark-ember"] .ant-card {
   background: var(--kb-bg-card) !important;
-  border-color: var(--kb-border-card) !important;
+  border-color: transparent !important;
   box-shadow: var(--kb-shadow-sm) !important;
   border-radius: 14px !important;
 }

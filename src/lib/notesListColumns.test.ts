@@ -5,6 +5,7 @@ import {
   MIN_COLUMN_WIDTH,
   clampColumnWidth,
   sanitizeNotesColumnPrefs,
+  DEFAULT_NOTES_COLUMN_PREFS,
 } from "./notesListColumns";
 
 describe("clampColumnWidth", () => {
@@ -22,7 +23,7 @@ describe("clampColumnWidth", () => {
 describe("sanitizeNotesColumnPrefs", () => {
   it("非对象一律回默认", () => {
     for (const bad of [null, undefined, 0, "x", true]) {
-      expect(sanitizeNotesColumnPrefs(bad)).toEqual({ hidden: [], widths: {} });
+      expect(sanitizeNotesColumnPrefs(bad)).toEqual(DEFAULT_NOTES_COLUMN_PREFS);
     }
   });
 
@@ -55,10 +56,29 @@ describe("sanitizeNotesColumnPrefs", () => {
     expect(out.widths.index).toBeUndefined();
   });
 
-  it("hidden / widths 类型不对时不抛错", () => {
+  it("hidden / widths 类型不对时不抛错，hidden 回到默认隐藏列", () => {
     expect(sanitizeNotesColumnPrefs({ hidden: "folder", widths: [1, 2] })).toEqual({
-      hidden: [],
+      hidden: ["index", "word_count"],
       widths: {},
+      showHeader: false,
     });
+  });
+
+  it("v4 默认：序号 / 字数收起、不显示表头", () => {
+    expect(DEFAULT_NOTES_COLUMN_PREFS).toEqual({
+      hidden: ["index", "word_count"],
+      widths: {},
+      showHeader: false,
+    });
+  });
+
+  it("空数组 hidden 表示用户主动全部显示，不能被默认值覆盖", () => {
+    expect(sanitizeNotesColumnPrefs({ hidden: [] }).hidden).toEqual([]);
+  });
+
+  it("showHeader 只认布尔值，旧数据没有这个字段时按默认（不显示）", () => {
+    expect(sanitizeNotesColumnPrefs({ hidden: [], showHeader: true }).showHeader).toBe(true);
+    expect(sanitizeNotesColumnPrefs({ hidden: [] }).showHeader).toBe(false);
+    expect(sanitizeNotesColumnPrefs({ hidden: [], showHeader: "yes" }).showHeader).toBe(false);
   });
 });

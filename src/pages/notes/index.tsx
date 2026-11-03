@@ -48,6 +48,9 @@ import {
   Hash,
   Columns3,
   Plus,
+  PenTool,
+  FileText,
+  ArrowDownUp,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ColumnsType } from "antd/es/table";
@@ -660,15 +663,16 @@ function FolderChangeCell({
       destroyOnHidden
       content={popoverContent}
     >
+      {/* v4 原型 .fchip：文件夹小标签；没有目录时显示「未分类」而不是一个「—」，点击同样能改目录 */}
       {currentName ? (
-        <a style={{ fontSize: 12 }} onClick={(e) => e.preventDefault()}>
-          {currentName}
+        <a className="kb-folder-chip" onClick={(e) => e.preventDefault()}>
+          <FolderIcon size={12} />
+          <span>{currentName}</span>
         </a>
       ) : (
-        <span
-          style={{ fontSize: 12, color: token.colorTextTertiary, cursor: "pointer" }}
-        >
-          —
+        <span className="kb-folder-chip is-empty">
+          <FolderIcon size={12} />
+          <span>未分类</span>
         </span>
       )}
     </Popover>
@@ -748,6 +752,18 @@ function DesktopNoteListPage() {
     if (realFolderId == null) return false;
     return (findFolderById(folders, realFolderId)?.children?.length ?? 0) > 0;
   }, [folders, realFolderId]);
+  /** 顶栏左侧的标题与路径：选中文件夹时标题 = 文件夹名、路径 = 从根到它；未分类 / 全部各有固定文案 */
+  const pageHeading = useMemo(() => {
+    if (folderId === "uncategorized") return { title: "未分类", path: "" };
+    if (realFolderId == null) return { title: "笔记", path: "全部笔记" };
+    const chain: string[] = [];
+    let cur = findFolderById(folders, realFolderId);
+    while (cur) {
+      chain.unshift(cur.name);
+      cur = cur.parent_id != null ? findFolderById(folders, cur.parent_id) : null;
+    }
+    return { title: chain[chain.length - 1] ?? "笔记", path: chain.join(" / ") };
+  }, [folders, folderId, realFolderId]);
   /** 传给后端的 include_descendants。没有子文件夹时两种口径结果一样，只是不显示切换；
    *  这里不依赖异步加载的 folders，免得 folders 到达前后各查一次、两次结果乱序覆盖 */
   const includeDescendants = folderScope === "all";
@@ -1429,6 +1445,25 @@ function DesktopNoteListPage() {
           const preview =
             record.note_type === "whiteboard" ? "" : notePreviews.get(record.id);
           return (
+            <div className="kb-note-row">
+            {/* 类型图标块：日记橙、白板蓝、普通笔记主色（原型 .li .ic） */}
+            <span
+              className={
+                record.is_daily
+                  ? "kb-cico sm is-warn"
+                  : record.note_type === "whiteboard"
+                    ? "kb-cico sm is-info"
+                    : "kb-cico sm"
+              }
+            >
+              {record.is_daily ? (
+                <Calendar size={14} />
+              ) : record.note_type === "whiteboard" ? (
+                <PenTool size={14} />
+              ) : (
+                <FileText size={14} />
+              )}
+            </span>
             <div className="kb-note-cell">
             <span className="flex items-center">
               {isFromDescendant && (
@@ -1451,6 +1486,7 @@ function DesktopNoteListPage() {
             </span>
             {preview && <div className="kb-note-preview">{preview}</div>}
             </div>
+            </div>
           );
         },
       },
@@ -1471,13 +1507,10 @@ function DesktopNoteListPage() {
               style={{ display: "flex", flexWrap: "nowrap", gap: 4, overflow: "hidden" }}
             >
               {tags.map((t) => (
-                <Tag
-                  key={t.id}
-                  color={t.color || undefined}
-                  style={{ margin: 0, flexShrink: 0, fontSize: 11, lineHeight: "16px", padding: "0 4px" }}
-                >
+                <span key={t.id} className="kb-tagchip">
+                  <i style={{ background: t.color || "var(--kb-primary)" }} />
                   {t.name}
-                </Tag>
+                </span>
               ))}
             </div>
           );
@@ -1490,6 +1523,7 @@ function DesktopNoteListPage() {
         width: colWidth("folder"),
         ...resizeProps("folder"),
         ellipsis: true,
+        className: "kb-col-folder",
         render: (fid: number | null, record: Note) => (
           <FolderChangeCell
             noteId={record.id}
@@ -1623,11 +1657,13 @@ function DesktopNoteListPage() {
    *  卡片视图原来是居中的「上一页 / 下一页」、时间线原来没有分页（只看得到第一页），统一成这一套 */
   const pagerBar = (
     <div className="kb-pager">
+      <span className="kb-pager-total">
+        共 <b>{data.total}</b> 篇 · 第 {data.page} / {Math.max(1, Math.ceil(data.total / data.page_size))} 页
+      </span>
       <Pagination
         current={data.page}
         pageSize={data.page_size}
         total={data.total}
-        showTotal={(total) => `共 ${total} 篇`}
         // 时间线固定每页 50 条（按日期分组需要一屏多看几天），不提供条数切换
         showSizeChanger={viewMode !== "timeline"}
         pageSizeOptions={["12", "20", "50", "100", "200"]}
@@ -1650,59 +1686,40 @@ function DesktopNoteListPage() {
   return (
     // 列表/卡片/时间线视图直接撑满 Content 区，避免最大化窗口时两侧大片留白；
     // 表格列宽固定 → 越宽标题列越能完整展示。px-4 保证贴边时有呼吸空间。
-    <div className="h-full flex flex-col min-h-0 px-4">
-      {/* 顶部标题栏 */}
-      <div className="flex items-center justify-between mb-2 flex-shrink-0">
-        <Title level={3} style={{ margin: 0, lineHeight: "32px" }}>
-          笔记
-        </Title>
-        <Space align="center">
-          {/* 选中有子文件夹的文件夹时：切换是否连子文件夹的笔记一起列（方便挑出直属笔记批量移走） */}
-          {realFolderId != null && hasSubfolders && (
-            <Segmented
-              size="small"
-              value={folderScope}
-              onChange={(v) => changeFolderScope(v as FolderScope)}
-              options={[
-                { value: "all", label: "含子文件夹" },
-                { value: "direct", label: "仅本级" },
-              ]}
-            />
-          )}
+    <div className="h-full flex flex-col min-h-0">
+      {/* 顶栏（v4 原型 .bar）：左「标题 路径 · N 篇 [含子文件夹|仅本级]」｜ 右「搜索 · 列 · 排序 · 视图 · 全部移到回收站 · 新建」 */}
+      <div className="kb-page-bar">
+        <h1>{pageHeading.title}</h1>
+        <span className="kb-page-sub">
+          {pageHeading.path}
+          {pageHeading.path ? " · " : ""}
+          {data.total} 篇
+        </span>
+        {/* 选中有子文件夹的文件夹时：切换是否连子文件夹的笔记一起列（方便挑出直属笔记批量移走） */}
+        {realFolderId != null && hasSubfolders && (
           <Segmented
-            value={viewMode}
-            onChange={handleViewChange}
-            options={[
-              { value: "list", icon: <LayoutList size={14} />, title: "列表" },
-              { value: "card", icon: <LayoutGrid size={14} />, title: "卡片" },
-              { value: "timeline", icon: <Clock size={14} />, title: "时间线" },
-            ]}
             size="small"
+            value={folderScope}
+            onChange={(v) => changeFolderScope(v as FolderScope)}
+            options={[
+              { value: "all", label: "含子文件夹" },
+              { value: "direct", label: "仅本级" },
+            ]}
           />
-          {data.total > 0 && (
-            <Button icon={<Archive size={14} />} onClick={handleTrashAll}>
-              全部移到回收站
-            </Button>
-          )}
-          {/* ?folder=uncategorized 时 folderId 也是 null，但不该套全局默认
-              （用户明确在看未分类）—— 这个区分由 targetFromFolderParam 给出 */}
-          <NewNoteButton
-            folderId={newNoteTarget.folderId}
-            useDefaults={newNoteTarget.useDefaults}
-          />
-        </Space>
-      </div>
-
-      {/* 搜索栏：mic 在 Input 的 suffix 内（与首页搜索一致）；右侧 Input 和「搜索」
-          按钮之间留 6px 间距，避免 Compact 紧贴模式让 suffix 显示拥挤。 */}
-      <div
-        className="mb-2 flex-shrink-0 flex items-stretch gap-1.5"
-        style={{ width: "100%" }}
-      >
+        )}
+        <span className="flex-1" />
+        {/* 搜索：回车或点左侧放大镜搜索（原来的「搜索」按钮合进了放大镜），mic 在 suffix */}
         <Input
-          size="large"
-          placeholder="搜索笔记标题..."
-          prefix={<Search size={16} />}
+          className="kb-bar-search"
+          placeholder="搜索笔记标题…"
+          prefix={
+            <Search
+              size={14}
+              style={{ cursor: "pointer" }}
+              onClick={handleSearch}
+              aria-label="搜索"
+            />
+          }
           suffix={
             <MicButton
               size="small"
@@ -1716,11 +1733,92 @@ function DesktopNoteListPage() {
           onChange={(e) => setKeyword(e.target.value)}
           onPressEnter={handleSearch}
           allowClear
-          style={{ flex: 1 }}
         />
-        <Button size="large" type="primary" onClick={handleSearch}>
-          搜索
-        </Button>
+        {viewMode === "list" && (
+          <>
+        <Popover
+          trigger="click"
+          placement="bottomRight"
+          content={
+            <div className="flex flex-col gap-1.5" style={{ minWidth: 120 }}>
+              {NOTES_COLUMN_KEYS.map((k) => (
+                <Checkbox
+                  key={k}
+                  checked={!colPrefs.hidden.includes(k)}
+                  onChange={(e) =>
+                    useAppStore
+                      .getState()
+                      .setNotesListColumnHidden(k, !e.target.checked)
+                  }
+                >
+                  {NOTES_COLUMN_LABELS[k]}
+                </Checkbox>
+              ))}
+              <Divider style={{ margin: "4px 0" }} />
+              <Checkbox
+                checked={colPrefs.showHeader}
+                onChange={(e) => useAppStore.getState().setNotesListShowHeader(e.target.checked)}
+              >
+                显示表头（可拖动列宽）
+              </Checkbox>
+              <Button
+                size="small"
+                type="link"
+                style={{ padding: 0, alignSelf: "flex-start" }}
+                onClick={() => useAppStore.getState().resetNotesListColumns()}
+              >
+                恢复默认
+              </Button>
+            </div>
+          }
+        >
+          <Button type="text" className="kb-bar-btn" icon={<Columns3 size={14} />}>
+            列
+          </Button>
+        </Popover>
+            {/* 排序：custom 才启用拖拽，其他模式按对应字段后端排序（原分段控件改为下拉，与原型一致） */}
+            <Dropdown
+              trigger={["click"]}
+              menu={{
+                selectable: true,
+                selectedKeys: [sortBy],
+                items: [
+                  { key: "default", label: "修改时间" },
+                  { key: "created", label: "创建时间" },
+                  { key: "title", label: "标题" },
+                  { key: "custom", label: "自定义（可拖动排序）" },
+                ],
+                onClick: ({ key }) => setSortBy(key as "default" | "custom" | "created" | "title"),
+              }}
+            >
+              <Button type="text" className="kb-bar-btn" icon={<ArrowDownUp size={14} />}>
+                {{ default: "修改时间", created: "创建时间", title: "标题", custom: "自定义" }[sortBy]}
+                <ChevronDown size={12} />
+              </Button>
+            </Dropdown>
+          </>
+        )}
+        <Segmented
+          value={viewMode}
+          onChange={handleViewChange}
+          options={[
+            { value: "list", icon: <LayoutList size={14} />, title: "列表" },
+            { value: "card", icon: <LayoutGrid size={14} />, title: "卡片" },
+            { value: "timeline", icon: <Clock size={14} />, title: "时间线" },
+          ]}
+          size="small"
+        />
+        {data.total > 0 && (
+          <Tooltip title="全部移到回收站">
+            <Button type="text" className="kb-bar-btn" icon={<Archive size={14} />} onClick={handleTrashAll} />
+          </Tooltip>
+        )}
+        {/* ?folder=uncategorized 时 folderId 也是 null，但不该套全局默认
+            （用户明确在看未分类）—— 这个区分由 targetFromFolderParam 给出 */}
+        <NewNoteButton
+          folderId={newNoteTarget.folderId}
+          useDefaults={newNoteTarget.useDefaults}
+        />
       </div>
 
       {/* 批量工具条：仅列表视图 + 有选中时显示 */}
@@ -1875,71 +1973,18 @@ function DesktopNoteListPage() {
 
       {/* 列表视图：表格 + 分页条共享同一个白色卡片，短列表底下不再露出页面背景 */}
       {viewMode === "list" && (
+        <>
         <div
           className="flex-1 flex flex-col min-h-0 notes-list-flat kb-surface"
           style={{
             background: token.colorBgContainer,
-            borderRadius: 8,
+            // v4 原型：列表是一张圆角白卡，细描边圈出轮廓
+            borderRadius: 12,
+            boxShadow: "inset 0 0 0 1px var(--kb-border)",
+            marginBottom: 16,
             overflow: "hidden",
           }}
         >
-          {/* 排序模式切换：custom 才启用拖拽，其他模式按对应字段后端排序 */}
-          <div
-            className="flex-shrink-0 flex items-center justify-end gap-2 px-3 py-2"
-            style={{ borderBottom: `1px solid ${token.colorBorderSecondary}` }}
-          >
-            {/* 列设置：勾选要显示的列。点击空白处关闭；拖动表头右缘可调列宽 */}
-            <Popover
-              trigger="click"
-              placement="bottomRight"
-              content={
-                <div className="flex flex-col gap-1.5" style={{ minWidth: 120 }}>
-                  {NOTES_COLUMN_KEYS.map((k) => (
-                    <Checkbox
-                      key={k}
-                      checked={!colPrefs.hidden.includes(k)}
-                      onChange={(e) =>
-                        useAppStore
-                          .getState()
-                          .setNotesListColumnHidden(k, !e.target.checked)
-                      }
-                    >
-                      {NOTES_COLUMN_LABELS[k]}
-                    </Checkbox>
-                  ))}
-                  <Divider style={{ margin: "4px 0" }} />
-                  <Button
-                    size="small"
-                    type="link"
-                    style={{ padding: 0, alignSelf: "flex-start" }}
-                    onClick={() => useAppStore.getState().resetNotesListColumns()}
-                  >
-                    恢复默认
-                  </Button>
-                </div>
-              }
-            >
-              <Button size="small" type="text" icon={<Columns3 size={14} />}>
-                列
-              </Button>
-            </Popover>
-            <span style={{ fontSize: 12, color: token.colorTextSecondary }}>
-              排序
-            </span>
-            <Segmented
-              size="small"
-              value={sortBy}
-              onChange={(v) =>
-                setSortBy(v as "default" | "custom" | "created" | "title")
-              }
-              options={[
-                { value: "default", label: "修改时间" },
-                { value: "created", label: "创建时间" },
-                { value: "title", label: "标题" },
-                { value: "custom", label: "自定义" },
-              ]}
-            />
-          </div>
           <div className="flex-1 min-h-0 overflow-auto">
             <DndContext
               sensors={dndSensors}
@@ -1957,7 +2002,9 @@ function DesktopNoteListPage() {
                   loading={loading}
                   size="small"
                   pagination={false}
-                  sticky
+                  showHeader={colPrefs.showHeader}
+                  // 表头隐藏时不能开 sticky：antd 仍会渲染一条空的吸顶占位，列表顶上多出一截空白
+                  sticky={colPrefs.showHeader}
                   rowSelection={{
                     selectedRowKeys: selectedIds,
                     onChange: (keys) =>
@@ -2001,8 +2048,9 @@ function DesktopNoteListPage() {
               </SortableContext>
             </DndContext>
           </div>
-          {pagerBar}
         </div>
+        {pagerBar}
+        </>
       )}
 
       {/* 卡片视图（虚拟滚动） */}

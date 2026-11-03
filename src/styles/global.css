@@ -3771,3 +3771,271 @@ body.sidebar-resizing .kb-panel-resizer {
 .notes-list-flat .ant-table-tbody > tr > td.kb-col-actions .ant-space:focus-within {
   opacity: 1;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 对照原型修正（第二轮）—— 卡片头 / 首页细节 / 同步胶囊
+   ═══════════════════════════════════════════════════════════ */
+/* 图标块（原型 .cico）：图标外一圈同色 14% 底的圆角方块 */
+.kb-cico {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+.kb-cico.sm {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+/* 首页卡片头：去分隔线、标题 15/600，标题里的第一个图标自动变成图标块 */
+.kb-home .ant-card-head {
+  border-bottom: none !important;
+  min-height: 52px;
+  padding: 0 18px;
+}
+.kb-home .ant-card-head-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.kb-home .ant-card-head-title > span > svg:first-child {
+  box-sizing: content-box;
+  padding: 7px;
+  border-radius: 8px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  margin-right: 2px;
+}
+.kb-home .ant-card-body {
+  padding-left: 18px !important;
+  padding-right: 18px !important;
+}
+.kb-card-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.kb-card-h > b {
+  font-size: 15px;
+  font-weight: 600;
+}
+/* 列表行（原型 .nr）：图标块 + 标题 + 右侧时间 */
+.kb-nr {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+}
+/* 快速记一笔：无边框输入 + 底栏 */
+.kb-quick-input.ant-input {
+  padding: 4px 0 !important;
+  font-size: 14px;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.kb-quick-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+/* 写作活力指标：大号数字 + 小字说明 */
+.kb-metric-v {
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--kb-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+/* 问 AI：实心发送按钮 + 推荐问题 */
+.kb-ask-send.ant-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+.kb-ask-sugs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 2px 0 10px;
+}
+.kb-ask-sugs > button {
+  border: none;
+  background: transparent;
+  padding: 2px 0;
+  font-size: 12.5px;
+  color: var(--kb-text-secondary);
+  cursor: pointer;
+}
+.kb-ask-sugs > button:hover {
+  color: var(--kb-primary);
+}
+/* 标题栏同步胶囊（原型 .sync）：圆点 + 文字 */
+.kb-sync {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--kb-text-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.kb-sync:hover:not(:disabled) {
+  background: var(--kb-bg-hover);
+  color: var(--kb-text-primary);
+}
+.kb-sync-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ant-color-success);
+}
+.kb-sync.is-off .kb-sync-dot {
+  background: var(--kb-text-tertiary);
+}
+.kb-sync.is-busy {
+  color: var(--kb-primary);
+  cursor: default;
+}
+
+/* ─── 笔记列表对照原型（第二轮）—— .bar / .li / .tg / .pager ─── */
+/* 顶栏：贴满纸张上沿与左右（抵掉纸张的 20/24 内边距），浅色底 + 底边线 */
+.kb-page-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  margin: -20px -24px 16px;
+  padding: 10px 20px 10px 24px;
+  background: var(--kb-bg-panel);
+  border-bottom: 1px solid var(--kb-border);
+  border-radius: 12px 12px 0 0;
+}
+.kb-page-bar > h1 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--kb-text-primary);
+  white-space: nowrap;
+}
+.kb-page-sub {
+  font-size: 12.5px;
+  color: var(--kb-text-tertiary);
+  white-space: nowrap;
+}
+.kb-bar-search.ant-input-affix-wrapper {
+  width: 260px;
+  height: 32px;
+  border-radius: 8px;
+}
+.kb-bar-btn.ant-btn {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--kb-text-secondary);
+}
+.kb-bar-btn.ant-btn:hover {
+  color: var(--kb-text-primary) !important;
+}
+/* 图标块配色变体 */
+.kb-cico.is-warn {
+  color: var(--ant-color-warning);
+}
+.kb-cico.is-info {
+  color: var(--ant-color-info);
+}
+.kb-cico:not(.is-warn):not(.is-info) {
+  color: var(--kb-primary);
+}
+/* 列表行：图标块 + 标题 / 预览（原型 .li） */
+.kb-note-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.kb-note-row > .kb-note-cell {
+  flex: 1;
+}
+.notes-list-flat .ant-table-tbody > tr > td {
+  padding-top: 9px !important;
+  padding-bottom: 9px !important;
+  border-bottom: 1px solid var(--kb-border) !important;
+}
+.notes-list-flat .ant-table-tbody > tr:last-child > td {
+  border-bottom: none !important;
+}
+/* 更新时间：贴右、三级灰 */
+.notes-list-flat td.ant-table-cell:has(> .ant-typography) {
+  color: var(--kb-text-tertiary);
+}
+/* 标签胶囊（原型 .tg）：白底细描边 + 彩色圆点 */
+.kb-tagchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+  white-space: nowrap;
+}
+.kb-tagchip > i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+/* 目录列：浅底文件夹小标签（原型 .fchip） */
+.kb-folder-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--kb-bg-hover);
+  font-size: 12px;
+  color: var(--kb-text-secondary) !important;
+  cursor: pointer;
+}
+.kb-folder-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-folder-chip:hover {
+  color: var(--kb-primary) !important;
+}
+.kb-folder-chip.is-empty {
+  color: var(--kb-text-tertiary) !important;
+}
+/* 分页条：贴满纸张底边，左统计右页码 */
+.kb-pager {
+  justify-content: space-between !important;
+  margin: 0 -24px -24px;
+  padding: 8px 20px 8px 24px !important;
+  background: var(--kb-bg-panel);
+  border-radius: 0 0 12px 12px;
+}
+.kb-pager-total {
+  font-size: 12.5px;
+  color: var(--kb-text-tertiary);
+}
+.kb-pager-total b {
+  color: var(--kb-text-primary);
+  font-weight: 600;
+}

@@ -784,6 +784,8 @@ interface AppStore {
   setNotesListColumnWidth: (key: NotesColumnKey, width: number) => void;
   /** 恢复笔记列表的默认列（全部显示、默认宽度） */
   resetNotesListColumns: () => void;
+  /** 笔记列表是否显示表头（v4 默认不显示） */
+  setNotesListShowHeader: (show: boolean) => void;
   /** 标记 NotesPanel 已完成首次"全部折叠"初始化（一次性） */
   markNotesFoldersInitialCollapseDone: () => void;
   /** 设置"每次启动默认收起所有文件夹"开关 */
@@ -1403,6 +1405,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       },
     })),
   resetNotesListColumns: () => set({ notesListColumnPrefs: DEFAULT_NOTES_COLUMN_PREFS }),
+  setNotesListShowHeader: (show) =>
+    set((s) => ({ notesListColumnPrefs: { ...s.notesListColumnPrefs, showHeader: show } })),
   markNotesFoldersInitialCollapseDone: () =>
     set({ notesFoldersInitialCollapseDone: true }),
   setNotesCollapseFoldersOnStartup: (on) =>
