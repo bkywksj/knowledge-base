@@ -1,30 +1,24 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import {
-  Table,
   Button,
-  Divider,
-  Typography,
-  Space,
+  Checkbox,
   Pagination,
   Popconfirm,
   Modal,
+  Spin,
   message,
-  theme as antdTheme,
 } from "antd";
-import { Trash2, RotateCcw, AlertTriangle } from "lucide-react";
-import type { ColumnsType } from "antd/es/table";
-import { trashApi } from "@/lib/api";
+import { Trash2, RotateCcw, AlertTriangle, CheckSquare, FileText, Info } from "lucide-react";
+import { folderApi, trashApi } from "@/lib/api";
 import { useTabsStore } from "@/store/tabs";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { relativeTime } from "@/lib/utils";
-import type { Note, PageResult } from "@/types";
+import type { Folder, Note, PageResult } from "@/types";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import {
   ContextMenuOverlay,
   type ContextMenuEntry,
 } from "@/components/ui/ContextMenuOverlay";
-
-const { Title, Text } = Typography;
 
 /**
  * 回收站
@@ -32,8 +26,6 @@ const { Title, Text } = Typography;
  * 列表 + 分页样式与 /notes 列表视图保持一致：白底卡包表格 + 外置分页。
  */
 function DesktopTrashPage() {
-  const { token } = antdTheme.useToken();
-
   const [data, setData] = useState<PageResult<Note>>({
     items: [],
     total: 0,
@@ -61,6 +53,25 @@ function DesktopTrashPage() {
   useEffect(() => {
     void loadTrash(1, pageSize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** 文件夹 id → 名：列表行「原位置」用 */
+  const [folderMap, setFolderMap] = useState<Map<number, string>>(new Map());
+  useEffect(() => {
+    folderApi
+      .list()
+      .then((list: Folder[]) => {
+        const map = new Map<number, string>();
+        const walk = (fl: Folder[]) => {
+          for (const f of fl) {
+            map.set(f.id, f.name);
+            if (f.children?.length) walk(f.children);
+          }
+        };
+        walk(list);
+        setFolderMap(map);
+      })
+      .catch(() => {});
   }, []);
 
   async function handleRestore(id: number) {
@@ -162,7 +173,7 @@ function DesktopTrashPage() {
     const visibleIds = data.items.map((n) => n.id);
     Modal.confirm({
       title: "清空回收站",
-      icon: <AlertTriangle size={20} style={{ color: "#ff4d4f", marginRight: 8 }} />,
+      icon: <AlertTriangle size={20} style={{ color: "var(--ant-color-error)", marginRight: 8 }} />,
       content: "此操作将永久删除回收站中的所有笔记，且不可恢复。确定继续？",
       okText: "确认清空",
       okType: "danger",
@@ -184,132 +195,51 @@ function DesktopTrashPage() {
     });
   }
 
-  const columns: ColumnsType<Note> = useMemo(
-    () => [
-      {
-        // 与 /notes 一致：跨页连续序号
-        title: "#",
-        key: "index",
-        width: 44,
-        align: "right" as const,
-        render: (_: unknown, __: Note, index: number) => (
-          <span style={{ color: token.colorTextTertiary, fontSize: 12 }}>
-            {(data.page - 1) * data.page_size + index + 1}
-          </span>
-        ),
-      },
-      {
-        title: "标题",
-        dataIndex: "title",
-        key: "title",
-        ellipsis: true,
-      },
-      {
-        title: "字数",
-        dataIndex: "word_count",
-        key: "word_count",
-        width: 70,
-        render: (val: number) => (
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {val}
-          </Text>
-        ),
-      },
-      {
-        title: "删除时间",
-        dataIndex: "updated_at",
-        key: "updated_at",
-        width: 110,
-        render: (val: string) => (
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {relativeTime(val)}
-          </Text>
-        ),
-      },
-      {
-        title: "操作",
-        key: "action",
-        width: 200,
-        render: (_: unknown, record: Note) => (
-          <Space size="small">
-            <Button
-              type="link"
-              size="small"
-              icon={<RotateCcw size={14} />}
-              onClick={() => handleRestore(record.id)}
-            >
-              恢复
-            </Button>
-            <Popconfirm
-              title="确认永久删除？"
-              description="此操作不可恢复"
-              onConfirm={() => handlePermanentDelete(record.id)}
-            >
-              <Button type="link" danger size="small" icon={<Trash2 size={14} />}>
-                永久删除
-              </Button>
-            </Popconfirm>
-          </Space>
-        ),
-      },
-    ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data.page, data.page_size, token.colorTextTertiary],
-  );
+  const allChecked = data.items.length > 0 && selectedIds.length === data.items.length;
+  function toggleOne(id: number) {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
 
   return (
     <div
-      // 横向留白统一交给 AppLayout Content 的 padding，不再单独限内容宽度
-      className="h-full flex flex-col min-h-0"
+      className="kb-hidden-page"
       onContextMenu={(e) => {
-        // 顶层兜底：表格行有自己的 onContextMenu 会先 preventDefault；
+        // 顶层兜底：列表行有自己的 onContextMenu 会先 preventDefault；
         // 其他位置统一吞 WebView 默认菜单。input 白名单留给搜索框等
         const t = e.target as HTMLElement;
         if (t.closest("input, textarea, [contenteditable='true']")) return;
         e.preventDefault();
       }}
     >
-      {/* 顶部标题栏 */}
-      <div className="flex items-center justify-between mb-2 flex-shrink-0">
-        <Title level={3} style={{ margin: 0, lineHeight: "32px" }}>
-          <span className="flex items-center gap-2">
-            <Trash2 size={22} />
-            回收站
-          </span>
-        </Title>
+      {/* 顶栏（原型 .bar）：回收站 · N 篇 ｜ 清空回收站 */}
+      <div className="kb-page-bar">
+        <h1>回收站</h1>
+        <span className="kb-trash-count">{data.total} 篇</span>
+        <span className="flex-1" />
         {data.items.length > 0 && (
-          <Button danger onClick={handleEmptyTrash}>
+          <Button className="kb-danger-soft" icon={<Trash2 size={14} />} onClick={handleEmptyTrash}>
             清空回收站
           </Button>
         )}
       </div>
 
-      <div className="flex-shrink-0" style={{ marginBottom: 12, lineHeight: 1.6 }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          提示：回收站中的笔记将在 30 天后自动永久删除。
-        </Text>
+      <div className="kb-trash-tip">
+        <Info size={14} />
+        提示：回收站中的笔记将在 30 天后自动永久删除。
       </div>
 
-      {/* 批量工具条：仅有选中时显示，与 /notes 风格一致 */}
+      {/* 批量工具条：仅有选中时显示（原型 .selbar） */}
       {selectedIds.length > 0 && (
-        <div
-          className="mb-2 flex items-center gap-2 flex-shrink-0"
-          style={{
-            padding: "8px 12px",
-            borderRadius: 8,
-            background: token.colorPrimaryBg,
-            color: token.colorPrimary,
-            border: `1px solid ${token.colorPrimaryBorder}`,
-          }}
-        >
-          <span style={{ fontSize: 13 }}>已选 {selectedIds.length} 条</span>
-          <Divider orientation="vertical" />
+        <div className="kb-trash-selbar">
+          <CheckSquare size={14} />
+          <b>已选 {selectedIds.length} 篇</b>
+          <span className="flex-1" />
           <Popconfirm
             title={`确认恢复 ${selectedIds.length} 条笔记？`}
             okText="恢复"
             onConfirm={handleRestoreBatch}
           >
-            <Button size="small" type="primary" icon={<RotateCcw size={14} />}>
+            <Button size="small" className="kb-selbar-btn" icon={<RotateCcw size={13} />}>
               批量恢复
             </Button>
           </Popconfirm>
@@ -320,58 +250,93 @@ function DesktopTrashPage() {
             okButtonProps={{ danger: true }}
             onConfirm={handlePermanentDeleteBatch}
           >
-            <Button size="small" danger icon={<Trash2 size={14} />}>
+            <Button size="small" className="kb-danger-soft" icon={<Trash2 size={13} />}>
               批量永久删除
             </Button>
           </Popconfirm>
-          <Button size="small" onClick={() => setSelectedIds([])}>
+          <Button size="small" type="text" onClick={() => setSelectedIds([])}>
             取消选择
           </Button>
         </div>
       )}
 
       {data.total > 0 || loading ? (
-        // 与 /notes 一样：表格 + 分页条共享同一个白色卡片，短列表底下不再露背景
-        <div
-          className="flex-1 flex flex-col min-h-0 kb-surface"
-          style={{
-            background: token.colorBgContainer,
-            borderRadius: 8,
-            overflow: "hidden",
-          }}
-        >
-          <div className="flex-1 min-h-0 overflow-auto">
-            <Table
-              columns={columns}
-              dataSource={data.items}
-              rowKey="id"
-              loading={loading}
-              size="small"
-              pagination={false}
-              sticky
-              rowSelection={{
-                selectedRowKeys: selectedIds,
-                onChange: (keys) => setSelectedIds(keys.map((k) => Number(k))),
-                columnWidth: 40,
-              }}
-              onRow={(record) => ({
-                onContextMenu: (e) => {
-                  e.preventDefault();
-                  ctx.open(e.nativeEvent, {
-                    id: record.id,
-                    title: record.title,
-                  });
-                },
-                // 用整行背景高亮替代 outline：antd Table 的 tr 之间有 1px
-                // border-bottom，outline 会被遮挡显示不全；background 不受影响
-                style:
-                  ctx.state.payload?.id === record.id
-                    ? { background: token.colorPrimaryBg }
-                    : undefined,
+        <section className="kb-cards-panel kb-hidden-list">
+          {loading && data.items.length === 0 ? (
+            <div className="flex justify-center py-10">
+              <Spin />
+            </div>
+          ) : (
+            <>
+              {/* 本页全选 */}
+              <label className="kb-trash-all">
+                <Checkbox
+                  checked={allChecked}
+                  indeterminate={selectedIds.length > 0 && !allChecked}
+                  onChange={(e) => setSelectedIds(e.target.checked ? data.items.map((n) => n.id) : [])}
+                />
+                全选本页
+              </label>
+              {data.items.map((n) => {
+                const checked = selectedIds.includes(n.id);
+                const folderName =
+                  n.folder_id == null ? "未分类" : folderMap.get(n.folder_id) ?? "已删除的文件夹";
+                return (
+                  <div
+                    key={n.id}
+                    className={
+                      "kb-hidden-row" +
+                      (checked ? " is-picked" : "") +
+                      (ctx.state.payload?.id === n.id ? " is-ctx" : "")
+                    }
+                    onClick={() => toggleOne(n.id)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      ctx.open(e.nativeEvent, { id: n.id, title: n.title });
+                    }}
+                  >
+                    <span onClick={(e) => e.stopPropagation()}>
+                      <Checkbox checked={checked} onChange={() => toggleOne(n.id)} />
+                    </span>
+                    <span className="kb-sr-ico is-err">
+                      <FileText size={15} />
+                    </span>
+                    <div className="kb-sr-main">
+                      <div className="kb-sr-title">{n.title || "(无标题)"}</div>
+                      <div className="kb-sr-snippet is-one">
+                        原位置：{folderName} · {n.word_count} 字
+                      </div>
+                    </div>
+                    {/* 列表接口只带 updated_at（不带 deleted_at），如实标成「修改于」 */}
+                    <span className="kb-trash-time" title={n.updated_at.slice(0, 16)}>
+                      修改于 {relativeTime(n.updated_at)}
+                    </span>
+                    {/* 悬停操作（原操作列） */}
+                    <div className="kb-hidden-acts" onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<RotateCcw size={13} />}
+                        onClick={() => handleRestore(n.id)}
+                      >
+                        恢复
+                      </Button>
+                      <Popconfirm
+                        title="确认永久删除？"
+                        description="此操作不可恢复"
+                        onConfirm={() => handlePermanentDelete(n.id)}
+                      >
+                        <Button type="text" size="small" danger icon={<Trash2 size={13} />}>
+                          永久删除
+                        </Button>
+                      </Popconfirm>
+                    </div>
+                  </div>
+                );
               })}
-            />
-          </div>
-          <div className="flex-shrink-0 flex justify-end items-center px-3 py-2">
+            </>
+          )}
+          <div className="kb-hidden-pager">
             <Pagination
               current={data.page}
               pageSize={data.page_size}
@@ -386,7 +351,7 @@ function DesktopTrashPage() {
               size="small"
             />
           </div>
-        </div>
+        </section>
       ) : (
         <EmptyState description="回收站为空" />
       )}

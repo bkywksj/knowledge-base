@@ -6385,3 +6385,74 @@ body.sidebar-resizing .kb-panel-resizer {
   letter-spacing: normal;
   font-size: 14px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 回收站（T3-15）—— 复用隐藏笔记的列表行（.kb-hidden-*），加计数标签 / 提示条 / 批量条
+   ═══════════════════════════════════════════════════════════ */
+.kb-trash-count {
+  padding: 1px 9px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: var(--kb-text-secondary);
+  background: var(--kb-bg-hover);
+}
+.kb-trash-tip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  color: var(--kb-text-secondary);
+  background: color-mix(in srgb, var(--kb-primary) 5%, var(--kb-bg-raised, #fff));
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+}
+.kb-trash-tip > svg {
+  color: var(--kb-primary);
+}
+.kb-trash-selbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 8px 16px;
+  border-radius: 12px;
+  color: var(--kb-primary);
+  background: var(--kb-primary-light);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kb-primary) 22%, transparent);
+}
+.kb-trash-selbar > b {
+  font-size: 13.5px;
+}
+.kb-selbar-btn.ant-btn {
+  border: none;
+  color: var(--kb-primary) !important;
+  background: var(--kb-bg-raised, #fff) !important;
+  font-weight: 600;
+}
+.kb-trash-all {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 6px;
+  font-size: 12.5px;
+  color: var(--kb-text-tertiary);
+  cursor: pointer;
+}
+.kb-hidden-row.is-picked {
+  background: var(--kb-primary-light);
+}
+.kb-trash-time {
+  flex: none;
+  padding: 2px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+  background: var(--kb-bg-hover);
+  white-space: nowrap;
+}
+/* 悬停操作浮层压在行内容（时间小标签等）之上：不加 z-index 时后面的文字会透出来 */
+.kb-task-actions,
+.kb-cl-actions,
+.kb-hidden-acts {
+  z-index: 2;
+}
