@@ -20,6 +20,10 @@ interface Props {
   size?: SizeType;
   /** 保存成功后回调（落库后宿主页可刷新列表/统计） */
   onSaved?: () => void;
+  /** 外观：button = 分段按钮（默认）；tile = 首页快捷入口卡片（v4 原型 .qb），主区新建、右侧 ▼ 同一套 AI 入口 */
+  variant?: "button" | "tile";
+  /** tile 形态右侧的小字数据，如「今日 3 条」 */
+  meta?: React.ReactNode;
 }
 
 /**
@@ -34,6 +38,8 @@ export function NewTodoButton({
   style,
   size,
   onSaved,
+  variant = "button",
+  meta,
 }: Props) {
   const { message } = AntdApp.useApp();
   const [createOpen, setCreateOpen] = useState(false);
@@ -90,8 +96,27 @@ export function NewTodoButton({
     },
   ];
 
+  const trigger =
+    variant === "tile" ? (
+      <div className="kb-qe">
+        <button type="button" className="kb-qe-main" onClick={() => setCreateOpen(true)} title="新建一条待办">
+          <span className="kb-qe-ico is-ok">
+            <CheckSquare size={16} />
+          </span>
+          <span className="kb-qe-label">{label}</span>
+          {meta != null && <span className="kb-qe-meta">{meta}</span>}
+        </button>
+        <Dropdown menu={{ items: menuItems }} trigger={["click"]} placement="bottomRight">
+          <button type="button" className="kb-qe-caret" title="AI 规划入口">
+            <ChevronDown size={14} />
+          </button>
+        </Dropdown>
+      </div>
+    ) : null;
+
   return (
     <>
+      {trigger ?? (
       <Space.Compact style={block ? { width: "100%", ...style } : style}>
         <Button
           type="primary"
@@ -116,6 +141,7 @@ export function NewTodoButton({
           />
         </Dropdown>
       </Space.Compact>
+      )}
 
       <CreateTaskModal
         open={createOpen}

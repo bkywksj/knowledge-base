@@ -3364,3 +3364,214 @@ body.sidebar-resizing .kb-panel-resizer {
   background: var(--kb-bg-active);
   color: var(--kb-text-primary);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 首页（T3-1）—— 原型 docs/design/ui-v4 的 .hm-head / .qb / .heat
+   ═══════════════════════════════════════════════════════════ */
+.kb-home-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 2px 0 4px;
+}
+.kb-home-greet {
+  min-width: 0;
+}
+.kb-home-date {
+  font-size: 12.5px;
+  color: var(--kb-text-tertiary);
+  margin-bottom: 4px;
+}
+.kb-home-greet h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.25;
+  font-weight: 700;
+  color: var(--kb-text-primary);
+  white-space: nowrap;
+}
+.kb-home-num {
+  color: var(--kb-primary);
+  font-variant-numeric: tabular-nums;
+}
+.kb-home-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 620px;
+  min-width: 0;
+}
+.kb-home-search {
+  flex: 1;
+  min-width: 0;
+}
+.kb-home-privacy.ant-btn {
+  color: var(--kb-text-tertiary);
+}
+.kb-home-privacy.ant-btn.is-on {
+  color: var(--kb-primary);
+  background: var(--kb-primary-light);
+}
+
+/* 快捷入口卡：图标块 + 名称 + 右侧数字；添加待办多一个 ▼（原型 .qb / .qn） */
+.kb-qe {
+  display: flex;
+  align-items: stretch;
+  height: 52px;
+  border-radius: 12px;
+  background: var(--kb-bg-card);
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+  overflow: hidden;
+  transition: box-shadow 0.14s ease;
+}
+.kb-qe:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kb-primary) 40%, transparent);
+}
+.kb-qe-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border: none;
+  background: transparent;
+  color: var(--kb-text-primary);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.kb-qe-main:hover {
+  background: var(--kb-bg-hover);
+}
+.kb-qe-ico {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--kb-primary);
+  background: color-mix(in srgb, var(--kb-primary) 14%, transparent);
+}
+.kb-qe-ico.is-ok {
+  color: var(--ant-color-success);
+  background: color-mix(in srgb, var(--ant-color-success) 14%, transparent);
+}
+.kb-qe-ico.is-info {
+  color: var(--ant-color-info);
+  background: color-mix(in srgb, var(--ant-color-info) 14%, transparent);
+}
+.kb-qe-label {
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.kb-qe-meta {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--kb-text-tertiary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.kb-qe-caret {
+  width: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-left: 1px solid var(--kb-border);
+  background: transparent;
+  color: var(--kb-text-tertiary);
+  cursor: pointer;
+}
+.kb-qe-caret:hover {
+  background: var(--kb-bg-hover);
+  color: var(--kb-primary);
+}
+
+/* 年度写作热力图：53 列等分宽度 + 正方形格子，卡片变窄时整体缩小 */
+.kb-heat {
+  --heat-weekday-w: 18px;
+  --heat-gap: 3px;
+  font-size: 10.5px;
+  color: var(--kb-text-tertiary);
+  /* 色阶：0 = 空格（跟底色走），1~4 主色由浅到深；暖炭下主色本身就亮，用同一套比例 */
+  --h0: color-mix(in srgb, var(--kb-text-tertiary) 12%, transparent);
+  --h1: color-mix(in srgb, var(--kb-primary) 28%, transparent);
+  --h2: color-mix(in srgb, var(--kb-primary) 50%, transparent);
+  --h3: color-mix(in srgb, var(--kb-primary) 75%, transparent);
+  --h4: var(--kb-primary);
+}
+.kb-heat-months {
+  display: grid;
+  grid-template-columns: repeat(53, 1fr);
+  column-gap: var(--heat-gap);
+  margin-left: calc(var(--heat-weekday-w) + 4px);
+  height: 16px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.kb-heat-body {
+  display: flex;
+  gap: 4px;
+}
+.kb-heat-weekdays {
+  width: var(--heat-weekday-w);
+  flex: none;
+  display: grid;
+  grid-template-rows: repeat(7, 1fr);
+  row-gap: var(--heat-gap);
+  text-align: right;
+}
+.kb-heat-weekdays > span {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  line-height: 1;
+}
+.kb-heat-grid {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(53, 1fr);
+  column-gap: var(--heat-gap);
+}
+.kb-heat-col {
+  display: grid;
+  grid-template-rows: repeat(7, auto);
+  row-gap: var(--heat-gap);
+}
+.kb-heat-cell {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  max-width: 14px;
+  border-radius: 3px;
+  background: var(--h0);
+}
+.kb-heat-cell.l1 { background: var(--h1); }
+.kb-heat-cell.l2 { background: var(--h2); }
+.kb-heat-cell.l3 { background: var(--h3); }
+.kb-heat-cell.l4 { background: var(--h4); }
+.kb-heat-cell.is-future { background: transparent; }
+.kb-heat-grid .kb-heat-cell:not(.is-future):hover {
+  outline: 1.5px solid var(--kb-primary);
+  outline-offset: 1px;
+}
+.kb-heat-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+}
+.kb-heat-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.kb-heat-legend .kb-heat-cell {
+  width: 11px;
+  height: 11px;
+}

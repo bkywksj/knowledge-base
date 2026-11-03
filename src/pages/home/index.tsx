@@ -36,6 +36,8 @@ import {
   ChevronRight,
   ChevronDown,
   Inbox,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { Tooltip as AntTooltip } from "antd";
 import {
@@ -70,6 +72,7 @@ import { SubtaskList } from "@/components/tasks/SubtaskList";
 import { TaskDetailModal } from "@/components/tasks/TaskDetailModal";
 import { CreateTaskModal } from "@/components/tasks/CreateTaskModal";
 import { HideableCard } from "@/components/home/HideableCard";
+import { WritingHeatmap } from "@/components/home/WritingHeatmap";
 import { useHomeWidgetsStore } from "@/store/homeWidgets";
 
 const { Text } = Typography;
@@ -96,6 +99,7 @@ function DesktopHomePage() {
   const { token } = antdTheme.useToken();
   const { message } = AntdApp.useApp();
   const refreshTaskStats = useAppStore((s) => s.refreshTaskStats);
+  const privacyMode = useHomeWidgetsStore((s) => s.privacyMode);
 
   // 功能模块开关：用户在设置里关闭某模块时，首页相关的卡片/按钮也要联动隐藏
   const tasksEnabled = useFeatureEnabled("tasks");
@@ -116,6 +120,11 @@ function DesktopHomePage() {
   const [noDueTasks, setNoDueTasks] = useState<Task[]>([]);
   /** 最近 AI 会话(用于"问 AI"卡 fallback 列表) */
   const [recentChats, setRecentChats] = useState<AiConversation[]>([]);
+  /** AI 会话总数（快捷入口「AI 问答」右侧的数字） */
+  const [aiConvCount, setAiConvCount] = useState(0);
+  /** 今日日记字数（快捷入口「今日笔记」右侧的数字）；null = 今天还没有日记。
+   *  用只读的 dailyApi.get，不能用 getOrCreate——打开首页不该凭空建一篇日记 */
+  const [todayDailyWords, setTodayDailyWords] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   // ─── 输入态 ───────────────────────────────────────
@@ -136,15 +145,17 @@ function DesktopHomePage() {
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     try {
-      const [notesResult, dashStats, trendData, allTodos, chats] =
+      const [notesResult, dashStats, trendData, allTodos, chats, todayDaily] =
         await Promise.all([
           // 拉 12 条而不是 8：这一批还要被 is_pinned 拆成「最近笔记」和「置顶笔记」
           // 两卡，置顶多的用户按 8 条拉会让「最近笔记」凑不够要显示的 8 条。
           noteApi.list({ page: 1, page_size: 12 }),
           systemApi.getDashboardStats(),
-          systemApi.getWritingTrend(14),
+          // 371 天 = 53 周：写作活力的年度热力图要一整年；连续写作 / 本周字数也从这批里算
+          systemApi.getWritingTrend(371),
           taskApi.list({ status: 0 }).catch(() => [] as Task[]),
           aiChatApi.listConversations().catch(() => [] as AiConversation[]),
+          dailyApi.get(todayYmd()).catch(() => null),
         ]);
       setRecentNotes(notesResult.items.filter((n) => !n.is_pinned));
       setPinnedNotes(notesResult.items.filter((n) => n.is_pinned));
@@ -176,6 +187,8 @@ function DesktopHomePage() {
       setUpcomingTasks(upcoming);
       setNoDueTasks(noDueSorted);
       setRecentChats(chats.slice(0, 3));
+      setAiConvCount(chats.length);
+      setTodayDailyWords(todayDaily ? todayDaily.word_count : null);
     } catch (e) {
       console.error("加载首页数据失败:", e);
     } finally {
@@ -451,25 +464,6 @@ function DesktopHomePage() {
     };
   }, [trend, stats]);
 
-  // 14 天柱状图的 normalize
-  const trendBars = useMemo(() => {
-    const now = new Date();
-    const items: { date: string; words: number }[] = [];
-    for (let i = 13; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(now.getDate() - i);
-      const ymd = localYmd(d);
-      const stat = vitalityMetrics.trendByDate.get(ymd);
-      items.push({ date: ymd, words: stat?.word_count ?? 0 });
-    }
-    const maxW = Math.max(...items.map((i) => i.words), 1);
-    // sqrt 归一化:线性归一化下,一条 25 万字的导入/长笔记会把其它天压成肉眼为 0 的细条。
-    // sqrt 压缩动态范围,让几十~几百字的日常写作(含日记)也清晰可见。
-    return items.map((it) => ({
-      ...it,
-      ratio: it.words > 0 ? Math.sqrt(it.words / maxW) : 0,
-    }));
-  }, [vitalityMetrics]);
 
   // 待办速览三段：逾期（昨天及更早）/ 今日 / 即将到期。每段最多 5 条
   const todoGroups = useMemo(() => {
@@ -546,20 +540,43 @@ function DesktopHomePage() {
       style={{ display: "flex", flexDirection: "column", gap: 12 }}
     >
 
-      {/* ① 顶部搜索 + 新建笔记
-          搜索：输入即下拉建议（笔记 + 待办，点击跳详情），回车去 /search 全量结果 */}
-      <div className="flex gap-3">
-        <HomeSearchInput
-          value={searchKeyword}
-          onChange={setSearchKeyword}
-          onPressEnter={handleSearch}
-        />
-        <NewNoteButton size="large" style={{ borderRadius: 8 }} />
+      {/* ① 页头：日期 + 问候（今天写了多少字）｜ 搜索 + 新建笔记 + 隐私模式（原型 .hm-head） */}
+      <div className="kb-home-head">
+        <div className="kb-home-greet">
+          <div className="kb-home-date">{homeDateLabel(new Date())}</div>
+          <h1>
+            {greetingFor(new Date().getHours())}，今天写了{" "}
+            <span className="kb-home-num">
+              {(vitalityMetrics.trendByDate.get(vitalityMetrics.todayStr)?.word_count ?? 0).toLocaleString()}
+            </span>{" "}
+            字
+          </h1>
+        </div>
+        <div className="kb-home-tools">
+          {/* 搜索：输入即下拉建议（笔记 + 待办，点击跳详情），回车去 /search 全量结果 */}
+          <div className="kb-home-search">
+            <HomeSearchInput
+              value={searchKeyword}
+              onChange={setSearchKeyword}
+              onPressEnter={handleSearch}
+            />
+          </div>
+          <NewNoteButton size="large" style={{ borderRadius: 8 }} />
+          {/* 隐私模式：原来只有 Ctrl/⌘+Shift+H，补一个看得见的开关 */}
+          <AntTooltip title={privacyMode ? "退出隐私模式 (Ctrl+Shift+H)" : "隐私模式：遮住首页卡片 (Ctrl+Shift+H)"}>
+            <Button
+              size="large"
+              type="text"
+              className={privacyMode ? "kb-home-privacy is-on" : "kb-home-privacy"}
+              icon={privacyMode ? <EyeOff size={17} /> : <Eye size={17} />}
+              onClick={() => useHomeWidgetsStore.getState().togglePrivacyMode()}
+            />
+          </AntTooltip>
+        </div>
       </div>
 
-      {/* ② 快速操作工具条 — 按启用模块动态分列
-          添加待办用 NewTodoButton 分段按钮(主按钮弹 Modal + ▼ 下拉 AI 规划)
-          某模块在设置里关闭时，对应按钮自动消失，剩余按钮等宽分布 */}
+      {/* ② 快捷入口 — 按启用模块动态分列，右侧带数字（原型 .qb + .qn）
+          添加待办保留分段交互（主区弹 Modal + ▼ 下拉 AI 规划），某模块关闭时对应入口消失、其余等宽 */}
       {(() => {
         const quickActions: { key: string; show: boolean; node: React.ReactNode }[] = [
           {
@@ -567,7 +584,8 @@ function DesktopHomePage() {
             show: tasksEnabled,
             node: (
               <NewTodoButton
-                block
+                variant="tile"
+                meta={`今日 ${todoGroups.todayTotal} 条`}
                 onSaved={() => {
                   loadDashboard();
                   refreshTaskStats();
@@ -579,42 +597,39 @@ function DesktopHomePage() {
             key: "today",
             show: dailyEnabled,
             node: (
-              <Button
-                icon={<CalendarDays size={14} style={{ color: token.colorPrimary }} />}
+              <QuickTile
+                icon={<CalendarDays size={16} />}
+                tone="v"
+                label="今日笔记"
+                meta={todayDailyWords == null ? "未开始" : `${todayDailyWords.toLocaleString()} 字`}
                 onClick={handleTodayNote}
-                block
-                style={{ borderRadius: 8 }}
-              >
-                今日笔记
-              </Button>
+              />
             ),
           },
           {
             key: "ai",
             show: aiEnabled,
             node: (
-              <Button
-                icon={<Bot size={14} style={{ color: "#9333ea" }} />}
+              <QuickTile
+                icon={<Bot size={16} />}
+                tone="v"
+                label="AI 问答"
+                meta={`${aiConvCount} 个会话`}
                 onClick={() => navigate("/ai")}
-                block
-                style={{ borderRadius: 8 }}
-              >
-                AI 问答
-              </Button>
+              />
             ),
           },
           {
             key: "graph",
             show: graphEnabled,
             node: (
-              <Button
-                icon={<GitBranch size={14} style={{ color: "#2563eb" }} />}
+              <QuickTile
+                icon={<GitBranch size={16} />}
+                tone="b"
+                label="知识图谱"
+                meta={`${(stats?.total_notes ?? 0).toLocaleString()} 篇笔记`}
                 onClick={() => navigate("/graph")}
-                block
-                style={{ borderRadius: 8 }}
-              >
-                知识图谱
-              </Button>
+              />
             ),
           },
         ];
@@ -693,15 +708,15 @@ function DesktopHomePage() {
       </Card>
       )}
 
-      {/* ④ 双列:今日待办速览(左) + 最近笔记(右)；待办关闭时只剩最近笔记一列 */}
+      {/* ④ 一行三卡：待办速览 5 ｜ 最近笔记 4 ｜ 置顶笔记 3（12 栏，原型 .cols.g12.r2）
+          待办关闭时：最近笔记 7 ｜ 置顶笔记 5 */}
       <div className="grid grid-cols-12 gap-3">
 
-        {/* 待办速览(三段:逾期/今日/即将到期):tasks 关闭整卡不渲染，最近笔记自动占满 */}
         {tasksEnabled && (
         <HideableCard
           widgetKey="todo"
           size="small"
-          className="col-span-7"
+          className="col-span-5"
           styles={{ body: { padding: "8px 14px" } }}
           title={
             <span className="flex items-center gap-2 text-sm">
@@ -1025,11 +1040,11 @@ function DesktopHomePage() {
         </HideableCard>
         )}
 
-        {/* 最近笔记：tasks 关时占满 12 列，反之 5 列 */}
+        {/* 最近笔记：待办开 4 列 / 关 7 列 */}
         <HideableCard
           widgetKey="recentNotes"
           size="small"
-          className={tasksEnabled ? "col-span-5" : "col-span-12"}
+          className={tasksEnabled ? "col-span-4" : "col-span-7"}
           styles={{ body: { padding: "8px 14px" } }}
           title={
             <span className="flex items-center gap-2 text-sm">
@@ -1101,114 +1116,15 @@ function DesktopHomePage() {
             </ul>
           )}
         </HideableCard>
-      </div>
 
-      {/* ⑤ 写作活力 — 4 指标 + 14 天迷你图 */}
-      <Card
-        size="small"
-        styles={{ body: { padding: "12px 14px" } }}
-      >
-        <div className="flex items-center justify-between mb-3">
-          <span className="flex items-center gap-2 text-sm font-medium">
-            <Sparkles size={14} style={{ color: "#f97316" }} />
-            写作活力
-          </span>
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            近 14 天
-          </Text>
-        </div>
-        <div className="grid grid-cols-5 gap-3">
-          <MetricItem
-            icon={<NotebookText size={16} style={{ color: token.colorPrimary }} />}
-            iconBg={`${token.colorPrimary}15`}
-            value={vitalityMetrics.totalNotes}
-            label="笔记总数"
-          />
-          <MetricItem
-            icon={<Type size={16} style={{ color: "#7c3aed" }} />}
-            iconBg="#ede9fe"
-            value={vitalityMetrics.totalWords.toLocaleString()}
-            label="总字数"
-            isText
-          />
-          <MetricItem
-            icon={<Flame size={16} style={{ color: "#ea580c" }} />}
-            iconBg="#fff7ed"
-            value={vitalityMetrics.streak}
-            valueSuffix="天"
-            label="连续写作"
-          />
-          <MetricItem
-            icon={<Clock size={16} style={{ color: "#2563eb" }} />}
-            iconBg="#dbeafe"
-            value={vitalityMetrics.lastSinceLabel}
-            label="距上次写作"
-            isText
-          />
-          <MetricItem
-            icon={<TrendingUp size={16} style={{ color: token.colorSuccess }} />}
-            iconBg={`${token.colorSuccess}1a`}
-            value={vitalityMetrics.thisWeekWords.toLocaleString()}
-            label="本周字数"
-            extra={
-              vitalityMetrics.weekDelta != null && (
-                <span
-                  className="text-[11px]"
-                  style={{
-                    color:
-                      vitalityMetrics.weekDelta >= 0
-                        ? token.colorSuccess
-                        : token.colorError,
-                  }}
-                >
-                  {vitalityMetrics.weekDelta >= 0 ? "▲" : "▼"} {Math.abs(vitalityMetrics.weekDelta)}%
-                </span>
-              )
-            }
-          />
-        </div>
-        {/* 迷你 14 天柱状图 + 底部 X 轴标签(3 个关键日期) */}
-        <div
-          className="mt-3 pt-3"
-          style={{ borderTop: `1px solid ${token.colorBorderSecondary}` }}
-        >
-          <div className="flex items-end gap-0.5" style={{ height: 36 }}>
-            {trendBars.map((bar) => (
-              <AntTooltip key={bar.date} title={`${bar.date} · ${bar.words} 字`}>
-                <div
-                  className="flex-1 rounded-sm transition-colors"
-                  style={{
-                    height: `${Math.max(bar.ratio * 100, 4)}%`,
-                    background: bar.words > 0 ? token.colorPrimary : token.colorBorderSecondary,
-                    opacity: bar.words > 0 ? 0.5 + bar.ratio * 0.5 : 0.4,
-                    cursor: "pointer",
-                  }}
-                />
-              </AntTooltip>
-            ))}
-          </div>
-          {/* X 轴标签:14 天前 / 7 天前 / 今天 */}
-          <div
-            className="flex justify-between mt-1"
-            style={{ fontSize: 10, color: token.colorTextQuaternary }}
-          >
-            <span>{trendBars[0]?.date.slice(5) ?? ""}</span>
-            <span>{trendBars[7]?.date.slice(5) ?? "7 天前"}</span>
-            <span>今天</span>
-          </div>
-        </div>
-      </Card>
-
-      {/* ⑥ 双列:置顶笔记 + 问 AI；ai 关闭时只剩置顶笔记一列 */}
-      <div className="grid grid-cols-12 gap-3">
         <HideableCard
           widgetKey="pinned"
           size="small"
-          className={aiEnabled ? "col-span-5" : "col-span-12"}
+          className={tasksEnabled ? "col-span-3" : "col-span-5"}
           styles={{ body: { padding: "12px 14px" } }}
           title={
             <span className="flex items-center gap-2 text-sm">
-              <Pin size={14} style={{ color: token.colorWarning }} />
+              <Pin size={14} style={{ color: token.colorPrimary }} />
               置顶笔记
               {pinnedNotes.length > 0 && (
                 <Text type="secondary" style={{ fontSize: 12, fontWeight: "normal" }}>
@@ -1231,7 +1147,7 @@ function DesktopHomePage() {
                   onClick={() => navigate(`/notes/${note.id}`)}
                   style={{ padding: "2px 0" }}
                 >
-                  <Pin size={11} style={{ color: token.colorWarning, flexShrink: 0 }} />
+                  <Pin size={11} style={{ color: token.colorPrimary, flexShrink: 0 }} />
                   <Text ellipsis style={{ fontSize: 13, flex: 1, minWidth: 0 }}>
                     {note.title}
                   </Text>
@@ -1243,16 +1159,92 @@ function DesktopHomePage() {
             </ul>
           )}
         </HideableCard>
+      </div>
+
+      {/* ⑤ 写作活力（5 指标 + 年度热力图）9 ｜ 问 AI 3；AI 关闭时写作活力占满 */}
+      <div className="grid grid-cols-12 gap-3">
+      <Card
+        size="small"
+        className={aiEnabled ? "col-span-9" : "col-span-12"}
+        styles={{ body: { padding: "12px 14px" } }}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <span className="flex items-center gap-2 text-sm font-medium">
+            <Sparkles size={14} style={{ color: token.colorWarning }} />
+            写作活力
+          </span>
+          <Text type="secondary" style={{ fontSize: 11 }}>
+            近一年
+          </Text>
+        </div>
+        <div className="grid grid-cols-5 gap-3">
+          <MetricItem
+            icon={<NotebookText size={16} style={{ color: token.colorPrimary }} />}
+            iconBg={tint(token.colorPrimary)}
+            value={vitalityMetrics.totalNotes}
+            label="笔记总数"
+          />
+          <MetricItem
+            icon={<Type size={16} style={{ color: token.colorPrimary }} />}
+            iconBg={tint(token.colorPrimary)}
+            value={vitalityMetrics.totalWords.toLocaleString()}
+            label="总字数"
+            isText
+          />
+          <MetricItem
+            icon={<Flame size={16} style={{ color: token.colorWarning }} />}
+            iconBg={tint(token.colorWarning)}
+            value={vitalityMetrics.streak}
+            valueSuffix="天"
+            label="连续写作"
+          />
+          <MetricItem
+            icon={<Clock size={16} style={{ color: token.colorInfo }} />}
+            iconBg={tint(token.colorInfo)}
+            value={vitalityMetrics.lastSinceLabel}
+            label="距上次写作"
+            isText
+          />
+          <MetricItem
+            icon={<TrendingUp size={16} style={{ color: token.colorSuccess }} />}
+            iconBg={tint(token.colorSuccess)}
+            value={vitalityMetrics.thisWeekWords.toLocaleString()}
+            label="本周字数"
+            extra={
+              vitalityMetrics.weekDelta != null && (
+                <span
+                  className="text-[11px]"
+                  style={{
+                    color:
+                      vitalityMetrics.weekDelta >= 0
+                        ? token.colorSuccess
+                        : token.colorError,
+                  }}
+                >
+                  {vitalityMetrics.weekDelta >= 0 ? "▲" : "▼"} {Math.abs(vitalityMetrics.weekDelta)}%
+                </span>
+              )
+            }
+          />
+        </div>
+        {/* 年度热力图（每日方块，悬停看「日期 · 字数」）——替代原来的 14 天柱状图 */}
+        <div
+          className="mt-3 pt-3"
+          style={{ borderTop: `1px solid ${token.colorBorderSecondary}` }}
+        >
+          <WritingHeatmap trend={trend} />
+        </div>
+      </Card>
 
         {aiEnabled && (
         <HideableCard
           widgetKey="askAi"
           size="small"
-          className="col-span-7"
+          className="col-span-3"
           styles={{ body: { padding: "12px 14px" } }}
           title={
             <span className="flex items-center gap-2 text-sm">
-              <Bot size={14} style={{ color: "#9333ea" }} />
+              <Bot size={14} style={{ color: token.colorPrimary }} />
               问 AI
             </span>
           }
@@ -1279,7 +1271,7 @@ function DesktopHomePage() {
                 icon={<Send size={12} />}
                 disabled={!aiQuestion.trim()}
                 onClick={handleAskAi}
-                style={{ color: aiQuestion.trim() ? "#9333ea" : undefined }}
+                style={{ color: aiQuestion.trim() ? token.colorPrimary : undefined }}
               />
             }
             style={{ borderRadius: 6, marginBottom: 8 }}
@@ -1366,6 +1358,52 @@ function DesktopHomePage() {
 }
 
 /** 写作活力卡内的单指标小项 */
+/** 图标底色：主题色的 14% 透明叠加（亮暗主题都合适，替代原来写死的浅色块） */
+function tint(color: string): string {
+  return `color-mix(in srgb, ${color} 14%, transparent)`;
+}
+
+/** 按小时给问候语 */
+function greetingFor(hour: number): string {
+  if (hour < 5) return "夜深了";
+  if (hour < 9) return "早上好";
+  if (hour < 12) return "上午好";
+  if (hour < 14) return "中午好";
+  if (hour < 18) return "下午好";
+  return "晚上好";
+}
+
+/** 「11 月 3 日 · 星期二」 */
+function homeDateLabel(d: Date): string {
+  const wk = ["日", "一", "二", "三", "四", "五", "六"][d.getDay()];
+  return `${d.getMonth() + 1} 月 ${d.getDate()} 日 · 星期${wk}`;
+}
+
+/** 首页快捷入口卡（原型 .qb）：图标块 + 名称 + 右侧小字数据；样式见 global.css .kb-qe */
+function QuickTile({
+  icon,
+  tone,
+  label,
+  meta,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  tone: "v" | "b";
+  label: string;
+  meta?: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <div className="kb-qe">
+      <button type="button" className="kb-qe-main" onClick={onClick}>
+        <span className={tone === "b" ? "kb-qe-ico is-info" : "kb-qe-ico"}>{icon}</span>
+        <span className="kb-qe-label">{label}</span>
+        {meta != null && <span className="kb-qe-meta">{meta}</span>}
+      </button>
+    </div>
+  );
+}
+
 function MetricItem({
   icon,
   iconBg,
@@ -1395,11 +1433,11 @@ function MetricItem({
         <div className="text-base font-semibold leading-tight" style={{ fontSize: isText ? 14 : 18 }}>
           {value}
           {valueSuffix && (
-            <span className="text-xs text-slate-400 font-normal ml-0.5">{valueSuffix}</span>
+            <span className="text-xs font-normal ml-0.5" style={{ color: "var(--kb-text-tertiary)" }}>{valueSuffix}</span>
           )}
           {extra && <span className="ml-1.5">{extra}</span>}
         </div>
-        <div className="text-[11px] text-slate-500">{label}</div>
+        <div className="text-[11px]" style={{ color: "var(--kb-text-secondary)" }}>{label}</div>
       </div>
     </div>
   );
