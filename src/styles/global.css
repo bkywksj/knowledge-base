@@ -2930,3 +2930,208 @@ body,
 .sidebar-folder-tree.kb-tree-guides .ant-tree-indent:not(:empty) ~ .ant-tree-switcher-noop::before {
   width: 14px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 标题栏（T2-1）—— 通栏 46px，左段 Logo + 品牌名 + 折叠面板，右段导航 / 操作 / 窗口按钮
+   原型见 docs/design/ui-v4/kit.css 的 .titlebar / .ib / .upd / .winbtn
+   ═══════════════════════════════════════════════════════════ */
+.kb-titlebar {
+  height: 46px;
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  background: transparent;
+  user-select: none;
+  position: relative;
+  z-index: 70;
+}
+.kb-tb-left {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 196px;
+  padding-right: 6px;
+  box-sizing: border-box;
+  transition: width 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+/* 拖动面板宽度时左段直接跟手，不走过渡（否则会比面板慢半拍） */
+body.sidebar-resizing .kb-tb-left {
+  transition: none;
+}
+.kb-tb-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 30px;
+  padding: 0 6px;
+  margin-right: auto;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--kb-text-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.kb-tb-brand:hover {
+  background: var(--kb-bg-hover);
+}
+.kb-tb-right {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding-left: 6px;
+}
+.kb-tb-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 100%;
+}
+
+/* 图标按钮：30×30、圆角 8，平时三级文字色，悬停浅底 + 主文字色（原型 .ib） */
+.kb-titlebar .kb-tb-btn.ant-btn {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0;
+  border-radius: 8px;
+  color: var(--kb-text-tertiary);
+}
+.kb-titlebar .kb-tb-btn.ant-btn:not(:disabled):hover {
+  background: var(--kb-bg-hover);
+  color: var(--kb-text-primary);
+}
+.kb-titlebar .kb-tb-btn.ant-btn.is-on {
+  color: var(--kb-primary);
+  background: var(--kb-primary-light);
+}
+.kb-titlebar .kb-tb-btn.ant-btn:disabled {
+  color: var(--kb-text-tertiary);
+  opacity: 0.4;
+}
+
+/* 版本 / 更新徽标（原型 .upd）：胶囊 24px；有更新时「● v旧 → v新」，下载中底部细进度条 */
+.kb-upd {
+  position: relative;
+  overflow: hidden;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  margin: 0 6px 0 4px;
+  border: none;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  color: var(--kb-primary);
+  background: var(--kb-primary-light);
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--kb-primary) 45%, transparent);
+  transition: background-color 0.15s ease;
+}
+.kb-upd:hover {
+  background: color-mix(in srgb, var(--kb-primary) 16%, transparent);
+}
+.kb-upd-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+.kb-upd-from {
+  color: var(--kb-text-tertiary);
+  font-weight: 500;
+}
+.kb-upd-arrow {
+  opacity: 0.8;
+}
+.kb-upd b {
+  font-weight: 700;
+}
+.kb-upd em {
+  font-style: normal;
+  font-weight: 500;
+  margin-left: 2px;
+}
+.kb-upd-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: color-mix(in srgb, var(--kb-primary) 15%, transparent);
+}
+.kb-upd-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--kb-primary);
+  transition: width 0.3s ease;
+}
+.kb-upd.is-downloading .kb-upd-dot {
+  animation: kbUpdPulse 1.2s ease-in-out infinite;
+}
+@keyframes kbUpdPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.kb-upd.is-ready {
+  color: var(--ant-color-success, #3E9A72);
+  background: color-mix(in srgb, var(--ant-color-success, #3E9A72) 10%, transparent);
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--ant-color-success, #3E9A72) 40%, transparent);
+}
+.kb-upd.is-ready .kb-upd-from {
+  color: color-mix(in srgb, var(--ant-color-success, #3E9A72) 70%, transparent);
+}
+/* 平时：中性灰的版本号胶囊，不抢眼 */
+.kb-upd.kb-upd-idle {
+  color: var(--kb-text-tertiary);
+  background: transparent;
+  box-shadow: 0 0 0 1px var(--kb-border);
+  font-weight: 500;
+}
+.kb-upd.kb-upd-idle:not(:disabled):hover {
+  background: var(--kb-bg-hover);
+}
+.kb-upd.kb-upd-idle:disabled {
+  cursor: default;
+}
+
+/* 窗口按钮：各 46px 宽、撑满所在条的高度；关闭悬停红底白字（原型 .winbtn） */
+.kb-winbtn {
+  display: flex;
+  align-self: stretch;
+  height: 100%;
+  margin-left: 6px;
+}
+.kb-winbtn > button {
+  width: 46px;
+  display: grid;
+  place-items: center;
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: var(--kb-text-secondary);
+  cursor: pointer;
+  outline: none;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.kb-winbtn > button:hover {
+  background: var(--kb-bg-hover);
+  color: var(--kb-text-primary);
+}
+.kb-winbtn > button.close:hover {
+  background: #DE5A6C;
+  color: #fff;
+}

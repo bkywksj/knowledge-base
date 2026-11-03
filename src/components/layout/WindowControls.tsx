@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 import { Minus, Square, Copy, X } from "lucide-react";
-import { theme as antdTheme } from "antd";
 
 function getAppWindow(): Window | null {
   try {
@@ -13,8 +12,6 @@ function getAppWindow(): Window | null {
 
 export function WindowControls() {
   const [isMaximized, setIsMaximized] = useState(false);
-  const [hovered, setHovered] = useState<string | null>(null);
-  const { token } = antdTheme.useToken();
   const windowRef = useRef<Window | null>(getAppWindow());
 
   useEffect(() => {
@@ -45,81 +42,18 @@ export function WindowControls() {
     windowRef.current?.close();
   }, []);
 
-  function getButtonStyle(id: string): React.CSSProperties {
-    const isHovered = hovered === id;
-    const isClose = id === "close";
-
-    if (isHovered && isClose) {
-      return { backgroundColor: "#e81123", color: "#fff" };
-    }
-    if (isHovered) {
-      return { backgroundColor: token.colorFillSecondary };
-    }
-    return {};
-  }
-
-  // 高度与 antd Button（size=middle）保持一致 = 32，避免同一 Header 里左右两组按钮竖直错位
-  const baseStyle: React.CSSProperties = {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: 36,
-    height: 32,
-    border: "none",
-    borderRadius: 6,
-    background: "transparent",
-    color: token.colorTextSecondary,
-    cursor: "pointer",
-    transition: "all 0.15s ease",
-    outline: "none",
-    padding: 0,
-    lineHeight: 1,
-  };
-
+  // v4 标题栏：三个按钮各 46px 宽、撑满标题栏高度，悬停浅底；关闭悬停红底白字。
+  // 样式在 global.css 的 .kb-winbtn（hover 用 CSS 而不是 state，省掉每次移入移出的重渲染）
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 2,
-        height: 48,
-        paddingRight: 8,
-        paddingLeft: 4,
-      }}
-    >
-      <button
-        style={{ ...baseStyle, ...getButtonStyle("min") }}
-        onMouseEnter={() => setHovered("min")}
-        onMouseLeave={() => setHovered(null)}
-        onClick={handleMinimize}
-        title="最小化"
-      >
-        <Minus size={16} strokeWidth={1.5} />
+    <div className="kb-winbtn">
+      <button type="button" onClick={handleMinimize} title="最小化">
+        <Minus size={15} strokeWidth={1.4} />
       </button>
-      <button
-        style={{ ...baseStyle, ...getButtonStyle("max") }}
-        onMouseEnter={() => setHovered("max")}
-        onMouseLeave={() => setHovered(null)}
-        onClick={handleToggleMaximize}
-        title={isMaximized ? "还原" : "最大化"}
-      >
-        {isMaximized ? (
-          <Copy size={14} strokeWidth={1.5} />
-        ) : (
-          <Square size={14} strokeWidth={1.5} />
-        )}
+      <button type="button" onClick={handleToggleMaximize} title={isMaximized ? "还原" : "最大化"}>
+        {isMaximized ? <Copy size={13} strokeWidth={1.4} /> : <Square size={13} strokeWidth={1.4} />}
       </button>
-      <button
-        style={{
-          ...baseStyle,
-          ...getButtonStyle("close"),
-        }}
-        onMouseEnter={() => setHovered("close")}
-        onMouseLeave={() => setHovered(null)}
-        onClick={handleClose}
-        title="关闭"
-      >
-        <X size={16} strokeWidth={1.5} />
+      <button type="button" className="close" onClick={handleClose} title="关闭">
+        <X size={15} strokeWidth={1.4} />
       </button>
     </div>
   );

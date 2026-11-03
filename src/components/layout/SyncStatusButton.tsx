@@ -95,6 +95,7 @@ export function SyncStatusButton() {
     <Tooltip title={tooltipTitle} placement="bottom">
       <Button
         type="text"
+        className="kb-tb-btn"
         icon={<ArrowDownUp size={16} className={syncing ? "kb-update-float" : ""} />}
         onClick={handleClick}
         loading={false}

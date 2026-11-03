@@ -35,6 +35,7 @@ import { ShortcutsPanel } from "@/components/ui/ShortcutsPanel";
 import { createBlankAndOpen } from "@/lib/noteCreator";
 import { targetFromFolderParam } from "@/lib/newNoteTarget";
 import { UpdateBadge } from "@/components/ui/UpdateBadge";
+import { BrandLogo } from "@/components/ui/BrandLogo";
 import { UpdateModal } from "@/components/ui/UpdateModal";
 import { AttachmentPreviewModal } from "@/components/preview/AttachmentPreviewModal";
 import { AiImportRequestHost } from "@/components/ai/AiImportRequestHost";
@@ -42,14 +43,14 @@ import { useUpdater } from "@/components/updater/UpdaterProvider";
 import { SyncStatusButton } from "./SyncStatusButton";
 import { syncV1Api } from "@/lib/api";
 
-const { Header, Sider, Content } = Layout;
+const { Sider, Content } = Layout;
 
 // macOS 上使用 titleBarStyle: "Overlay" 保留原生红黄绿按钮（见 tauri.macos.conf.json）。
 // 避免 `decorations: false` 触发 NSWindow setStyleMask 反复重建（2026-04-22 卡死根因）。
-// 因此 Mac 下需隐藏自绘 WindowControls，并给 Header 左侧留出 ~80px 让位给系统按钮。
+// 因此 Mac 下需隐藏自绘 WindowControls，并给标题栏左侧留出 ~80px 让位给系统按钮。
 const IS_MAC =
   typeof navigator !== "undefined" && /Mac OS X|Macintosh/.test(navigator.userAgent);
-const HEADER_LEFT_PADDING = IS_MAC ? 80 : 16;
+const HEADER_LEFT_PADDING = IS_MAC ? 80 : 10;
 
 function getAppWindow(): Window | null {
   try {
@@ -59,7 +60,7 @@ function getAppWindow(): Window | null {
   }
 }
 
-/** Header 中间的可拖拽空白区域 */
+/** 标题栏中间的可拖拽空白区域（单击拖动窗口，双击最大化 / 还原） */
 function DragRegion() {
   const windowRef = useRef<Window | null>(getAppWindow());
 
@@ -261,6 +262,8 @@ export function AppLayout() {
   // SidePanel 容器 DOM 引用：拖拽时直接改样式，避免 React 每 mousemove 重渲染
   const panelRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<HTMLDivElement>(null);
+  // 标题栏左段（Logo + 品牌名 + 折叠按钮）：面板展开时与「活动栏 + 面板」等宽，拖动时一起变
+  const titleLeftRef = useRef<HTMLDivElement>(null);
 
   const startPanelResize = useCallback(
     (e: React.MouseEvent) => {
@@ -278,6 +281,9 @@ export function AppLayout() {
         }
         if (handleRef.current) {
           handleRef.current.style.left = `${effectiveSiderWidth + w - 2}px`;
+        }
+        if (titleLeftRef.current) {
+          titleLeftRef.current.style.width = `${effectiveSiderWidth + w}px`;
         }
       }
 
@@ -573,8 +579,8 @@ export function AppLayout() {
   }, [handleGlobalKeyDown]);
 
   return (
-    <Layout
-      style={{ height: "100vh", position: "relative" }}
+    <div
+      style={{ height: "100vh", display: "flex", flexDirection: "column" }}
       // 全局右键守卫：input/textarea/[contenteditable=true] 白名单（搜索框 / Tiptap 编辑器
       // 内部仍走浏览器原生剪切/复制/粘贴菜单），其他位置吞 WebView 默认菜单。
       // 各 panel / 页面已接入的自定义菜单子级 onContextMenu 先跑 preventDefault + ctx.open，
@@ -586,14 +592,123 @@ export function AppLayout() {
         e.preventDefault();
       }}
     >
+      {/*
+        v4 标题栏：通栏横跨窗口（原型 docs/design/ui-v4 .titlebar），活动栏 / 侧栏面板 / 主区都在它下面。
+        左段宽度 = 活动栏 + 面板（面板展开时），与下方两列对齐；面板收起时按内容宽（CSS 最小 196px）。
+        专注模式 / pop-out 窗口不显示（与原 Header 一致）。样式见 global.css .kb-titlebar
+      */}
+      {!focusMode && (
+        <header className="kb-titlebar">
+          <div
+            ref={titleLeftRef}
+            className="kb-tb-left"
+            style={{
+              paddingLeft: HEADER_LEFT_PADDING,
+              width: panelShown ? effectiveSiderWidth + sidePanelWidth : undefined,
+            }}
+          >
+            <Tooltip title="回到首页">
+              <button type="button" className="kb-tb-brand" onClick={() => navigate("/")}>
+                <BrandLogo size={22} />
+                <span>Knowledge Base</span>
+              </button>
+            </Tooltip>
+            {canTogglePanel && (
+              <Tooltip title={sidePanelVisible ? "折叠面板" : "展开面板"}>
+                <Button
+                  type="text"
+                  className="kb-tb-btn"
+                  icon={
+                    sidePanelVisible ? (
+                      <PanelLeftClose size={16} />
+                    ) : (
+                      <PanelLeftOpen size={16} />
+                    )
+                  }
+                  onClick={toggleSidePanel}
+                />
+              </Tooltip>
+            )}
+          </div>
+          <div className="kb-tb-right">
+            <Tooltip title="后退 (Alt+←)">
+              <Button
+                type="text"
+                className="kb-tb-btn"
+                icon={<ArrowLeft size={16} />}
+                disabled={!canGoBack}
+                onClick={() => navigate(-1)}
+              />
+            </Tooltip>
+            <Tooltip title="前进 (Alt+→)">
+              <Button
+                type="text"
+                className="kb-tb-btn"
+                icon={<ArrowRight size={16} />}
+                disabled={!canGoForward}
+                onClick={() => navigate(1)}
+              />
+            </Tooltip>
+            <DragRegion />
+            <div className="kb-tb-actions">
+              <UpdateBadge
+                update={update}
+                phase={updatePhase}
+                progress={updateProgress}
+                onClick={openModal}
+                onCheck={() => void checkUpdateWithFeedback(checkManually)}
+              />
+              <Tooltip title="快速记一笔 (Ctrl+Alt+N) — 追加到今天的日记">
+                <Button
+                  type="text"
+                  className="kb-tb-btn"
+                  icon={<FilePlus2 size={16} />}
+                  onClick={() => setQuickNoteOpen(true)}
+                />
+              </Tooltip>
+              <Tooltip title="搜索 (Ctrl+K)">
+                <Button
+                  type="text"
+                  className="kb-tb-btn"
+                  icon={<Search size={16} />}
+                  onClick={() => setPaletteOpen(true)}
+                />
+              </Tooltip>
+              <SyncStatusButton />
+              <Dropdown menu={{ items: themeMenuItems, onClick: handleThemeSelect, selectedKeys: [activeTheme] }} trigger={["click"]}>
+                <Tooltip title="切换主题">
+                  <Button type="text" className="kb-tb-btn" icon={<Palette size={16} />} />
+                </Tooltip>
+              </Dropdown>
+              <Tooltip title="设置">
+                <Button
+                  type="text"
+                  className="kb-tb-btn"
+                  icon={<SettingOutlined />}
+                  onClick={() => navigate("/settings")}
+                />
+              </Tooltip>
+              <Tooltip title={alwaysOnTop ? "取消置顶" : "窗口置顶"}>
+                <Button
+                  type="text"
+                  className={alwaysOnTop ? "kb-tb-btn is-on" : "kb-tb-btn"}
+                  icon={alwaysOnTop ? <PushpinFilled /> : <PushpinOutlined />}
+                  onClick={() => setAlwaysOnTop(!alwaysOnTop)}
+                />
+              </Tooltip>
+              {!IS_MAC && <WindowControls />}
+            </div>
+          </div>
+        </header>
+      )}
+    <Layout
+      style={{ flex: 1, minHeight: 0, position: "relative" }}
+    >
       {!focusMode && !autoHideActivityBar && (
         <Sider
           width={siderWidth}
           style={{
             borderRight: `1px solid ${token.colorBorderSecondary}`,
-            // Mac 上 titleBarStyle: "Overlay" 使系统红黄绿按钮悬浮在窗口左上角，
-            // 给 Sider 顶部留出高度避免按钮压住菜单项
-            paddingTop: IS_MAC ? 28 : 0,
           }}
         >
           <ActivityBar />
@@ -608,7 +723,7 @@ export function AppLayout() {
             style={{
               position: "absolute",
               left: 0,
-              top: IS_MAC ? 28 : 0,
+              top: 0,
               bottom: 0,
               width: 6,
               zIndex: 60,
@@ -621,7 +736,7 @@ export function AppLayout() {
             style={{
               position: "absolute",
               left: 0,
-              top: IS_MAC ? 28 : 0,
+              top: 0,
               bottom: 0,
               width: ACTIVITY_BAR_WIDTH,
               transform: activityBarShown
@@ -653,7 +768,7 @@ export function AppLayout() {
           className="side-panel-enter kb-surface"
           style={{
             position: "absolute",
-            top: IS_MAC ? 28 : 0,
+            top: 0,
             left: effectiveSiderWidth,
             width: sidePanelWidth,
             bottom: 0,
@@ -705,97 +820,6 @@ export function AppLayout() {
           transition: "margin-left 180ms cubic-bezier(0.2, 0.8, 0.2, 1)",
         }}
       >
-        {!focusMode && (
-        <Header
-          style={{
-            padding: 0,
-            height: 48,
-            lineHeight: "48px",
-            display: "flex",
-            alignItems: "center",
-            borderBottom: `1px solid ${token.colorBorderSecondary}`,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 4, paddingLeft: HEADER_LEFT_PADDING }}>
-            {canTogglePanel && (
-              <Tooltip title={sidePanelVisible ? "折叠面板" : "展开面板"}>
-                <Button
-                  type="text"
-                  icon={
-                    sidePanelVisible ? (
-                      <PanelLeftClose size={16} />
-                    ) : (
-                      <PanelLeftOpen size={16} />
-                    )
-                  }
-                  onClick={toggleSidePanel}
-                />
-              </Tooltip>
-            )}
-            <Tooltip title="后退 (Alt+←)">
-              <Button
-                type="text"
-                icon={<ArrowLeft size={16} />}
-                disabled={!canGoBack}
-                onClick={() => navigate(-1)}
-              />
-            </Tooltip>
-            <Tooltip title="前进 (Alt+→)">
-              <Button
-                type="text"
-                icon={<ArrowRight size={16} />}
-                disabled={!canGoForward}
-                onClick={() => navigate(1)}
-              />
-            </Tooltip>
-          </div>
-          <DragRegion />
-          <div style={{ display: "flex", alignItems: "center" }}>
-            <UpdateBadge
-              update={update}
-              phase={updatePhase}
-              progress={updateProgress}
-              onClick={openModal}
-              onCheck={() => void checkUpdateWithFeedback(checkManually)}
-            />
-            <Tooltip title="快速记一笔 (Ctrl+Alt+N) — 追加到今天的日记">
-              <Button
-                type="text"
-                icon={<FilePlus2 size={16} />}
-                onClick={() => setQuickNoteOpen(true)}
-              />
-            </Tooltip>
-            <Tooltip title="搜索 (Ctrl+K)">
-              <Button
-                type="text"
-                icon={<Search size={16} />}
-                onClick={() => setPaletteOpen(true)}
-              />
-            </Tooltip>
-            <SyncStatusButton />
-            <Dropdown menu={{ items: themeMenuItems, onClick: handleThemeSelect, selectedKeys: [activeTheme] }} trigger={["click"]}>
-              <Tooltip title="切换主题">
-                <Button type="text" icon={<Palette size={16} />} />
-              </Tooltip>
-            </Dropdown>
-            <Button
-              type="text"
-              icon={<SettingOutlined />}
-              onClick={() => navigate("/settings")}
-              title="设置"
-            />
-            <Tooltip title={alwaysOnTop ? "取消置顶" : "窗口置顶"}>
-              <Button
-                type="text"
-                icon={alwaysOnTop ? <PushpinFilled /> : <PushpinOutlined />}
-                onClick={() => setAlwaysOnTop(!alwaysOnTop)}
-                style={alwaysOnTop ? { color: token.colorPrimary } : undefined}
-              />
-            </Tooltip>
-            {!IS_MAC && <WindowControls />}
-          </div>
-        </Header>
-        )}
         {/* 标签栏只在笔记工作区渲染。刻意做成"不挂载"而非 TabBar 内部 early return：
             TabBar 注册了全局 Ctrl+W 关闭当前 tab，若在日记 / 待办页仍挂着，按 Ctrl+W
             会关掉一个屏幕上根本看不见的笔记 tab。不挂载则快捷键随之失效，语义才对。
@@ -871,5 +895,6 @@ export function AppLayout() {
       <AiImportRequestHost />
       <AsrToggleController />
     </Layout>
+    </div>
   );
 }
