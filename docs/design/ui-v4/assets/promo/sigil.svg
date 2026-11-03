@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="gIce" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#0e7490"/>
+    </linearGradient>
+  </defs>
+  <!-- 冰蓝渐变圆角方形底板（贴边设计 + macOS squircle 圆角）-->
+  <rect x="0" y="0" width="1024" height="1024" rx="232" ry="232" fill="url(#gIce)"/>
+  <!-- 大光晕环（白色半透）-->
+  <circle cx="512" cy="512" r="380" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="40"/>
+  <!-- 钥匙（倾斜 -30°，白色 + 深青内圆）-->
+  <g transform="translate(512 512) rotate(-30)" fill="#fff">
+    <circle cx="-180" cy="0" r="140"/>
+    <circle cx="-180" cy="0" r="60" fill="#155e75"/>
+    <rect x="-50" y="-32" width="340" height="64" rx="14"/>
+    <rect x="240" y="32" width="36" height="78"/>
+    <rect x="180" y="32" width="36" height="56"/>
+  </g>
+</svg>

@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a56db"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="100%" stop-color="#a78bfa"/>
+    </linearGradient>
+  </defs>
+  <!-- 圆角底板 -->
+  <rect width="128" height="128" rx="28" fill="url(#bg)"/>
+  <!-- 桌面窗口轮廓 -->
+  <rect x="24" y="30" width="80" height="62" rx="8" stroke="white" stroke-width="3" fill="none" opacity="0.35"/>
+  <line x1="24" y1="44" x2="104" y2="44" stroke="white" stroke-width="2" opacity="0.25"/>
+  <!-- 窗口控制点 -->
+  <circle cx="34" cy="37" r="2.5" fill="white" opacity="0.4"/>
+  <circle cx="42" cy="37" r="2.5" fill="white" opacity="0.4"/>
+  <circle cx="50" cy="37" r="2.5" fill="white" opacity="0.4"/>
+  <!-- 中心灵动闪电 — 代表 AI 驱动 -->
+  <path d="M56 50 L68 50 L62 62 L74 62 L54 84 L60 68 L48 68Z" fill="white" opacity="0.95"/>
+  <!-- 三个 AI 节点 — 代表三引擎协同 -->
+  <circle cx="36" cy="104" r="6" fill="url(#spark)" opacity="0.9"/>
+  <circle cx="64" cy="108" r="6" fill="url(#spark)" opacity="0.9"/>
+  <circle cx="92" cy="104" r="6" fill="url(#spark)" opacity="0.9"/>
+  <!-- 节点连线 -->
+  <line x1="42" y1="104" x2="58" y2="108" stroke="url(#spark)" stroke-width="2" opacity="0.6"/>
+  <line x1="70" y1="108" x2="86" y2="104" stroke="url(#spark)" stroke-width="2" opacity="0.6"/>
+  <!-- 中心节点到窗口的连线 — AI 驱动桌面 -->
+  <line x1="64" y1="102" x2="64" y2="84" stroke="white" stroke-width="1.5" opacity="0.3" stroke-dasharray="3 3"/>
+</svg>

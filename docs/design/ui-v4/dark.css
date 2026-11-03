@@ -1,0 +1,114 @@
+/* ════════════════════════════════════════════════════════════
+   Knowledge Base · 暗色（底色中性，紫色只留给强调色）
+   html.dark 生效；底色为暖炭（带一点暖棕，长时间写作更柔和）
+   所有面板底色都走 --d-* 变量，换底色只改这一组，不碰组件规则
+   ════════════════════════════════════════════════════════════ */
+html.dark{
+  /* 暖炭：底色带一点暖棕，紫色只用在强调处 */
+  --d-chrome:#161514; --d-sheet:#1D1C1A; --d-tint:#21201E; --d-card:#242321;
+  --d-raised:#2D2B28; --d-field:#191817; --d-sel:#312F2B; --d-menu:rgba(40,38,35,.98);
+  --d-dot:#302E2B; --d-wb:#1A1918; --d-line:255,245,230;
+
+  --chrome:var(--d-chrome);
+  --sheet:var(--d-sheet);
+  --sheet-tint:var(--d-tint);
+  --raised:var(--d-raised);
+  --field:var(--d-field);
+  --hover:rgba(var(--d-line),.05); --press:rgba(var(--d-line),.085);
+
+  --ink:#EFEBE4; --ink2:#C4BEB4; --ink3:#958F85; --ink4:#68635C;
+  --hair:rgba(var(--d-line),.07); --hair2:rgba(var(--d-line),.12);
+
+  --accent:#A992FA; --accent-ink:#FFFFFF;
+  --accent-soft:rgba(169,146,250,.12); --accent-soft2:rgba(169,146,250,.2); --accent-line:rgba(169,146,250,.45);
+  --link:#B9A7FC; --link-line:rgba(185,167,252,.4); --link-soft:rgba(169,146,250,.13);
+  --grad:linear-gradient(135deg,#9C86F2 0%,#8269E4 45%,#6C52D2 100%);
+  --grad-soft:linear-gradient(135deg,var(--d-card) 0%,var(--d-raised) 100%);
+  --grad-text:linear-gradient(100deg,#C2B2FF 0%,#A992FA 50%,#D3A6F2 100%);
+  --grad-bar:linear-gradient(180deg,var(--d-tint) 0%,var(--d-sheet) 100%);
+
+  --ok:#62C79B; --ok-soft:rgba(98,199,155,.14);
+  --bad:#F0808F; --bad-soft:rgba(240,128,143,.14);
+  --warn:#E3B160; --warn-soft:rgba(227,177,96,.14);
+  --info:#86A9F2; --info-soft:rgba(134,169,242,.14);
+
+  --code-bg:var(--d-field); --code-inline:rgba(var(--d-line),.07);
+  --kw:#D695EE; --fn:#93A4FF; --str:#7FCDA2; --cm:#6E6E7A; --ty:#E8A873;
+
+  --sh-raised:0 0 0 .5px rgba(var(--d-line),.09),0 1px 2px rgba(0,0,0,.35);
+  --sh-sheet:0 0 0 .5px rgba(var(--d-line),.07),0 18px 40px -16px rgba(0,0,0,.6);
+  --sh-card:0 0 0 .5px rgba(var(--d-line),.08),0 10px 26px -16px rgba(0,0,0,.55);
+  --sh-pop:0 0 0 .5px rgba(var(--d-line),.12),0 6px 16px rgba(0,0,0,.4),0 24px 48px -12px rgba(0,0,0,.6);
+  --hi:inset 0 1px 0 rgba(var(--d-line),.03);
+  --flat:inset 0 0 0 1px rgba(var(--d-line),.1);
+  --flat-on:inset 0 0 0 1px rgba(169,146,250,.38);
+
+  /* 热力图空格子跟底色走，有记录的格子才是紫色 */
+  --h0:var(--d-raised); --h1:#3A3166; --h2:#5845A6; --h3:#7F66DC; --h4:#B19CFF;
+  color-scheme:dark;
+}
+
+html.dark body{background:var(--chrome)}
+
+/* ── 外框：标签页 / 活动栏 / 树行 / 分段按钮的选中态 ── */
+html.dark .tab.on,
+html.dark .ra.on,
+html.dark .row.on,
+html.dark .seg button.on,
+html.dark .sess.on,
+html.dark .st-nav a.on{background:var(--d-sel)!important;box-shadow:var(--flat)!important}
+html.dark .ra.on,html.dark .seg button.on{color:var(--accent)}
+html.dark .ra .bd{box-shadow:0 0 0 2px var(--chrome)}
+html.dark .winbtn button.close:hover{background:#C9485C}
+
+/* ── 内容区底板 ── */
+html.dark .sheet{background:var(--d-sheet)}
+html.dark .tinted{background:var(--d-tint)}
+html.dark .bar,html.dark .statusbar,html.dark .pager{background:var(--d-tint)}
+html.dark .card{background:var(--d-card)}
+html.dark .modal{background:var(--d-raised)}
+html.dark .menu{background:var(--d-menu);backdrop-filter:blur(14px)}
+
+/* ── 卡片图标底色：同色相的半透明，不再写死紫调深色 ── */
+html.dark .cico.v{background:rgba(169,146,250,.16)}
+html.dark .cico.g{background:rgba(98,199,155,.15)}
+html.dark .cico.o{background:rgba(227,177,96,.15)}
+html.dark .cico.b{background:rgba(134,169,242,.15)}
+html.dark .cico.r{background:rgba(240,128,143,.15)}
+html.dark .notice.warn{background:rgba(227,177,96,.1);box-shadow:0 0 0 .5px rgba(227,177,96,.3) inset}
+
+/* ── 控件 ── */
+html.dark .sw{background:var(--d-sel)}
+html.dark .sw::after{background:#E8E8EE;box-shadow:0 1px 2px rgba(0,0,0,.4)}
+html.dark .radio{background:var(--field)}
+html.dark .chip.tag{background:var(--raised)}
+html.dark .pin-dots i.f{background:var(--raised)}
+
+/* ── 编辑器格式工具栏 ── */
+html.dark .fmt{background:var(--d-card)!important;box-shadow:inset 0 0 0 1px var(--hair2)!important}
+html.dark .fb:hover{background:var(--d-sel);color:var(--accent)}
+html.dark .fb.on{background:rgba(169,146,250,.16)!important;color:var(--accent)}
+html.dark .fb.ai,html.dark .fb.ai:hover{color:#fff}
+
+/* ── 列表行悬停时浮出的操作按钮，底色渐变要跟着行底 ── */
+html.dark .li .acts,html.dark .tk .acts{background:linear-gradient(90deg,transparent 0,var(--d-sheet) 20px)}
+
+/* ── 推荐应用：真实 logo 很多是深色，给一块浅色衬底保证可辨认 ── */
+html.dark .reco-i{background:var(--raised)}
+html.dark .reco-i:hover{background:var(--d-sel)}
+html.dark .reco-logo{background:#EDEDF2;box-shadow:none}
+
+/* ── AI 出处缩略图 / 图谱节点文字描边 / 白板点阵 ── */
+html.dark .imgs .thumb{background:var(--d-raised)}
+html.dark .gp svg text{stroke:var(--d-sheet)}
+html.dark .wb{background:radial-gradient(circle,var(--d-dot) 1px,transparent 1.2px) 0 0/22px 22px,var(--d-wb)!important}
+
+/* ── 半透明浅色浮层：锁定遮罩 / 图谱图例 ── */
+html.dark .mask{background:rgba(0,0,0,.45)}
+html.dark .legend{background:var(--d-menu)}
+
+/* ── 滚动条 ── */
+html.dark ::-webkit-scrollbar-thumb:hover{background:rgba(var(--d-line),.2)}
+
+/* ── 主题切换时整体过渡，避免闪一下 ── */
+html.theming *{transition:background-color .25s var(--ease),color .25s var(--ease),box-shadow .25s var(--ease)!important}

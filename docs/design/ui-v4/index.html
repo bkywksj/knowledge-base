@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knowledge Base · 界面重设计 v4（淡紫 · 全部页面）</title>
+<link rel="stylesheet" href="kit.css">
+<link rel="stylesheet" href="dark.css">
+</head>
+<body>
+
+<!-- ═════════════ 图标库（线性 1.6 描边） ═════════════ -->
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="home" viewBox="0 0 24 24"><path d="M3.5 10.2 12 3.5l8.5 6.7V19a1.5 1.5 0 0 1-1.5 1.5h-4.2v-5.8H9.2v5.8H5A1.5 1.5 0 0 1 3.5 19z"/></symbol>
+  <symbol id="note" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></symbol>
+  <symbol id="cal" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M8 3v4M16 3v4M3.5 10h17"/></symbol>
+  <symbol id="check" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="m8.5 12 2.5 2.5 4.5-5"/></symbol>
+  <symbol id="cards" viewBox="0 0 24 24"><rect x="6" y="3.5" width="14" height="14" rx="2.5"/><path d="M4 7.5v10A3 3 0 0 0 7 20.5h10"/></symbol>
+  <symbol id="tag" viewBox="0 0 24 24"><path d="M12.6 3.6a2 2 0 0 0-1.4-.6H5a2 2 0 0 0-2 2v6.2a2 2 0 0 0 .6 1.4l8.2 8.2a2 2 0 0 0 2.8 0l6-6a2 2 0 0 0 0-2.8z"/><circle cx="7.8" cy="7.8" r="1.3"/></symbol>
+  <symbol id="graph" viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.2 8.3 10.8 15.8M15.6 6.3 8.5 6.9M13.4 15.9l3.4-7.6"/></symbol>
+  <symbol id="bot" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="11.5" rx="3.5"/><path d="M12 8V4.5M9.5 13v1.5M14.5 13v1.5M2.5 13.5v2M21.5 13.5v2"/></symbol>
+  <symbol id="spark" viewBox="0 0 24 24"><path d="M12 3.5 13.6 8 18 9.6 13.6 11.2 12 15.7 10.4 11.2 6 9.6 10.4 8z"/><path d="M18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></symbol>
+  <symbol id="sparkle" viewBox="0 0 24 24"><path d="M12 3.5 13.6 8 18 9.6 13.6 11.2 12 15.7 10.4 11.2 6 9.6 10.4 8z"/></symbol>
+  <symbol id="bell" viewBox="0 0 24 24"><path d="M6.5 9a5.5 5.5 0 0 1 11 0c0 5.5 2.5 7.5 2.5 7.5H4s2.5-2 2.5-7.5"/><path d="M10.3 20a1.9 1.9 0 0 0 3.4 0"/></symbol>
+  <symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
+  <symbol id="trash" viewBox="0 0 24 24"><path d="M4 6.5h16M9.5 6.5V4.5h5v2M6 6.5l.9 12.6A1.5 1.5 0 0 0 8.4 20.5h7.2a1.5 1.5 0 0 0 1.5-1.4L18 6.5"/></symbol>
+  <symbol id="eyeoff" viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 5.2A9.8 9.8 0 0 1 12 5c5 0 8.5 4.5 9.5 7a13 13 0 0 1-2.4 3.5M6.6 6.6C4.5 8 3.1 10.1 2.5 12c1 2.5 4.5 7 9.5 7a9.6 9.6 0 0 0 5.4-1.6"/></symbol>
+  <symbol id="eye" viewBox="0 0 24 24"><path d="M2.5 12c1-2.5 4.5-7 9.5-7s8.5 4.5 9.5 7c-1 2.5-4.5 7-9.5 7s-8.5-4.5-9.5-7z"/><circle cx="12" cy="12" r="2.8"/></symbol>
+  <symbol id="info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 16v-4.5M12 8h.01"/></symbol>
+  <symbol id="lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></symbol>
+  <symbol id="gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.8"/><path d="M19.2 14.6a1.4 1.4 0 0 0 .3 1.5l.1.1a1.8 1.8 0 1 1-2.5 2.5l-.1-.1a1.4 1.4 0 0 0-1.5-.3 1.4 1.4 0 0 0-.9 1.3v.2a1.8 1.8 0 1 1-3.6 0v-.1a1.4 1.4 0 0 0-.9-1.3 1.4 1.4 0 0 0-1.5.3l-.1.1a1.8 1.8 0 1 1-2.5-2.5l.1-.1a1.4 1.4 0 0 0 .3-1.5 1.4 1.4 0 0 0-1.3-.9h-.2a1.8 1.8 0 1 1 0-3.6h.1a1.4 1.4 0 0 0 1.3-.9 1.4 1.4 0 0 0-.3-1.5l-.1-.1a1.8 1.8 0 1 1 2.5-2.5l.1.1a1.4 1.4 0 0 0 1.5.3h.1a1.4 1.4 0 0 0 .8-1.3v-.2a1.8 1.8 0 1 1 3.6 0v.1a1.4 1.4 0 0 0 .9 1.3 1.4 1.4 0 0 0 1.5-.3l.1-.1a1.8 1.8 0 1 1 2.5 2.5l-.1.1a1.4 1.4 0 0 0-.3 1.5v.1a1.4 1.4 0 0 0 1.3.8h.2a1.8 1.8 0 1 1 0 3.6h-.1a1.4 1.4 0 0 0-1.3.9z"/></symbol>
+  <symbol id="palette" viewBox="0 0 24 24"><path d="M12 3.5a8.5 8.5 0 0 0 0 17c1.2 0 1.8-.8 1.8-1.7 0-1.1-.9-1.6-.9-2.6 0-1 .8-1.7 1.8-1.7h2.1a3.7 3.7 0 0 0 3.7-3.7c0-4-3.8-7.3-8.5-7.3z"/><circle cx="7.8" cy="11" r="1"/><circle cx="10.5" cy="7.3" r="1"/><circle cx="15" cy="7.8" r="1"/></symbol>
+  <symbol id="pin" viewBox="0 0 24 24"><path d="M9 4h6l-1 5.5 3.5 3v1.5h-11V12.5l3.5-3zM12 15v5.5"/></symbol>
+  <symbol id="fileplus" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 11.5v6M9 14.5h6"/></symbol>
+  <symbol id="folder" viewBox="0 0 24 24"><path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h3.6l2 2.2h7.4a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="folderplus" viewBox="0 0 24 24"><path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h3.6l2 2.2h7.4a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/><path d="M12 11v5M9.5 13.5h5"/></symbol>
+  <symbol id="folderopen" viewBox="0 0 24 24"><path d="M4 18.5 6.4 11a1.5 1.5 0 0 1 1.4-1h12.7a1 1 0 0 1 1 1.3l-2 6.3a1.5 1.5 0 0 1-1.4 1H5.5a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2h3.6l2 2.2h5.4a2 2 0 0 1 2 2V10"/></symbol>
+  <symbol id="broom" viewBox="0 0 24 24"><path d="M14.5 3.5 10 12M7 12.5h7l1.5 8h-10z"/><path d="M9 16.5v4M12 16.5v4"/></symbol>
+  <symbol id="foldonly" viewBox="0 0 24 24"><path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h3.6l2 2.2h7.4a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/><path d="M8 14h8"/></symbol>
+  <symbol id="collapse" viewBox="0 0 24 24"><path d="m7 20 5-5 5 5M7 4l5 5 5-5"/></symbol>
+  <symbol id="cv" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+  <symbol id="right" viewBox="0 0 24 24"><path d="m10 7 5 5-5 5"/></symbol>
+  <symbol id="left" viewBox="0 0 24 24"><path d="m14 7-5 5 5 5"/></symbol>
+  <symbol id="arrl" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+  <symbol id="arrr" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></symbol>
+  <symbol id="x" viewBox="0 0 24 24"><path d="M17 7 7 17M7 7l10 10"/></symbol>
+  <symbol id="min" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="max" viewBox="0 0 24 24"><rect x="5.5" y="5.5" width="13" height="13" rx="1.5"/></symbol>
+  <symbol id="link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+  <symbol id="mic" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M18 11a6 6 0 0 1-12 0M12 17v3.5"/></symbol>
+  <symbol id="pen" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/></symbol>
+  <symbol id="outline" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M14.5 4.5v15M17 8.5h1M17 11.5h1"/></symbol>
+  <symbol id="dots" viewBox="0 0 24 24"><circle cx="6" cy="12" r=".9"/><circle cx="12" cy="12" r=".9"/><circle cx="18" cy="12" r=".9"/></symbol>
+  <symbol id="copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></symbol>
+  <symbol id="tick" viewBox="0 0 24 24"><path d="M5 12.5 10 17.5 19 7.5"/></symbol>
+  <symbol id="bulb" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2V16h5v-.1c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z"/></symbol>
+  <symbol id="panel" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/></symbol>
+  <symbol id="list" viewBox="0 0 24 24"><path d="M9 6.5h11M9 12h11M9 17.5h11M4.5 6.5h.01M4.5 12h.01M4.5 17.5h.01"/></symbol>
+  <symbol id="code" viewBox="0 0 24 24"><path d="m8.5 8-4 4 4 4M15.5 8l4 4-4 4"/></symbol>
+  <symbol id="book" viewBox="0 0 24 24"><path d="M12 6.5c-2-1.5-5-2-8-1.5v13c3-.5 6 0 8 1.5 2-1.5 5-2 8-1.5V5c-3-.5-6 0-8 1.5zM12 6.5v13"/></symbol>
+  <symbol id="focus" viewBox="0 0 24 24"><path d="M4 8.5V5.5A1.5 1.5 0 0 1 5.5 4h3M15.5 4h3A1.5 1.5 0 0 1 20 5.5v3M20 15.5v3a1.5 1.5 0 0 1-1.5 1.5h-3M8.5 20h-3A1.5 1.5 0 0 1 4 18.5v-3"/><circle cx="12" cy="12" r="2.5"/></symbol>
+  <symbol id="history" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.6L4 8.7"/><path d="M4 4v4.7h4.7M12 8v4.5l3 2"/></symbol>
+  <symbol id="mind" viewBox="0 0 24 24"><rect x="9" y="9.5" width="6" height="5" rx="1.5"/><rect x="2.5" y="3.5" width="5" height="4" rx="1.2"/><rect x="2.5" y="16.5" width="5" height="4" rx="1.2"/><rect x="16.5" y="10" width="5" height="4" rx="1.2"/><path d="M7.5 5.5H8a1 1 0 0 1 1 1V9.5M7.5 18.5H8a1 1 0 0 0 1-1V14.5M15 12h1.5"/></symbol>
+  <symbol id="slides" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M12 16v4M8.5 20h7M10 8.5l4 1.5-4 1.5z"/></symbol>
+  <symbol id="newwin" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8 8M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10"/></symbol>
+  <symbol id="print" viewBox="0 0 24 24"><path d="M7 8.5V4h10v4.5M7 16.5H5.5A1.5 1.5 0 0 1 4 15v-5a1.5 1.5 0 0 1 1.5-1.5h13A1.5 1.5 0 0 1 20 10v5a1.5 1.5 0 0 1-1.5 1.5H17"/><rect x="7" y="13.5" width="10" height="6.5" rx="1"/></symbol>
+  <symbol id="export" viewBox="0 0 24 24"><path d="M12 15V4M8 7.5 12 3.5l4 4M5 13v5.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V13"/></symbol>
+  <symbol id="import" viewBox="0 0 24 24"><path d="M12 4v11M8 11l4 4 4-4M5 15v3.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V15"/></symbol>
+  <symbol id="whiteboard" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="12" rx="2"/><path d="M8 20l2-4M16 20l-2-4M7 11.5l3-3 2.5 2.5L17 7"/></symbol>
+  <symbol id="globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.3 2.5 3.4 5.3 3.4 8.5s-1.1 6-3.4 8.5c-2.3-2.5-3.4-5.3-3.4-8.5S9.7 6 12 3.5z"/></symbol>
+  <symbol id="template" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="2.5"/><path d="M3.5 9h17M9 9v11.5"/></symbol>
+  <symbol id="clear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="m9 9 6 6M15 9l-6 6"/></symbol>
+  <symbol id="send" viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></symbol>
+  <symbol id="chat" viewBox="0 0 24 24"><path d="M20.5 15a2 2 0 0 1-2 2H8l-4.5 3.5V5.5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="sub" viewBox="0 0 24 24"><path d="M6 4v10a2 2 0 0 0 2 2h10M14 12l4 4-4 4"/></symbol>
+  <symbol id="flame" viewBox="0 0 24 24"><path d="M12 21c4 0 6.5-2.6 6.5-6.3 0-3.7-3-6-4-9.7-2 1.6-3 3.6-3 5.6-1.2-.6-2-1.8-2.2-3.1C7.3 9.1 5.5 11.5 5.5 14.7 5.5 18.4 8 21 12 21z"/></symbol>
+  <symbol id="hide" viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M6.6 6.6C4.5 8 3.1 10.1 2.5 12c1 2.5 4.5 7 9.5 7a9.6 9.6 0 0 0 5.4-1.6M9.9 5.2A9.8 9.8 0 0 1 12 5c5 0 8.5 4.5 9.5 7a13 13 0 0 1-2.4 3.5"/></symbol>
+  <!-- 编辑器工具栏 -->
+  <symbol id="undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+  <symbol id="redo" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></symbol>
+  <symbol id="marker" viewBox="0 0 24 24"><path d="m9 11-5 5v3.5h3.5l5-5M9 11l6.5-6.5a2.1 2.1 0 0 1 3 3L12 14M9 11l3 3"/><path d="M14 20.5h6"/></symbol>
+  <symbol id="comment" viewBox="0 0 24 24"><path d="M20.5 15a2 2 0 0 1-2 2H8l-4.5 3.5V5.5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/><path d="M8 8.5h8M8 12h5"/></symbol>
+  <symbol id="sup" viewBox="0 0 24 24"><path d="m4 19 8-8M12 19l-8-8M17 4h3.5L17 8.5h3.8"/></symbol>
+  <symbol id="subs" viewBox="0 0 24 24"><path d="m4 5 8 8M12 5l-8 8M17 15.5h3.5L17 20h3.8"/></symbol>
+  <symbol id="fontA" viewBox="0 0 24 24"><path d="m6 16 5-11h2l5 11M8 12h8"/></symbol>
+  <symbol id="fill" viewBox="0 0 24 24"><path d="m19 11-8-8-8.5 8.5a2 2 0 0 0 0 2.8l5.2 5.2a2 2 0 0 0 2.8 0zM5 2l5 5"/><path d="M21 17c0 1.1-.9 2-2 2s-2-.9-2-2c0-1.5 2-3.5 2-3.5s2 2 2 3.5z"/></symbol>
+  <symbol id="type" viewBox="0 0 24 24"><path d="M4 7V4.5h16V7M9 20h6M12 4.5V20"/></symbol>
+  <symbol id="lineh" viewBox="0 0 24 24"><path d="M3 7l3-3 3 3M3 17l3 3 3-3M6 4v16M12 6h9M12 12h9M12 18h9"/></symbol>
+  <symbol id="ul" viewBox="0 0 24 24"><path d="M9 6.5h11M9 12h11M9 17.5h11"/><circle cx="4.5" cy="6.5" r="1" fill="currentColor"/><circle cx="4.5" cy="12" r="1" fill="currentColor"/><circle cx="4.5" cy="17.5" r="1" fill="currentColor"/></symbol>
+  <symbol id="ol" viewBox="0 0 24 24"><path d="M10 6.5h10M10 12h10M10 17.5h10M4 5l1.5-1v5M4 14.5a1.5 1.5 0 0 1 3 0c0 1.5-3 2-3 4h3"/></symbol>
+  <symbol id="tasklist" viewBox="0 0 24 24"><rect x="3.5" y="4" width="6" height="6" rx="1.5"/><path d="m4.8 7 1.4 1.4L8.4 6M13 7h7.5M13 17h7.5"/><rect x="3.5" y="14" width="6" height="6" rx="1.5"/></symbol>
+  <symbol id="quote" viewBox="0 0 24 24"><path d="M5 17.5c-1-1-1.5-2.3-1.5-4 0-3.3 2-6 5-7.5l.8 1.2C7.3 8.6 6.4 10 6.3 11.5c.3-.1.7-.2 1.2-.2a2.9 2.9 0 0 1 0 5.8c-1 0-1.8-.3-2.5-.6zM14 17.5c-1-1-1.5-2.3-1.5-4 0-3.3 2-6 5-7.5l.8 1.2c-2 1.4-2.9 2.8-3 4.3.3-.1.7-.2 1.2-.2a2.9 2.9 0 0 1 0 5.8c-1 0-1.8-.3-2.5-.6z"/></symbol>
+  <symbol id="callout" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7.5 9.5v.01M10.5 9.5h6M7.5 14h9"/></symbol>
+  <symbol id="toggle" viewBox="0 0 24 24"><path d="m5 8 3 3-3 3M11 11h9M11 17h9M11 5h9"/></symbol>
+  <symbol id="columns" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M12 4v16"/></symbol>
+  <symbol id="emoji" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 14a4 4 0 0 0 7 0M9 9.5h.01M15 9.5h.01"/></symbol>
+  <symbol id="codeblock" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m10 9.5-2.5 2.5 2.5 2.5M14 9.5l2.5 2.5-2.5 2.5"/></symbol>
+  <symbol id="sigma" viewBox="0 0 24 24"><path d="M18 5H6l6 7-6 7h12"/></symbol>
+  <symbol id="alL" viewBox="0 0 24 24"><path d="M4 6h16M4 10h10M4 14h16M4 18h10"/></symbol>
+  <symbol id="alC" viewBox="0 0 24 24"><path d="M4 6h16M7 10h10M4 14h16M7 18h10"/></symbol>
+  <symbol id="alR" viewBox="0 0 24 24"><path d="M4 6h16M10 10h10M4 14h16M10 18h10"/></symbol>
+  <symbol id="table" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M3.5 9.5h17M3.5 15h17M10 9.5V20"/></symbol>
+  <symbol id="image" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><circle cx="9" cy="9.5" r="1.8"/><path d="m20.5 15.5-4.5-4.5-9.5 9"/></symbol>
+  <symbol id="caption" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="12" rx="2"/><path d="M7 19.5h10M9 12l2.5-3 2 2.2L15 9.5l2 2.5"/></symbol>
+  <symbol id="video" viewBox="0 0 24 24"><rect x="2.5" y="6" width="13.5" height="12" rx="2.5"/><path d="m16 10.5 5.5-3.5v10L16 13.5"/></symbol>
+  <symbol id="tv" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12.5" rx="2.5"/><path d="m8 2.5 4 2.5 4-2.5M8.5 21h7M10.5 9v5l4-2.5z"/></symbol>
+  <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="clip" viewBox="0 0 24 24"><path d="m20.5 11.5-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9"/></symbol>
+  <symbol id="hr" viewBox="0 0 24 24"><path d="M3.5 12h17M7 7h10M7 17h10" stroke-dasharray="0"/></symbol>
+  <symbol id="outdent" viewBox="0 0 24 24"><path d="M10 6h10M10 12h10M10 18h10M7 9l-3 3 3 3"/></symbol>
+  <symbol id="indent" viewBox="0 0 24 24"><path d="M10 6h10M10 12h10M10 18h10M4 9l3 3-3 3"/></symbol>
+  <symbol id="brush" viewBox="0 0 24 24"><path d="M18.5 3.5 21 6l-9 9-2.5-2.5zM9.5 12.5l-2.2.4a3 3 0 0 0-2.4 2.5L4 20.5l4.8-1a3 3 0 0 0 2.4-2.4l.4-2.1"/></symbol>
+  <symbol id="eraser" viewBox="0 0 24 24"><path d="m7.5 20.5-4-4a1.5 1.5 0 0 1 0-2.1L13.4 4.5a1.5 1.5 0 0 1 2.1 0l5 5a1.5 1.5 0 0 1 0 2.1l-9 8.9zM20.5 20.5h-9M9 9l6 6"/></symbol>
+  <symbol id="wand" viewBox="0 0 24 24"><path d="m3.5 20.5 12-12M14 4.5v-1M18.5 9.5h1M17.5 5.5l.7-.7M14 7l3 3"/><path d="M19.5 3.5v2M18.5 4.5h2"/></symbol>
+  <symbol id="find" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="m19.5 19.5-4.2-4.2M8 10.5h5"/></symbol>
+  <symbol id="diff" viewBox="0 0 24 24"><rect x="3.5" y="4" width="7" height="16" rx="1.5"/><rect x="13.5" y="4" width="7" height="16" rx="1.5"/><path d="M5.5 9h3M15.5 9h3M17 7.5v3M5.5 14h3"/></symbol>
+  <symbol id="heading" viewBox="0 0 24 24"><path d="M5 5v14M15 5v14M5 12h10M18.5 19v-6l-2 1.2"/></symbol>
+  <!-- 页面级 -->
+  <symbol id="kanban" viewBox="0 0 24 24"><rect x="3.5" y="4" width="5" height="16" rx="1.5"/><rect x="9.5" y="4" width="5" height="10" rx="1.5"/><rect x="15.5" y="4" width="5" height="13" rx="1.5"/></symbol>
+  <symbol id="matrix" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="2.5"/><path d="M12 3.5v17M3.5 12h17"/></symbol>
+  <symbol id="gantt" viewBox="0 0 24 24"><path d="M4 4v16h16"/><rect x="7" y="6.5" width="7" height="3" rx="1"/><rect x="10" y="11" width="8" height="3" rx="1"/><rect x="8" y="15.5" width="5" height="2.5" rx="1"/></symbol>
+  <symbol id="filter" viewBox="0 0 24 24"><path d="M4 5h16l-6 7.5V19l-4 1.5v-8z"/></symbol>
+  <symbol id="sort" viewBox="0 0 24 24"><path d="M7 4v16M3.5 16.5 7 20l3.5-3.5M14 6h7M14 11h5M14 16h3"/></symbol>
+  <symbol id="refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-14.3 4.9M4 12a8 8 0 0 1 14.3-4.9"/><path d="M18.5 3v4.5H14M5.5 21v-4.5H10"/></symbol>
+  <symbol id="fit" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+  <symbol id="target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></symbol>
+  <symbol id="play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></symbol>
+  <symbol id="stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5"/></symbol>
+  <symbol id="archive" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v9.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V9M10 13h4"/></symbol>
+  <symbol id="restore" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.6L4 8.7"/><path d="M4 4v4.7h4.7"/></symbol>
+  <symbol id="cpu" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9 2.5V6M15 2.5V6M9 18v3.5M15 18v3.5M2.5 9H6M2.5 15H6M18 9h3.5M18 15h3.5"/></symbol>
+  <symbol id="monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12.5" rx="2"/><path d="M8.5 20.5h7M12 16.5v4"/></symbol>
+  <symbol id="db" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="8" ry="2.8"/><path d="M4 5.5v13c0 1.5 3.6 2.8 8 2.8s8-1.3 8-2.8v-13M4 12c0 1.5 3.6 2.8 8 2.8s8-1.3 8-2.8"/></symbol>
+  <symbol id="cloud" viewBox="0 0 24 24"><path d="M7.5 18.5a4.5 4.5 0 0 1-.6-9 5.5 5.5 0 0 1 10.6 1.4 3.8 3.8 0 0 1-.5 7.6z"/></symbol>
+  <symbol id="server" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="7" rx="2"/><rect x="3.5" y="13" width="17" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol>
+  <symbol id="scan" viewBox="0 0 24 24"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16M8 10h8M8 14h5"/></symbol>
+  <symbol id="key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 8.5-8.5M16.5 6.5l2.5 2.5M14 9l2 2"/></symbol>
+  <symbol id="keyboard" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M8 14h8"/></symbol>
+  <symbol id="rocket" viewBox="0 0 24 24"><path d="M5 15.5c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.9.7-2.2-.1-3s-2.1-.8-2.9 0zM12 15l-3-3a22 22 0 0 1 2-4A12.9 12.9 0 0 1 22 2c0 2.7-.8 7.5-6 11a22.4 22.4 0 0 1-4 2zM9 12H4s.6-3 2-4c1.6-1.1 5 0 5 0M12 15v5s3-.6 4-2c1.1-1.6 0-5 0-5"/></symbol>
+  <symbol id="sidebarI" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M8.5 4.5v15M5.5 8.5h1M5.5 11.5h1"/></symbol>
+  <symbol id="puzzle" viewBox="0 0 24 24"><path d="M14 4.5a2 2 0 1 0-4 0V6H6.5A1.5 1.5 0 0 0 5 7.5V11h1.5a2 2 0 1 1 0 4H5v3.5A1.5 1.5 0 0 0 6.5 20H10v-1.5a2 2 0 1 1 4 0V20h3.5a1.5 1.5 0 0 0 1.5-1.5V15h-1.5a2 2 0 1 1 0-4H19V7.5A1.5 1.5 0 0 0 17.5 6H14z"/></symbol>
+  <symbol id="save" viewBox="0 0 24 24"><path d="M5.5 3.5h10l3 3v12a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2z"/><path d="M8 3.5v5h7v-5M8 20.5v-6h8v6"/></symbol>
+  <symbol id="heart" viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.3 4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"/></symbol>
+  <symbol id="users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5M16 4.8a3.5 3.5 0 0 1 0 6.4M17.5 14.7c2 .6 3.5 2.4 3.5 5.3"/></symbol>
+  <symbol id="star" viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"/></symbol>
+  <symbol id="truck" viewBox="0 0 24 24"><path d="M3 6.5h11v10H3zM14 10h4l3 3.5v3h-7"/><circle cx="7" cy="18" r="1.8"/><circle cx="17" cy="18" r="1.8"/></symbol>
+  <symbol id="health" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 4 12 2.5-6h5"/></symbol>
+  <symbol id="file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+  <symbol id="repeat" viewBox="0 0 24 24"><path d="m17 2.5 3.5 3.5-3.5 3.5"/><path d="M3.5 11.5V10a4 4 0 0 1 4-4h13M7 21.5 3.5 18 7 14.5"/><path d="M20.5 12.5V14a4 4 0 0 1-4 4h-13"/></symbol>
+  <symbol id="flag" viewBox="0 0 24 24"><path d="M5 21V4.5M5 4.5h11l-2 4 2 4H5"/></symbol>
+  <symbol id="layers" viewBox="0 0 24 24"><path d="m12 3 9 4.5-9 4.5-9-4.5z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></symbol>
+  <symbol id="moon" viewBox="0 0 24 24"><path d="M12 3.5a6.5 6.5 0 0 0 8.5 8.5A8.5 8.5 0 1 1 12 3.5z"/></symbol>
+  <symbol id="drag" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1" fill="currentColor"/><circle cx="15" cy="6" r="1" fill="currentColor"/><circle cx="9" cy="12" r="1" fill="currentColor"/><circle cx="15" cy="12" r="1" fill="currentColor"/><circle cx="9" cy="18" r="1" fill="currentColor"/><circle cx="15" cy="18" r="1" fill="currentColor"/></symbol>
+  <symbol id="role" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 20.5c.8-3.6 3.9-6 7.5-6s6.7 2.4 7.5 6"/></symbol>
+  <symbol id="shield" viewBox="0 0 24 24"><path d="M12 3 4.5 6v5.5c0 4.5 3.2 8.2 7.5 9.5 4.3-1.3 7.5-5 7.5-9.5V6z"/></symbol>
+</svg>
+
+<div class="win" id="win">
+  <header class="titlebar">
+  <!-- ═════ 标题栏左 ═════ -->
+  <div class="tb-l">
+    <span id="tbLogo" style="display:flex"></span>
+    <span class="brand">Knowledge Base</span>
+    <button class="ib hv" id="panelBtn" title="折叠面板"><svg class="i"><use href="#panel"/></svg></button>
+    <button class="ib hv" title="后退 (Alt+←)"><svg class="i"><use href="#arrl"/></svg></button>
+    <button class="ib hv" title="前进 (Alt+→)"><svg class="i"><use href="#arrr"/></svg></button>
+  </div>
+
+  <!-- ═════ 标题栏右 ═════ -->
+  <div class="tb-r">
+    <!-- 标签栏只在笔记工作区（笔记 / 日记 / 白板）出现，与现状一致 -->
+    <div class="tabs" id="tabs">
+      <button class="ib hv" data-go="notes" title="笔记列表" style="margin-right:2px"><svg class="i"><use href="#list"/></svg></button>
+      <div class="tab hv on" data-go="editor"><svg class="i sm"><use href="#note"/></svg><span class="t">Rust 所有权</span><span class="x" title="关闭（右键：关闭其他 / 关闭右侧 / 关闭全部）"><svg class="i xs"><use href="#x"/></svg></span></div>
+      <div class="tab hv" data-go="daily" title="未保存"><svg class="i sm"><use href="#cal"/></svg><span class="t">2026-11-03</span><span class="mod"></span></div>
+      <div class="tab hv" data-go="whiteboard"><svg class="i sm"><use href="#whiteboard"/></svg><span class="t">架构草图</span><span class="x"><svg class="i xs"><use href="#x"/></svg></span></div>
+      <button class="tab-add hv" title="新建笔记"><svg class="i sm"><use href="#plus"/></svg></button>
+    </div>
+    <div class="tb-title" id="tbTitle"></div>
+    <!-- 更新徽标：三态都带新版本号（原型里点击可依次切换三态预览） -->
+    <button class="upd hv" id="upd" data-s="0" title="发现新版本 v1.64.0 → v1.65.0，点击查看更新内容"><i></i><span class="ut"><s>v1.64.0</s><svg class="i xs"><use href="#arrr"/></svg><b class="nv">v1.65.0</b></span><b class="up"><em style="width:42%"></em></b></button>
+    <button class="ib hv" title="快速记一笔 (Ctrl+Alt+N) — 追加到今天的日记"><svg class="i"><use href="#fileplus"/></svg></button>
+    <button class="ib hv" data-go="search" title="搜索 (Ctrl+K)"><svg class="i"><use href="#search"/></svg></button>
+    <button class="sync hv" title="WebDAV · 上次同步 23:12 · 点击立即同步"><span class="p"></span>已同步</button>
+    <button class="ib hv" data-menu="m-theme" title="切换主题"><svg class="i"><use href="#palette"/></svg></button>
+    <button class="ib hv" data-go="settings" title="设置"><svg class="i"><use href="#gear"/></svg></button>
+    <button class="ib hv" data-toggle title="窗口置顶"><svg class="i"><use href="#pin"/></svg></button>
+    <div class="winbtn">
+      <button title="最小化"><svg class="i"><use href="#min"/></svg></button>
+      <button title="最大化"><svg class="i"><use href="#max"/></svg></button>
+      <button class="close" title="关闭"><svg class="i"><use href="#x"/></svg></button>
+    </div>
+  </div>
+
+  </header>
+
+  <!-- ═════ 活动栏：15 个入口，图标 + 文字 ═════ -->
+  <nav class="rail" id="rail">
+    <button class="ra hv" data-go="home"><svg class="i"><use href="#home"/></svg><span>首页</span></button>
+    <div class="ra-sep"></div>
+    <button class="ra hv" data-go="notes"><svg class="i"><use href="#note"/></svg><span>笔记</span></button>
+    <button class="ra hv" data-go="daily"><svg class="i"><use href="#cal"/></svg><span>日记</span></button>
+    <button class="ra hv" data-go="tasks" title="待办 · 2 项逾期"><svg class="i"><use href="#check"/></svg><span>待办</span><span class="bd">2</span></button>
+    <button class="ra hv" data-go="cards" title="卡片复习"><svg class="i"><use href="#cards"/></svg><span>复习</span></button>
+    <div class="ra-sep"></div>
+    <button class="ra hv" data-go="search"><svg class="i"><use href="#search"/></svg><span>搜索</span></button>
+    <button class="ra hv" data-go="tags"><svg class="i"><use href="#tag"/></svg><span>标签</span></button>
+    <button class="ra hv" data-go="graph" title="知识图谱"><svg class="i"><use href="#graph"/></svg><span>图谱</span></button>
+    <div class="ra-sep"></div>
+    <button class="ra hv" data-go="ai" title="AI 问答"><svg class="i"><use href="#bot"/></svg><span>AI</span></button>
+    <button class="ra hv" data-go="prompts"><svg class="i"><use href="#spark"/></svg><span>提示词</span></button>
+    <button class="ra hv" data-go="push" title="定时推送"><svg class="i"><use href="#bell"/></svg><span>推送</span></button>
+    <div class="ra-fill"></div>
+    <button class="ra hv" data-go="lock" title="立即锁定（启用应用锁后显示）"><svg class="i"><use href="#lock"/></svg><span>锁定</span></button>
+    <button class="ra hv" data-go="hidden" title="隐藏笔记（需 PIN 解锁）"><svg class="i"><use href="#eyeoff"/></svg><span>隐藏</span></button>
+    <button class="ra hv" data-go="trash"><svg class="i"><use href="#trash"/></svg><span>回收站</span></button>
+    <button class="ra hv" data-go="about"><svg class="i"><use href="#info"/></svg><span>关于</span></button>
+  </nav>
+
+  <aside class="side" id="side"></aside>
+  <main class="sheet" id="sheet"></main>
+</div>
+
+<!-- ═════════════ 下拉菜单 ═════════════ -->
+<div class="menu" id="m-theme">
+  <div class="mh">亮色主题</div>
+  <div class="mi" data-theme="light"><span class="swc" style="background:linear-gradient(135deg,#F4F1FD,#937BE9)"></span>淡紫<svg class="i sm ok"><use href="#tick"/></svg></div>
+  <div class="mi"><span class="swc" style="background:linear-gradient(135deg,#ede9fe,#6366f1)"></span>柔光毛玻璃</div>
+  <div class="mi"><span class="swc" style="background:linear-gradient(135deg,#faf8f5,#c2713a)"></span>暖木书房</div>
+  <div class="mi"><span class="swc" style="background:linear-gradient(135deg,#fafafa,#07c160)"></span>玉青</div>
+  <div class="ms"></div>
+  <div class="mh">暗色主题</div>
+  <div class="mi" data-theme="warm"><span class="swc" style="background:linear-gradient(135deg,#1D1C1A 55%,#A992FA)"></span>暖炭</div>
+  <div class="mi"><span class="swc" style="background:linear-gradient(135deg,#1a1a2e,#7c6cf0)"></span>星夜</div>
+  <div class="mi"><span class="swc" style="background:linear-gradient(135deg,#2a2a40,#c49a6c)"></span>摩卡</div>
+</div>
+<div class="menu" id="m-new">
+  <div class="mi"><svg class="i sm"><use href="#plus"/></svg>新建空白笔记<kbd>Ctrl N</kbd></div>
+  <div class="mi"><svg class="i sm"><use href="#template"/></svg>从模板…</div>
+  <div class="mi"><svg class="i sm"><use href="#whiteboard"/></svg>新建白板</div>
+  <div class="mi"><svg class="i sm"><use href="#globe"/></svg>剪藏网页…</div>
+  <div class="ms"></div><div class="mh">导入</div>
+  <div class="mi"><svg class="i sm"><use href="#import"/></svg>Markdown / TXT…</div>
+  <div class="mi"><svg class="i sm"><use href="#folder"/></svg>Markdown 文件夹 / Obsidian Vault…</div>
+  <div class="mi"><svg class="i sm"><use href="#import"/></svg>PDF…</div>
+  <div class="mi"><svg class="i sm"><use href="#import"/></svg>Word…</div>
+  <div class="mi"><svg class="i sm"><use href="#import"/></svg>Excel / CSV…</div>
+</div>
+<div class="menu" id="m-open">
+  <div class="mi"><svg class="i sm"><use href="#folderopen"/></svg>打开本机 .md 文件…</div>
+  <div class="mi"><svg class="i sm"><use href="#history"/></svg>临时文件…</div>
+</div>
+<div class="menu" id="m-expand">
+  <div class="mi">全部展开</div><div class="mi">全部折叠</div><div class="ms"></div>
+  <div class="mi">显示 1 级目录</div><div class="mi">显示 2 级目录</div><div class="mi">显示 3 级目录</div>
+</div>
+<div class="menu" id="m-export">
+  <div class="mi"><svg class="i sm"><use href="#export"/></svg>导出为 Markdown</div>
+  <div class="mi"><svg class="i sm"><use href="#export"/></svg>导出为 Word (.docx)</div>
+  <div class="mi"><svg class="i sm"><use href="#copy"/></svg>复制为 Word（富文本，可直接粘贴）</div>
+  <div class="mi"><svg class="i sm"><use href="#export"/></svg>导出为 HTML（单文件）</div>
+  <div class="ms"></div>
+  <div class="mi"><svg class="i sm"><use href="#print"/></svg>打印 / 打印成 PDF</div>
+  <div class="mi"><svg class="i sm"><use href="#export"/></svg>导出为 PDF（旧版排版）</div>
+</div>
+<div class="menu" id="m-more">
+  <div class="mi"><svg class="i sm"><use href="#hide"/></svg>隐藏笔记</div>
+  <div class="mi"><svg class="i sm"><use href="#lock"/></svg>加密笔记</div>
+  <div class="mi"><svg class="i sm"><use href="#print"/></svg>打印</div>
+  <div class="ms"></div>
+  <div class="mi"><svg class="i sm"><use href="#newwin"/></svg>用系统应用打开 .md</div>
+  <div class="mi"><svg class="i sm"><use href="#folderopen"/></svg>打开所在文件夹</div>
+  <div class="mi"><svg class="i sm"><use href="#file"/></svg>转为正式笔记（临时文件时）</div>
+  <div class="mi"><svg class="i sm"><use href="#link"/></svg>解除外部 .md 关联</div>
+  <div class="ms"></div>
+  <div class="mi danger"><svg class="i sm"><use href="#trash"/></svg>删除笔记</div>
+</div>
+<div class="menu" id="m-para">
+  <div class="mi"><span style="width:28px;color:var(--ink3)">¶</span>正文</div>
+  <div class="mi" style="font-size:17px;font-weight:700"><span style="width:28px;color:var(--ink3);font-size:12px">H1</span>一级标题</div>
+  <div class="mi" style="font-size:15px;font-weight:700"><span style="width:28px;color:var(--ink3);font-size:12px">H2</span>二级标题</div>
+  <div class="mi" style="font-weight:700"><span style="width:28px;color:var(--ink3);font-size:12px">H3</span>三级标题</div>
+  <div class="mi" style="font-weight:600"><span style="width:28px;color:var(--ink3);font-size:12px">H4</span>四级标题</div>
+  <div class="mi"><span style="width:28px;color:var(--ink3);font-size:12px">H5</span>五级标题</div>
+  <div class="mi"><span style="width:28px;color:var(--ink3);font-size:12px">H6</span>六级标题</div>
+</div>
+<div class="menu" id="m-color">
+  <div class="mh">字体颜色 · 常用</div>
+  <div class="colors"><i style="background:#34304A"></i><i style="background:#7C63DC"></i><i style="background:#D65A6E"></i><i style="background:#E08A3C"></i><i style="background:#C9A227"></i><i style="background:#3E9A72"></i><i style="background:#5C86DA"></i><i style="background:#9690AF"></i></div>
+  <div class="mi"><svg class="i sm"><use href="#eraser"/></svg>默认颜色</div>
+</div>
+<div class="menu" id="m-bg">
+  <div class="mh">背景颜色 · 常用</div>
+  <div class="colors"><i style="background:#EFEAFE"></i><i style="background:#FDE7EB"></i><i style="background:#FDEFD9"></i><i style="background:#FBF5CF"></i><i style="background:#DFF3E8"></i><i style="background:#E0EAFB"></i><i style="background:#F1EEF7"></i><i style="background:#fff"></i></div>
+  <div class="mi"><svg class="i sm"><use href="#eraser"/></svg>清除背景</div>
+</div>
+<div class="menu" id="m-font">
+  <div class="mh">字体（作用于选中文字）</div>
+  <div class="mi">默认<svg class="i sm ok"><use href="#tick"/></svg></div>
+  <div class="mi" style="font-family:'Microsoft YaHei UI'">微软雅黑</div>
+  <div class="mi" style="font-family:'Noto Serif SC',serif">思源宋体</div>
+  <div class="mi" style="font-family:KaiTi,serif">楷体</div>
+  <div class="mi" style="font-family:Consolas,monospace">Consolas</div>
+</div>
+<div class="menu" id="m-size"><div class="mi">默认字号</div><div class="ms"></div>
+  <div class="mi">12</div><div class="mi">13</div><div class="mi">14</div><div class="mi">15</div><div class="mi">16<svg class="i sm ok"><use href="#tick"/></svg></div><div class="mi">18</div><div class="mi">20</div><div class="mi">24</div><div class="mi">30</div><div class="mi">36</div><div class="mi">48</div></div>
+<div class="menu" id="m-lineh"><div class="mi">默认行高</div><div class="ms"></div>
+  <div class="mi">1.0</div><div class="mi">1.15</div><div class="mi">1.4</div><div class="mi">1.6</div><div class="mi">1.8<svg class="i sm ok"><use href="#tick"/></svg></div><div class="mi">2.0</div></div>
+<div class="menu grid2" id="m-insert">
+  <div class="gb">
+    <div><div class="mh">块</div>
+      <div class="mi"><svg class="i sm"><use href="#callout"/></svg>Callout 提示框<span class="r">信息 / 成功 / 警告 / 危险</span></div>
+      <div class="mi"><svg class="i sm"><use href="#toggle"/></svg>折叠块</div>
+      <div class="mi"><svg class="i sm"><use href="#columns"/></svg>分栏布局<span class="r">2 – 5 栏</span></div>
+      <div class="mi"><svg class="i sm"><use href="#codeblock"/></svg>代码块</div>
+      <div class="mi"><svg class="i sm"><use href="#graph"/></svg>Mermaid 流程图</div>
+      <div class="mi"><svg class="i sm"><use href="#sigma"/></svg>行内公式 $…$</div>
+      <div class="mi"><svg class="i sm"><use href="#sigma"/></svg>块级公式 $$…$$</div>
+      <div class="mi"><svg class="i sm"><use href="#table"/></svg>表格</div>
+      <div class="mi"><svg class="i sm"><use href="#hr"/></svg>分割线</div>
+      <div class="mi"><svg class="i sm"><use href="#emoji"/></svg>Emoji</div>
+    </div>
+    <div><div class="mh">媒体与链接</div>
+      <div class="mi"><svg class="i sm"><use href="#link"/></svg>链接</div>
+      <div class="mi"><svg class="i sm"><use href="#image"/></svg>图片</div>
+      <div class="mi"><svg class="i sm"><use href="#caption"/></svg>图注 / Alt（先选中图片）</div>
+      <div class="mi"><svg class="i sm"><use href="#video"/></svg>视频</div>
+      <div class="mi"><svg class="i sm"><use href="#tv"/></svg>嵌入网络视频<span class="r">B站 / YouTube</span></div>
+      <div class="mi"><svg class="i sm"><use href="#clock"/></svg>视频时间戳</div>
+      <div class="mi"><svg class="i sm"><use href="#whiteboard"/></svg>白板</div>
+      <div class="mi"><svg class="i sm"><use href="#globe"/></svg>剪藏网页正文到这里</div>
+      <div class="mi"><svg class="i sm"><use href="#clip"/></svg>附件<span class="r">PDF / Office / ZIP</span></div>
+      <div class="mi"><svg class="i sm"><use href="#db"/></svg>数据视图<span class="r">最近 / 任务 / 标签</span></div>
+    </div>
+  </div>
+</div>
+<div class="menu grid2" id="m-typo" style="min-width:460px">
+  <div class="gb" style="grid-template-columns:1.4fr 1fr 1fr">
+    <div><div class="mh">字体（作用于选中文字）</div><div class="mi">默认<svg class="i sm ok"><use href="#tick"/></svg></div><div class="mi" style="font-family:'Microsoft YaHei UI'">微软雅黑</div><div class="mi" style="font-family:'Noto Serif SC',serif">思源宋体</div><div class="mi" style="font-family:KaiTi,serif">楷体</div><div class="mi" style="font-family:Consolas,monospace">Consolas</div></div>
+    <div><div class="mh">字号</div><div class="mi">默认字号</div><div class="mi">12 · 13 · 14</div><div class="mi">15 · 16<svg class="i sm ok"><use href="#tick"/></svg></div><div class="mi">18 · 20 · 24</div><div class="mi">30 · 36 · 48</div></div>
+    <div><div class="mh">行间距</div><div class="mi">默认行高</div><div class="mi">1.0 · 1.15</div><div class="mi">1.4 · 1.6</div><div class="mi">1.8<svg class="i sm ok"><use href="#tick"/></svg></div><div class="mi">2.0</div></div>
+  </div>
+</div>
+<div class="menu" id="m-align" style="min-width:150px">
+  <div class="mi"><svg class="i sm"><use href="#alL"/></svg>左对齐<svg class="i sm ok"><use href="#tick"/></svg></div>
+  <div class="mi"><svg class="i sm"><use href="#alC"/></svg>居中</div>
+  <div class="mi"><svg class="i sm"><use href="#alR"/></svg>右对齐</div>
+</div>
+<div class="menu" id="m-tidy">
+  <div class="mi"><svg class="i sm"><use href="#wand"/></svg>一键规整（空行 + 空格 + 中英文间距）</div>
+  <div class="ms"></div>
+  <div class="mi">删除多余空行</div>
+  <div class="mi">去除首尾空格 / 压缩连续空格</div>
+  <div class="mi">中英文之间补空格</div>
+  <div class="mi">清除字号 / 颜色 / 高亮（保留粗体等）</div>
+  <div class="mi">清除标题内手写编号（1.1 / 一、/ 第一章）</div>
+</div>
+<div class="menu" id="m-compare">
+  <div class="mi"><svg class="i sm"><use href="#copy"/></svg>对比剪贴板</div>
+  <div class="mi"><svg class="i sm"><use href="#diff"/></svg>对比其他笔记…</div>
+</div>
+<div class="menu" id="m-aiwrite">
+  <div class="mh">AI 写作 · 对选区或全文</div>
+  <div class="mi"><svg class="i sm"><use href="#sparkle"/></svg>润色</div>
+  <div class="mi"><svg class="i sm"><use href="#sparkle"/></svg>续写</div>
+  <div class="mi"><svg class="i sm"><use href="#sparkle"/></svg>总结</div>
+  <div class="mi"><svg class="i sm"><use href="#sparkle"/></svg>翻译</div>
+  <div class="ms"></div>
+  <div class="mh">我的提示词</div>
+  <div class="mi"><svg class="i sm"><use href="#spark"/></svg>润色公众号文案<span class="r">替换</span></div>
+  <div class="mi"><svg class="i sm"><use href="#spark"/></svg>生成读书摘要<span class="r">追加</span></div>
+  <div class="mi"><svg class="i sm"><use href="#pen"/></svg>自定义指令…</div>
+  <div class="ms"></div>
+  <div class="mi"><svg class="i sm"><use href="#chat"/></svg>问 AI（侧栏对话）</div>
+</div>
+<div class="menu" id="m-todo"><div class="mi"><svg class="i sm"><use href="#sparkle"/></svg>AI 规划待办…</div></div>
+<div class="menu" id="m-sort">
+  <div class="mi">修改时间<svg class="i sm ok"><use href="#tick"/></svg></div><div class="mi">创建时间</div><div class="mi">标题</div><div class="mi">自定义（拖拽）</div><div class="ms"></div><div class="mi">恢复默认</div>
+</div>
+<div class="menu" id="m-batchexp">
+  <div class="mi">批量导出为 Markdown</div><div class="mi">批量导出为 Word (.docx)</div><div class="mi">批量导出为 HTML（单文件）</div>
+</div>
+<div class="menu" id="m-range">
+  <div class="mi">昨天</div><div class="mi">最近 7 天</div><div class="mi">最近 30 天</div><div class="mi">本周</div><div class="mi">本月</div><div class="mi">上月</div>
+</div>
+<div class="menu" id="m-taskrow">
+  <div class="mi"><svg class="i sm"><use href="#pen"/></svg>编辑任务</div>
+  <div class="mi"><svg class="i sm"><use href="#copy"/></svg>复制为 Markdown</div>
+  <div class="ms"></div>
+  <div class="mi"><span class="swc" style="background:var(--bad)"></span>设为紧急</div>
+  <div class="mi"><span class="swc" style="background:var(--warn)"></span>设为普通</div>
+  <div class="mi"><span class="swc" style="background:var(--ink4)"></span>设为低</div>
+  <div class="ms"></div>
+  <div class="mi"><svg class="i sm"><use href="#x"/></svg>放弃这个任务</div>
+  <div class="mi danger"><svg class="i sm"><use href="#trash"/></svg>删除任务（可撤销）</div>
+</div>
+<div class="menu" id="m-aiclean">
+  <div class="mi">清理 7 天前未活动</div><div class="mi">清理 30 天前未活动</div><div class="ms"></div><div class="mi danger">清空全部对话</div>
+</div>
+<div class="menu" id="m-model">
+  <div class="mh">模型服务</div>
+  <div class="mi">DeepSeek · deepseek-chat<svg class="i sm ok"><use href="#tick"/></svg></div>
+  <div class="mi">通义千问 · qwen-plus</div>
+  <div class="mi">Ollama · qwen2.5:7b（本地）</div>
+  <div class="ms"></div><div class="mi"><svg class="i sm"><use href="#gear"/></svg>去配置模型服务</div>
+</div>
+<div class="menu" id="m-role">
+  <div class="mh">角色</div><div class="mi">默认助手<svg class="i sm ok"><use href="#tick"/></svg></div><div class="mi">写作教练</div><div class="mi">技术导师</div>
+</div>
+<div class="menu" id="m-wb">
+  <div class="mi"><svg class="i sm"><use href="#copy"/></svg>复制为图片</div>
+  <div class="mi"><svg class="i sm"><use href="#export"/></svg>导出 PNG…</div>
+  <div class="mi"><svg class="i sm"><use href="#export"/></svg>导出 SVG…</div>
+  <div class="ms"></div>
+  <div class="mi danger"><svg class="i sm"><use href="#trash"/></svg>删除白板</div>
+</div>
+<div class="menu" id="m-graphnode">
+  <div class="mi"><svg class="i sm"><use href="#note"/></svg>打开笔记</div>
+  <div class="mi"><svg class="i sm"><use href="#target"/></svg>居中此节点</div>
+</div>
+<div class="menu" id="m-tagrow">
+  <div class="mi">在此下方新建子标签</div><div class="mi">新建同级标签</div><div class="mi">重命名</div><div class="mi">提升为顶层</div><div class="ms"></div><div class="mi danger">删除标签</div>
+</div>
+<div class="menu" id="m-dailyrow">
+  <div class="mi"><svg class="i sm"><use href="#copy"/></svg>复制日期</div>
+  <div class="mi danger"><svg class="i sm"><use href="#trash"/></svg>删除日记</div>
+</div>
+<div class="menu" id="m-searchhist">
+  <div class="mi"><svg class="i sm"><use href="#copy"/></svg>复制查询词</div>
+  <div class="mi"><svg class="i sm"><use href="#x"/></svg>从历史中移除</div>
+  <div class="ms"></div>
+  <div class="mi danger">清空所有历史</div>
+</div>
+<div class="menu" id="m-notecard">
+  <div class="mi">打开</div><div class="mi">在新窗口打开</div><div class="mi">重命名</div><div class="mi">移动到…</div>
+  <div class="mi">复制 wiki 链接</div><div class="mi">复制笔记 ID</div><div class="mi">复制内容</div><div class="ms"></div>
+  <div class="mi">导出为 Markdown</div><div class="mi">导出为 Word (.docx)</div><div class="mi">导出为 HTML（单文件）</div>
+  <div class="mi">与另一篇笔记对比…</div><div class="ms"></div>
+  <div class="mi danger">移到回收站</div>
+</div>
+<div class="menu" id="m-cat">
+  <div class="mi">新建子分类</div><div class="mi">重命名</div><div class="ms"></div><div class="mi danger">删除分类</div>
+</div>
+
+<script src="app.js"></script>
+<script src="views-notes.js"></script>
+<script src="views-work.js"></script>
+<script src="views-ai.js"></script>
+<script src="views-sys.js"></script>
+<script src="dark.js"></script>
+<script>KB.start('editor');</script>
+</body>
+</html>
