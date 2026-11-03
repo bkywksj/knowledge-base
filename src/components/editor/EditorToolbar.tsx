@@ -1,6 +1,6 @@
 import { Fragment, useState, useCallback, useEffect, useMemo, useReducer } from "react";
 import type { Editor } from "@tiptap/react";
-import { Button, Divider, Tooltip, Modal, Input, message, Dropdown, Select, ColorPicker } from "antd";
+import { Button, Divider, Tooltip, Modal, Input, message, Dropdown, Select, ColorPicker, Popover } from "antd";
 import type { MenuProps } from "antd";
 import {
   Bold,
@@ -47,6 +47,9 @@ import {
   ChevronDown,
   Search,
   ListX,
+  Type,
+  Plus,
+  GitCompare,
 } from "lucide-react";
 import { hasManualNumber, stripManualNumber } from "@/lib/headingNumber";
 import {
@@ -607,6 +610,9 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
     setLinkModalOpen(false);
     setLinkUrl("");
   }, [editor, linkUrl]);
+
+  /** 当前展开的收纳面板（排版 / 对齐 / 插入 / 对比），同一时间只开一个 */
+  const [openPanel, setOpenPanel] = useState<string | null>(null);
 
   const groups: ToolItem[][] = [
     // 撤销/重做
@@ -1379,6 +1385,142 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
       </Tooltip>
     );
   };
+  // ── v4 分组（原型 docs/design/ui-v4 FMT）──
+  //
+  // 上面 groups 里每个条目的定义（图标 / 行为 / 下拉 / 弹窗）一个都不动，这里只决定「摆在哪」：
+  //   撤销重做 ｜ 段落 ｜ 文本格式 ｜ 字色 · 底色 · 排版▾ ｜ 列表 · 引用 ｜ 对齐▾ · 缩进 ｜ 表格 · 插入▾ ｜
+  //   格式刷 · 清除 · 规整 ｜ 查找 · 语音 · 对比▾
+  // 收进「▾」面板的条目在弹层里用同一个 renderItem 渲染，各自的下拉 / 取色器 / 弹窗照常工作。
+  // 兜底：没被点名摆放的条目（以后新增的按钮）自动追加到最后一组，绝不会因为改版悄悄消失。
+  const byTitle = new Map(groups.flat().map((it) => [it.title, it] as const));
+  const placed = new Set<string>();
+  const pick = (...titles: string[]): ToolItem[] =>
+    titles.flatMap((t) => {
+      const it = byTitle.get(t);
+      if (!it) return [];
+      placed.add(t);
+      return [it];
+    });
+  /** 收纳面板：一个触发按钮 + 弹层里逐行列出原条目（图标 + 名称） */
+  const panel = (
+    key: string,
+    trigger: React.ReactNode,
+    title: string,
+    items: ToolItem[],
+    opts: { accent?: boolean; columns?: 1 | 2; active?: boolean } = {},
+  ): ToolItem | null => {
+    if (items.length === 0) return null;
+    return {
+      icon: null,
+      title,
+      customRender: () => (
+        <Popover
+          trigger="click"
+          placement="bottomLeft"
+          arrow={false}
+          open={openPanel === key}
+          onOpenChange={(o: boolean) => setOpenPanel(o ? key : null)}
+          content={
+            <div className={opts.columns === 2 ? "kb-fmt-panel two" : "kb-fmt-panel"}>
+              {items.map((it, i) => (
+                <div
+                  key={it.title}
+                  className="kb-fmt-panel-row"
+                  onClick={() => {
+                    // 普通按钮：点整行都算点按钮，点完收起面板；带下拉 / 自定义控件的行交给控件自己处理
+                    if (it.action && !it.dropdownItems && !it.customRender) {
+                      it.action();
+                      setOpenPanel(null);
+                    }
+                  }}
+                >
+                  <span onClick={(e) => it.action && !it.dropdownItems && !it.customRender && e.stopPropagation()}>
+                    {renderItem(it, i)}
+                  </span>
+                  <span className="kb-fmt-panel-lb">{it.title.replace(/（.*$/, "").replace(/\s*\(.*$/, "")}</span>
+                </div>
+              ))}
+            </div>
+          }
+        >
+          <Tooltip title={title} mouseEnterDelay={0.5}>
+            <Button
+              type="text"
+              size="small"
+              className={[
+                "kb-fmt-drop",
+                opts.accent ? "is-accent" : "",
+                opts.active ? "toolbar-btn-active" : "",
+              ].join(" ")}
+            >
+              {trigger}
+              <ChevronDown size={11} />
+            </Button>
+          </Tooltip>
+        </Popover>
+      ),
+    };
+  };
+  const alignActive = byTitle.get("居中")?.isActive?.()
+    ? <AlignCenter size={15} />
+    : byTitle.get("右对齐")?.isActive?.()
+      ? <AlignRight size={15} />
+      : <AlignLeft size={15} />;
+  const layoutGroupsRaw: (ToolItem | null)[][] = [
+    pick("撤销", "重做"),
+    pick("段落格式"),
+    pick("粗体", "斜体", "下划线", "删除线", "高亮", "批注", "行内代码", "上标", "下标"),
+    [
+      ...pick("字体颜色", "背景颜色"),
+      panel("typo", <Type size={15} />, "字体 / 字号 / 行间距", pick("字体", "字号", "行间距")),
+    ],
+    pick("无序列表", "有序列表", "任务列表", "引用"),
+    [
+      panel("align", alignActive, "对齐方式：左 / 居中 / 右", pick("左对齐", "居中", "右对齐")),
+      ...pick("减少缩进", "增加缩进"),
+    ],
+    [
+      ...pick("表格"),
+      panel(
+        "insert",
+        <>
+          <Plus size={15} />
+          <span>插入</span>
+        </>,
+        "插入：Callout / 折叠块 / 分栏 / Emoji / 代码块 / 公式 / 链接 / 图片 / 视频 / 白板 / 附件 …",
+        pick(
+          "Callout 提示框",
+          "折叠块",
+          "分栏布局（左图右文等）",
+          "插入 Emoji",
+          "代码块",
+          "公式（LaTeX）",
+          "插入链接（在选中链接上点击 → 弹窗留空确定可移除）",
+          "插入图片",
+          "图注 / Alt（先选中图片）",
+          "插入视频",
+          "插入白板（画流程图 / 草图，正文里显示为图片，可随时点开再改）",
+          "嵌入网络视频（B站 / YouTube / 腾讯 / 优酷）",
+          "剪藏网页正文到这里（可直接粘贴带标题的整段分享文本）",
+          "插入视频时间戳",
+          "插入附件（PDF/Office/ZIP 等）",
+          "分割线",
+        ),
+        { accent: true, columns: 2 },
+      ),
+    ],
+    pick("格式刷", "清除格式", "格式规整（清理从别处复制来的内容）"),
+    [
+      ...pick("查找替换 (Ctrl+F / Ctrl+H)", "语音输入"),
+      panel("compare", <GitCompare size={15} />, "对比剪贴板 / 对比其他笔记", pick("对比剪贴板", "对比其他笔记")),
+    ],
+  ];
+  const leftovers = groups.flat().filter((it) => !placed.has(it.title));
+  const layoutGroups: ToolItem[][] = [
+    ...layoutGroupsRaw.map((g) => g.filter((it): it is ToolItem => it != null)),
+    leftovers,
+  ].filter((g) => g.length > 0);
+
   // ── 分组渲染 ──
   //
   // 🔴 分组**不能**整体包一层 `inline-flex` 的 span。工具栏是 `flex-wrap: wrap`
@@ -1413,8 +1555,8 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
 
   return (
     <>
-      <div className="tiptap-toolbar" onMouseDown={handleToolbarMouseDown}>
-        {groups.map((group, gi) => renderGroup(group, gi, gi > 0))}
+      <div className="tiptap-toolbar kb-fmt" onMouseDown={handleToolbarMouseDown}>
+        {layoutGroups.map((group, gi) => renderGroup(group, gi, gi > 0))}
       </div>
 
       <Modal

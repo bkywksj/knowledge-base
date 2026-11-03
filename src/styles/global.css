@@ -4205,3 +4205,89 @@ body.sidebar-resizing .kb-panel-resizer {
   background: var(--kb-bg-hover);
   color: var(--kb-text-secondary);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 格式工具栏（T3-3b）—— 原型 .fmt / .fb / .fsep：圆角浅底条，按钮 30px，选中浅紫底
+   ═══════════════════════════════════════════════════════════ */
+.tiptap-toolbar.kb-fmt {
+  margin: 8px 14px 4px;
+  padding: 5px 6px;
+  column-gap: 2px;
+  border: none;
+  border-radius: 11px;
+  background: var(--kb-bg-panel);
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+}
+.tiptap-toolbar.kb-fmt .ant-btn {
+  height: 30px !important;
+  min-width: 30px !important;
+  border-radius: 7px;
+  color: var(--kb-text-secondary);
+}
+.tiptap-toolbar.kb-fmt .ant-btn:hover:not(:disabled) {
+  background: var(--kb-bg-hover) !important;
+  color: var(--kb-text-primary) !important;
+}
+.tiptap-toolbar.kb-fmt .toolbar-btn-active,
+.tiptap-toolbar.kb-fmt .toolbar-btn-active.ant-btn {
+  background: color-mix(in srgb, var(--kb-primary) 16%, transparent) !important;
+  color: var(--kb-primary) !important;
+}
+.tiptap-toolbar.kb-fmt .ant-divider-vertical {
+  height: 16px !important;
+  margin: 0 4px !important;
+  border-color: var(--kb-border) !important;
+}
+/* 收纳面板的触发按钮：图标 + ▾；「插入」用主色加粗（原型里它是最常用的入口） */
+.tiptap-toolbar .kb-fmt-drop.ant-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px !important;
+  width: auto !important;
+}
+.tiptap-toolbar .kb-fmt-drop.is-accent.ant-btn {
+  color: var(--kb-primary) !important;
+  font-weight: 600;
+}
+/* 收纳面板：一行一个原条目（控件 + 名称）；插入面板两列 */
+.kb-fmt-panel {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
+  min-width: 180px;
+}
+.kb-fmt-panel.two {
+  grid-template-columns: 1fr 1fr;
+  min-width: 380px;
+}
+.kb-fmt-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 2px 8px 2px 4px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.kb-fmt-panel-row:hover {
+  background: var(--kb-bg-hover);
+}
+.kb-fmt-panel-lb {
+  font-size: 13px;
+  color: var(--kb-text-primary);
+  white-space: nowrap;
+}
+.kb-fmt-panel-row .ant-btn {
+  height: 28px;
+  min-width: 28px;
+}
+/* 触发按钮里图标 + 文字 + ▾ 同一行（antd Button 会把多个子节点各包一层 span，默认会被挤成上下两行） */
+.tiptap-toolbar .kb-fmt-drop.ant-btn,
+.tiptap-toolbar .kb-fmt-drop.ant-btn > span {
+  display: inline-flex !important;
+  align-items: center;
+  flex-direction: row !important;
+  white-space: nowrap;
+  gap: 3px;
+}
