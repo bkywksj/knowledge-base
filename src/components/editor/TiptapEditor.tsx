@@ -902,6 +902,8 @@ interface TiptapEditorProps {
    * 底部 stats 会被推得离视觉底部很远 → 笔记页面应传 false 关闭它。
    */
   showFooterStats?: boolean;
+  /** 统计（字数 / 字符 / 阅读时长）变化时回调：笔记页把它放进底部状态栏（v4），同时传 showFooterStats={false} */
+  onStats?: (stats: { words: number; chars: number; readingTime: string }) => void;
   /**
    * 外部预填查询词（搜索结果点进笔记时携带的关键词）。设置后编辑器就绪即
    * 自动展开查找浮条、定位到首个命中——省去用户进笔记后再 Ctrl+F 搜一遍。
@@ -920,6 +922,7 @@ export function TiptapEditor({
   readingMode = false,
   onEditorReady,
   showFooterStats = true,
+  onStats,
   initialSearch,
 }: TiptapEditorProps) {
   const isExternalUpdate = useRef(false);
@@ -2500,15 +2503,18 @@ export function TiptapEditor({
     }
     const timer = setTimeout(() => {
       const s = calcEditorStats(editor);
-      setStats({
+      const next = {
         chars: s.chars,
         words: s.words,
         readingTime: `${s.readMinutes} min`,
-      });
+      };
+      setStats(next);
+      onStats?.(next);
     }, 300);
     return () => clearTimeout(timer);
     // 依赖 content prop：父组件在 onChange 后会更新 content，
     // 这反过来表示编辑器内容刚刚变过，此时触发一次 debounced 重算即可。
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onStats 只是通知出口，变了不需要重算
   }, [editor, content]);
 
   // 上抛 editor 实例给父组件（外挂大纲面板、调试用），unmount 时传 null 让父侧能解绑

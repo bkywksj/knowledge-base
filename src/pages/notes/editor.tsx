@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense, type ReactNode } from "react";
+import { Fragment, useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense, type ReactNode } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 
 /** 历史版本抽屉：不点开就不加载（大多数编辑会话根本用不到） */
@@ -15,7 +15,7 @@ import {
   Space,
   Typography,
   Spin,
-  Popconfirm,
+  Segmented,
   TreeSelect,
   Tag as AntTag,
   Divider,
@@ -29,6 +29,7 @@ import {
   App as AntdApp,
   theme as antdTheme,
 } from "antd";
+import { MoreHorizontal } from "lucide-react";
 import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, ChevronDown, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, MessageSquare, ListTree, Network, ExternalLink, BookOpen, FilePen, Presentation, Printer, Code2, History } from "lucide-react";
 import { CloseCircleFilled } from "@ant-design/icons";
 import { useAppStore, EDITOR_FONT_DEFAULTS } from "@/store";
@@ -208,6 +209,14 @@ function collectAllKeys(nodes: FolderTreeNode[]): number[] {
 
 /** 根据目标 folderId 从树中回溯，得到祖先链（根 → 子 → … → 目标）
  *  返回 `[{id, name}]` 数组；找不到返回空数组。 */
+/** 状态栏「10 月 27 日创建」：今年省略年份 */
+function formatCreatedDay(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const md = `${d.getMonth() + 1} 月 ${d.getDate()} 日`;
+  return d.getFullYear() === new Date().getFullYear() ? md : `${d.getFullYear()} 年 ${md}`;
+}
+
 function buildFolderPath(
   folders: Folder[],
   targetId: number,
@@ -769,7 +778,9 @@ function DesktopNoteEditorPage() {
   const [searchParams] = useSearchParams();
   const initialSearch = (searchParams.get("q") ?? "").trim() || undefined;
   // 上下文感知的 message / notification（避免静态方法丢主题、偶发不显示）
-  const { message, notification } = AntdApp.useApp();
+  const { message, notification, modal } = AntdApp.useApp();
+  /** 正文实时统计（TiptapEditor 回传），显示在底部状态栏 */
+  const [editorStats, setEditorStats] = useState<{ words: number; chars: number; readingTime: string } | null>(null);
   // 逐字段订阅：useAppStore() 订阅整个 store，任何 tick（如待办统计刷新）都会让整个编辑页重渲染
   const focusMode = useAppStore((s) => s.focusMode);
   const setFocusMode = useAppStore((s) => s.setFocusMode);
@@ -2219,222 +2230,39 @@ function DesktopNoteEditorPage() {
 
   return (
     <div className="editor-page">
-      {/* 顶部工具栏 */}
-      <div className="editor-topbar">
-        {/* 左侧：返回按钮 + 右边小字（更新时间 / 保存状态 上下堆叠）
-            原方案是同一行 Space，"更新于 XX 分钟前 未保存"会把按钮挤到换行；
-            改成竖向堆叠后整个左侧组宽度变窄，按钮全部回到一行 */}
-        <div className="editor-topbar__left">
-          <Button
-            icon={<ArrowLeft size={16} />}
-            onClick={() => {
-              if (window.history.length > 1) {
-                navigate(-1);
-              } else {
-                navigate("/notes");
-              }
-            }}
-          >
-            返回
-          </Button>
-          {(note || autoSaving || dirty || saveError || lastAutoSavedAt) && (
-            <div className="editor-topbar__meta">
-              {note && (
-                <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.2 }}>
-                  更新于 {relativeTime(note.updated_at)}
-                </Text>
-              )}
-              {/* 保存状态提示：优先级 保存中 > 保存失败 > 未保存 > 已保存 */}
-              {autoSaving || saving ? (
-                <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.2 }}>
-                  {autoSaving ? "自动保存中…" : "保存中…"}
-                </Text>
-              ) : saveError ? (
-                <Tooltip title={saveError}>
-                  <Text
-                    type="danger"
-                    style={{ fontSize: 11, lineHeight: 1.2, cursor: "pointer" }}
-                    onClick={() => void handleSave()}
-                  >
-                    保存失败 · 点此重试
-                  </Text>
-                </Tooltip>
-              ) : dirty ? (
-                <Text type="warning" style={{ fontSize: 11, lineHeight: 1.2 }}>
-                  {autoSaveEnabled ? (
-                    "未保存"
-                  ) : (
-                    <>
-                      未保存 · Ctrl+S 保存 ·{" "}
-                      {/* 老用户升级后保留了「关闭自动保存」，不强制改设置，
-                          但在最容易丢内容的地方给一个就地开启的入口 */}
-                      <a
-                        title="打开后停止输入片刻即自动保存，可在设置 → 自动保存里关闭"
-                        onClick={() => {
-                          setAutoSaveEnabled(true);
-                          message.success("已开启自动保存");
-                        }}
-                      >
-                        开启自动保存
-                      </a>
-                    </>
-                  )}
-                </Text>
-              ) : lastAutoSavedAt ? (
-                <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.2 }}>
-                  {autoSaveEnabled ? "已自动保存" : "已保存"} ·{" "}
-                  {relativeTime(new Date(lastAutoSavedAt).toISOString())}
-                </Text>
-              ) : null}
-            </div>
-          )}
-        </div>
-        <Space align="center">
-          <Tooltip
-            title={
-              sourceMode
-                ? "退出源码模式，回到富文本编辑"
-                : "源码模式：直接编辑 Markdown 原文（HTML / front-matter 原样保留）"
-            }
-          >
+      {/* 顶部条（v4 原型 .ebar）：左「← 面包屑 · 来源文件 · 保存状态」｜ 右「编辑/阅读/源码 · 专注 · 历史 · 置顶 · 大纲 ｜
+          导图 · 幻灯片 · 新窗口 · 导出 ｜ 保存（有改动时） · 问 AI · ⋯」。
+          隐藏 / 加密 / 打印 / 删除 收进「⋯」（用户确认的位置调整，功能不减）；「更新于」挪到底部状态栏 */}
+      <div className="editor-topbar kb-ebar">
+        <div className="editor-topbar__left kb-ebar-left">
+          <Tooltip title="返回">
             <Button
-              type={sourceMode ? "primary" : "default"}
-              icon={<Code2 size={16} />}
+              type="text"
+              className="kb-ib"
+              icon={<ArrowLeft size={16} />}
               onClick={() => {
-                const next = !sourceMode;
-                setSourceMode(next);
-                localStorage.setItem("editor.sourceMode", next ? "1" : "0");
-                // 源码模式与阅读模式互斥：阅读态下进源码没意义（源码本身就要编辑）
-                if (next) {
-                  setReadingMode(false);
-                  showSourceModeIntroOnce();
+                if (window.history.length > 1) {
+                  navigate(-1);
+                } else {
+                  navigate("/notes");
                 }
               }}
             />
           </Tooltip>
-          <Tooltip
-            title={
-              sourceMode
-                ? "源码模式下不可用（请先退出源码模式）"
-                : readingMode
-                  ? "切换到编辑模式"
-                  : "切换到阅读模式（隐藏工具栏，不可编辑）"
-            }
-          >
-            <Button
-              type={readingMode ? "primary" : "default"}
-              icon={readingMode ? <BookOpen size={16} /> : <FilePen size={16} />}
-              disabled={sourceMode}
-              onClick={() => setReadingMode((v) => !v)}
-            />
-          </Tooltip>
-          <Tooltip title={focusMode ? "退出专注模式 (Esc)" : "专注模式 (F11)"}>
-            <Button
-              icon={focusMode ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-              onClick={() => setFocusMode(!focusMode)}
-            />
-          </Tooltip>
-          <Tooltip title="历史版本（保存 / 同步覆盖前会自动留底）">
-            <Button icon={<History size={16} />} onClick={() => void openHistory()} />
-          </Tooltip>
-          <Tooltip title={note?.is_pinned ? "取消置顶" : "置顶"}>
-            <Button
-              type={note?.is_pinned ? "primary" : "default"}
-              icon={<Pin size={16} />}
-              onClick={handleTogglePin}
-            />
-          </Tooltip>
-          <Tooltip
-            title={
-              note?.is_hidden
-                ? "取消隐藏（回到主列表）"
-                : "隐藏此笔记（主列表/搜索/图谱不可见）"
-            }
-          >
-            <Button
-              type={note?.is_hidden ? "primary" : "default"}
-              icon={note?.is_hidden ? <EyeOff size={16} /> : <Eye size={16} />}
-              onClick={handleToggleHidden}
-            />
-          </Tooltip>
-          <Tooltip
-            title={
-              note?.is_encrypted
-                ? "取消加密（恢复为普通笔记）"
-                : "加密此笔记（需先设置并解锁主密码）"
-            }
-          >
-            <Button
-              type={note?.is_encrypted ? "primary" : "default"}
-              icon={note?.is_encrypted ? <Lock size={16} /> : <Unlock size={16} />}
-              onClick={handleToggleEncrypt}
-            />
-          </Tooltip>
-          <Tooltip
-            title={
-              mindMapOpen
-                ? "思维导图打开期间大纲已暂时隐藏（关闭导图后恢复）"
-                : outlineVisible
-                  ? "隐藏大纲"
-                  : "显示大纲"
-            }
-          >
-            <Button
-              type={effectiveOutlineVisible ? "primary" : "default"}
-              icon={<ListTree size={16} />}
-              onClick={toggleOutline}
-              disabled={mindMapOpen}
-            />
-          </Tooltip>
-          <Tooltip title="思维导图（只读视图）">
-            <Button
-              icon={<Network size={16} />}
-              onClick={() => setMindMapOpen(true)}
-            />
-          </Tooltip>
-          <Tooltip title="幻灯片演示（用 --- 分页）">
-            <Button
-              icon={<Presentation size={16} />}
-              onClick={() => setSlideshowOpen(true)}
-            />
-          </Tooltip>
-          {/* popout 窗口里再点这个按钮没有意义（同 id 只会前置已存在窗口），直接隐藏 */}
-          {!IS_POPOUT_WINDOW && (
-            <Tooltip title="新窗口打开">
-              <Button
-                icon={<ExternalLink size={16} />}
-                onClick={async () => {
-                  if (!noteId) return;
-                  // 弹新窗口前先把未保存内容落库，避免 pop-out 看到老版本
-                  if (dirty) await handleSave(true);
-                  try {
-                    await noteApi.openInNewWindow(noteId);
-                  } catch (e) {
-                    message.error(`打开新窗口失败：${e}`);
-                  }
-                }}
-              />
-            </Tooltip>
-          )}
-          {/* 原先这里有个 Link2 徽标按钮，作用只是「滚动到正文底部的反链面板」——
-              本质是个滚动快捷方式而非功能入口，语义绕、还占工具栏位置。
-              现在底部有常驻的链接状态条（链出/链入/断链，点击即看明细），它就没必要了。
-              正文底部的 BacklinksPanel 保留：习惯从底部看反链的用户不受影响。 */}
-          {!readingMode && (
-            <Button
-              type="primary"
-              icon={<Save size={16} />}
-              loading={saving}
-              onClick={() => handleSave()}
-              disabled={!dirty}
-            >
-              保存
-            </Button>
-          )}
+          {/* 面包屑：文件夹路径 › 标题（点文件夹跳到该文件夹的笔记列表） */}
+          <div className="kb-crumb">
+            {(note?.folder_id != null ? buildFolderPath(folders, note.folder_id) : []).map((f) => (
+              <Fragment key={f.id}>
+                <a onClick={() => navigate(`/notes?folder=${f.id}`)}>{f.name}</a>
+                <ChevronRight size={12} />
+              </Fragment>
+            ))}
+            <b>{title || note?.title || "未命名"}</b>
+          </div>
           {note?.source_file_path && (
             note?.source_file_type === "md" ? (
               // 外部 .md 双向同步关联：主按钮用系统应用打开，下拉菜单提供"解除关联"
-              <Space.Compact>
+              <Space.Compact size="small" className="kb-src-chip">
                 <Tooltip title="用系统默认应用打开原始 .md 文件">
                   <Button
                     icon={<FileTextIcon size={16} />}
@@ -2488,7 +2316,7 @@ function DesktopNoteEditorPage() {
             ) : (
               /* PDF / Word 等其它来源：主按钮打开文件，下拉补"定位到文件夹"。
                  这些同样是磁盘上的本地文件，"它到底存在哪"的需求和 .md 一样常见。 */
-              <Space.Compact>
+              <Space.Compact size="small" className="kb-src-chip">
                 <Tooltip
                   title={
                     note?.source_file_type === "pdf"
@@ -2532,19 +2360,147 @@ function DesktopNoteEditorPage() {
               </Space.Compact>
             )
           )}
-          {/* R-005b 打印：所见即所得，克隆编辑器实时 DOM + 应用同款 CSS → 系统打印对话框 */}
-          <Tooltip title="打印 / 打印成 PDF（所见即所得）">
-            <Button icon={<Printer size={16} />} onClick={() => void handlePrint()} />
+          <span className="kb-saved">
+          {/* 保存状态提示：优先级 保存中 > 保存失败 > 未保存 > 已保存 */}
+          {autoSaving || saving ? (
+            <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.2 }}>
+              {autoSaving ? "自动保存中…" : "保存中…"}
+            </Text>
+          ) : saveError ? (
+            <Tooltip title={saveError}>
+              <Text
+                type="danger"
+                style={{ fontSize: 11, lineHeight: 1.2, cursor: "pointer" }}
+                onClick={() => void handleSave()}
+              >
+                保存失败 · 点此重试
+              </Text>
+            </Tooltip>
+          ) : dirty ? (
+            <Text type="warning" style={{ fontSize: 11, lineHeight: 1.2 }}>
+              {autoSaveEnabled ? (
+                "未保存"
+              ) : (
+                <>
+                  未保存 · Ctrl+S 保存 ·{" "}
+                  {/* 老用户升级后保留了「关闭自动保存」，不强制改设置，
+                      但在最容易丢内容的地方给一个就地开启的入口 */}
+                  <a
+                    title="打开后停止输入片刻即自动保存，可在设置 → 自动保存里关闭"
+                    onClick={() => {
+                      setAutoSaveEnabled(true);
+                      message.success("已开启自动保存");
+                    }}
+                  >
+                    开启自动保存
+                  </a>
+                </>
+              )}
+            </Text>
+          ) : lastAutoSavedAt ? (
+            <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.2 }}>
+              {autoSaveEnabled ? "已自动保存" : "已保存"} ·{" "}
+              {relativeTime(new Date(lastAutoSavedAt).toISOString())}
+            </Text>
+          ) : null}
+          </span>
+        </div>
+        <div className="kb-ebar-right">
+          {/* 编辑 / 阅读 / 源码 三态（原来是「阅读切换」「源码切换」两个按钮，合成一个；源码与阅读本就互斥） */}
+          <Segmented
+            size="small"
+            className="kb-mode-seg"
+            value={sourceMode ? "source" : readingMode ? "read" : "edit"}
+            onChange={(v) => {
+              const next = v as "edit" | "read" | "source";
+              const toSource = next === "source";
+              if (toSource !== sourceMode) {
+                setSourceMode(toSource);
+                localStorage.setItem("editor.sourceMode", toSource ? "1" : "0");
+                if (toSource) showSourceModeIntroOnce();
+              }
+              setReadingMode(next === "read");
+            }}
+            options={[
+              { value: "edit", label: <span className="kb-seg-lb"><FilePen size={13} />编辑</span>, title: "富文本编辑" },
+              { value: "read", label: <span className="kb-seg-lb"><BookOpen size={13} />阅读</span>, title: "阅读模式（隐藏工具栏，不可编辑）" },
+              { value: "source", label: <span className="kb-seg-lb"><Code2 size={13} />源码</span>, title: "源码模式：直接编辑 Markdown 原文（HTML / front-matter 原样保留）" },
+            ]}
+          />
+          <Tooltip title={focusMode ? "退出专注模式 (Esc)" : "专注模式 (F11)"}>
+            <Button
+              type="text"
+              className="kb-ib"
+              icon={focusMode ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              onClick={() => setFocusMode(!focusMode)}
+            />
           </Tooltip>
+          <Tooltip title="历史版本（保存 / 同步覆盖前会自动留底）">
+            <Button type="text" className="kb-ib" icon={<History size={16} />} onClick={() => void openHistory()} />
+          </Tooltip>
+          <Tooltip title={note?.is_pinned ? "取消置顶" : "置顶"}>
+            <Button
+              type="text"
+              className={note?.is_pinned ? "kb-ib is-on" : "kb-ib"}
+              icon={<Pin size={16} />}
+              onClick={handleTogglePin}
+            />
+          </Tooltip>
+          <Tooltip
+            title={
+              mindMapOpen
+                ? "思维导图打开期间大纲已暂时隐藏（关闭导图后恢复）"
+                : outlineVisible
+                  ? "隐藏大纲"
+                  : "显示大纲"
+            }
+          >
+            <Button
+              type="text"
+              className={effectiveOutlineVisible ? "kb-ib is-on" : "kb-ib"}
+              icon={<ListTree size={16} />}
+              onClick={toggleOutline}
+              disabled={mindMapOpen}
+            />
+          </Tooltip>
+          <span className="kb-vsep" />
+          <Tooltip title="思维导图（只读视图）">
+            <Button type="text" className="kb-ib" icon={<Network size={16} />} onClick={() => setMindMapOpen(true)} />
+          </Tooltip>
+          <Tooltip title="幻灯片演示（用 --- 分页）">
+            <Button type="text" className="kb-ib" icon={<Presentation size={16} />} onClick={() => setSlideshowOpen(true)} />
+          </Tooltip>
+          {/* popout 窗口里再点这个按钮没有意义（同 id 只会前置已存在窗口），直接隐藏 */}
+          {!IS_POPOUT_WINDOW && (
+            <Tooltip title="新窗口打开">
+              <Button
+                type="text"
+                className="kb-ib"
+                icon={<ExternalLink size={16} />}
+                onClick={async () => {
+                  if (!noteId) return;
+                  // 弹新窗口前先把未保存内容落库，避免 pop-out 看到老版本
+                  if (dirty) await handleSave(true);
+                  try {
+                    await noteApi.openInNewWindow(noteId);
+                  } catch (e) {
+                    message.error(`打开新窗口失败：${e}`);
+                  }
+                }}
+              />
+            </Tooltip>
+          )}
           {/* T-020 导出按钮：默认导出 Markdown；右侧下拉可选 Word / HTML（Ctrl+Shift+E 唤起菜单） */}
           {(() => {
             const exportAccel = accelToKeys(
               findShortcut("editor.exportMenu")?.defaultAccel ?? "CommandOrControl+Shift+E",
             ).join("+");
             return (
-              <Space.Compact>
+              <Space.Compact className="kb-ib-group">
                 <Tooltip title="导出为 Markdown">
                   <Button
+                    type="text"
+                    className="kb-ib"
                     icon={<Share size={16} />}
                     onClick={handleExportNote}
                   />
@@ -2589,29 +2545,84 @@ function DesktopNoteEditorPage() {
                   }}
                 >
                   <Tooltip title={`更多导出格式 (${exportAccel})`}>
-                    <Button icon={<ChevronDown size={14} />} />
+                    <Button type="text" className="kb-ib kb-ib-caret" icon={<ChevronDown size={13} />} />
                   </Tooltip>
                 </Dropdown>
               </Space.Compact>
             );
           })()}
-          <Tooltip title="问 AI">
+          <span className="kb-vsep" />
+          {/* 保存：自动保存开着时平时不占位，只在有未保存改动（或关了自动保存）时出现；阅读模式下不需要 */}
+          {!readingMode && (dirty || !autoSaveEnabled) && (
             <Button
-              icon={<MessageSquare size={16} />}
-              onClick={async () => {
-                // 先确保未保存内容已落库，否则 AI 拿到的还是老正文
-                if (dirty) await handleSave(true);
-                setAiSelection(undefined);
-                setAiDrawerOpen(true);
-              }}
-            />
-          </Tooltip>
-          <Popconfirm title="确认删除此笔记？" onConfirm={handleDelete}>
-            <Button danger icon={<Trash2 size={16} />}>
-              删除
+              type="primary"
+              size="small"
+              icon={<Save size={14} />}
+              loading={saving}
+              onClick={() => handleSave()}
+              disabled={!dirty}
+            >
+              保存
             </Button>
-          </Popconfirm>
-        </Space>
+          )}
+          <Button
+            size="small"
+            className="kb-ask-btn"
+            icon={<MessageSquare size={14} />}
+            onClick={async () => {
+              // 先确保未保存内容已落库，否则 AI 拿到的还是老正文
+              if (dirty) await handleSave(true);
+              setAiSelection(undefined);
+              setAiDrawerOpen(true);
+            }}
+          >
+            问 AI
+          </Button>
+          {/* 更多：隐藏 / 加密 / 打印 / 删除（原来各占一个按钮，挪进来，行为不变） */}
+          <Dropdown
+            trigger={["click"]}
+            placement="bottomRight"
+            menu={{
+              items: [
+                {
+                  key: "hidden",
+                  icon: note?.is_hidden ? <EyeOff size={14} /> : <Eye size={14} />,
+                  label: note?.is_hidden ? "取消隐藏（回到主列表）" : "隐藏此笔记（主列表 / 搜索 / 图谱不可见）",
+                  onClick: () => void handleToggleHidden(),
+                },
+                {
+                  key: "encrypt",
+                  icon: note?.is_encrypted ? <Unlock size={14} /> : <Lock size={14} />,
+                  label: note?.is_encrypted ? "取消加密（恢复为普通笔记）" : "加密此笔记（需先设置并解锁主密码）",
+                  onClick: () => void handleToggleEncrypt(),
+                },
+                {
+                  key: "print",
+                  icon: <Printer size={14} />,
+                  label: "打印 / 打印成 PDF（所见即所得）",
+                  onClick: () => void handlePrint(),
+                },
+                { type: "divider" },
+                {
+                  key: "delete",
+                  icon: <Trash2 size={14} />,
+                  label: "删除笔记",
+                  danger: true,
+                  onClick: () =>
+                    modal.confirm({
+                      title: "确认删除此笔记？",
+                      okText: "删除",
+                      okButtonProps: { danger: true },
+                      cancelText: "取消",
+                      onOk: handleDelete,
+                    }),
+                },
+              ],
+            }}
+          >
+            <Button type="text" className="kb-ib" icon={<MoreHorizontal size={16} />} title="更多操作" />
+          </Dropdown>
+        </div>
       </div>
 
       {/* 编辑器 + 思维导图 横向分栏容器（mindMapOpen=true 时变两栏，否则编辑器独占） */}
@@ -2784,6 +2795,8 @@ function DesktopNoteEditorPage() {
                 setAiDrawerOpen(true);
               }}
               onEditorReady={setEditorInstance}
+              showFooterStats={false}
+              onStats={setEditorStats}
             />
           )}
 
@@ -2934,6 +2947,26 @@ function DesktopNoteEditorPage() {
           saveTick 在保存完成后自增：出链是保存时才同步进 note_links 的，
           不刷新的话刚写完 [[X]] 计数还是旧的。 */}
       <LinkStatusBar
+        variant="statusbar"
+        leading={
+          <>
+            <span className="kb-sb-mode">{sourceMode ? "源码" : readingMode ? "阅读" : "富文本"}</span>
+            {note && (
+              <span>
+                {formatCreatedDay(note.created_at)} 创建 · {relativeTime(note.updated_at)} 修改
+              </span>
+            )}
+          </>
+        }
+        trailing={
+          editorStats && (
+            <>
+              <span>{editorStats.words.toLocaleString()} 字</span>
+              <span>{editorStats.chars.toLocaleString()} 字符</span>
+              <span>约 {editorStats.readingTime}</span>
+            </>
+          )
+        }
         noteId={Number.isFinite(noteId) ? noteId : undefined}
         refreshKey={linkRefreshTick}
         /* 大纲列宽 + 6px 分隔条：状态条据此让出同样的空间，左右沿才对得上卡片 */

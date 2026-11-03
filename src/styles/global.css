@@ -4039,3 +4039,169 @@ body.sidebar-resizing .kb-panel-resizer {
   color: var(--kb-text-primary);
   font-weight: 600;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 编辑页顶部条 + 底部状态栏（T3-3a）—— 原型 .ebar / .crumb / .saved / .statusbar
+   ═══════════════════════════════════════════════════════════ */
+.editor-topbar.kb-ebar {
+  min-height: 46px;
+  padding: 6px 10px 6px 14px !important;
+  gap: 8px;
+  border-bottom: 1px solid var(--kb-border) !important;
+  background: var(--kb-bg-panel) !important;
+}
+.kb-ebar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+.kb-ebar-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+/* 编辑页里的图标按钮：30×30、圆角 8、三级灰，选中浅紫底（原型 .ib / .ib.on） */
+.kb-ib.ant-btn {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0;
+  border-radius: 8px;
+  color: var(--kb-text-tertiary);
+}
+.kb-ib.ant-btn:not(:disabled):hover {
+  background: var(--kb-bg-hover) !important;
+  color: var(--kb-text-primary) !important;
+}
+.kb-ib.ant-btn.is-on {
+  color: var(--kb-primary) !important;
+  background: var(--kb-primary-light) !important;
+}
+.kb-ib.kb-ib-caret.ant-btn {
+  width: 18px;
+  min-width: 18px;
+}
+.kb-ib-group.ant-space-compact {
+  gap: 0;
+}
+.kb-vsep {
+  width: 1px;
+  height: 16px;
+  margin: 0 6px;
+  flex: none;
+  background: var(--kb-border);
+}
+/* 面包屑：文件夹 › 标题 */
+.kb-crumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--kb-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.kb-crumb > a {
+  color: var(--kb-text-tertiary);
+}
+.kb-crumb > a:hover {
+  color: var(--kb-primary);
+}
+.kb-crumb > svg {
+  flex: none;
+  opacity: 0.6;
+}
+.kb-crumb > b {
+  font-weight: 400;
+  color: var(--kb-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 来源文件小标签（MD / PDF / XLSX …） */
+.kb-src-chip .ant-btn {
+  height: 24px;
+  font-size: 12px;
+}
+/* 保存状态：小号灰字，前面一颗状态圆点 */
+.kb-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.kb-saved .ant-typography {
+  font-size: 12px !important;
+}
+.kb-saved::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ant-color-success);
+  flex: none;
+}
+.kb-saved:empty::before {
+  display: none;
+}
+/* 编辑 / 阅读 / 源码 三态 */
+.kb-mode-seg {
+  margin-right: 6px;
+}
+.kb-seg-lb {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+/* 问 AI：浅紫底主色字（原型 .btn-s） */
+.kb-ask-btn.ant-btn {
+  border: none;
+  background: var(--kb-primary-light);
+  color: var(--kb-primary);
+  font-weight: 600;
+}
+.kb-ask-btn.ant-btn:hover {
+  background: color-mix(in srgb, var(--kb-primary) 18%, transparent) !important;
+  color: var(--kb-primary) !important;
+}
+/* 底部状态栏：通栏 30px，左「模式 · 创建 · 修改」中「链出 / 链入 / 断链」右「字数 · 字符 · 阅读」 */
+.kb-statusbar {
+  height: 30px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 14px 0 18px;
+  border-top: 1px solid var(--kb-border);
+  background: var(--kb-bg-panel);
+  font-size: 11.5px;
+  color: var(--kb-text-tertiary);
+}
+.kb-statusbar .kb-link-status-bar {
+  /* 复用链接条本体，但在状态栏里不再自带卡片外观 */
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  width: auto !important;
+  flex: 1;
+  justify-content: center;
+}
+.kb-statusbar-lead,
+.kb-statusbar-trail {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  white-space: nowrap;
+}
+.kb-sb-mode {
+  padding: 1px 7px;
+  border-radius: 5px;
+  background: var(--kb-bg-hover);
+  color: var(--kb-text-secondary);
+}
