@@ -4570,3 +4570,64 @@ body.sidebar-resizing .kb-panel-resizer {
 .kb-wb-canvas {
   background: var(--ant-color-bg-container);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 待办侧栏（T3-6a）—— 原型 .ph-sec / .ni：小节标题粗体灰字；行选中白底细描边；计数灰字
+   ═══════════════════════════════════════════════════════════ */
+.kb-tp-sec {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 14px 4px 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--kb-text-tertiary);
+}
+.kb-tp-sec .ant-btn {
+  width: 22px !important;
+  height: 22px !important;
+  min-width: 22px !important;
+  padding: 0 !important;
+  color: var(--kb-text-tertiary);
+}
+.kb-tp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--kb-text-primary);
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+.kb-tp-row:hover {
+  background: var(--kb-bg-hover);
+}
+.kb-tp-row.is-active {
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+  font-weight: 600;
+}
+.kb-tp-ic {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--kb-text-tertiary);
+}
+.kb-tp-lb {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-tp-count {
+  flex: none;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--kb-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}

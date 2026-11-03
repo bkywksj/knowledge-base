@@ -1,11 +1,10 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Button, Badge, Modal, Input, message, theme as antdTheme } from "antd";
+import { Button, Modal, Input, message, theme as antdTheme } from "antd";
 import {
-  CheckSquare,
   Plus,
   ListChecks,
-  AlertTriangle,
+  Flag,
   Sun,
   CalendarRange,
   CalendarClock,
@@ -15,7 +14,6 @@ import {
   Ban,
   Repeat,
   Link as LinkIcon,
-  Tags as TagsIcon,
   Settings as SettingsIcon,
   Inbox as InboxIcon,
   ChevronRight as ChevronRightIcon,
@@ -360,16 +358,9 @@ export function TasksPanel() {
       // 其他智能筛选行 / "分类"标题 / "未分类"行右键无反应（桌面应用一致行为）
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* 视图标题 */}
-      <div
-        className="flex items-center gap-2 px-3 py-2.5 shrink-0"
-        style={{ borderBottom: `1px solid ${token.colorBorderSecondary}` }}
-      >
-        <CheckSquare size={15} style={{ color: token.colorPrimary }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: token.colorText }}>
-          待办
-        </span>
-        <div style={{ flex: 1 }} />
+      {/* 视图标题栏（v4 原型 .ph，与笔记 / 日记面板同款 .kb-ph） */}
+      <div className="kb-ph">
+        <span className="kb-ph-title">待办</span>
         <Button
           type="text"
           size="small"
@@ -378,14 +369,13 @@ export function TasksPanel() {
             // 触发主区"新建任务"Modal：通过一次性 URL 参数携带
             navigate("/tasks?new=1");
           }}
-          style={{ width: 24, height: 24, padding: 0 }}
           title="新建任务"
         />
       </div>
 
       <div
         className="flex-1 overflow-auto"
-        style={{ minHeight: 0, padding: "6px 8px" }}
+        style={{ minHeight: 0, padding: "2px 8px 8px" }}
       >
         {/* 智能列表 */}
         {/*
@@ -403,7 +393,7 @@ export function TasksPanel() {
         />
         <SmartRow
           active={currentFilter === "overdue"}
-          icon={<AlertTriangle size={14} />}
+          icon={<Flag size={14} />}
           label="逾期"
           count={counts.overdue}
           danger
@@ -483,25 +473,13 @@ export function TasksPanel() {
         />
 
         {/* 分类 section */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            color: token.colorTextTertiary,
-            fontSize: 11,
-            textTransform: "uppercase",
-            letterSpacing: 0.5,
-            padding: "12px 10px 6px",
-          }}
-        >
-          <TagsIcon size={11} style={{ marginRight: 4 }} />
+        <div className="kb-tp-sec">
           <span style={{ flex: 1 }}>分类</span>
           <Button
             type="text"
             size="small"
             icon={<Plus size={12} />}
             onClick={() => openCreateCategory(null)}
-            style={{ width: 20, height: 20, padding: 0, fontSize: 11 }}
             title="新建分类（右键分类可新建子分类）"
           />
           <Button
@@ -509,7 +487,6 @@ export function TasksPanel() {
             size="small"
             icon={<SettingsIcon size={12} />}
             onClick={() => setManageOpen(true)}
-            style={{ width: 20, height: 20, padding: 0, fontSize: 11 }}
             title="管理分类"
           />
         </div>
@@ -680,19 +657,9 @@ function GroupLabel({
   children: React.ReactNode;
   token: { colorTextTertiary: string };
 }) {
-  return (
-    <div
-      style={{
-        color: token.colorTextTertiary,
-        fontSize: 11,
-        textTransform: "uppercase",
-        letterSpacing: 0.5,
-        padding: "12px 10px 6px",
-      }}
-    >
-      {children}
-    </div>
-  );
+  // v4 原型 .ph-sec：小号粗体灰字（样式见 global.css .kb-tp-sec）；token 参数保留，调用处不用改
+  void token;
+  return <div className="kb-tp-sec">{children}</div>;
 }
 
 function SmartRow({
@@ -724,55 +691,28 @@ function SmartRow({
   };
 }) {
   return (
+    // v4 原型 .ni：选中 = 白底 + 细描边（与笔记文件夹树一致），计数一律灰色数字；
+    // 「逾期 / 紧急」的警示靠红色图标表达，不再用红底徽章
     <div
       onClick={onClick}
       onContextMenu={onContextMenu}
-      className="cursor-pointer"
+      className={active ? "kb-tp-row is-active" : "kb-tp-row"}
       style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "6px 10px",
-        borderRadius: 6,
-        background: active ? `${token.colorPrimary}14` : "transparent",
-        color: active ? token.colorPrimary : token.colorText,
-        fontWeight: active ? 500 : undefined,
-        fontSize: 13,
         outline: contextActive ? `1px solid ${token.colorPrimary}` : "none",
         outlineOffset: -1,
-        transition: "background .15s, outline .1s",
       }}
     >
       <span
+        className="kb-tp-ic"
         style={{
-          color: danger
-            ? token.colorError
-            : active
-              ? token.colorPrimary
-              : token.colorTextSecondary,
-          display: "inline-flex",
-          alignItems: "center",
-          flexShrink: 0,
+          color: danger ? token.colorError : active ? token.colorPrimary : undefined,
         }}
       >
         {icon}
       </span>
-      <span style={{ flex: 1 }}>{label}</span>
+      <span className="kb-tp-lb">{label}</span>
       {typeof count === "number" && count > 0 && (
-        <Badge
-          count={count}
-          overflowCount={99}
-          style={{
-            backgroundColor: danger
-              ? token.colorError
-              : active
-                ? token.colorPrimary
-                : "transparent",
-            color: danger || active ? "#fff" : token.colorTextTertiary,
-            boxShadow: "none",
-            fontWeight: 500,
-          }}
-        />
+        <span className="kb-tp-count">{count > 999 ? "999+" : count}</span>
       )}
     </div>
   );
