@@ -145,7 +145,7 @@ function BacklinksPanel({
   onNavigate: (id: number) => void;
 }) {
   return (
-    <div id="backlinks-panel" className="mt-6 pt-4 border-t border-gray-100">
+    <div id="backlinks-panel" className="mt-6 pt-4 border-t border-[var(--kb-border)]">
       <div className="flex items-center gap-2 mb-2">
         <Link2 size={14} className="text-gray-400" />
         <Text type="secondary" style={{ fontSize: 13 }}>
@@ -161,7 +161,7 @@ function BacklinksPanel({
           {backlinks.map((link) => (
             <div
               key={link.source_id}
-              className="flex items-center justify-between px-3 py-2 rounded-md cursor-pointer hover:bg-gray-50"
+              className="flex items-center justify-between px-3 py-2 rounded-md cursor-pointer hover:bg-[var(--kb-bg-hover)]"
               onClick={() => onNavigate(link.source_id)}
             >
               <Text style={{ fontSize: 13 }}>{link.source_title}</Text>
@@ -2710,7 +2710,7 @@ function DesktopNoteEditorPage() {
                   style={{
                     cursor: "pointer",
                     fontSize: 14,
-                    color: "rgba(0, 0, 0, 0.25)",
+                    color: "var(--ant-color-text-quaternary)",
                     transition: "color 0.2s",
                   }}
                   onMouseEnter={(e) => {
@@ -2917,7 +2917,7 @@ function DesktopNoteEditorPage() {
             background: "transparent",
             flexShrink: 0,
           }}
-          className="hover:bg-blue-500/30 active:bg-blue-500/50 transition-colors"
+          className="hover:bg-[color-mix(in_srgb,var(--kb-primary)_30%,transparent)] active:bg-[color-mix(in_srgb,var(--kb-primary)_50%,transparent)] transition-colors"
         />
       )}
 

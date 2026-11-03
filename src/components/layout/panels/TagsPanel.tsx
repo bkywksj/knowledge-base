@@ -731,7 +731,7 @@ export function TagsPanel() {
               treeNodeFilterProp="title"
             />
           </Form.Item>
-          <Form.Item name="color" label="颜色" initialValue="#1677ff">
+          <Form.Item name="color" label="颜色" initialValue="#722ed1">
             <TagColorPicker />
           </Form.Item>
         </Form>

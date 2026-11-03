@@ -220,11 +220,11 @@ export function ImportConfigModal({
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   placeholder='粘贴 envelope JSON，例如：\n{"kbConfig":"v1","kind":"webdav-backend","data":{...}}'
-                  className="w-full h-40 rounded-lg border border-slate-200 p-3 font-mono text-xs leading-relaxed"
+                  className="w-full h-40 rounded-lg border border-[var(--kb-border)] bg-[var(--kb-bg-raised)] text-[var(--kb-text-primary)] p-3 font-mono text-xs leading-relaxed"
                 />
                 <button
                   onClick={pasteFromClipboard}
-                  className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white py-2 text-sm text-slate-700 active:bg-slate-50"
+                  className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--kb-border)] bg-[var(--kb-bg-raised)] py-2 text-sm text-[var(--kb-text-primary)] active:bg-[var(--kb-bg-hover)]"
                 >
                   <ClipboardPaste size={14} /> 从剪贴板读取
                 </button>
@@ -238,25 +238,25 @@ export function ImportConfigModal({
               <div className="flex flex-col items-center gap-3">
                 <div
                   id={scanContainerId}
-                  className="w-full overflow-hidden rounded-lg border border-slate-200"
+                  className="w-full overflow-hidden rounded-lg border border-[var(--kb-border)]"
                   style={{ minHeight: 280 }}
                 />
                 {!scanning ? (
                   <button
                     onClick={startScan}
-                    className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#1677FF] py-2 text-sm font-medium text-white active:scale-95"
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[var(--kb-primary)] py-2 text-sm font-medium text-white active:scale-95"
                   >
                     <ScanLine size={14} /> 启动摄像头
                   </button>
                 ) : (
                   <button
                     onClick={() => void stopScan()}
-                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white py-2 text-sm text-slate-700"
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--kb-border)] bg-[var(--kb-bg-raised)] py-2 text-sm text-[var(--kb-text-primary)]"
                   >
                     停止扫描
                   </button>
                 )}
-                <p className="text-center text-xs text-slate-500">
+                <p className="text-center text-xs text-[var(--kb-text-tertiary)]">
                   对准对方设备「分享」页面的二维码
                 </p>
               </div>
@@ -267,8 +267,8 @@ export function ImportConfigModal({
 
       {/* 加密 envelope → 让用户输 PIN */}
       {needPin && (
-        <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
-          <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-blue-700">
+        <div className="mt-3 rounded-lg border border-[var(--kb-border)] bg-[var(--kb-primary-light)] p-3">
+          <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-[var(--kb-primary)]">
             <Lock size={12} />
             此配置已加密，请输入分享方提供的 PIN
           </div>
@@ -315,14 +315,14 @@ export function ImportConfigModal({
       <div className="mt-4 flex gap-2">
         <button
           onClick={onClose}
-          className="flex-1 rounded-lg border border-slate-200 bg-white py-2 text-sm text-slate-700"
+          className="flex-1 rounded-lg border border-[var(--kb-border)] bg-[var(--kb-bg-raised)] py-2 text-sm text-[var(--kb-text-primary)]"
         >
           取消
         </button>
         <button
           onClick={doImport}
           disabled={!parsed || importing}
-          className="flex-1 rounded-lg bg-[#1677FF] py-2 text-sm font-medium text-white disabled:opacity-50"
+          className="flex-1 rounded-lg bg-[var(--kb-primary)] py-2 text-sm font-medium text-white disabled:opacity-50"
         >
           {importing ? "导入中…" : "导入"}
         </button>

@@ -2279,7 +2279,7 @@ function DesktopNoteListPage() {
                           <div className="flex items-center gap-1.5">
                             <Text
                               style={{ fontSize: 13 }}
-                              className="group-hover:text-blue-500 transition-colors"
+                              className="group-hover:text-[var(--kb-primary)] transition-colors"
                             >
                               {note.title}
                             </Text>

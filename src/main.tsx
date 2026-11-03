@@ -152,7 +152,7 @@ function showFatalDomFallback(e: unknown) {
     msg +
     "</pre>" +
     '<button onclick="window.location.reload()" style="margin-top:16px;padding:8px 18px;font-size:14px;' +
-    'border:none;border-radius:6px;background:#1677ff;color:#fff;cursor:pointer;">重新加载</button>' +
+    'border:none;border-radius:6px;background:#7C63DC;color:#fff;cursor:pointer;">重新加载</button>' +
     "</div></div>";
 }
 

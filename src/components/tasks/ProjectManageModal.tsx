@@ -42,7 +42,7 @@ function toHex(value: unknown): string {
     const fn = (value as { toHexString: () => string }).toHexString;
     if (typeof fn === "function") return fn.call(value);
   }
-  return "#1677ff";
+  return "#722ed1";
 }
 
 interface ProjectFormValues {
@@ -100,7 +100,7 @@ export function ProjectManageModal({ open, onClose, onChanged }: Props) {
     setEditing(null);
     setFormOpen(true);
     form.resetFields();
-    form.setFieldsValue({ color: "#1677ff" });
+    form.setFieldsValue({ color: "#722ed1" });
   }
 
   function startEdit(p: Project) {
@@ -273,7 +273,7 @@ export function ProjectManageModal({ open, onClose, onChanged }: Props) {
               form={form}
               layout="vertical"
               onFinish={handleSubmit}
-              initialValues={{ color: "#1677ff" }}
+              initialValues={{ color: "#722ed1" }}
             >
               <Form.Item
                 name="name"

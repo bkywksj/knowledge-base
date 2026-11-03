@@ -252,13 +252,13 @@ function RecordModal({
         <div
           style={{
             padding: "20px",
-            border: "2px dashed #d9d9d9",
+            border: "2px dashed var(--kb-border)",
             borderRadius: 8,
             minHeight: 64,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: "#fafafa",
+            background: "var(--kb-bg-panel)",
           }}
         >
           {recorded ? (

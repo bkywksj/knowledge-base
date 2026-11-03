@@ -158,8 +158,8 @@ export function ShareConfigModal({
       destroyOnClose
       width={440}
     >
-      <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-        <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-slate-700">
+      <div className="mb-3 rounded-lg border border-[var(--kb-border)] bg-[var(--kb-bg-panel)] p-3">
+        <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-[var(--kb-text-primary)]">
           <Lock size={12} />
           加密 PIN（接收方需相同 PIN 才能导入）
         </div>
@@ -175,17 +175,17 @@ export function ShareConfigModal({
               <button
                 type="button"
                 onClick={copyPin}
-                className="flex items-center gap-0.5 text-xs text-slate-600 hover:text-blue-600"
+                className="flex items-center gap-0.5 text-xs text-[var(--kb-text-secondary)] hover:text-[var(--kb-primary)]"
                 title="复制 PIN"
               >
                 <Copy size={12} />
                 复制
               </button>
-              <span className="mx-1 h-3 w-px bg-slate-300" />
+              <span className="mx-1 h-3 w-px bg-[var(--kb-border)]" />
               <button
                 type="button"
                 onClick={regeneratePin}
-                className="flex items-center text-xs text-slate-600 hover:text-blue-600"
+                className="flex items-center text-xs text-[var(--kb-text-secondary)] hover:text-[var(--kb-primary)]"
                 title="重新生成随机 PIN"
               >
                 <RefreshCw size={12} />
@@ -225,18 +225,18 @@ export function ShareConfigModal({
                   readOnly
                   value={text}
                   onClick={(e) => (e.target as HTMLTextAreaElement).select()}
-                  className="w-full h-40 rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono text-xs leading-relaxed"
+                  className="w-full h-40 rounded-lg border border-[var(--kb-border)] bg-[var(--kb-bg-panel)] p-3 font-mono text-xs leading-relaxed"
                 />
                 <button
                   onClick={copyJson}
-                  className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#1677FF] py-2 text-sm font-medium text-white active:scale-95 transition-transform"
+                  className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg bg-[var(--kb-primary)] py-2 text-sm font-medium text-white active:scale-95 transition-transform"
                 >
                   <Copy size={14} /> 复制 JSON
                 </button>
                 {envelope?.kind === "ai-model" && (
                   <button
                     onClick={copyAsAiProfile}
-                    className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white py-2 text-xs text-slate-700 active:bg-slate-50"
+                    className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--kb-border)] bg-[var(--kb-bg-raised)] py-2 text-xs text-[var(--kb-text-primary)] active:bg-[var(--kb-bg-hover)]"
                     title="跨软件通用协议：可粘贴到 tauri-cc 等其他桌面端（明文 camelCase）"
                   >
                     <Copy size={12} /> 复制为 ai.profile 通用协议
@@ -254,10 +254,10 @@ export function ShareConfigModal({
                   <img
                     src={qrDataUrl}
                     alt="config QR code"
-                    className="h-72 w-72 rounded-lg border border-slate-200 bg-white p-2"
+                    className="h-72 w-72 rounded-lg border border-[var(--kb-border)] bg-white p-2"
                   />
                 ) : (
-                  <div className="h-72 w-72 flex items-center justify-center rounded-lg border border-dashed border-slate-300 text-sm text-slate-400">
+                  <div className="h-72 w-72 flex items-center justify-center rounded-lg border border-dashed border-[var(--kb-border)] text-sm text-[var(--kb-text-tertiary)]">
                     QR 生成中…
                   </div>
                 )}
@@ -273,7 +273,7 @@ export function ShareConfigModal({
                     <Copy size={11} />
                   </button>
                 )}
-                <p className="text-center text-xs text-slate-500">
+                <p className="text-center text-xs text-[var(--kb-text-tertiary)]">
                   在另一台设备的 <strong>导入配置</strong> → <strong>扫码</strong>
                 </p>
               </div>

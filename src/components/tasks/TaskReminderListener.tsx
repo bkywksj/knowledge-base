@@ -109,7 +109,7 @@ export function TaskReminderListener() {
         <div className="flex flex-col gap-3">
           {/* 推迟提醒：左侧标签 + 三个时长按钮 */}
           <div className="flex items-center justify-between">
-            <span style={{ fontSize: 12, color: "rgba(0,0,0,0.45)" }}>
+            <span style={{ fontSize: 12, color: "var(--ant-color-text-tertiary)" }}>
               推迟提醒
             </span>
             <div className="flex items-center gap-2">

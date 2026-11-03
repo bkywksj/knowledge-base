@@ -1382,7 +1382,7 @@ function DesktopSettingsPage() {
       dataIndex: "model_id",
       key: "model_id",
       render: (text: string) => (
-        <code className="text-xs px-1.5 py-0.5 rounded bg-gray-100">{text}</code>
+        <code className="text-xs px-1.5 py-0.5 rounded bg-[var(--kb-bg-active)]">{text}</code>
       ),
     },
     {

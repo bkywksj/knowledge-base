@@ -579,16 +579,16 @@ function DesktopDailyPage() {
                       style={{
                         cursor: "pointer",
                         fontSize: 14,
-                        color: "rgba(0, 0, 0, 0.25)",
+                        color: "var(--ant-color-text-quaternary)",
                         transition: "color 0.2s",
                       }}
                       onMouseEnter={(e) => {
                         (e.currentTarget as unknown as HTMLElement).style.color =
-                          "rgba(0, 0, 0, 0.45)";
+                          "var(--ant-color-text-tertiary)";
                       }}
                       onMouseLeave={(e) => {
                         (e.currentTarget as unknown as HTMLElement).style.color =
-                          "rgba(0, 0, 0, 0.25)";
+                          "var(--ant-color-text-quaternary)";
                       }}
                     />
                   )}

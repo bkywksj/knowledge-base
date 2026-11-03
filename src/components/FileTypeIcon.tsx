@@ -17,21 +17,20 @@ interface Props {
 interface IconConfig {
   label: string;
   color: string;
-  bg: string;
 }
 
 function configFor(type: string | null | undefined): IconConfig {
   switch ((type ?? "").toLowerCase()) {
     case "pdf":
-      return { label: "PDF", color: "#D4380D", bg: "#FFF1F0" };
+      return { label: "PDF", color: "#D4380D" };
     case "docx":
     case "doc":
-      return { label: "W", color: "#1677FF", bg: "#E6F4FF" };
+      return { label: "W", color: "#1677FF" };
     case "md":
     case "markdown":
-      return { label: "M↓", color: "#08979C", bg: "#E6FFFB" };
+      return { label: "M↓", color: "#08979C" };
     case "txt":
-      return { label: "TXT", color: "#595959", bg: "#F5F5F5" };
+      return { label: "TXT", color: "#8A8F99" };
     case "xlsx":
     case "xls":
     case "xlsm":
@@ -39,9 +38,9 @@ function configFor(type: string | null | undefined): IconConfig {
     case "ods":
     case "csv":
     case "tsv":
-      return { label: "X", color: "#237804", bg: "#F6FFED" };
+      return { label: "X", color: "#237804" };
     default:
-      return { label: "T", color: "#8C8C8C", bg: "#FAFAFA" };
+      return { label: "T", color: "#8C8C8C" };
   }
 }
 
@@ -49,7 +48,8 @@ export function FileTypeIcon({ type, size = 16, variant = "outline" }: Props) {
   const cfg = configFor(type);
   const fontSize = cfg.label.length >= 3 ? 5 : cfg.label.length === 2 ? 6.5 : 8;
 
-  const fillColor = variant === "solid" ? cfg.color : cfg.bg;
+  // 描边款的底色由图标色派生（12% 叠透明），不用写死的浅粉 / 浅蓝：暖炭下那是一排亮块
+  const fillColor = variant === "solid" ? cfg.color : `color-mix(in srgb, ${cfg.color} 12%, transparent)`;
   const strokeColor = cfg.color;
   const textColor = variant === "solid" ? "#FFFFFF" : cfg.color;
 
@@ -71,7 +71,7 @@ export function FileTypeIcon({ type, size = 16, variant = "outline" }: Props) {
            L 3.5 14.5
            Q 2.5 14.5 2.5 13.5
            Z"
-        fill={fillColor}
+        style={{ fill: fillColor }}
         stroke={strokeColor}
         strokeWidth="1"
         strokeLinejoin="round"

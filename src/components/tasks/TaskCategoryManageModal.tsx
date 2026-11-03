@@ -65,7 +65,7 @@ function toHex(value: unknown): string {
     const fn = (value as { toHexString: () => string }).toHexString;
     if (typeof fn === "function") return fn.call(value);
   }
-  return "#1677ff";
+  return "#722ed1";
 }
 
 /**
@@ -271,14 +271,14 @@ export function TaskCategoryManageModal({ open, onClose, onChanged }: Props) {
 
   // 新建态
   const [newName, setNewName] = useState("");
-  const [newColor, setNewColor] = useState("#1677ff");
+  const [newColor, setNewColor] = useState("#722ed1");
   /** 新建到哪个上级下；null = 顶层 */
   const [newParent, setNewParent] = useState<number | null>(null);
 
   // 编辑态：单条编辑
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
-  const [editColor, setEditColor] = useState("#1677ff");
+  const [editColor, setEditColor] = useState("#722ed1");
   const [editParent, setEditParent] = useState<number | null>(null);
 
   /** 按树展开的显示顺序（父在前、子紧跟） */
@@ -301,7 +301,7 @@ export function TaskCategoryManageModal({ open, onClose, onChanged }: Props) {
     if (open) {
       load();
       setNewName("");
-      setNewColor("#1677ff");
+      setNewColor("#722ed1");
       setNewParent(null);
       setEditingId(null);
     }
@@ -334,7 +334,7 @@ export function TaskCategoryManageModal({ open, onClose, onChanged }: Props) {
         parent_id: newParent,
       });
       setNewName("");
-      setNewColor("#1677ff");
+      setNewColor("#722ed1");
       await load();
       onChanged?.();
       message.success("已创建");

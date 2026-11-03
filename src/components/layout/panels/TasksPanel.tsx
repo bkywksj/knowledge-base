@@ -335,8 +335,8 @@ export function TasksPanel() {
     try {
       await taskCategoryApi.create({
         name,
-        // 子分类沿用父分类颜色，一眼看出归属；顶级用默认蓝，之后可在管理弹窗里改
-        color: parent?.color ?? "#1677ff",
+        // 子分类沿用父分类颜色，一眼看出归属；顶级用默认紫（与淡紫主题一致），之后可在管理弹窗里改
+        color: parent?.color ?? "#722ed1",
         sort_order: categories.filter((c) => (c.parent_id ?? null) === parentId).length,
         parent_id: parentId,
       });
