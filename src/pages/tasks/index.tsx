@@ -37,6 +37,8 @@ import {
   Check as IconCheck,
   Ban,
   Paperclip,
+  Repeat,
+  CornerDownRight,
   List,
   Columns3,
   LayoutGrid,
@@ -147,6 +149,26 @@ function describeDueDate(
   );
   if (diff === 1) return { text: `明天${timeSuffix}`, overdue: false };
   return { text: `${dueDay}（${diff} 天后）${timeSuffix}`, overdue: false };
+}
+
+/**
+ * 行右侧「截止时间列」的短文案（v4 原型 .tk .due）：
+ * 今天 → 时分（没时分写「今天」）；昨天 / 明天；一周内 → 周几；其余 → MM-DD（跨年带年份）。
+ * 逾期标红交给调用方（describeDueDate().overdue），完整的「逾期 N 天」放在悬停提示里。
+ */
+function dueShortText(due: string | null): string {
+  if (!due) return "";
+  const today = ymdLocal(new Date());
+  const day = dueDateOnly(due);
+  const time = due.length > 10 ? due.slice(11, 16) : "";
+  const diff = Math.round(
+    (new Date(day + "T00:00:00").getTime() - new Date(today + "T00:00:00").getTime()) / 86400000,
+  );
+  if (diff === 0) return time || "今天";
+  if (diff === -1) return "昨天";
+  if (diff === 1) return time ? `明天 ${time}` : "明天";
+  if (diff > 1 && diff < 7) return "周" + "日一二三四五六"[new Date(day + "T00:00:00").getDay()];
+  return day.slice(0, 4) === today.slice(0, 4) ? day.slice(5) : day;
 }
 
 /** SidePanel 的 TasksPanel 和主区共享的筛选键 */
@@ -503,6 +525,12 @@ function DesktopTasksPage() {
   }, [tasks, dateRange, dateActive, dateFilterApplicable]);
 
   const grouped = useMemo(() => groupTasks(visibleTasks), [visibleTasks]);
+  /** 列表上方的分组胶囊（v4 原型 .chips）：只在当前列表里再按到期分组筛一层，不改侧栏筛选 */
+  const [groupPick, setGroupPick] = useState<"all" | "overdue" | "today" | "upcoming" | "noDate">("all");
+  // 换了侧栏筛选 / 分类，胶囊回到「全部」，免得新列表被旧胶囊挡成空白
+  useEffect(() => setGroupPick("all"), [filter, categoryParam]);
+  const showGroup = (k: "overdue" | "today" | "upcoming" | "noDate") =>
+    groupPick === "all" || groupPick === k;
 
   // "全部任务"视图底部折叠区只展示最近 7 天完成的（避免历史归档塞满主区）；
   // 其他 filter（如 done）下不裁剪，由其自有渲染分支处理。
@@ -877,8 +905,33 @@ function DesktopTasksPage() {
           }
         />
       ) : (
-        <div className="flex flex-col gap-5">
-          {grouped.overdue.length > 0 && (
+        <>
+        {/* 分组胶囊：全部 / 逾期 / 今天 / 即将到期 / 无截止（数量为 0 的置灰不可点） */}
+        <div className="kb-task-chips">
+          {(
+            [
+              ["all", "全部", grouped.overdue.length + grouped.today.length + grouped.upcoming.length + grouped.noDate.length],
+              ["overdue", "逾期", grouped.overdue.length],
+              ["today", "今天", grouped.today.length],
+              ["upcoming", "即将到期", grouped.upcoming.length],
+              ["noDate", "无截止", grouped.noDate.length],
+            ] as const
+          ).map(([k, label, n]) => (
+            <button
+              key={k}
+              type="button"
+              className={groupPick === k ? "kb-task-chip is-on" : "kb-task-chip"}
+              disabled={k !== "all" && n === 0}
+              onClick={() => setGroupPick(k)}
+            >
+              {label}
+              <b>{n}</b>
+            </button>
+          ))}
+          <span className="kb-task-chips-hint">右键任务可设优先级 / 复制为 Markdown / 放弃</span>
+        </div>
+        <div className="kb-task-board">
+          {showGroup("overdue") && grouped.overdue.length > 0 && (
             <TaskSection
               title="逾期"
               icon={<AlertTriangle size={14} style={{ color: token.colorError }} />}
@@ -900,7 +953,7 @@ function DesktopTasksPage() {
               onPatchTask={patchTask}
             />
           )}
-          {grouped.today.length > 0 && (
+          {showGroup("today") && grouped.today.length > 0 && (
             <TaskSection
               title="今天"
               icon={<Sun size={14} style={{ color: token.colorWarning }} />}
@@ -921,7 +974,7 @@ function DesktopTasksPage() {
               onPatchTask={patchTask}
             />
           )}
-          {grouped.upcoming.length > 0 && (
+          {showGroup("upcoming") && grouped.upcoming.length > 0 && (
             <TaskSection
               title="即将到期"
               icon={<CalendarRange size={14} style={{ color: token.colorPrimary }} />}
@@ -942,7 +995,7 @@ function DesktopTasksPage() {
               onPatchTask={patchTask}
             />
           )}
-          {grouped.noDate.length > 0 && (
+          {showGroup("noDate") && grouped.noDate.length > 0 && (
             <TaskSection
               title="无截止"
               count={grouped.noDate.length}
@@ -962,7 +1015,9 @@ function DesktopTasksPage() {
               onPatchTask={patchTask}
             />
           )}
-          {filter === "todo"
+          {groupPick !== "all"
+            ? null
+            : filter === "todo"
             ? recentDoneTasks.length > 0 && (
                 <TaskSection
                   title={
@@ -1032,6 +1087,7 @@ function DesktopTasksPage() {
                 />
               )}
         </div>
+        </>
       )}
 
       </div>
@@ -1335,21 +1391,14 @@ function TaskSection({
   return (
     <section>
       {!hideHeader && (
-        <div
-          className="text-xs font-semibold flex items-center gap-1 mb-2"
-          style={{ color: color ?? token.colorTextSecondary }}
-        >
+        // v4 原型 .grp：组名 + 数量，放在整块卡片里面（原来每组一张卡片、标题在卡片外）
+        <div className="kb-task-sec-head" style={{ color: color ?? undefined }}>
           {icon}
-          {title} · {count}
+          {title}
+          <b>{count}</b>
         </div>
       )}
-      <div
-        className="rounded-lg border kb-surface"
-        style={{
-          background: token.colorBgContainer,
-          borderColor: token.colorBorderSecondary,
-        }}
-      >
+      <div className="kb-task-sec-body">
         {tasks.map((t, idx) => (
           <TaskRow
             key={t.id}
@@ -1456,19 +1505,14 @@ function TaskRow({
   return (
     <>
     <div
-      className="group flex items-start gap-3 px-4 py-3 transition"
+      className={
+        "group kb-task-row" +
+        (isLast || expanded ? " is-last" : "") +
+        (multiSelect && isSelected ? " is-picked" : "")
+      }
       style={{
-        // 展开时不画下边框，让展开区与本行视觉相连
-        borderBottom:
-          isLast || expanded
-            ? "none"
-            : `1px solid ${token.colorBorderSecondary}`,
-        background:
-          multiSelect && isSelected ? token.colorPrimaryBg : "transparent",
-        cursor: "pointer",
         outline: contextActive ? `1px solid ${token.colorPrimary}` : "none",
         outlineOffset: -1,
-        transition: "background .15s, outline .1s",
       }}
       onClick={
         multiSelect
@@ -1522,26 +1566,14 @@ function TaskRow({
               e.stopPropagation();
               onToggle(task);
             }}
-            className="mt-0.5 rounded-full flex items-center justify-center transition cursor-pointer shrink-0"
-            style={{
-              width: 18,
-              height: 18,
-              border: abandoned
-                ? `1.5px dashed ${token.colorTextQuaternary}`
-                : done
-                  ? `1.5px solid ${token.colorSuccess}`
-                  : `1.5px solid ${token.colorBorder}`,
-              background: done ? token.colorSuccess : "transparent",
-              color: abandoned ? token.colorTextQuaternary : "#fff",
-            }}
+            className={
+              "kb-task-ck" + (abandoned ? " is-abandoned" : done ? " is-done" : "")
+            }
           >
             {abandoned ? (
               <IconX size={11} />
             ) : done ? (
-              <ChevronRight
-                size={12}
-                style={{ transform: "rotate(90deg) scale(0.9)" }}
-              />
+              <IconCheck size={12} strokeWidth={3} />
             ) : null}
           </button>
         </Tooltip>
@@ -1554,160 +1586,95 @@ function TaskRow({
           width: 8,
           height: 8,
           background: priorityColor(task.priority, token),
-          marginTop: 7,
+          marginTop: 6,
           opacity: inactive ? 0.35 : 1,
         }}
       />
 
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span
-            className="font-medium"
-            style={{
-              fontSize: 13,
-              textDecoration: inactive ? "line-through" : "none",
-              color: inactive ? token.colorTextTertiary : token.colorText,
-            }}
-          >
+      {/* 主体：标题（加粗）+ 描述一行（原型 .tk .tt / .ds） */}
+      <div className="kb-task-main">
+        <div className="kb-task-title-row">
+          <span className={inactive ? "kb-task-title is-inactive" : "kb-task-title"}>
             {task.title}
           </span>
-          {abandoned && (
-            <span
-              className="shrink-0 text-[10px] leading-none px-1.5 py-0.5 rounded"
-              style={{
-                background: token.colorFillTertiary,
-                color: token.colorTextTertiary,
-              }}
-            >
-              已放弃
-            </span>
-          )}
-          {due.text && (
-            <span
-              className="text-[10px] px-1.5 py-0.5 rounded"
-              style={{
-                background: due.overdue
-                  ? `${token.colorErrorBg}`
-                  : token.colorFillSecondary,
-                color: due.overdue ? token.colorError : token.colorTextSecondary,
-              }}
-            >
-              {due.text}
-            </span>
-          )}
-          {task.important && (
-            <span
-              className="text-[10px] px-1.5 py-0.5 rounded"
-              style={{
-                background: token.colorWarningBg,
-                color: token.colorWarning,
-              }}
-            >
-              重要
-            </span>
-          )}
-          {task.repeat_kind !== "none" && (
-            <span
-              className="text-[10px] px-1.5 py-0.5 rounded"
-              style={{
-                background: token.colorInfoBg,
-                color: token.colorInfoText ?? token.colorPrimary,
-              }}
-              title="循环任务"
-            >
-              {describeRepeat(task)}
-            </span>
-          )}
-          {task.subtask_total > 0 && (
-            <span
-              className="text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-1"
-              style={{
-                background:
-                  task.subtask_done === task.subtask_total
-                    ? token.colorSuccessBg
-                    : token.colorFillSecondary,
-                color:
-                  task.subtask_done === task.subtask_total
-                    ? token.colorSuccess
-                    : token.colorTextSecondary,
-              }}
-              title={`子任务进度：${task.subtask_done}/${task.subtask_total}`}
-            >
-              {task.subtask_done}/{task.subtask_total}
-            </span>
-          )}
-          {(task.attachment_count ?? 0) > 0 && (
-            <span
-              className="text-[10px] inline-flex items-center gap-0.5"
-              style={{ color: token.colorTextTertiary }}
-              title={`${task.attachment_count} 个附件`}
-            >
-              <Paperclip size={10} />
-              {task.attachment_count}
-            </span>
-          )}
-          {category && (
-            <span
-              className="inline-flex items-center gap-1 text-[10px]"
-              style={{ color: token.colorTextTertiary }}
-              title={`分类：${category.name}`}
-            >
-              <span
-                style={{
-                  display: "inline-block",
-                  width: 8,
-                  height: 8,
-                  borderRadius: 999,
-                  background: category.color,
-                  opacity: done ? 0.4 : 1,
-                }}
-              />
-              {category.name}
-            </span>
-          )}
+          {abandoned && <span className="kb-task-mini">已放弃</span>}
         </div>
         {task.description && (
-          <Paragraph
-            type="secondary"
-            ellipsis={{ rows: 1 }}
-            style={{ marginBottom: 0, fontSize: 11, marginTop: 2 }}
-          >
+          <Paragraph type="secondary" ellipsis={{ rows: 1 }} className="kb-task-desc">
             {task.description}
           </Paragraph>
         )}
-        {/* 关联 chips */}
-        {task.links.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1 mt-1.5">
-            {task.links.map((l) => (
-              <button
-                key={l.id}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenLink(l);
-                }}
-                className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] hover:opacity-80 transition cursor-pointer"
-                style={{
-                  background: token.colorFillTertiary,
-                  color: token.colorTextSecondary,
-                }}
-                title={l.target}
-              >
-                {l.kind === "note" && <NotebookText size={10} />}
-                {l.kind === "path" && <FolderIcon size={10} />}
-                {l.kind === "url" && <LinkIcon size={10} />}
-                <span className="truncate max-w-[180px]">
-                  {l.label || l.target}
-                </span>
-              </button>
-            ))}
-          </div>
+      </div>
+
+      {/* 右侧小标签（原型 .tk .meta）：子任务进度 · 关联 · 循环 · 重要 · 附件 · 分类 */}
+      <div className="kb-task-meta" onClick={(e) => e.stopPropagation()}>
+        {task.subtask_total > 0 && (
+          <span
+            className={
+              "kb-task-chip-sm" +
+              (task.subtask_done === task.subtask_total ? " is-ok" : "")
+            }
+            title={`子任务进度：${task.subtask_done}/${task.subtask_total}`}
+          >
+            <CornerDownRight size={11} />
+            {task.subtask_done}/{task.subtask_total}
+          </span>
+        )}
+        {task.links.slice(0, 2).map((l) => (
+          <button
+            key={l.id}
+            type="button"
+            onClick={() => onOpenLink(l)}
+            className="kb-task-chip-sm is-link"
+            title={l.target}
+          >
+            {l.kind === "note" && <NotebookText size={11} />}
+            {l.kind === "path" && <FolderIcon size={11} />}
+            {l.kind === "url" && <LinkIcon size={11} />}
+            <span className="truncate max-w-[140px]">{l.label || l.target}</span>
+          </button>
+        ))}
+        {task.links.length > 2 && (
+          <span
+            className="kb-task-chip-sm"
+            title={task.links.slice(2).map((l) => l.label || l.target).join("\n")}
+          >
+            +{task.links.length - 2}
+          </span>
+        )}
+        {task.repeat_kind !== "none" && (
+          <span className="kb-task-chip-sm is-link" title="循环任务">
+            <Repeat size={11} />
+            {describeRepeat(task)}
+          </span>
+        )}
+        {task.important && <span className="kb-task-chip-sm is-warn">重要</span>}
+        {(task.attachment_count ?? 0) > 0 && (
+          <span className="kb-task-chip-sm" title={`${task.attachment_count} 个附件`}>
+            <Paperclip size={11} />
+            {task.attachment_count}
+          </span>
+        )}
+        {category && (
+          <span className="kb-task-chip-sm" title={`分类：${category.name}`}>
+            <i style={{ background: category.color, opacity: inactive ? 0.4 : 1 }} />
+            {category.name}
+          </span>
         )}
       </div>
+
+      {/* 截止时间列：逾期红字；完整说法（逾期 N 天 / N 天后）在悬停提示里 */}
+      <span
+        className={"kb-task-due" + (due.overdue ? " is-overdue" : "")}
+        title={due.text || undefined}
+      >
+        {dueShortText(task.due_date)}
+      </span>
 
       {/* hover 操作（多选态下隐藏，避免误触） */}
       {!multiSelect && (
         <div
-          className="opacity-0 group-hover:opacity-100 transition flex items-center gap-1 shrink-0"
+          className="kb-task-actions"
           onClick={(e) => e.stopPropagation()}
         >
           <Tooltip title="编辑">
@@ -1736,8 +1703,9 @@ function TaskRow({
       <div
         style={{
           padding: "6px 16px 10px 56px",
-          borderBottom: isLast ? "none" : `1px solid ${token.colorBorderSecondary}`,
+          borderBottom: isLast ? "none" : "1px solid var(--kb-border)",
           background: token.colorFillQuaternary,
+          borderRadius: 8,
         }}
         // 阻止冒泡到行级 onClick（多选态切勿误触）
         onClick={(e) => e.stopPropagation()}

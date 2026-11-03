@@ -4678,3 +4678,237 @@ body.sidebar-resizing .kb-panel-resizer {
   font-size: 12px;
   color: var(--kb-text-tertiary);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 待办列表（T3-6c）—— 原型 .chips / .grp / .tk：分组胶囊、整块卡片、方形勾选、右侧小标签、时间列
+   ═══════════════════════════════════════════════════════════ */
+.kb-task-chips {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 12px;
+}
+.kb-task-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 13px;
+  color: var(--kb-text-secondary);
+  cursor: pointer;
+}
+.kb-task-chip > b {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  background: var(--kb-bg-hover);
+  color: var(--kb-text-tertiary);
+}
+.kb-task-chip:hover:not(:disabled) {
+  background: var(--kb-bg-hover);
+}
+.kb-task-chip.is-on {
+  background: var(--kb-primary-light);
+  color: var(--kb-primary);
+  font-weight: 600;
+}
+.kb-task-chip.is-on > b {
+  background: var(--kb-grad, var(--kb-primary));
+  color: #fff;
+}
+.kb-task-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.kb-task-chips-hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--kb-text-tertiary);
+  white-space: nowrap;
+}
+.kb-task-board {
+  padding: 6px 10px 10px;
+  border-radius: 14px;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+}
+.kb-task-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 14px 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--kb-text-primary);
+}
+.kb-task-sec-head > b {
+  font-weight: 600;
+  color: var(--kb-text-tertiary);
+}
+.kb-task-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--kb-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+.kb-task-row.is-last {
+  border-bottom-color: transparent;
+}
+.kb-task-row:hover {
+  background: var(--kb-bg-hover);
+}
+.kb-task-row.is-picked {
+  background: var(--kb-primary-light);
+}
+/* 方形勾选框（原型 .ck） */
+.kb-task-ck {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--ant-color-border);
+  border-radius: 5px;
+  background: var(--kb-bg-raised, #fff);
+  color: #fff;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.kb-task-ck:hover {
+  border-color: var(--kb-primary);
+}
+.kb-task-ck.is-done {
+  border-color: transparent;
+  background: var(--kb-grad, var(--kb-primary));
+}
+.kb-task-ck.is-abandoned {
+  border-style: dashed;
+  color: var(--kb-text-tertiary);
+}
+.kb-task-main {
+  flex: 1;
+  min-width: 0;
+}
+.kb-task-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.kb-task-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--kb-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-task-title.is-inactive {
+  font-weight: 500;
+  color: var(--kb-text-tertiary);
+  text-decoration: line-through;
+}
+.kb-task-mini {
+  flex: none;
+  font-size: 10.5px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--kb-bg-hover);
+  color: var(--kb-text-tertiary);
+}
+.kb-task-desc.ant-typography {
+  margin: 2px 0 0 !important;
+  font-size: 12px;
+}
+.kb-task-meta {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 46%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  cursor: default;
+}
+.kb-task-chip-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border: none;
+  border-radius: 6px;
+  background: var(--kb-bg-hover);
+  font-size: 11.5px;
+  color: var(--kb-text-secondary);
+  white-space: nowrap;
+}
+.kb-task-chip-sm > i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.kb-task-chip-sm.is-link {
+  color: var(--kb-primary);
+  background: var(--kb-primary-light);
+  cursor: pointer;
+}
+.kb-task-chip-sm.is-ok {
+  color: var(--ant-color-success);
+}
+.kb-task-chip-sm.is-warn {
+  color: var(--ant-color-warning);
+  background: color-mix(in srgb, var(--ant-color-warning) 12%, transparent);
+}
+.kb-task-due {
+  flex: none;
+  width: 72px;
+  text-align: right;
+  font-size: 12.5px;
+  line-height: 22px;
+  color: var(--kb-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.kb-task-due.is-overdue {
+  color: var(--ant-color-error);
+  font-weight: 600;
+}
+/* 行悬停操作（编辑 / 删除）：平时不占位，悬停时浮在行右端、盖住时间列（时间在悬停提示里还能看到） */
+.kb-task-row {
+  position: relative;
+}
+.kb-task-actions {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  border-radius: 8px;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: 0 0 0 1px var(--kb-border), 0 2px 8px rgba(0, 0, 0, 0.06);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.kb-task-row:hover .kb-task-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
