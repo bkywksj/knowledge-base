@@ -1,4 +1,4 @@
-import { cloneElement, isValidElement, startTransition, useEffect, useMemo, useState } from "react";
+import { cloneElement, Fragment, isValidElement, startTransition, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Tooltip, Badge, theme as antdTheme, message } from "antd";
 import { hiddenPinApi } from "@/lib/api";
@@ -220,6 +220,7 @@ export function ActivityBar() {
     // Badge wrapper 下失效——ant-badge-children 在某些版本会截断 color 继承，导致点"待办"
     // 时图标 stroke 不变色。改用 cloneElement 把 color 显式 prop 注入 lucide CheckSquare，
     // svg stroke 由 prop 直接决定，不再依赖任何祖先 wrapper 的 color 继承行为。
+    // （悬停加深由 global.css 的 .activity-item:hover svg 覆盖 stroke 完成，同样不依赖继承）
     const iconColor = isActive ? token.colorPrimary : token.colorTextSecondary;
     const coloredIcon = isValidElement(item.icon)
       ? cloneElement(
@@ -231,13 +232,21 @@ export function ActivityBar() {
     const badgeCount = item.view === "tasks" ? urgentTodoCount : 0;
     const iconNode =
       badgeCount > 0 ? (
-        <Badge count={badgeCount} size="small" offset={[2, -2]} overflowCount={99}>
+        <Badge
+          count={badgeCount}
+          size="small"
+          offset={[2, -2]}
+          overflowCount={99}
+          className="kb-rail-badge"
+        >
           {coloredIcon}
         </Badge>
       ) : (
         coloredIcon
       );
 
+    // v4 样式（原型 .ra）：选中 = 白底 / 抬升底 + 主色细描边 + 主色加粗字，不再用左侧竖条；
+    // 尺寸与纯图标模式的差异都在 global.css 的 .activity-item / .activity-bar.icon-only 里
     return (
       <Tooltip key={item.view} title={item.label} placement="right" mouseEnterDelay={0.15}>
         <button
@@ -247,83 +256,31 @@ export function ActivityBar() {
           aria-current={isActive ? "page" : undefined}
           className="activity-item"
           data-active={isActive || undefined}
-          style={{
-            // 纯图标模式：40×40 的方块，栏宽从 64 收到 48
-            width: showLabels ? 56 : 40,
-            height: showLabels ? 52 : 40,
-            borderRadius: 8,
-            border: "none",
-            cursor: "pointer",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: showLabels ? 5 : 0,
-            padding: showLabels ? "4px 2px" : 0,
-            background: isActive ? `${token.colorPrimary}14` : "transparent",
-            color: isActive ? token.colorPrimary : token.colorTextSecondary,
-            position: "relative",
-            transition: "background .15s, color .15s",
-          }}
         >
           {iconNode}
           {/* 纯图标模式下不渲染文字：可发现性由外层的 Tooltip 兜底（悬停仍显示名称），
               aria-label 也已在 button 上，无障碍不受影响。 */}
-          {showLabels && (
-            <span
-              style={{
-                fontSize: 12,
-                lineHeight: 1.1,
-                fontWeight: isActive ? 600 : 400,
-                maxWidth: "100%",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {item.label}
-            </span>
-          )}
-          {isActive && (
-            <span
-              aria-hidden
-              style={{
-                position: "absolute",
-                left: -6,
-                top: 10,
-                bottom: 10,
-                width: 2,
-                borderRadius: 2,
-                background: token.colorPrimary,
-              }}
-            />
-          )}
+          {showLabels && <span className="activity-label">{item.label}</span>}
         </button>
       </Tooltip>
     );
   }
 
+  // 各组只留启用的项；整组都被功能开关关掉时连同分隔线一起不渲染，避免出现两条线挨着
+  const visibleGroups = MAIN_GROUPS.map((g) => g.filter(isVisible)).filter((g) => g.length > 0);
+
   return (
     <nav
       aria-label="视图切换"
-      className="activity-bar"
-      style={{
-        width: activityBarWidth(showLabels),
-        // 必须撑满 Sider 高度，否则下方 flex:1 spacer 没有空间，
-        // 底部三项（隐藏笔记 / 回收站 / 关于）会贴在主组按钮后面而不是钉在左下角
-        height: "100%",
-        flexShrink: 0,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        paddingTop: 8,
-        paddingBottom: 8,
-        gap: 2,
-        background: token.colorBgContainer,
-        borderRight: `1px solid ${token.colorBorderSecondary}`,
-      }}
+      className={showLabels ? "activity-bar" : "activity-bar icon-only"}
+      style={{ width: activityBarWidth(showLabels) }}
     >
-      {MAIN_GROUPS.flat().filter(isVisible).map(renderItem)}
+      {visibleGroups.map((group, i) => (
+        <Fragment key={group[0].view}>
+          {i > 0 && <span className="activity-sep" aria-hidden />}
+          {group.map(renderItem)}
+        </Fragment>
+      ))}
       <div style={{ flex: 1 }} />
       {/* 立即锁定：仅在已启用应用锁时显示，点一下回到锁屏（临时离开座位用） */}
       {appLockEnabled && (
@@ -333,38 +290,9 @@ export function ActivityBar() {
             onClick={lockAppNow}
             aria-label="立即锁定"
             className="activity-item"
-            style={{
-              // 与上面 renderItem 的尺寸保持同一套口径，纯图标模式下不要比别人大
-              width: showLabels ? 56 : 40,
-              height: showLabels ? 52 : 40,
-              borderRadius: 8,
-              border: "none",
-              cursor: "pointer",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: showLabels ? 5 : 0,
-              padding: showLabels ? "4px 2px" : 0,
-              background: "transparent",
-              color: token.colorTextSecondary,
-            }}
           >
             <Lock size={20} color={token.colorTextSecondary} />
-            {showLabels && (
-            <span
-              style={{
-                fontSize: 12,
-                lineHeight: 1.1,
-                maxWidth: "100%",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              锁定
-            </span>
-            )}
+            {showLabels && <span className="activity-label">锁定</span>}
           </button>
         </Tooltip>
       )}

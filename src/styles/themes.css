@@ -17,6 +17,7 @@
   --kb-bg-header: #E9E4F8;
   --kb-bg-content: #FFFFFF;
   --kb-bg-panel: #F6F3FD;
+  --kb-bg-raised: #FFFFFF;
   --kb-bg-hover: rgba(124,99,220,0.055);
   --kb-bg-active: rgba(124,99,220,0.1);
   --kb-text-primary: #27233B;
@@ -50,9 +51,10 @@
 [data-theme="light-lilac"] .ant-layout {
   background: transparent !important;
 }
+/* 活动栏列透明、无右边线：与标题栏连成一片的底色，层次靠右侧白色内容区区分（v4 原型 .rail） */
 [data-theme="light-lilac"] .ant-layout-sider {
   background: transparent !important;
-  border-right-color: var(--kb-border-sidebar) !important;
+  border-right: none !important;
 }
 [data-theme="light-lilac"] .ant-layout-header {
   background: transparent !important;
@@ -144,6 +146,7 @@
   --kb-bg-header: #161514;
   --kb-bg-content: #1D1C1A;
   --kb-bg-panel: #21201E;
+  --kb-bg-raised: #2D2B28;
   --kb-bg-hover: rgba(255,245,230,0.05);
   --kb-bg-active: rgba(169,146,250,0.14);
   --kb-text-primary: #EFEBE4;
@@ -172,8 +175,8 @@
   background: var(--kb-bg-app) !important;
 }
 [data-theme="dark-ember"] .ant-layout-sider {
-  background: var(--kb-bg-sidebar) !important;
-  border-right: 1px solid var(--kb-border-sidebar) !important;
+  background: transparent !important;
+  border-right: none !important;
 }
 [data-theme="dark-ember"] .ant-layout-header {
   background: var(--kb-bg-header) !important;

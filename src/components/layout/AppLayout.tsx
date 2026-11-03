@@ -705,12 +705,7 @@ export function AppLayout() {
       style={{ flex: 1, minHeight: 0, position: "relative" }}
     >
       {!focusMode && !autoHideActivityBar && (
-        <Sider
-          width={siderWidth}
-          style={{
-            borderRight: `1px solid ${token.colorBorderSecondary}`,
-          }}
-        >
+        <Sider width={siderWidth}>
           <ActivityBar />
         </Sider>
       )}
@@ -744,7 +739,8 @@ export function AppLayout() {
                 : `translateX(-${ACTIVITY_BAR_WIDTH}px)`,
               transition: "transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1)",
               zIndex: 61,
-              borderRight: `1px solid ${token.colorBorderSecondary}`,
+              // 浮层模式下活动栏本身透明，这里补一块与窗口底色相同的底，免得滑出时透出下面的内容
+              background: "var(--kb-bg-app)",
               boxShadow: activityBarShown
                 ? "2px 0 12px rgba(0,0,0,0.15)"
                 : "none",

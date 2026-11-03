@@ -3135,3 +3135,94 @@ body.sidebar-resizing .kb-tb-left {
   background: #DE5A6C;
   color: #fff;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 活动栏（T2-2）—— 原型 docs/design/ui-v4/kit.css 的 .rail / .ra / .ra-sep
+   整栏透明（透出底色，与标题栏连成一片）；选中项 = 抬升底 + 主色细描边 + 主色加粗字
+   ═══════════════════════════════════════════════════════════ */
+.activity-bar {
+  height: 100%;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 4px 0 10px;
+  background: transparent;
+}
+.activity-item {
+  width: 52px;
+  height: 46px;
+  flex: none;
+  border: none;
+  border-radius: 11px;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  position: relative;
+  background: transparent;
+  color: var(--kb-text-secondary);
+  transition: background-color 0.14s ease, color 0.14s ease, box-shadow 0.14s ease;
+}
+.activity-item svg {
+  width: 18px;
+  height: 18px;
+}
+.activity-label {
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-item:hover:not([data-active]) {
+  background: var(--kb-bg-hover);
+  color: var(--kb-text-primary);
+}
+/* 图标颜色由 prop 写在 svg 的 stroke 属性上；CSS 声明优先级高于属性，悬停时直接覆盖 */
+.activity-item:hover:not([data-active]) svg {
+  stroke: var(--kb-text-primary);
+}
+.activity-item[data-active] {
+  background: var(--kb-bg-raised, #fff);
+  color: var(--kb-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kb-primary) 32%, transparent);
+}
+.activity-item[data-active] .activity-label {
+  font-weight: 600;
+}
+/* 纯图标模式：40×40 方块、图标 20，栏宽 48 */
+.activity-bar.icon-only .activity-item {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+.activity-bar.icon-only .activity-item svg {
+  width: 20px;
+  height: 20px;
+}
+/* 分组分隔线 */
+.activity-sep {
+  width: 20px;
+  height: 1px;
+  margin: 4px 0;
+  flex: none;
+  background: var(--kb-border);
+}
+/* 待办角标：红色渐变小胶囊，外圈一道底色描边把它和图标分开 */
+.kb-rail-badge .ant-badge-count {
+  background: linear-gradient(135deg, #EE8195, #D65A6E);
+  box-shadow: 0 0 0 2px var(--kb-bg-app);
+  font-weight: 700;
+}
+/* 纯图标模式栏宽只有 48，角标默认的 translate(50%) 会伸出栏外几像素、被右侧面板盖住，往里收一点 */
+.activity-bar.icon-only .kb-rail-badge .ant-badge-count {
+  transform: translate(20%, -50%);
+}
