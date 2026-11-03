@@ -527,13 +527,13 @@ export function TagsPanel() {
       >
         <span
           aria-hidden
+          // v4 原型：彩色圆点（原 10px 小方块）
           style={{
-            width: 10,
-            height: 10,
-            borderRadius: 3,
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
             background: tag.color || token.colorTextQuaternary,
             flexShrink: 0,
-            border: `1px solid ${token.colorBorderSecondary}`,
           }}
         />
         {isEditing ? (
@@ -691,6 +691,10 @@ export function TagsPanel() {
             // antd Tree 默认会把每行 padding 弄得很宽，压缩一下
             style={{ background: "transparent" }}
           />
+        )}
+        {/* v4 原型：右键操作提示（右键菜单本身不变） */}
+        {tags.length > 0 && (
+          <div className="kb-tag-hint">右键标签：新建子标签 / 同级标签 / 重命名 / 提升为顶层 / 删除</div>
         )}
       </div>
 
