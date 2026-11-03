@@ -75,6 +75,8 @@ export function getAntdTokens(mode: ThemeMode) {
         colorBgLayout: "#E9E4F8",
         colorBgContainer: "#FFFFFF",
         colorBgElevated: "#FFFFFF",
+        // 弹窗 / 抽屉遮罩：淡紫半透明（原型 .mask），配合 global.css 的 backdrop 模糊
+        colorBgMask: "rgba(233,228,248,0.62)",
         colorText: "#27233B",
         colorTextSecondary: "#6E6888",
         colorTextTertiary: "#9C96B4",
@@ -101,6 +103,7 @@ export function getAntdTokens(mode: ThemeMode) {
         colorBgLayout: "#161514",
         colorBgContainer: "#1D1C1A",
         colorBgElevated: "#2D2B28",
+        colorBgMask: "rgba(16,14,12,0.55)",
         colorText: "#EFEBE4",
         colorTextSecondary: "#C4BEB4",
         colorTextTertiary: "#958F85",

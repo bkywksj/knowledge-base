@@ -4912,3 +4912,12 @@ body.sidebar-resizing .kb-panel-resizer {
   opacity: 1;
   pointer-events: auto;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 弹窗遮罩（T3-6d）—— 原型 .mask：半透明主题色 + 6px 模糊（颜色走 antd 令牌 colorBgMask）
+   ═══════════════════════════════════════════════════════════ */
+.ant-modal-mask,
+.ant-drawer-mask {
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
