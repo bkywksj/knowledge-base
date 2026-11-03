@@ -3575,3 +3575,199 @@ body.sidebar-resizing .kb-panel-resizer {
   width: 11px;
   height: 11px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 侧栏面板通用件（T3-2a 起）—— 原型 .ph / .sec / .row / .tagrow
+   ═══════════════════════════════════════════════════════════ */
+.kb-ph {
+  height: 38px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px 0 14px;
+}
+.kb-ph-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--kb-text-primary);
+}
+/* 标题栏 / 小节标题里的小图标按钮（antd Button 与原生 button 两种都覆盖） */
+.kb-ph .ant-btn,
+.kb-ph-btn {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--kb-text-tertiary);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+}
+.kb-ph .ant-btn:hover,
+.kb-ph-btn:hover {
+  background: var(--kb-bg-hover) !important;
+  color: var(--kb-text-primary) !important;
+}
+.kb-panel-sec {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 30px;
+  padding: 8px 8px 0 16px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--kb-text-tertiary);
+}
+.kb-panel-sec > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.kb-panel-sec .ant-btn {
+  width: 22px !important;
+  height: 22px !important;
+  color: var(--kb-text-tertiary);
+}
+/* 面板搜索框：圆角、跟面板底色融合的输入底 */
+.kb-panel-search.ant-input-affix-wrapper {
+  height: 32px;
+  border-radius: 8px;
+}
+
+/* 文件夹树：去掉 antd Tree 自带的容器白底（面板已透出窗口底色），行 30px / 圆角 6；
+   当前打开的行 = 抬升底 + 细描边（原型 .row.on），文件夹数量贴右灰字 */
+.sidebar-folder-tree,
+.sidebar-folder-tree .ant-tree-list,
+.sidebar-folder-tree .ant-tree-list-holder,
+.sidebar-folder-tree .ant-tree-list-holder-inner {
+  background: transparent !important;
+}
+.sidebar-folder-tree .ant-tree-node-content-wrapper {
+  min-height: 28px;
+  border-radius: 6px !important;
+  color: var(--kb-text-primary);
+  transition: background-color 0.12s ease;
+}
+.sidebar-folder-tree .ant-tree-node-content-wrapper:hover {
+  background: var(--kb-bg-hover) !important;
+}
+.sidebar-folder-tree .ant-tree-node-content-wrapper.ant-tree-node-selected {
+  background: var(--kb-bg-raised, #fff) !important;
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+}
+
+/* 常用标签胶囊 */
+.kb-tagpills-wrap {
+  padding-bottom: 4px;
+}
+.kb-tagpills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 12px 4px 14px;
+}
+.kb-tagpill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  max-width: 100%;
+  padding: 0 9px;
+  border: none;
+  border-radius: 999px;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+  color: var(--kb-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: box-shadow 0.12s ease, color 0.12s ease;
+}
+.kb-tagpill:hover {
+  color: var(--kb-text-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kb-primary) 40%, transparent);
+}
+.kb-tagpill > i {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+}
+.kb-tagpill > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-tagpill > small {
+  font-size: 11px;
+  color: var(--kb-text-tertiary);
+}
+/* 拖入提示：说明面板本身就是 .md / .txt 的拖入区 */
+.kb-drop-hint {
+  margin: 10px 12px 12px;
+  padding: 10px 8px;
+  border: 1px dashed var(--kb-border);
+  border-radius: 10px;
+  text-align: center;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--kb-text-tertiary);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   v4 笔记列表（T3-2b）—— 原型 .li / .pager
+   ═══════════════════════════════════════════════════════════ */
+/* 分页条：三种视图共用，钉在页面底部右侧 */
+.kb-pager {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 8px 12px;
+  border-top: 1px solid var(--kb-border);
+}
+/* 标题 + 一行正文预览 */
+.kb-note-cell {
+  min-width: 0;
+  padding: 3px 0;
+}
+.kb-note-cell a {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--kb-text-primary);
+}
+.kb-note-cell a:hover {
+  color: var(--kb-primary);
+}
+.kb-note-preview {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--kb-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 表头淡一点、行悬停整行浅底 */
+.notes-list-flat .ant-table-thead > tr > th {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--kb-text-tertiary);
+}
+.notes-list-flat .ant-table-tbody > tr:hover > td {
+  background: var(--kb-bg-hover) !important;
+}
+/* 操作列：平时隐藏，鼠标移到行上 / 行被勾选 / 右键指向时才出现 */
+.notes-list-flat .ant-table-tbody > tr > td.kb-col-actions .ant-space {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.notes-list-flat .ant-table-tbody > tr:hover > td.kb-col-actions .ant-space,
+.notes-list-flat .ant-table-tbody > tr.ant-table-row-selected > td.kb-col-actions .ant-space,
+.notes-list-flat .ant-table-tbody > tr.is-ctx-active > td.kb-col-actions .ant-space,
+.notes-list-flat .ant-table-tbody > tr > td.kb-col-actions .ant-space:focus-within {
+  opacity: 1;
+}

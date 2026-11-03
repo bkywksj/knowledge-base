@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect } from "react";
-import { Segmented, Skeleton, theme as antdTheme } from "antd";
+import { Segmented, Skeleton } from "antd";
 import { FolderTree, Tags as TagsIcon } from "lucide-react";
 import { useAppStore } from "@/store";
 
@@ -24,7 +24,6 @@ const TagsPanel = lazy(() =>
  * 两个子面板都是 lazy 的：只切到哪个才加载哪个，首屏不为没看的那个买单。
  */
 export function NotesTagsPanel() {
-  const { token } = antdTheme.useToken();
   const tab = useAppStore((s) => s.notesPanelTab);
   const setTab = useAppStore((s) => s.setNotesPanelTab);
   const activeView = useAppStore((s) => s.activeView);
@@ -39,8 +38,8 @@ export function NotesTagsPanel() {
   return (
     <div className="flex flex-col h-full" style={{ overflow: "hidden" }}>
       <div
-        className="shrink-0 px-2 pt-2 pb-1.5"
-        style={{ borderBottom: `1px solid ${token.colorBorderSecondary}` }}
+        // v4：面板透出窗口底色后不再需要分隔线，切换条与下面的标题栏靠留白分组
+        className="shrink-0 px-2.5 pt-1 pb-1"
       >
         <Segmented
           block

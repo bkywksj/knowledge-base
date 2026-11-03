@@ -823,8 +823,8 @@ function DesktopNoteListPage() {
       setLoading(true);
       try {
         const isUncategorized = folderId === "uncategorized";
-        const result = await noteApi.list({
-          page,
+        const query = (p: number) => noteApi.list({
+          page: p,
           page_size:
             viewMode === "timeline"
               ? 50
@@ -842,6 +842,13 @@ function DesktopNoteListPage() {
           // 只 list 视图才让用户切换 sort_by；卡片/时间线沿用默认
           sort_by: viewMode === "list" ? sortBy : undefined,
         });
+        let result = await query(page);
+        // 页码越界（删掉了最后一页仅剩的笔记 / 切视图时每页条数变了，旧页码在新口径下不存在）：
+        // 退回最后一页，而不是停在一张「暂无笔记」的空页上——空页连分页条都不渲染，翻不回去
+        if (result.items.length === 0 && result.total > 0 && page > 1) {
+          const lastPage = Math.max(1, Math.ceil(result.total / result.page_size));
+          if (lastPage < page) result = await query(lastPage);
+        }
         setData(result);
       } catch (e) {
         message.error(String(e));
@@ -1359,6 +1366,17 @@ function DesktopNoteListPage() {
     ];
   }, [noteCtx, navigate, handleTogglePin, handleSoftDelete, handleCopyContent]);
 
+  // 笔记纯文本预览（列表标题下的一行预览 + 卡片视图共用；缓存：仅当 data.items 变化才重算，避免每次 render 都跑）
+  // 用 contentToPreview 而非 stripHtml：笔记是 Markdown，需剥掉图片/链接等语法噪声，
+  // 否则 `![](kb-asset://…)` 的图片地址会原样堆进预览。
+  const notePreviews = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const n of data.items) {
+      map.set(n.id, n.content ? contentToPreview(n.content) : "");
+    }
+    return map;
+  }, [data.items]);
+
   const allColumns: ColumnsType<Note> = useMemo(
     () => {
       /** 某列当前生效的宽度：拖动中的临时值 > 用户保存的 > 默认 */
@@ -1407,7 +1425,11 @@ function DesktopNoteListPage() {
             folderId && folderId !== "uncategorized" ? Number(folderId) : null;
           const isFromDescendant =
             numericFolderId !== null && record.folder_id !== numericFolderId;
+          // 白板的 content 是画布 JSON，抽出来的「预览」是一串配置，对用户没意义，不显示
+          const preview =
+            record.note_type === "whiteboard" ? "" : notePreviews.get(record.id);
           return (
+            <div className="kb-note-cell">
             <span className="flex items-center">
               {isFromDescendant && (
                 <Tooltip
@@ -1427,6 +1449,8 @@ function DesktopNoteListPage() {
               <a onClick={() => navigate(`/notes/${record.id}`)}>{title}</a>
               <NoteDecorators note={record} warningColor={token.colorWarning} />
             </span>
+            {preview && <div className="kb-note-preview">{preview}</div>}
+            </div>
           );
         },
       },
@@ -1502,6 +1526,7 @@ function DesktopNoteListPage() {
         ),
       },
       {
+        className: "kb-col-actions",
         title: "操作",
         key: "action",
         width: 120,
@@ -1551,7 +1576,7 @@ function DesktopNoteListPage() {
       },
       ];
     },
-    [navigate, token.colorWarning, token.colorTextTertiary, handleDelete, handleExport, handleExportWordSingle, handleExportHtmlSingle, folderMap, folders, loadNotes, data.page, data.page_size, noteTags, liveWidths, colPrefs.widths],
+    [navigate, notePreviews, token.colorWarning, token.colorTextTertiary, handleDelete, handleExport, handleExportWordSingle, handleExportHtmlSingle, folderMap, folders, loadNotes, data.page, data.page_size, noteTags, liveWidths, colPrefs.widths],
   );
 
   // 按用户的显隐偏好过滤。标题 / 操作列的 key 不在可隐藏列表里，永远保留
@@ -1562,17 +1587,6 @@ function DesktopNoteListPage() {
 
   // 时间线分组（缓存）
   const dateGroups = useMemo(() => groupByDate(data.items), [data.items]);
-
-  // 笔记纯文本预览（缓存：仅当 data.items 变化才重算，避免每次 render 都跑）
-  // 用 contentToPreview 而非 stripHtml：笔记是 Markdown，需剥掉图片/链接等语法噪声，
-  // 否则 `![](kb-asset://…)` 的图片地址会原样堆进预览。
-  const notePreviews = useMemo(() => {
-    const map = new Map<number, string>();
-    for (const n of data.items) {
-      map.set(n.id, n.content ? contentToPreview(n.content) : "");
-    }
-    return map;
-  }, [data.items]);
 
   // 卡片模式缩略图（缓存：data.items 或 data_dir 变化才重算）：取每篇笔记正文第一张图，
   // 解析成可显示 URL。无图 / 加密图 / 解析失败的笔记不入表，卡片退回纯文字。
@@ -1604,6 +1618,34 @@ function DesktopNoteListPage() {
     estimateSize: () => 182, // 170 card + 12 gap
     overscan: 3,
   });
+
+  /** 分页条：三种视图共用，固定在页面底部右侧（列表滚动、它不动）。
+   *  卡片视图原来是居中的「上一页 / 下一页」、时间线原来没有分页（只看得到第一页），统一成这一套 */
+  const pagerBar = (
+    <div className="kb-pager">
+      <Pagination
+        current={data.page}
+        pageSize={data.page_size}
+        total={data.total}
+        showTotal={(total) => `共 ${total} 篇`}
+        // 时间线固定每页 50 条（按日期分组需要一屏多看几天），不提供条数切换
+        showSizeChanger={viewMode !== "timeline"}
+        pageSizeOptions={["12", "20", "50", "100", "200"]}
+        onChange={(page, size) => {
+          setSelectedIds([]);
+          if (size !== listPageSize) {
+            // 改了每页条数 → 同步 state；loadNotes 用 override 立即生效，
+            // 不依赖 useCallback 重建后才生效（否则会闪一次旧 size）
+            setListPageSize(size);
+            loadNotes(page, undefined, size);
+          } else {
+            loadNotes(page);
+          }
+        }}
+        size="small"
+      />
+    </div>
+  );
 
   return (
     // 列表/卡片/时间线视图直接撑满 Content 区，避免最大化窗口时两侧大片留白；
@@ -1959,30 +2001,7 @@ function DesktopNoteListPage() {
               </SortableContext>
             </DndContext>
           </div>
-          <div
-            className="flex-shrink-0 flex justify-end items-center px-3 py-2"
-          >
-            <Pagination
-              current={data.page}
-              pageSize={data.page_size}
-              total={data.total}
-              showTotal={(total) => `共 ${total} 篇`}
-              showSizeChanger
-              pageSizeOptions={["12", "20", "50", "100", "200"]}
-              onChange={(page, size) => {
-                setSelectedIds([]);
-                if (size !== listPageSize) {
-                  // 改了每页条数 → 同步 state；loadNotes 用 override 立即生效，
-                  // 不依赖 useCallback 重建后才生效（否则会闪一次旧 size）
-                  setListPageSize(size);
-                  loadNotes(page, undefined, size);
-                } else {
-                  loadNotes(page);
-                }
-              }}
-              size="small"
-            />
-          </div>
+          {pagerBar}
         </div>
       )}
 
@@ -2002,7 +2021,8 @@ function DesktopNoteListPage() {
               <div
                 ref={cardContainerRef}
                 style={{
-                  height: Math.min(cardRows.length * 182, 600),
+                  flex: 1,
+                  minHeight: 0,
                   overflow: "auto",
                 }}
               >
@@ -2160,22 +2180,7 @@ function DesktopNoteListPage() {
                 </div>
               </div>
 
-              {data.total > data.page_size && (
-                <div className="flex justify-center mt-4">
-                  <Button disabled={data.page <= 1} onClick={() => loadNotes(data.page - 1)}>
-                    上一页
-                  </Button>
-                  <Text className="mx-4" style={{ lineHeight: "32px" }}>
-                    {data.page} / {Math.ceil(data.total / data.page_size)}
-                  </Text>
-                  <Button
-                    disabled={data.page >= Math.ceil(data.total / data.page_size)}
-                    onClick={() => loadNotes(data.page + 1)}
-                  >
-                    下一页
-                  </Button>
-                </div>
-              )}
+              {pagerBar}
             </>
           ) : (
             <EmptyState
@@ -2197,7 +2202,8 @@ function DesktopNoteListPage() {
           {loading ? (
             <Card loading style={{ height: 200 }} />
           ) : data.items.length > 0 ? (
-            <div className="pl-2">
+            <>
+            <div className="pl-2 flex-1 min-h-0 overflow-auto">
               {Array.from(dateGroups.entries()).map(([date, notes]) => (
                 <div key={date} className="mb-5">
                   <div
@@ -2257,6 +2263,8 @@ function DesktopNoteListPage() {
                 </div>
               ))}
             </div>
+            {pagerBar}
+            </>
           ) : (
             <EmptyState
               description="暂无笔记"

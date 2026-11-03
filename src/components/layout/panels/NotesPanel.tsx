@@ -52,6 +52,7 @@ import {
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderFilled } from "@ant-design/icons";
 import type { DataNode } from "antd/es/tree";
+import { NotesTagPills } from "./NotesTagPills";
 import { useAppStore } from "@/store";
 import { MicButton } from "@/components/MicButton";
 import { useTabsStore } from "@/store/tabs";
@@ -2789,17 +2790,9 @@ export function NotesPanel() {
       style={{ overflow: "hidden" }}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* 视图标题栏 */}
-      <div
-        className="flex items-center gap-2 px-3 py-2.5 shrink-0"
-        style={{
-          borderBottom: `1px solid ${token.colorBorderSecondary}`,
-        }}
-      >
-        <NotebookText size={15} style={{ color: token.colorPrimary }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: token.colorText }}>
-          笔记
-        </span>
+      {/* 视图标题栏（v4 原型 .ph：无底边线、标题 14/700，样式见 global.css .kb-ph） */}
+      <div className="kb-ph">
+        <span className="kb-ph-title">笔记</span>
         <div style={{ flex: 1 }} />
         <Button
           type="text"
@@ -2888,7 +2881,7 @@ export function NotesPanel() {
       {/* 新建笔记 + 打开 md */}
       <div
         style={{
-          padding: "10px 12px",
+          padding: "4px 10px 8px",
           display: "flex",
           gap: 6,
           flexShrink: 0,
@@ -2938,9 +2931,9 @@ export function NotesPanel() {
       </div>
 
       {/* 面板内搜索框：输入走后端全文搜索，结果替换下方文件夹树 */}
-      <div style={{ padding: "0 12px 8px", flexShrink: 0 }}>
+      <div style={{ padding: "0 10px 6px", flexShrink: 0 }}>
         <Input
-          size="small"
+          className="kb-panel-search"
           allowClear
           prefix={<Search size={13} style={{ color: token.colorTextTertiary }} />}
           placeholder="搜索笔记…"
@@ -3083,15 +3076,7 @@ export function NotesPanel() {
 
         {!searchActive && (
           <div
-            className="flex items-center justify-between cursor-pointer select-none shrink-0"
-            style={{
-              color: token.colorTextSecondary,
-              fontSize: 12,
-              paddingLeft: 16,
-              paddingRight: 16,
-              paddingTop: 12,
-              paddingBottom: 8,
-            }}
+            className="kb-panel-sec cursor-pointer select-none shrink-0"
             onClick={() => setFolderExpanded(!folderExpanded)}
           >
             <span className="flex items-center gap-1">
@@ -3287,6 +3272,17 @@ export function NotesPanel() {
                 </div>
               )
             )}
+          </div>
+        )}
+
+        {!searchActive && (
+          <div className="shrink-0">
+            <NotesTagPills />
+            <div className="kb-drop-hint">
+              拖入 .md / .txt 文件到这里
+              <br />
+              直接新建为笔记
+            </div>
           </div>
         )}
       </div>
