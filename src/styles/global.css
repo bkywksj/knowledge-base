@@ -8699,9 +8699,10 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   font-size: 12px;
   color: var(--kb-ink2);
 }
-/* 消息区（原型 .msgs .mi-in）：内容最大 780、左右 30 */
+/* 消息区（原型 .msgs .mi-in）：内容最大 780、左右 30。
+   2026-11-04 用户嫌两侧留白大 → 内容 960（外框 1020），与输入框左右对齐 */
 .kb-ai-thread-inner {
-  max-width: 780px;
+  max-width: 1020px;
   padding: 22px 30px 10px;
 }
 .kb-user-bubble {
@@ -8750,7 +8751,8 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
 }
 /* 输入区（原型 .cmp / .cmp-in）：最大 780、圆角 16、0.5px 细圈 + 浮层投影；输入 14.5；底栏按钮 26 高 */
 .kb-composer-wrap {
-  max-width: 840px;
+  /* 1020 − 左右 30 = 输入框 960，与上方消息卡片同宽对齐（原 840 → 780，比消息宽一截） */
+  max-width: 1020px;
   padding: 6px 30px 16px;
 }
 .kb-composer {
