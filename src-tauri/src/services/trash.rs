@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::database::Database;
 use crate::error::AppError;
-use crate::models::{Note, PageResult, RestoreBatchResult};
+use crate::models::{PageResult, RestoreBatchResult, TrashNote};
 use crate::services::attachment::AttachmentService;
 use crate::services::image::ImageService;
 use crate::services::pdf::PdfService;
@@ -98,7 +98,7 @@ impl TrashService {
         db: &Database,
         page: Option<usize>,
         page_size: Option<usize>,
-    ) -> Result<PageResult<Note>, AppError> {
+    ) -> Result<PageResult<TrashNote>, AppError> {
         let page = page.unwrap_or(1).max(1);
         let page_size = page_size.unwrap_or(20).clamp(1, 100);
 

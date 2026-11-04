@@ -80,7 +80,8 @@ const CORE_MODULES = [
   {
     icon: <Trash2 size={16} className="text-slate-500" />,
     label: "回收站",
-    desc: "已删除笔记 30 天保留",
+    // 应用没有按时间自动清理回收站，原文案「30 天保留」与实际不符
+    desc: "已删除的笔记，可恢复或永久删除",
   },
   {
     icon: <InfoIcon size={16} className="text-slate-500" />,

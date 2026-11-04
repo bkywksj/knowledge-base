@@ -1213,6 +1213,12 @@ export interface NoteTemplateInput {
   content: string;
 }
 
+/** 回收站列表项：Note 字段 + 删除时间（与 Rust TrashNote 对齐，serde flatten 平铺） */
+export interface TrashNote extends Note {
+  /** 移入回收站的时间（本地时间 YYYY-MM-DD HH:MM:SS）；老数据可能为空 */
+  deleted_at: string | null;
+}
+
 // ─── 通用 ─────────────────────────────────────
 
 /** 分页响应 */

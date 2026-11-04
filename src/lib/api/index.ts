@@ -24,6 +24,7 @@ import type {
   NoteInput,
   NoteQuery,
   PageResult,
+  TrashNote,
   Folder,
   EmptyFolderInfo,
   Tag,
@@ -662,7 +663,7 @@ export const trashApi = {
   permanentDelete: (id: number) =>
     invoke<void>("permanent_delete_note", { id }),
   list: (page?: number, pageSize?: number) =>
-    invoke<PageResult<Note>>("list_trash", { page, pageSize }),
+    invoke<PageResult<TrashNote>>("list_trash", { page, pageSize }),
   empty: () => invoke<number>("empty_trash"),
   /** 批量恢复；返回 {restored, toRoot} */
   restoreBatch: (ids: number[]) =>

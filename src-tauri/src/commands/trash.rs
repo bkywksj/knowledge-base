@@ -1,4 +1,4 @@
-use crate::models::{Note, PageResult, RestoreBatchResult};
+use crate::models::{PageResult, RestoreBatchResult, TrashNote};
 use crate::services::trash::TrashService;
 use crate::state::AppState;
 
@@ -28,7 +28,7 @@ pub fn list_trash(
     state: tauri::State<'_, AppState>,
     page: Option<usize>,
     page_size: Option<usize>,
-) -> Result<PageResult<Note>, String> {
+) -> Result<PageResult<TrashNote>, String> {
     TrashService::list(&state.db, page, page_size).map_err(|e| e.to_string())
 }
 

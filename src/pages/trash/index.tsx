@@ -13,7 +13,7 @@ import { folderApi, trashApi } from "@/lib/api";
 import { useTabsStore } from "@/store/tabs";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { relativeTime } from "@/lib/utils";
-import type { Folder, Note, PageResult } from "@/types";
+import type { Folder, PageResult, TrashNote } from "@/types";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import {
   ContextMenuOverlay,
@@ -26,7 +26,7 @@ import {
  * 列表 + 分页样式与 /notes 列表视图保持一致：白底卡包表格 + 外置分页。
  */
 function DesktopTrashPage() {
-  const [data, setData] = useState<PageResult<Note>>({
+  const [data, setData] = useState<PageResult<TrashNote>>({
     items: [],
     total: 0,
     page: 1,
@@ -225,7 +225,8 @@ function DesktopTrashPage() {
 
       <div className="kb-trash-tip">
         <Info size={14} />
-        提示：回收站中的笔记将在 30 天后自动永久删除。
+        {/* 应用没有按时间自动清理回收站（原文案写「30 天后自动永久删除」与实际不符） */}
+        提示：回收站里的笔记会一直保留，不会自动删除；可以随时恢复，或手动永久删除。
       </div>
 
       {/* 批量工具条：仅有选中时显示（原型 .selbar） */}
@@ -307,9 +308,17 @@ function DesktopTrashPage() {
                         原位置：{folderName} · {n.word_count} 字
                       </div>
                     </div>
-                    {/* 列表接口只带 updated_at（不带 deleted_at），如实标成「修改于」 */}
-                    <span className="kb-trash-time" title={n.updated_at.slice(0, 16)}>
-                      修改于 {relativeTime(n.updated_at)}
+                    {/* 显示删除时间；老数据没有删除时间时退回「修改于」 */}
+                    <span
+                      className="kb-trash-time"
+                      title={
+                        (n.deleted_at ? `删除于 ${n.deleted_at.slice(0, 16)} · ` : "") +
+                        `修改于 ${n.updated_at.slice(0, 16)}`
+                      }
+                    >
+                      {n.deleted_at
+                        ? `删除于 ${relativeTime(n.deleted_at)}`
+                        : `修改于 ${relativeTime(n.updated_at)}`}
                     </span>
                     {/* 悬停操作（原操作列） */}
                     <div className="kb-hidden-acts" onClick={(e) => e.stopPropagation()}>

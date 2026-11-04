@@ -1064,6 +1064,17 @@ pub struct NoteTemplateInput {
     pub content: String,
 }
 
+/// 回收站列表项：笔记本体（字段平铺，前端照旧按 Note 用）+ 删除时间
+///
+/// 删除时间只回收站要用，不放进通用的 Note，免得其它几十处构造 Note 的地方都要补字段
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrashNote {
+    #[serde(flatten)]
+    pub note: Note,
+    /// 移入回收站的时间（本地时间 YYYY-MM-DD HH:MM:SS）；老数据可能为空
+    pub deleted_at: Option<String>,
+}
+
 // ─── 通用 ─────────────────────────────────────
 
 /// 分页响应

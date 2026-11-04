@@ -1,7 +1,7 @@
 use rusqlite::{params, params_from_iter, OptionalExtension};
 
 use crate::error::AppError;
-use crate::models::{DailyEntry, Note, NoteInput};
+use crate::models::{DailyEntry, Note, NoteInput, TrashNote};
 
 use super::Database;
 
@@ -1260,7 +1260,7 @@ impl Database {
         &self,
         page: usize,
         page_size: usize,
-    ) -> Result<(Vec<Note>, usize), AppError> {
+    ) -> Result<(Vec<TrashNote>, usize), AppError> {
         let conn = self
             .conn
             .lock()
@@ -1276,7 +1276,7 @@ impl Database {
         // 查询分页数据
         let offset = (page.saturating_sub(1)) * page_size;
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type, is_scratch
+            "SELECT id, title, content, folder_id, is_daily, daily_date, is_pinned, is_hidden, is_encrypted, word_count, created_at, updated_at, source_file_path, source_file_type, sort_order, note_type, is_scratch, deleted_at
              FROM notes WHERE is_deleted = 1
              ORDER BY deleted_at DESC
              LIMIT ?1 OFFSET ?2",
@@ -1284,7 +1284,9 @@ impl Database {
 
         let notes = stmt
             .query_map(params![page_size as i64, offset as i64], |row| {
-                Ok(Note {
+                Ok(TrashNote {
+                  deleted_at: row.get(17)?,
+                  note: Note {
                     id: row.get(0)?,
                     title: row.get(1)?,
                     content: row.get(2)?,
@@ -1302,6 +1304,7 @@ impl Database {
                     sort_order: row.get(14)?,
                     note_type: row.get(15)?,
                     is_scratch: row.get::<_, i32>(16)? != 0,
+                  },
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -2299,5 +2302,59 @@ mod stable_uuid_tests {
             )
             .unwrap_err();
         assert!(matches!(err, AppError::NotFound(_)));
+    }
+}
+
+#[cfg(test)]
+mod trash_list_tests {
+    //! 回收站列表要带上删除时间（前端显示「删除于 N 天前」）
+
+    use super::*;
+
+    #[test]
+    fn list_trash_returns_deleted_at() {
+        let db = Database::init(":memory:").expect("init :memory: 应成功");
+        let kept = db
+            .create_note(&NoteInput {
+                title: "保留".into(),
+                content: "a".into(),
+                folder_id: None,
+            })
+            .unwrap();
+        let gone = db
+            .create_note(&NoteInput {
+                title: "删掉".into(),
+                content: "b".into(),
+                folder_id: None,
+            })
+            .unwrap();
+        assert!(db.soft_delete_note(gone.id).unwrap());
+
+        let (items, total) = db.list_trash(1, 20).unwrap();
+        assert_eq!(total, 1, "只有软删的那篇进回收站");
+        assert_eq!(items[0].note.id, gone.id);
+        assert_ne!(items[0].note.id, kept.id);
+        let at = items[0].deleted_at.as_deref().expect("软删后应有删除时间");
+        assert_eq!(at.len(), 19, "格式应为 YYYY-MM-DD HH:MM:SS，实际：{at}");
+    }
+
+    #[test]
+    fn trash_note_serializes_flat() {
+        // 前端按 Note 字段直接取（n.id / n.title），删除时间是同级的 deleted_at
+        let db = Database::init(":memory:").unwrap();
+        let n = db
+            .create_note(&NoteInput {
+                title: "t".into(),
+                content: "c".into(),
+                folder_id: None,
+            })
+            .unwrap();
+        db.soft_delete_note(n.id).unwrap();
+        let (items, _) = db.list_trash(1, 20).unwrap();
+        let v = serde_json::to_value(&items[0]).unwrap();
+        assert_eq!(v["id"], n.id);
+        assert_eq!(v["title"], "t");
+        assert!(v["deleted_at"].is_string());
+        assert!(v.get("note").is_none(), "Note 字段应平铺，不能嵌在 note 下");
     }
 }
