@@ -451,8 +451,14 @@ function DesktopDailyPage() {
             disabled={!neighbors.next}
             title={neighbors.next ? `下一篇：${formatDateCN(neighbors.next)}` : "没有更晚的日记"}
           />
-          {/* 原型里「今天」常驻；已经在今天时置灰，位置不跳 */}
-          <Button size="small" disabled={isToday} onClick={() => goToDate(todayStr())}>
+          {/* 原型里「今天」常驻（.btn-o.sm 小号描边按钮）；已经在今天时置灰，位置不跳 */}
+          <Button
+            className="kb-bar-btn is-sm"
+            // antd 默认在两个汉字间插空格（「今 天」），原型没有
+            autoInsertSpace={false}
+            disabled={isToday}
+            onClick={() => goToDate(todayStr())}
+          >
             今天
           </Button>
           <span className="kb-daily-status">{renderStatus()}</span>
@@ -470,15 +476,16 @@ function DesktopDailyPage() {
           )}
           <Tooltip title="从「日期文件夹/笔记.md」结构导入历史日记，或把已导入的普通笔记认回日记">
             <Button
-              type="text"
-              icon={<CalendarCheck size={15} />}
+              className="kb-bar-btn"
+              icon={<CalendarCheck size={14} />}
               onClick={() => setShowImportModal(true)}
             >
               导入日记
             </Button>
           </Tooltip>
           <Button
-            icon={<Save size={15} />}
+            className="kb-bar-btn"
+            icon={<Save size={14} />}
             onClick={() => void autoSave.flush()}
             loading={autoSave.status === "saving"}
             disabled={

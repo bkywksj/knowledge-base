@@ -7853,3 +7853,89 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   min-height: 26px !important;
   line-height: 26px !important;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 对齐第三轮·日记：数值取自原型实测（.ebar / .ph / .seg / .cal / .cd / .aside .ah .td）
+   ═══════════════════════════════════════════════════════════ */
+/* 顶部条日期（原型 14 / 700） */
+.kb-daily-date.ant-picker .ant-picker-input > input {
+  font-size: 14px;
+}
+/* 小号描边按钮（原型 .btn-o.sm：高 26、内边距 0 10、12px） */
+[data-theme] .kb-bar-btn.is-sm.ant-btn:not(.ant-btn-icon-only) {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+/* 描边按钮禁用态：保留描边外形，整体变淡（否则看上去像可点） */
+[data-theme] .kb-bar-btn.ant-btn:disabled {
+  opacity: 0.5;
+  color: var(--kb-ink2) !important;
+}
+/* 面板头「跳到今天」：图标按钮，去掉旧的文字按钮样式 */
+.kb-ph .kb-daily-today.ant-btn {
+  width: 30px;
+  padding: 0;
+}
+/* 月历 / 全部（block 撑满，不要编辑器那边的右外边距） */
+.kb-mode-seg.kb-daily-seg {
+  margin-right: 0;
+}
+/* 月历卡片（原型 .card.cal）：圆角 14、卡片投影、内边距 4 6 10、白到极淡紫渐变 */
+.kb-cal-card {
+  margin: 0 8px 4px;
+  padding: 4px 6px 10px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--kb-bg-raised, #fff), color-mix(in srgb, var(--kb-bg-raised, #fff) 98%, var(--kb-primary)));
+  box-shadow: var(--kb-shadow-card);
+}
+/* 月份头（原型 .cal-h：高 34、标题 13.5 / 700） */
+.kb-cal-head {
+  height: 34px;
+  padding: 0 0 8px 4px;
+}
+.kb-cal-title {
+  font-size: 13.5px;
+}
+/* 有日记的圆点（原型 .cd.has::after）：主色、透明度 .7 */
+.kb-cal-dot {
+  opacity: 0.7;
+}
+/* 右侧「今日待办」（原型 .ah + .td）：标题与「大纲」同款，不要分隔线；行高 32 */
+.kb-aside-sec {
+  margin-top: 24px;
+  padding-top: 0;
+  border-top: none;
+}
+.kb-aside-head {
+  padding: 0 10px;
+  font-size: 11.5px;
+  color: var(--kb-text-secondary);
+}
+.kb-aside-head > svg {
+  display: none;
+}
+.kb-aside-empty,
+.kb-day-task-overdue {
+  padding: 2px 10px;
+}
+.kb-day-tasks {
+  gap: 0;
+  padding: 0 4px;
+}
+.kb-day-task {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 13.5px;
+}
+/* 侧栏小标题（原型 .ah：左右 10，与下方目录项 / 待办行文字对齐）—— 笔记编辑器同款大纲一起生效 */
+.editor-outline__header {
+  padding: 0 10px;
+}
+.editor-outline__hint {
+  padding: 0 10px;
+}
+/* 与上方 .editor-outline 同一条左缘（它自带 10 的左内边距） */
+.kb-aside-sec {
+  padding-left: 10px;
+}

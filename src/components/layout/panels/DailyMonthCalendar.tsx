@@ -63,12 +63,12 @@ export function DailyMonthCalendar({
   const grid = useMemo(() => buildGrid(year, month), [year, month]);
 
   return (
-    <div className="px-2 pb-2 shrink-0">
-      {/* 周标题 */}
+    <div className="shrink-0">
+      {/* 周标题（原型 .cw：11px、三级色） */}
       <div
         className="grid grid-cols-7"
         style={{
-          fontSize: 10,
+          fontSize: 11,
           color: token.colorTextTertiary,
           fontWeight: 500,
           marginBottom: 2,
@@ -100,15 +100,20 @@ export function DailyMonthCalendar({
           const hasEntry = datesWithEntry.has(ymd);
 
           // v4 原型：今天 = 主题渐变色块；选中 = 主色描边；有日记 = 日期下方一颗小圆点（不再整格染色）
+          // 当月日期用 ink2（比正文浅一档），未来日期再淡一档（原型 .cd.fut）
           let bg = "transparent";
-          let color = sameMonth ? token.colorText : token.colorTextQuaternary;
+          let color = !sameMonth
+            ? token.colorTextQuaternary
+            : ymd > today
+              ? token.colorTextTertiary
+              : "var(--kb-ink2)";
           let outline: string | undefined;
           let weight = 400;
 
           if (isToday) {
             bg = "var(--kb-grad, " + token.colorPrimary + ")";
             color = "#fff";
-            weight = 600;
+            weight = 700;
           } else if (isSelected) {
             outline = `1.5px solid ${token.colorPrimary}`;
             color = token.colorPrimary;
@@ -127,15 +132,15 @@ export function DailyMonthCalendar({
               className="flex items-center justify-center transition kb-cal-cell"
               style={{
                 position: "relative",
-                aspectRatio: "1 / 1",
-                minHeight: 26,
-                fontSize: 12,
+                // 原型 .cd：高 30、宽随列宽（不再强制正方形）
+                height: 30,
+                fontSize: 12.5,
                 fontWeight: weight,
                 background: bg,
                 color,
                 outline,
                 outlineOffset: -1,
-                borderRadius: 6,
+                borderRadius: 8,
                 border: "none",
                 padding: 0,
                 cursor: "pointer",

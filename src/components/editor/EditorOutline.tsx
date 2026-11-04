@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { theme as antdTheme } from "antd";
-import { EyeOff, ListTree } from "lucide-react";
+import { EyeOff } from "lucide-react";
 import { getHeadingNumberMap } from "./HeadingNumber";
 import { pickActiveIndex, type OutlineProbe } from "@/lib/outlineScrollSpy";
 import { useAppStore } from "@/store";
@@ -308,7 +308,7 @@ export function EditorOutline({ editor, scrollRoot, onHide }: Props) {
         style={{ color: token.colorTextQuaternary }}
       >
         <div className="editor-outline__header">
-          <ListTree size={13} />
+          {/* 与有标题时同款：原型 .ah 只有文字，不带图标 */}
           <span>大纲</span>
           {onHide && (
             <button

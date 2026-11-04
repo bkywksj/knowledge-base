@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button, Modal, Segmented, message, theme as antdTheme } from "antd";
-import { ChevronLeft, ChevronRight, Copy, Trash2 } from "lucide-react";
+import { CalendarCheck, ChevronLeft, ChevronRight, Copy, Trash2 } from "lucide-react";
 import { dailyApi, trashApi } from "@/lib/api";
 import { todayYmd } from "@/lib/utils";
 import type { DailyEntry } from "@/types";
@@ -261,13 +261,12 @@ export function DailyPanel() {
         <span className="kb-ph-title">日记</span>
         <Button
           type="text"
-          size="small"
-          className={selectedDate === today ? "kb-daily-today is-on" : "kb-daily-today"}
+          className="kb-ib kb-daily-today"
+          icon={<CalendarCheck size={15} />}
           onClick={goToToday}
           title="跳到今天"
-        >
-          今天
-        </Button>
+          aria-label="跳到今天"
+        />
       </div>
 
       {/* 视图切换：月历 / 全部 */}
@@ -278,6 +277,8 @@ export function DailyPanel() {
         <Segmented
           block
           size="small"
+          // 原型 .seg：高 30、圆角 8、选中白底 + 描边（与编辑器模式切换同款）
+          className="kb-mode-seg kb-daily-seg"
           value={viewMode}
           onChange={(v) => setViewMode(v as "calendar" | "all")}
           options={[

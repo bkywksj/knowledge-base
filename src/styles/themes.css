@@ -711,10 +711,10 @@ html[data-theme-category="dark"] .tiptap-toolbar .toolbar-btn-active:hover:not(:
   color: #FFFFFF !important;
   font-weight: 600;
 }
-/* 分段切换选中项：细描边代替投影 */
+/* 分段切换选中项：细描边代替投影（原型 .seg button.on 用深一档描边 .24） */
 [data-theme] .ant-segmented .ant-segmented-item-selected,
 [data-theme] .ant-segmented .ant-segmented-thumb {
-  box-shadow: inset 0 0 0 1px var(--kb-border) !important;
+  box-shadow: inset 0 0 0 1px var(--kb-border-strong) !important;
 }
 /* 下拉菜单 / 右键菜单：外边距 5px，菜单项之间留 1px，跟原型 .menu 一致 */
 [data-theme] .ant-dropdown .ant-dropdown-menu {
