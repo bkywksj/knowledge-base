@@ -130,10 +130,12 @@ impl Database {
             .map_err(|e| AppError::Custom(e.to_string()))?;
 
         let mut stmt = conn.prepare(
-            "SELECT t.id, t.name, t.color, t.parent_id, COUNT(nt.note_id) as note_count
+            // 数 n.id 而不是 nt.note_id：关联行在回收站 / 隐藏 / 临时笔记身上也还在，
+            // 数关联行会把它们算进去，和点进标签看到的「关联 N 篇」（list_notes_by_tag）对不上
+            "SELECT t.id, t.name, t.color, t.parent_id, COUNT(n.id) as note_count
              FROM tags t
              LEFT JOIN note_tags nt ON t.id = nt.tag_id
-             LEFT JOIN notes n ON nt.note_id = n.id AND n.is_deleted = 0
+             LEFT JOIN notes n ON nt.note_id = n.id AND n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0
              GROUP BY t.id
              ORDER BY COALESCE(t.parent_id, -1), t.sort_order, t.name COLLATE NOCASE",
         )?;
@@ -582,11 +584,12 @@ impl Database {
             .map_err(|e| AppError::Custom(e.to_string()))?;
 
         let mut stmt = conn.prepare(
-            "SELECT t.id, t.name, t.color, t.parent_id, COUNT(nt2.note_id) as note_count
+            // 计数口径同 list_tags：只数正常笔记（n.id），不数关联行
+            "SELECT t.id, t.name, t.color, t.parent_id, COUNT(n.id) as note_count
              FROM tags t
              INNER JOIN note_tags nt ON t.id = nt.tag_id AND nt.note_id = ?1
              LEFT JOIN note_tags nt2 ON t.id = nt2.tag_id
-             LEFT JOIN notes n ON nt2.note_id = n.id AND n.is_deleted = 0
+             LEFT JOIN notes n ON nt2.note_id = n.id AND n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0
              GROUP BY t.id
              ORDER BY t.name",
         )?;
@@ -1107,5 +1110,71 @@ mod sync_tag_tests {
         assert_eq!(n1_tags, vec!["x".to_string(), "y".to_string()]);
         assert_eq!(map.get(&n2.id).cloned().unwrap_or_default(), vec!["x".to_string()]);
         assert!(map.get(&n3.id).is_none(), "无标签的 note_id 不该出现在 map 里");
+    }
+}
+
+#[cfg(test)]
+mod tag_count_tests {
+    //! 标签计数只数正常笔记：回收站 / 隐藏的笔记关联行还在，但不该算进去
+    //! （否则面板显示 5、点进去「关联 0 篇」）
+
+    use crate::database::Database;
+    use crate::models::NoteInput;
+
+    fn note(db: &Database, title: &str) -> i64 {
+        db.create_note(&NoteInput {
+            title: title.into(),
+            content: "x".into(),
+            folder_id: None,
+        })
+        .unwrap()
+        .id
+    }
+
+    fn count_of(db: &Database, tag_id: i64) -> usize {
+        db.list_tags()
+            .unwrap()
+            .into_iter()
+            .find(|t| t.id == tag_id)
+            .expect("标签应存在")
+            .note_count
+    }
+
+    #[test]
+    fn list_tags_excludes_trashed_and_hidden_notes() {
+        let db = Database::init(":memory:").unwrap();
+        let (a, b, c) = (note(&db, "a"), note(&db, "b"), note(&db, "c"));
+        let t = db.create_tag("环境搭建", None, None).unwrap().id;
+        for n in [a, b, c] {
+            db.add_tag_to_note(n, t).unwrap();
+        }
+        assert_eq!(count_of(&db, t), 3);
+
+        db.soft_delete_note(b).unwrap();
+        assert_eq!(count_of(&db, t), 2, "移入回收站的笔记不该计数");
+
+        {
+            let conn = db.conn_lock().unwrap();
+            conn.execute("UPDATE notes SET is_hidden = 1 WHERE id = ?1", [c])
+                .unwrap();
+        }
+        assert_eq!(count_of(&db, t), 1, "隐藏笔记不该计数");
+
+        let (_, total) = db.list_notes_by_tag(t, 1, 20).unwrap();
+        assert_eq!(total, count_of(&db, t), "面板计数应与标签详情的篇数一致");
+    }
+
+    #[test]
+    fn note_tags_count_uses_same_rule() {
+        let db = Database::init(":memory:").unwrap();
+        let (a, b) = (note(&db, "a"), note(&db, "b"));
+        let t = db.create_tag("工作", None, None).unwrap().id;
+        db.add_tag_to_note(a, t).unwrap();
+        db.add_tag_to_note(b, t).unwrap();
+        db.soft_delete_note(b).unwrap();
+
+        let tags = db.get_note_tags(a).unwrap();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].note_count, 1, "某笔记的标签计数同样不算回收站笔记");
     }
 }
