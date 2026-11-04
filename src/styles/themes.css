@@ -47,6 +47,8 @@
   --kb-hi: inset 0 1px 0 rgba(255,255,255,.85);
   /* 二级墨色（原型 --ink2）：描边按钮文字等，比二级文字色深一档 */
   --kb-ink2: #4A4462;
+  /* 编辑器格式工具栏底（原型 .fmt） */
+  --kb-fmt-bg: #FBFAFF;
   --kb-scrollbar-thumb: rgba(124,99,220,0.18);
   --kb-scrollbar-hover: rgba(124,99,220,0.32);
   color-scheme: light;
@@ -188,6 +190,7 @@
   --kb-bar-grad: linear-gradient(180deg, #21201E 0%, #1D1C1A 100%);
   --kb-hi: inset 0 1px 0 rgba(255,245,230,.03);
   --kb-ink2: #C4BEB4;
+  --kb-fmt-bg: #242321;
   --kb-scrollbar-thumb: rgba(255,245,230,0.12);
   --kb-scrollbar-hover: rgba(255,245,230,0.22);
   color-scheme: dark;

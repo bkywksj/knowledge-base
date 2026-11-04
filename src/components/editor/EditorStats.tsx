@@ -18,10 +18,13 @@ const { Text } = Typography;
  * - `editor`：富文本模式，走文档树统计（段落数准确）
  * - `text`：源码模式没有 Editor 实例，直接统计 markdown 原文
  */
-type Props = { editor: Editor; text?: undefined } | { editor?: undefined; text: string };
+type Props = ({ editor: Editor; text?: undefined } | { editor?: undefined; text: string }) & {
+  /** statusbar = 编辑页底部状态栏里的纯文字样式；缺省 = 工具栏小标签样式 */
+  variant?: "statusbar";
+};
 
 export function EditorStats(props: Props) {
-  const { editor, text } = props;
+  const { editor, text, variant } = props;
   const [stats, setStats] = useState<EditorTextStats>(() =>
     editor ? calcEditorStats(editor) : calcTextStats(text ?? ""),
   );
@@ -41,10 +44,12 @@ export function EditorStats(props: Props) {
         setStats(calcEditorStats(editor));
       }, 300);
     };
-    editor.on("update", update);
+    // 切换笔记时编辑器实例不重建，只 setContent（不发 update 事件）→ 只听 update 字数会停在上一篇。
+    // transaction 每次换内容都会触发；选区变化也会触发，但有上面 300ms 合并，开销可忽略
+    editor.on("transaction", update);
     editor.on("create", update);
     return () => {
-      editor.off("update", update);
+      editor.off("transaction", update);
       editor.off("create", update);
       if (timer != null) window.clearTimeout(timer);
     };
@@ -64,14 +69,19 @@ export function EditorStats(props: Props) {
         </div>
       }
     >
-      <span
-        className="tiptap-toolbar-stats"
-        style={{ cursor: "default", padding: "0 8px" }}
-      >
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          {stats.words} 字
-        </Text>
-      </span>
+      {variant === "statusbar" ? (
+        // 状态栏：跟同行其它项一样的纯文字（字号 / 颜色继承状态栏）
+        <span style={{ cursor: "default" }}>{stats.words.toLocaleString()} 字</span>
+      ) : (
+        <span
+          className="tiptap-toolbar-stats"
+          style={{ cursor: "default", padding: "0 8px" }}
+        >
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {stats.words} 字
+          </Text>
+        </span>
+      )}
     </Popover>
   );
 }

@@ -181,7 +181,8 @@ export const EDITOR_FONT_DEFAULTS = {
   family: "system" as EditorFontFamily,
   // 标题默认跟随正文，保持老行为（此前标题就是继承正文字体的）
   headingFamily: EDITOR_HEADING_FONT_FOLLOW as EditorFontFamily,
-  size: 15,
+  // v4 原型正文 16px；行高原型 1.86，取预设里最近的 1.8
+  size: 16,
   lineHeight: 1.8,
   codeSize: 0, // 0 = 代码块字号跟随正文（相对 0.9em），保持老行为
 };
@@ -214,8 +215,9 @@ export const EDITOR_RULE_LABELS: Record<EditorRuleLines, string> = {
 };
 
 export const EDITOR_LAYOUT_DEFAULTS = {
-  readingWidth: 820,
-  paper: true,
+  // v4 原型：正文直接写在页面上（不套纸张卡片），文档宽约 740 → 取预设「紧凑 720」
+  readingWidth: 720,
+  paper: false,
   ruleLines: "none" as EditorRuleLines,
   firstLineIndent: false,
   headingNumber: false,

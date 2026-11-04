@@ -336,17 +336,9 @@ export function EditorOutline({ editor, scrollRoot, onHide }: Props) {
         className="editor-outline__header"
         style={{ color: token.colorTextSecondary }}
       >
-        <ListTree size={13} />
+        {/* 原型 .ah：只有「大纲」两个字（小号粗体加宽字距），不带图标和计数 */}
         <span>大纲</span>
-        <span
-          style={{
-            marginLeft: "auto",
-            fontSize: 11,
-            color: token.colorTextQuaternary,
-          }}
-        >
-          {items.length}
-        </span>
+        <span style={{ marginLeft: "auto" }} />
         {onHide && (
           <button
             type="button"
@@ -378,9 +370,9 @@ export function EditorOutline({ editor, scrollRoot, onHide }: Props) {
                   it.level > 1
                     ? `1px solid ${guideLine ? token.colorBorderSecondary : "transparent"}`
                     : undefined,
-                color: isActive ? token.colorPrimary : token.colorTextSecondary,
-                fontWeight: isActive ? 600 : 400,
-                background: isActive ? `${token.colorPrimary}14` : "transparent",
+                // 原型 .toc a：当前项只换浅紫底 + 主色圆点，字色字重不变
+                color: token.colorTextSecondary,
+                background: isActive ? "var(--kb-primary-light)" : "transparent",
               }}
               onClick={() => handleJump(it)}
               title={it.label ? `${it.label} ${it.text}` : it.text}

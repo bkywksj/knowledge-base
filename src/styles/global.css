@@ -7590,3 +7590,266 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   margin-top: 0;
   line-height: 18px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 对齐第三轮·编辑器：数值取自原型实测（.ebar / .fmt / .doc-title / .doc-meta / .prose / .toc / .statusbar / .tab）
+   ═══════════════════════════════════════════════════════════ */
+/* 顶部条（原型 .ebar）：透明底、无底边线，高 46、内边距 0 10 0 20 */
+.editor-topbar.kb-ebar {
+  min-height: 46px;
+  padding: 0 10px 0 20px !important;
+  border-bottom: none !important;
+  background: transparent !important;
+}
+.kb-crumb,
+.kb-crumb > a {
+  color: var(--kb-text-secondary);
+}
+.kb-crumb > b {
+  color: var(--kb-ink2);
+}
+.kb-saved .ant-typography {
+  color: var(--kb-text-secondary);
+}
+/* 图标按钮（原型 .ib）：圆角 6、二级字色 */
+.kb-ib.ant-btn {
+  border-radius: 6px;
+  color: var(--kb-text-secondary);
+}
+/* 编辑 / 阅读 / 源码（原型 .seg：高 30、圆角 8、内边距 2；选中白底 + 深一档描边） */
+.kb-mode-seg.ant-segmented {
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--kb-primary-light);
+}
+.kb-mode-seg .ant-segmented-item {
+  border-radius: 6px;
+}
+.kb-mode-seg .ant-segmented-item-label {
+  min-height: 26px;
+  line-height: 26px;
+  font-size: 12px;
+}
+.kb-mode-seg .ant-segmented-item-selected,
+.kb-mode-seg .ant-segmented-thumb {
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: inset 0 0 0 1px var(--kb-border-strong);
+}
+.kb-mode-seg .ant-segmented-item-selected {
+  color: var(--kb-primary);
+  font-weight: 600;
+}
+/* 问 AI（原型 .btn-s）：高 30、内边距 0 13、字号 12.5、圆角 6 */
+.kb-ask-btn.ant-btn {
+  height: 30px;
+  padding: 0 13px;
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+/* 格式工具栏（原型 .fmt）：浮动卡片 —— 底 #FBFAFF、圆角 11、深一档描边、上下不留边距；按钮 28×30、ink2 */
+.kb-fmt-slot .tiptap-toolbar.kb-fmt {
+  margin: 0 14px;
+  padding: 5px 4px;
+  background: var(--kb-fmt-bg);
+  box-shadow: inset 0 0 0 1px var(--kb-border-strong);
+}
+.tiptap-toolbar.kb-fmt .ant-btn {
+  min-width: 28px !important;
+  color: var(--kb-ink2);
+}
+/* 标题（原型 .doc-title）：34 / 700，字距 -0.015em */
+.editor-title.ant-input,
+.editor-title .ant-input {
+  font-size: 34px !important;
+  letter-spacing: -0.015em;
+}
+/* 元数据行（原型 .doc-meta）：标题下 14、正文上 26；文件夹块 / 标签胶囊 / + 标签 */
+.kb-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 26px;
+}
+.kb-meta-chip {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border-radius: 6px;
+  background: var(--kb-primary-light);
+  color: var(--kb-ink2);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.kb-meta-chip.is-folder:hover,
+.kb-meta-chip.is-folder.is-open {
+  background: var(--kb-bg-active);
+}
+.kb-meta-chip > svg {
+  flex: none;
+  color: var(--kb-text-secondary);
+}
+.kb-meta-sep {
+  margin: 0 3px;
+  color: var(--kb-text-tertiary);
+}
+.kb-meta-chip > .kb-meta-caret {
+  color: var(--kb-text-tertiary);
+}
+.kb-meta-chip.is-tag > i {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+}
+/* 标签上的 ×：平时不占位，悬停胶囊才出现 */
+.kb-meta-x {
+  display: none;
+  width: 14px;
+  height: 14px;
+  margin-right: -3px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--kb-text-tertiary);
+  place-items: center;
+  cursor: pointer;
+}
+.kb-meta-chip.is-tag:hover > .kb-meta-x {
+  display: inline-grid;
+}
+.kb-meta-x:hover {
+  color: var(--ant-color-error);
+}
+/* + 标签（原型 .chip.add）：平时一颗细圈小胶囊，聚焦搜索时展开 */
+.kb-tag-add {
+  width: 72px;
+  transition: width 0.16s ease;
+}
+.kb-tag-add:focus-within {
+  width: 240px;
+}
+[data-theme] .kb-tag-add .ant-select-selector {
+  min-height: 26px !important;
+  height: 26px;
+  padding: 0 8px !important;
+  border: none !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  box-shadow: inset 0 0 0 0.5px var(--kb-border-strong) !important;
+  font-size: 12px;
+}
+.kb-tag-add .ant-select-selection-placeholder,
+.kb-tag-add .ant-select-selection-overflow-item-rest .ant-select-selection-item {
+  color: var(--kb-text-tertiary) !important;
+  font-size: 12px;
+}
+.kb-tag-add .ant-select-selection-overflow-item-rest .ant-select-selection-item {
+  border: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+}
+/* 正文（原型 .prose）：段后 1.05em；标题按原型二级 21px（1.3125em）同比例收一级 / 三级 */
+.editor-content-area .tiptap p {
+  margin: 0 0 1.05em;
+}
+.editor-content-area .tiptap h1 {
+  font-size: 1.6em;
+  line-height: 1.4;
+  margin: 1.9em 0 0.55em;
+}
+.editor-content-area .tiptap h2 {
+  font-size: 1.3125em;
+  line-height: 1.45;
+  margin: 1.9em 0 0.55em;
+}
+.editor-content-area .tiptap h3 {
+  font-size: 1.15em;
+  line-height: 1.5;
+  margin: 1.6em 0 0.5em;
+}
+.editor-content-area .tiptap > :first-child {
+  margin-top: 0;
+}
+.editor-content-area .tiptap ol,
+.editor-content-area .tiptap ul {
+  margin: 0 0 1.05em;
+  padding-left: 1.6em;
+}
+.editor-content-area .tiptap li {
+  margin: 0.25em 0;
+  padding-left: 0.2em;
+}
+.editor-content-area .tiptap li > p {
+  margin: 0;
+}
+.editor-content-area .tiptap ol > li::marker {
+  color: var(--kb-primary);
+  font-weight: 600;
+  font-size: 0.94em;
+}
+/* 大纲（原型 .ah / .toc）：小号粗体加宽字距的标题；目录项前一颗 4px 圆点，当前项浅紫底 + 主色圆点 */
+.editor-outline__header {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--kb-text-secondary) !important;
+}
+.editor-outline__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px !important;
+  border-radius: 5px;
+  font-size: 12.5px;
+}
+.editor-outline__item::before {
+  content: "";
+  width: 4px;
+  height: 4px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--kb-border-strong);
+}
+.editor-outline__item[data-active]::before {
+  background: var(--kb-primary);
+}
+/* 底部状态栏（原型 .statusbar）：渐变底 */
+.kb-statusbar {
+  background: var(--kb-bar-grad);
+  color: var(--kb-text-secondary);
+}
+/* 笔记标签页（原型 .tab）：字号 13，当前页深一档描边 */
+.kb-tab {
+  font-size: 13px;
+}
+.kb-tab.is-active {
+  box-shadow: inset 0 0 0 1px var(--kb-border-strong);
+}
+/* + 标签：antd 6 的边框 / 底色画在 .ant-select 根上（没有 .ant-select-selector 这一层）；平时不显示下拉箭头 */
+[data-theme] .kb-tag-add .ant-select {
+  width: 100%;
+  height: 26px;
+  border: none !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  box-shadow: inset 0 0 0 0.5px var(--kb-border-strong) !important;
+  font-size: 12px;
+}
+.kb-tag-add .ant-select-placeholder {
+  color: var(--kb-text-tertiary) !important;
+  font-size: 12px;
+}
+.kb-tag-add:not(:focus-within) .ant-select-suffix {
+  display: none;
+}
+/* 编辑 / 阅读 / 源码是 size="small"，antd 小号规则优先级更高 → 加 !important 才能到原型的 26 */
+.kb-mode-seg .ant-segmented-item-label {
+  min-height: 26px !important;
+  line-height: 26px !important;
+}

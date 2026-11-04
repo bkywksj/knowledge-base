@@ -17,7 +17,6 @@ import {
   Spin,
   Segmented,
   TreeSelect,
-  Tag as AntTag,
   Divider,
   Tooltip,
   Modal,
@@ -30,7 +29,7 @@ import {
   theme as antdTheme,
 } from "antd";
 import { MoreHorizontal } from "lucide-react";
-import { ArrowLeft, Save, Trash2, Pin, FolderOpen, Tags, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, ChevronDown, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, MessageSquare, ListTree, Network, ExternalLink, BookOpen, FilePen, Presentation, Printer, Code2, History } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Pin, FolderOpen, X, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, ChevronDown, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, MessageSquare, ListTree, Network, ExternalLink, BookOpen, FilePen, Presentation, Printer, Code2, History } from "lucide-react";
 import { CloseCircleFilled } from "@ant-design/icons";
 import { useAppStore, EDITOR_FONT_DEFAULTS } from "@/store";
 import { useCtrlWheelZoom } from "@/hooks/useCtrlWheelZoom";
@@ -399,40 +398,21 @@ function FolderPathEditor({
       destroyOnHidden
     >
       <div
-        className="inline-flex items-center gap-1 cursor-pointer select-none"
-        style={{
-          padding: "2px 8px",
-          borderRadius: 6,
-          fontSize: 13,
-          color: token.colorText,
-          background: open ? token.colorFillTertiary : "transparent",
-          transition: "background-color .15s",
-        }}
-        onMouseEnter={(e) =>
-          (e.currentTarget.style.background = token.colorFillQuaternary)
-        }
-        onMouseLeave={(e) =>
-          (e.currentTarget.style.background = open
-            ? token.colorFillTertiary
-            : "transparent")
-        }
+        className={"kb-meta-chip is-folder" + (open ? " is-open" : "")}
+        title="所在文件夹 · 点击移动"
       >
-        <FolderOpen size={14} style={{ color: token.colorTextTertiary }} />
+        <FolderOpen size={13} />
         {path.length === 0 ? (
-          <span style={{ color: token.colorTextTertiary }}>未分类</span>
+          <span>未分类</span>
         ) : (
           path.map((seg, idx) => (
             <span key={seg.id} className="inline-flex items-center">
-              {idx > 0 && (
-                <ChevronRight
-                  size={12}
-                  style={{ color: token.colorTextQuaternary, margin: "0 2px" }}
-                />
-              )}
+              {idx > 0 && <span className="kb-meta-sep">/</span>}
               <span>{seg.name}</span>
             </span>
           ))
         )}
+        <ChevronDown size={12} className="kb-meta-caret" />
       </div>
     </Popover>
   );
@@ -444,8 +424,6 @@ function MetaBar({
   allTags,
   folders,
   folderId,
-  editor,
-  sourceText,
   onTagsChange,
   onFolderChange,
   onCreateTag,
@@ -455,9 +433,6 @@ function MetaBar({
   allTags: Tag[];
   folders: Folder[];
   folderId: number | null;
-  editor: any | null;
-  /** 源码模式下没有 editor 实例，改用 markdown 原文统计字数；富文本模式传 undefined */
-  sourceText?: string;
   onTagsChange: (tagIds: number[]) => void;
   onFolderChange: (folderId: number | null) => void;
   onCreateTag: (name: string) => Promise<void>;
@@ -491,20 +466,17 @@ function MetaBar({
   }, [selectedTagIds, defaultTagIds]);
 
   return (
-    <div className="flex items-center gap-3 py-2 flex-wrap">
-      {/* 文件夹路径面包屑（点击切换目录） */}
+    <div className="kb-meta">
+      {/* 文件夹（点击切换目录） */}
       <FolderPathEditor
         folders={folders}
         folderId={folderId}
         onChange={onFolderChange}
       />
 
-      <Divider orientation="vertical" style={{ height: 20 }} />
-
       {/* 标签管理 */}
-      <div className="flex items-center gap-1 flex-1 min-w-0">
-        <Tags size={14} className="text-gray-400 shrink-0" />
-        <div className="flex items-center gap-1 flex-wrap flex-1">
+      <div className="flex items-center gap-2 flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap flex-1">
           {noteTags.map((tag) => (
             <Popover
               key={tag.id}
@@ -519,18 +491,23 @@ function MetaBar({
                 />
               }
             >
-              <AntTag
-                closable
-                color={tag.color ?? undefined}
-                style={{ cursor: "pointer" }}
-                onClose={(e) => {
-                  // 阻止 Popover 触发 + close 走 onTagsChange
-                  e.stopPropagation();
-                  onTagsChange(selectedTagIds.filter((id) => id !== tag.id));
-                }}
-              >
+              {/* 原型 .chip.tag：浅紫底 + 彩色圆点；点击调颜色，悬停出现 × 移除 */}
+              <span className="kb-meta-chip is-tag" title="点击调整颜色">
+                <i style={{ background: tag.color || "var(--kb-primary)" }} />
                 {tag.name}
-              </AntTag>
+                <button
+                  type="button"
+                  className="kb-meta-x"
+                  aria-label={`移除标签 ${tag.name}`}
+                  onClick={(e) => {
+                    // 阻止 Popover 触发 + 走 onTagsChange
+                    e.stopPropagation();
+                    onTagsChange(selectedTagIds.filter((id) => id !== tag.id));
+                  }}
+                >
+                  <X size={11} />
+                </button>
+              </span>
             </Popover>
           ))}
           {/* TreeSelect 把扁平 Select 升级为层级选择：复用 TagsPanel 的同款 treeData，
@@ -546,23 +523,21 @@ function MetaBar({
                 setTagSearch("");
               }
             }}
-            style={{ minWidth: 160, maxWidth: 240 }}
+            // 原型 .chip.add：平时是一颗「+ 标签」细圈小胶囊，聚焦搜索时展开（样式见 .kb-tag-add）
+            className="kb-tag-add"
           >
           <TreeSelect
             multiple
             size="small"
-            placeholder={
-              allTags.length === 0
-                ? "输入标签名后回车创建"
-                : "+ 添加 / 搜索 / 新建"
-            }
+            placeholder="+ 标签"
+            title={allTags.length === 0 ? "输入标签名后回车创建" : "添加 / 搜索 / 新建标签"}
             style={{ width: "100%" }}
             value={selectedTagIds}
             onChange={(val) => onTagsChange(val as number[])}
             treeData={tagTreeData}
             treeDefaultExpandAll
             maxTagCount={0}
-            maxTagPlaceholder={`+ 添加`}
+            maxTagPlaceholder="+ 标签"
             popupMatchSelectWidth={260}
             notFoundContent={
               trimmedSearch
@@ -659,18 +634,6 @@ function MetaBar({
         </div>
       </div>
 
-      {/* 字数统计：放在元数据栏末尾（与文件夹/标签同行），shrink-0 防被标签挤掉。
-          源码模式下 editor 为 null，退回按 markdown 原文统计，保证字数不会凭空消失。 */}
-      {(editor || sourceText !== undefined) && (
-        <div className="shrink-0 flex items-center gap-2">
-          <Divider type="vertical" style={{ height: 20, margin: 0 }} />
-          {editor ? (
-            <EditorStats editor={editor} />
-          ) : (
-            <EditorStats text={sourceText ?? ""} />
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -2387,7 +2350,11 @@ function DesktopNoteEditorPage() {
               {autoSaveEnabled ? "已自动保存" : "已保存"} ·{" "}
               {relativeTime(new Date(lastAutoSavedAt).toISOString())}
             </Text>
-          ) : null}
+          ) : (
+            <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.2 }}>
+              {autoSaveEnabled ? "已自动保存" : "已保存"}
+            </Text>
+          )}
           </span>
         </div>
         <div className="kb-ebar-right">
@@ -2760,8 +2727,6 @@ function DesktopNoteEditorPage() {
               allTags={allTags}
               folders={folders}
               folderId={note?.folder_id ?? null}
-              editor={editorInstance}
-              sourceText={sourceMode ? content : undefined}
               onTagsChange={handleTagsChange}
               onFolderChange={handleFolderChange}
               onCreateTag={handleCreateTag}
@@ -2965,7 +2930,13 @@ function DesktopNoteEditorPage() {
         trailing={
           editorStats && (
             <>
-              <span>{editorStats.words.toLocaleString()} 字</span>
+              {sourceMode ? (
+                <EditorStats text={content} variant="statusbar" />
+              ) : editorInstance ? (
+                <EditorStats editor={editorInstance} variant="statusbar" />
+              ) : (
+                <span>{editorStats.words.toLocaleString()} 字</span>
+              )}
               <span>{editorStats.chars.toLocaleString()} 字符</span>
               <span>约 {editorStats.readingTime}</span>
             </>
