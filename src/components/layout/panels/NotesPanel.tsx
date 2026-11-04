@@ -19,7 +19,7 @@ import {
 import {
   NotebookText,
   FolderPlus,
-  FolderX,
+  BrushCleaning,
   ChevronDown,
   ChevronRight,
   Edit3,
@@ -195,10 +195,23 @@ function collectAllKeys(folders: Folder[]): string[] {
 
 /** Tree DataNode 扩展：携带 isNote 标志和原始数据，便于 renderTitle 区分 */
 type TreeNoteData = { isNote: true; note: Note };
-/** isChild：是否为子文件夹（非根级），用于 renderTitle 加视觉小点区分层级 */
-type TreeFolderData = { isNote: false; isChild: boolean; color: string | null };
+/** isChild：是否为子文件夹（非根级），用于 renderTitle 加视觉小点区分层级；
+ *  count：本层 + 所有子文件夹的笔记数（原型 .row .ct，行尾小灰字） */
+type TreeFolderData = { isNote: false; isChild: boolean; color: string | null; count: number };
+
+/** 文件夹子树内的笔记总数：note_count 只算本层，原型的数字含子文件夹 */
+function folderSubtreeCount(f: Folder): number {
+  return f.children.reduce((sum, c) => sum + folderSubtreeCount(c), f.note_count);
+}
 type TreeNodeData = TreeNoteData | TreeFolderData;
 type EnrichedNode = DataNode & { data?: TreeNodeData };
+
+/** 文件夹行尾的笔记数（原型 .row .ct：11.5 小灰等宽字）；0 篇不显示 */
+function FolderCount({ node }: { node: DataNode }) {
+  const d = (node as EnrichedNode).data;
+  if (!d || d.isNote || !d.count) return null;
+  return <span className="kb-tree-ct">{d.count}</span>;
+}
 
 /** 将 Folder[] + 各文件夹直属笔记 转为 antd Tree 的 DataNode[]
  *
@@ -252,7 +265,7 @@ function foldersToTreeData(
       // 拖拽落在叶子上会被当成"同级排序"，无法 drop-into 折叠的空文件夹。
       isLeaf: false,
       children: children.length ? children : undefined,
-      data: { isNote: false, isChild: depth > 0, color: f.color ?? null },
+      data: { isNote: false, isChild: depth > 0, color: f.color ?? null, count: folderSubtreeCount(f) },
     };
   });
 }
@@ -2509,9 +2522,10 @@ export function NotesPanel() {
             strokeWidth={2}
             style={{ flexShrink: 0, color: token.colorTextSecondary }}
           />
-          <span className="truncate" style={{ color: token.colorTextSecondary }}>
+          <span className="truncate flex-1 min-w-0" style={{ color: token.colorTextSecondary }}>
             {display}
           </span>
+          <FolderCount node={node} />
         </span>
       );
     }
@@ -2575,7 +2589,8 @@ export function NotesPanel() {
         ) : (
           <FolderIcon size={15} strokeWidth={1.8} style={{ flexShrink: 0, color: folderColor }} />
         )}
-        <span className="truncate">{display}</span>
+        <span className="truncate flex-1 min-w-0">{display}</span>
+        <FolderCount node={node} />
       </span>
     );
   }
@@ -2608,7 +2623,8 @@ export function NotesPanel() {
       // 这样未分类笔记也能参与 antd Tree 的拖拽（拖到任意文件夹会触发 handleDrop
       // 跨 folder 移动逻辑），不需要单独写一套 HTML5 drag 系统。
       const uncatTotal = folderTotals.get(UNCATEGORIZED_KEY) ?? uncategorizedNotes.length;
-      const uncatTitle = uncatTotal > 0 ? `未分类 ${uncatTotal}` : "未分类";
+      // 数量和其它文件夹一样放行尾（原来拼在名字里「未分类 9」）
+      const uncatTitle = "未分类";
       const uncatChildren: EnrichedNode[] = uncategorizedNotes
         .map((n) => ({
           key: noteKey(n.id),
@@ -2622,7 +2638,7 @@ export function NotesPanel() {
         title: uncatTitle,
         isLeaf: false,
         children: uncatChildren.length ? uncatChildren : undefined,
-        data: { isNote: false, isChild: false, color: null },
+        data: { isNote: false, isChild: false, color: null, count: uncatTotal },
       });
     }
     return folderTree;
@@ -3089,7 +3105,7 @@ export function NotesPanel() {
                 type="text"
                 size="small"
                 title="清理空文件夹"
-                icon={<FolderX size={14} />}
+                icon={<BrushCleaning size={14} />}
                 onClick={(e) => {
                   e.stopPropagation();
                   void handleCleanupEmptyFolders();

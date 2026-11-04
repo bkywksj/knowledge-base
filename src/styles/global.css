@@ -9540,3 +9540,13 @@ main.ant-layout-content:has(.kb-home) {
   left: -9px;
   width: 6px;
 }
+
+/* 侧栏文件夹行尾笔记数（原型 .row .ct：11.5、ink4、等宽数字，含子文件夹） */
+.kb-tree-ct {
+  flex: none;
+  margin-left: auto;
+  padding-right: 4px;
+  font-size: 11.5px;
+  color: var(--kb-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}

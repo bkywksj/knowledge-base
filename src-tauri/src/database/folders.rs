@@ -508,10 +508,12 @@ impl Database {
 
         // note_count 与用户在笔记列表里真正看得见的口径一致：排除回收站里的和日记。
         // 否则"导入历史日记"后，日期文件夹在列表里是空的、树上却挂着 1，对不上。
+        // 隐藏 / 临时编辑笔记同理（侧栏树和列表都看不到它们），2026-11-04 侧栏显示数量时补上
         let mut stmt = conn.prepare(
             "SELECT f.id, f.name, f.parent_id, f.sort_order,
                     (SELECT COUNT(*) FROM notes
-                     WHERE folder_id = f.id AND is_deleted = 0 AND is_daily = 0) as note_count,
+                     WHERE folder_id = f.id AND is_deleted = 0 AND is_daily = 0
+                       AND is_hidden = 0 AND is_scratch = 0) as note_count,
                     f.color
              FROM folders f ORDER BY f.sort_order, f.name",
         )?;
@@ -739,6 +741,24 @@ mod daily_folder_tests {
         let tree = db.list_folders_tree().unwrap();
         let node = tree.iter().find(|x| x.id == f).expect("应找到该文件夹");
         assert_eq!(node.note_count, 1, "只数用户真能看到的那一篇");
+    }
+
+    #[test]
+    fn note_count_excludes_hidden_and_scratch() {
+        // 侧栏行尾显示这个数：隐藏 / 临时编辑笔记树上和列表里都看不到，不能算
+        let db = fresh_db();
+        let f = db.create_folder("混合", None).unwrap().id;
+        note_in(&db, Some(f), "可见");
+        let hidden = note_in(&db, Some(f), "隐藏");
+        let scratch = note_in(&db, Some(f), "临时");
+        {
+            let conn = db.conn_lock().unwrap();
+            conn.execute("UPDATE notes SET is_hidden = 1 WHERE id = ?1", [hidden]).unwrap();
+            conn.execute("UPDATE notes SET is_scratch = 1 WHERE id = ?1", [scratch]).unwrap();
+        }
+        let tree = db.list_folders_tree().unwrap();
+        let node = tree.iter().find(|x| x.id == f).expect("应找到该文件夹");
+        assert_eq!(node.note_count, 1);
     }
 }
 
