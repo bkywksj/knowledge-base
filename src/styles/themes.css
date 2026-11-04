@@ -34,6 +34,13 @@
   --kb-glass-blur: 0px;
   --kb-shadow-sm: 0 0 0 .5px rgba(110,85,200,.10), 0 1px 2px rgba(110,85,200,.035);
   --kb-shadow-md: 0 0 0 .5px rgba(110,85,200,.10), 0 8px 24px -14px rgba(110,85,200,.18);
+  /* v4 原型 kit.css 末段定稿值：卡片 = 1px 紫调轮廓 + 柔和大投影（--sh-card），列表页底色 = .tinted */
+  --kb-shadow-card: 0 0 0 1px rgba(110,85,200,.12), 0 1px 2px rgba(110,85,200,.04), 0 8px 24px -14px rgba(110,85,200,.2);
+  --kb-bg-tint: linear-gradient(180deg, #F7F4FE 0%, #F3EFFC 100%);
+  /* 活动栏未选中项（原型 .ra 用 --ink2，比二级文字色深一档） */
+  --kb-rail-ink: #4A4462;
+  /* 深一档描边（原型 --hair2）：快捷入口卡、键帽等 */
+  --kb-border-strong: rgba(110,85,200,.24);
   --kb-scrollbar-thumb: rgba(124,99,220,0.18);
   --kb-scrollbar-hover: rgba(124,99,220,0.32);
   color-scheme: light;
@@ -71,11 +78,12 @@
   background: var(--kb-bg-card) !important;
   /* 原型卡片无描边，靠半像素阴影圈出轮廓 */
   border-color: transparent !important;
-  box-shadow: var(--kb-shadow-sm) !important;
+  box-shadow: var(--kb-shadow-card) !important;
   border-radius: 14px !important;
 }
+/* 原型卡片悬停不换投影；原来悬停换成更小的 md 投影，放到淡紫底上反而像「缩回去」 */
 [data-theme="light-lilac"] .ant-card:hover {
-  box-shadow: var(--kb-shadow-md) !important;
+  box-shadow: var(--kb-shadow-card) !important;
 }
 
 /* Menu */
@@ -166,6 +174,11 @@
   --kb-glass-blur: 0px;
   --kb-shadow-sm: 0 0 0 .5px rgba(255,245,230,.08), 0 1px 2px rgba(0,0,0,.35);
   --kb-shadow-md: 0 0 0 .5px rgba(255,245,230,.08), 0 10px 26px -16px rgba(0,0,0,.55);
+  /* 原型 dark.css：卡片 --sh-card、列表页底色 --d-tint、活动栏 --ink2 */
+  --kb-shadow-card: 0 0 0 .5px rgba(255,245,230,.08), 0 10px 26px -16px rgba(0,0,0,.55);
+  --kb-bg-tint: #21201E;
+  --kb-rail-ink: #C4BEB4;
+  --kb-border-strong: rgba(255,245,230,.12);
   --kb-scrollbar-thumb: rgba(255,245,230,0.12);
   --kb-scrollbar-hover: rgba(255,245,230,0.22);
   color-scheme: dark;
@@ -195,11 +208,11 @@
 [data-theme="dark-ember"] .ant-card {
   background: var(--kb-bg-card) !important;
   border-color: transparent !important;
-  box-shadow: var(--kb-shadow-sm) !important;
+  box-shadow: var(--kb-shadow-card) !important;
   border-radius: 14px !important;
 }
 [data-theme="dark-ember"] .ant-card:hover {
-  box-shadow: var(--kb-shadow-md) !important;
+  box-shadow: var(--kb-shadow-card) !important;
 }
 
 /* Statistic */

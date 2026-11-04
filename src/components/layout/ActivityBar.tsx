@@ -5,22 +5,22 @@ import { hiddenPinApi } from "@/lib/api";
 import { isNoActivityPath } from "@/lib/noteWorkspaceRoute";
 import { HiddenPinUnlockModal } from "@/components/hidden/HiddenPinUnlockModal";
 import {
-  Home,
-  NotebookText,
-  Search,
-  Calendar,
-  Tags,
-  CheckSquare,
-  Layers,
-  GitBranch,
-  Bot,
-  Sparkles,
-  BellRing,
-  Trash2,
-  Info,
-  EyeOff,
-  Lock,
-} from "lucide-react";
+  RailBell,
+  RailBot,
+  RailCalendar,
+  RailCards,
+  RailCheck,
+  RailEyeOff,
+  RailGraph,
+  RailHome,
+  RailInfo,
+  RailLock,
+  RailNote,
+  RailSearch,
+  RailSpark,
+  RailTag,
+  RailTrash,
+} from "./railIcons";
 import { useAppStore } from "@/store";
 import type { ActiveView } from "@/store";
 
@@ -56,7 +56,10 @@ export function activityBarWidth(showLabels: boolean): number {
 interface ActivityItem {
   view: ActiveView;
   route: string;
+  /** 完整名：悬停提示、aria-label、功能模块开关等处用 */
   label: string;
+  /** 活动栏上显示的短名（原型 .ra span）：栏宽 52，「卡片复习」这类四字名会挤满。缺省用 label */
+  short?: string;
   icon: React.ReactNode;
   /**
    * 核心视图：永远显示，不受用户"功能模块"开关影响。
@@ -76,33 +79,33 @@ interface ActivityItem {
  */
 const MAIN_GROUPS: ActivityItem[][] = [
   // 概览
-  [{ view: "home", route: "/", label: "首页", icon: <Home size={20} />, core: true }],
+  [{ view: "home", route: "/", label: "首页", icon: <RailHome />, core: true }],
   // 创作 / 工作流
   [
-    { view: "notes", route: "/notes", label: "笔记", icon: <NotebookText size={20} />, core: true },
-    { view: "daily", route: "/daily", label: "日记", icon: <Calendar size={20} /> },
-    { view: "tasks", route: "/tasks", label: "待办", icon: <CheckSquare size={20} /> },
-    { view: "cards", route: "/cards", label: "卡片复习", icon: <Layers size={20} /> },
+    { view: "notes", route: "/notes", label: "笔记", icon: <RailNote />, core: true },
+    { view: "daily", route: "/daily", label: "日记", icon: <RailCalendar /> },
+    { view: "tasks", route: "/tasks", label: "待办", icon: <RailCheck /> },
+    { view: "cards", route: "/cards", label: "卡片复习", short: "复习", icon: <RailCards /> },
   ],
   // 检索 / 发现
   [
-    { view: "search", route: "/search", label: "搜索", icon: <Search size={20} />, core: true },
-    { view: "tags", route: "/tags", label: "标签", icon: <Tags size={20} /> },
-    { view: "graph", route: "/graph", label: "知识图谱", icon: <GitBranch size={20} /> },
+    { view: "search", route: "/search", label: "搜索", icon: <RailSearch />, core: true },
+    { view: "tags", route: "/tags", label: "标签", icon: <RailTag /> },
+    { view: "graph", route: "/graph", label: "知识图谱", short: "图谱", icon: <RailGraph /> },
   ],
   // AI 辅助
   [
-    { view: "ai", route: "/ai", label: "AI 问答", icon: <Bot size={20} /> },
-    { view: "prompts", route: "/prompts", label: "提示词", icon: <Sparkles size={20} /> },
-    { view: "push", route: "/push", label: "定时推送", icon: <BellRing size={20} /> },
+    { view: "ai", route: "/ai", label: "AI 问答", short: "AI", icon: <RailBot /> },
+    { view: "prompts", route: "/prompts", label: "提示词", icon: <RailSpark /> },
+    { view: "push", route: "/push", label: "定时推送", short: "推送", icon: <RailBell /> },
   ],
 ];
 
 /** 底部视图（放最下方，视觉上与主视图分组） */
 const BOTTOM_ITEMS: ActivityItem[] = [
-  { view: "hidden", route: "/hidden", label: "隐藏笔记", icon: <EyeOff size={20} /> },
-  { view: "trash", route: "/trash", label: "回收站", icon: <Trash2 size={20} />, core: true },
-  { view: "about", route: "/about", label: "关于", icon: <Info size={20} />, core: true },
+  { view: "hidden", route: "/hidden", label: "隐藏笔记", short: "隐藏", icon: <RailEyeOff /> },
+  { view: "trash", route: "/trash", label: "回收站", icon: <RailTrash />, core: true },
+  { view: "about", route: "/about", label: "关于", icon: <RailInfo />, core: true },
 ];
 
 /** 路由 → ActiveView 的反查映射（用于根据 URL 推导高亮态） */
@@ -228,7 +231,7 @@ export function ActivityBar() {
     // 时图标 stroke 不变色。改用 cloneElement 把 color 显式 prop 注入 lucide CheckSquare，
     // svg stroke 由 prop 直接决定，不再依赖任何祖先 wrapper 的 color 继承行为。
     // （悬停加深由 global.css 的 .activity-item:hover svg 覆盖 stroke 完成，同样不依赖继承）
-    const iconColor = isActive ? token.colorPrimary : token.colorTextSecondary;
+    const iconColor = isActive ? token.colorPrimary : "var(--kb-rail-ink)";
     const coloredIcon = isValidElement(item.icon)
       ? cloneElement(
           item.icon as React.ReactElement<{ color?: string }>,
@@ -267,7 +270,7 @@ export function ActivityBar() {
           {iconNode}
           {/* 纯图标模式下不渲染文字：可发现性由外层的 Tooltip 兜底（悬停仍显示名称），
               aria-label 也已在 button 上，无障碍不受影响。 */}
-          {showLabels && <span className="activity-label">{item.label}</span>}
+          {showLabels && <span className="activity-label">{item.short ?? item.label}</span>}
         </button>
       </Tooltip>
     );
@@ -298,7 +301,7 @@ export function ActivityBar() {
             aria-label="立即锁定"
             className="activity-item"
           >
-            <Lock size={20} color={token.colorTextSecondary} />
+            <RailLock color="var(--kb-rail-ink)" />
             {showLabels && <span className="activity-label">锁定</span>}
           </button>
         </Tooltip>

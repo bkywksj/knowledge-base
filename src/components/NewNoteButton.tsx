@@ -192,7 +192,8 @@ export function NewNoteButton({
 
   return (
     <>
-      <Space.Compact style={block ? { width: "100%", ...style } : style}>
+      {/* kb-split：原型 .split —— 整颗一块渐变，下拉段只隔一道半透明白线（样式见 global.css） */}
+      <Space.Compact className="kb-split" style={block ? { width: "100%", ...style } : style}>
         <Button
           type="primary"
           size={size}

@@ -90,19 +90,29 @@ export function HomeSearchInput({
   const notesPreview = notes.slice(0, 5);
 
   return (
-    <div ref={wrapRef} style={{ position: "relative", flex: 1 }}>
+    <div
+      ref={wrapRef}
+      style={{ position: "relative", flex: 1 }}
+      // 快捷键提示原来塞在 placeholder 里，原型 placeholder 只写用途 → 挪到悬停提示
+      title="输入即出建议，回车看全部结果 · Ctrl+K 快速跳转"
+    >
       <Input
         size="large"
-        placeholder={placeholder ?? "搜索笔记 / 待办…   (Ctrl+K 快速跳转)"}
+        className="kb-home-search-input"
+        placeholder={placeholder ?? "搜索笔记和待办…"}
         prefix={<Search size={16} style={{ color: token.colorTextQuaternary }} />}
         suffix={
-          <MicButton
-            size="small"
-            stripTrailingPunctuation
-            onTranscribed={(text) =>
-              onChange(value ? `${value} ${text}` : text)
-            }
-          />
+          <>
+            <MicButton
+              size="small"
+              stripTrailingPunctuation
+              onTranscribed={(text) =>
+                onChange(value ? `${value} ${text}` : text)
+              }
+            />
+            {/* 原型 .inp.big 右侧的 Enter 键帽：回车 = 去搜索页看全部结果 */}
+            <kbd className="kb-kbd">Enter</kbd>
+          </>
         }
         value={value}
         onChange={(e) => onChange(e.target.value)}

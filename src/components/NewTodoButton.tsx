@@ -117,7 +117,7 @@ export function NewTodoButton({
   return (
     <>
       {trigger ?? (
-      <Space.Compact style={block ? { width: "100%", ...style } : style}>
+      <Space.Compact className="kb-split" style={block ? { width: "100%", ...style } : style}>
         <Button
           type="primary"
           size={size}

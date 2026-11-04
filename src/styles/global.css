@@ -7033,3 +7033,394 @@ body.sidebar-resizing .kb-panel-resizer {
 [data-theme="light-lilac"] .ant-switch:not(.ant-switch-checked) .ant-switch-inner-unchecked {
   color: var(--kb-text-secondary);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 对齐第三轮（全站外框）：列表类页面淡紫底 + 卡片投影 + 活动栏墨色
+   ═══════════════════════════════════════════════════════════ */
+/* 原型 .scroll.tinted：内容区淡紫渐变，白卡片浮在上面。设了背景图（has-custom-bg）时内容区要透明，不铺 */
+body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
+  background: var(--kb-bg-tint) !important;
+}
+/* 自定义卡片面板与 antd Card 同一套投影（原型 --sh-card） */
+.kb-cards-panel {
+  box-shadow: var(--kb-shadow-card);
+}
+/* 活动栏未选中项文字：原型 .ra 用 --ink2 */
+.activity-item {
+  color: var(--kb-rail-ink);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   v4 对齐第三轮·首页：数值取自原型实测（docs/design/ui-v4 首页 computed style）
+   ═══════════════════════════════════════════════════════════ */
+/* 新建分体按钮（原型 .split）：整颗一块渐变，两段透明，下拉段只隔一道半透明白线 */
+.kb-split.ant-space-compact {
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--kb-grad, var(--kb-primary));
+}
+[data-theme] .kb-split.ant-space-compact > .ant-btn {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: #fff !important;
+  font-weight: 600;
+}
+[data-theme] .kb-split.ant-space-compact > .ant-btn:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+[data-theme] .kb-split.ant-space-compact > .ant-btn + .ant-btn {
+  border-left: 1px solid rgba(255, 255, 255, 0.28) !important;
+  width: 28px;
+  padding: 0;
+}
+/* 首页页头：搜索 / 新建 / 隐私按钮统一 42 高、圆角 11 */
+.kb-home-tools .kb-split.ant-space-compact {
+  height: 42px;
+  border-radius: 11px;
+}
+[data-theme] .kb-home-tools .kb-split.ant-space-compact > .ant-btn {
+  height: 42px;
+  padding: 0 16px;
+}
+[data-theme] .kb-home-tools .kb-split.ant-space-compact > .ant-btn + .ant-btn {
+  width: 32px;
+  padding: 0;
+}
+.kb-home-privacy.ant-btn {
+  width: 42px !important;
+  height: 42px;
+  border-radius: 11px;
+  color: var(--kb-text-secondary);
+}
+/* 搜索框（原型 .inp.big）：白底 + 卡片投影、无描边 */
+[data-theme] .kb-home-search-input.ant-input-affix-wrapper {
+  height: 42px;
+  border-radius: 11px !important;
+  border-color: transparent !important;
+  background: var(--kb-bg-raised, #fff) !important;
+  box-shadow: var(--kb-shadow-card) !important;
+  font-size: 14px;
+}
+[data-theme] .kb-home-search-input.ant-input-affix-wrapper-focused {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--kb-primary) 22%, transparent), var(--kb-shadow-card) !important;
+}
+.kb-home-search-input .ant-input-suffix {
+  gap: 6px;
+}
+/* 键帽（原型 kbd） */
+.kb-kbd {
+  font: 10.5px/1 var(--ant-font-family, inherit);
+  padding: 3px 5px;
+  border-radius: 4px;
+  color: var(--kb-text-secondary);
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: 0 0 0 0.5px var(--kb-border-strong);
+}
+/* 问候区（原型 .hm-h）：日期二级色、标题 26 */
+.kb-home-date {
+  color: var(--kb-text-secondary);
+}
+.kb-home-greet h1 {
+  font-size: 26px;
+  line-height: 1.3;
+}
+/* 快捷入口（原型 .qb）：高 46、浅渐变底、深一档描边；图标块 26；下拉段 26×26 */
+.kb-qe {
+  height: 46px;
+  background: linear-gradient(180deg, var(--kb-bg-raised, #fff), color-mix(in srgb, var(--kb-bg-raised, #fff) 97%, var(--kb-primary)));
+  box-shadow: inset 0 0 0 1px var(--kb-border-strong);
+  align-items: center;
+}
+.kb-qe-main {
+  align-self: stretch;
+  padding: 0 6px 0 14px;
+}
+.kb-qe-ico,
+.kb-qe-ico.is-ok,
+.kb-qe-ico.is-info {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, color-mix(in srgb, currentColor 8%, transparent), color-mix(in srgb, currentColor 16%, transparent));
+}
+.kb-qe-label {
+  font-size: 13px;
+}
+.kb-qe-meta {
+  color: var(--kb-text-secondary);
+}
+.kb-qe-caret {
+  width: 26px;
+  height: 26px;
+  margin-right: 6px;
+  border-radius: 6px;
+  border-left: 1px solid var(--kb-border);
+  color: var(--kb-text-tertiary);
+}
+/* 卡片头（原型 .card-h）：高 42、标题 14/600、图标块 26；右侧数量 / 链接 / 隐藏按钮 */
+.kb-home .ant-card-head {
+  min-height: 42px;
+  padding: 0 10px 0 18px;
+}
+.kb-home .ant-card-head-title {
+  font-size: 14px;
+}
+.kb-home .ant-card-head-title > span > svg:first-child {
+  padding: 5.5px;
+  border-radius: 8px;
+}
+.kb-card-n {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--kb-text-secondary);
+}
+.kb-lnk {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+  cursor: pointer;
+}
+.kb-lnk:hover {
+  color: var(--kb-primary);
+}
+.kb-card-hide.ant-btn {
+  width: 26px !important;
+  height: 26px;
+  border-radius: 8px;
+  color: var(--kb-text-secondary);
+  opacity: 0;
+  transition: opacity 0.14s ease;
+}
+.ant-card:hover .kb-card-hide.ant-btn,
+.kb-card-hide.ant-btn.is-on,
+.kb-card-hide.ant-btn:focus-visible {
+  opacity: 1;
+}
+.kb-card-h > b {
+  font-size: 14px;
+}
+/* 快速记一笔：输入 14.5；保存按钮空内容时仍是渐变（半透明），不变成灰描边 */
+.kb-quick-input.ant-input {
+  font-size: 14.5px;
+}
+[data-theme] .kb-quick-foot .ant-btn-primary:disabled {
+  background: var(--kb-grad, var(--kb-primary)) !important;
+  border-color: transparent !important;
+  color: #fff !important;
+  opacity: 0.5;
+}
+/* 待办分组胶囊（原型 .pills） */
+.kb-hm-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 6px 6px;
+}
+.kb-hm-pills > button {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+  cursor: pointer;
+}
+.kb-hm-pills > button:hover {
+  background: var(--kb-bg-hover);
+}
+.kb-hm-pills > button.is-on {
+  background: var(--kb-primary-light);
+  color: var(--kb-primary);
+  font-weight: 600;
+}
+.kb-hm-pills b {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--kb-bg-active);
+  color: var(--kb-text-secondary);
+}
+.kb-hm-pills b.is-bad {
+  background: color-mix(in srgb, var(--ant-color-error) 9%, transparent);
+  color: var(--ant-color-error);
+}
+.kb-hm-pills > button.is-on b {
+  background: var(--kb-grad, var(--kb-primary));
+  color: #fff;
+}
+/* 列表（原型 .td / .nr）：行高 40、圆角 8、悬停底 */
+.kb-hm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.kb-hm-td,
+.kb-hm-nr {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.kb-hm-nr.is-sm {
+  height: 32px;
+  font-size: 12.5px;
+}
+.kb-hm-td:hover,
+.kb-hm-nr:hover {
+  background: var(--kb-bg-hover);
+}
+.kb-hm-td.is-ctx,
+.kb-hm-nr.is-ctx {
+  background: var(--kb-primary-light);
+}
+.kb-hm-td .kb-task-ck {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border-color: var(--kb-border-strong);
+}
+.kb-hm-td-tx {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  color: var(--kb-text-primary);
+}
+.kb-hm-nr.is-sm .kb-hm-td-tx {
+  font-size: 12.5px;
+}
+.kb-hm-nr .kb-cico.sm {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+}
+.kb-hm-badge {
+  flex: none;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 7px;
+  border: none;
+  border-radius: 5px;
+  font-size: 11.5px;
+  background: var(--kb-bg-active);
+  color: var(--kb-text-secondary);
+}
+.kb-hm-badge.is-r {
+  background: color-mix(in srgb, var(--ant-color-error) 9%, transparent);
+  color: var(--ant-color-error);
+}
+.kb-hm-badge.is-btn {
+  cursor: pointer;
+}
+.kb-hm-badge.is-btn:hover {
+  color: var(--kb-primary);
+}
+.kb-hm-due,
+.kb-hm-time {
+  flex: none;
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.kb-hm-due {
+  min-width: 40px;
+  text-align: right;
+}
+.kb-hm-due.is-bad {
+  color: var(--ant-color-error);
+  font-weight: 600;
+}
+.kb-hm-sub {
+  list-style: none;
+  padding: 0 10px 4px 36px;
+}
+.kb-hm-more > button {
+  border: none;
+  background: transparent;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--kb-primary);
+  cursor: pointer;
+}
+.kb-hm-empty {
+  padding: 14px 10px;
+  font-size: 12.5px;
+  color: var(--kb-text-tertiary);
+}
+/* 写作活力（原型 .stt）：数字 22/700、单位与说明 12 */
+.kb-metric-v {
+  font-size: 22px;
+}
+.kb-metric-v > small {
+  margin-left: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--kb-text-secondary);
+}
+.kb-metric-l {
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+}
+/* 问 AI（原型 .ask-in）：淡紫渐变底 + 主色细线；发送 32；推荐问题胶囊；会话列表上方一道细线 */
+[data-theme] .kb-ask-in.ant-input-affix-wrapper {
+  height: 42px;
+  padding: 0 5px 0 14px;
+  border-radius: 10px;
+  border-color: transparent !important;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--kb-primary) 6%, var(--kb-bg-raised, #fff)), color-mix(in srgb, var(--kb-primary) 12%, var(--kb-bg-raised, #fff))) !important;
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--kb-primary) 32%, transparent) !important;
+}
+[data-theme] .kb-ask-in .ant-input {
+  background: transparent !important;
+}
+.kb-ask-send.ant-btn {
+  width: 32px;
+  height: 32px;
+}
+.kb-ask-sugs {
+  gap: 4px;
+  margin: 10px 0 0;
+}
+.kb-ask-sugs > button {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+.kb-ask-sugs > button:hover {
+  background: var(--kb-bg-hover);
+}
+.kb-ask-chats {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--kb-border);
+}
+/* 最近笔记行里还包了一层 .kb-nr，要撑满整行，时间才会贴右 */
+.kb-hm-nr > .kb-nr {
+  flex: 1;
+  min-width: 0;
+}

@@ -25,7 +25,7 @@ import {
 } from "./ActivityBar";
 import { SidePanel, viewHasPanel } from "./SidePanel";
 import { TabBar } from "./TabBar";
-import { isNoteWorkspacePath, isFullBleedPath } from "@/lib/noteWorkspaceRoute";
+import { isNoteWorkspacePath, isFullBleedPath, isTintedPath } from "@/lib/noteWorkspaceRoute";
 import { WindowControls } from "./WindowControls";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 import { QuickCaptureAsrModal } from "@/components/QuickCaptureAsrModal";
@@ -834,7 +834,11 @@ export function AppLayout() {
         <Content
           // v4「纸张」：右 / 下各留 8px、圆角 12、淡投影（样式见 global.css .kb-sheet）；
           // 专注模式与 pop-out 窗口铺满，不做纸张
-          className={focusMode ? undefined : "kb-sheet"}
+          className={
+            [focusMode ? "" : "kb-sheet", isTintedPath(location.pathname) ? "kb-content-tinted" : ""]
+              .filter(Boolean)
+              .join(" ") || undefined
+          }
           style={{
             // 🔴 四边一律写 longhand，不要再混用 `padding` shorthand。
             // 曾经写成 `padding: 24` + `paddingLeft/Right: isPopoutWindow ? 16 : undefined`，

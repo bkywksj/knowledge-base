@@ -12,12 +12,10 @@ import {
 import {
   NotebookText,
   CalendarDays,
-  ArrowRight,
   Pin,
   Bot,
   GitBranch,
   CheckSquare,
-  AlertTriangle,
   PencilLine,
   Send,
   Flame,
@@ -33,8 +31,7 @@ import {
   Trash2,
   ExternalLink,
   ChevronRight,
-  ChevronDown,
-  Inbox,
+  CornerDownRight,
   Eye,
   PenTool,
   EyeOff,
@@ -466,6 +463,8 @@ function DesktopHomePage() {
 
 
   // 待办速览三段：逾期（昨天及更早）/ 今日 / 即将到期。每段最多 5 条
+  /** 待办速览当前看哪个分组；null = 还没手动选过（默认今日，今日空则第一个有内容的） */
+  const [todoTab, setTodoTab] = useState<TodoTab | null>(null);
   const todoGroups = useMemo(() => {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -562,7 +561,7 @@ function DesktopHomePage() {
               onPressEnter={handleSearch}
             />
           </div>
-          <NewNoteButton size="large" style={{ borderRadius: 8 }} />
+          <NewNoteButton size="large" />
           {/* 隐私模式：原来只有 Ctrl/⌘+Shift+H，补一个看得见的开关 */}
           <AntTooltip title={privacyMode ? "退出隐私模式 (Ctrl+Shift+H)" : "隐私模式：遮住首页卡片 (Ctrl+Shift+H)"}>
             <Button
@@ -718,326 +717,174 @@ function DesktopHomePage() {
           widgetKey="todo"
           size="small"
           className="col-span-5"
-          styles={{ body: { padding: "8px 14px" } }}
+          styles={{ body: { padding: "0 8px 10px" } }}
           title={
             <span className="flex items-center gap-2 text-sm">
               <CheckSquare size={14} style={{ color: token.colorSuccess }} />
               待办速览
               {totalTodoCount > 0 && (
-                <Text type="secondary" style={{ fontSize: 12, fontWeight: "normal" }}>
-                  · 共 {totalTodoCount} 条
-                </Text>
+                <span className="kb-card-n">共 {totalTodoCount} 条</span>
               )}
             </span>
           }
           extra={
-            <Button
-              type="link"
-              size="small"
-              onClick={() => navigate("/tasks")}
-              style={{ padding: 0, fontSize: 12 }}
-            >
-              全部 <ArrowRight size={11} />
-            </Button>
+            <button type="button" className="kb-lnk" onClick={() => navigate("/tasks")}>
+              全部待办
+              <ChevronRight size={12} />
+            </button>
           }
         >
-          {totalTodoCount === 0 ? (
-            <div className="text-center py-4">
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {loading ? "加载中…" : "暂无待办，享受当下 ✨"}
-              </Text>
-            </div>
-          ) : (
-            (() => {
-              /** 单条任务渲染（三段共用），按段类型决定日期标签的色/文 */
-              const renderTaskRow = (
-                task: Task,
-                sectionKey: "overdue" | "today" | "upcoming" | "noDue",
-              ) => {
-                const due = new Date(task.due_date!);
-                const dueMs = due.getTime();
-                const dotColor =
-                  task.priority === 0
-                    ? token.colorError
-                    : task.priority === 1
-                      ? token.colorPrimary
-                      : token.colorTextTertiary;
-                const desc = task.description?.trim();
-                const ctxActive = taskCtx.state.payload?.id === task.id;
-                const hasSubtasks = task.subtask_total > 0;
-                const expanded = expandedTodoIds.has(task.id);
+          {(() => {
+            const sections: Array<{
+              key: TodoTab;
+              items: Task[];
+              total: number;
+              label: string;
+            }> = [
+              { key: "overdue", items: todoGroups.overdue, total: todoGroups.overdueTotal, label: "逾期" },
+              { key: "today", items: todoGroups.today, total: todoGroups.todayTotal, label: "今日" },
+              { key: "upcoming", items: todoGroups.upcoming, total: todoGroups.upcomingTotal, label: "即将到期" },
+              { key: "noDue", items: todoGroups.noDue, total: todoGroups.noDueTotal, label: "无截止日期" },
+            ];
+            // 没手动选过：今日有就看今日，否则第一个有内容的分组（原型默认停在「今日」）
+            const activeKey: TodoTab =
+              todoTab ??
+              (todoGroups.todayTotal > 0
+                ? "today"
+                : (sections.find((s) => s.total > 0)?.key ?? "today"));
+            const active = sections.find((s) => s.key === activeKey)!;
 
-                // 日期标签：每段不同
-                let dateLabel: React.ReactNode;
-                if (sectionKey === "overdue") {
-                  const todayStart = new Date();
-                  todayStart.setHours(0, 0, 0, 0);
-                  const days = Math.max(
-                    1,
-                    Math.round((todayStart.getTime() - dueMs) / 86400000),
-                  );
-                  dateLabel = (
-                    <span
-                      className="text-[11px] px-1.5 py-0.5 rounded shrink-0"
-                      style={{
-                        background: `${token.colorError}1a`,
-                        color: token.colorError,
-                      }}
-                    >
-                      {days === 1 ? "昨天" : `${days} 天前`}
-                    </span>
-                  );
-                } else if (sectionKey === "today") {
-                  const hh = String(due.getHours()).padStart(2, "0");
-                  const mm = String(due.getMinutes()).padStart(2, "0");
-                  const noTime = hh === "00" && mm === "00";
-                  const overdueNow = dueMs < Date.now();
-                  dateLabel = (
-                    <Text
-                      type={overdueNow ? "danger" : "secondary"}
-                      style={{ fontSize: 11, flexShrink: 0 }}
-                    >
-                      {noTime ? "今天" : `${hh}:${mm}`}
-                    </Text>
-                  );
-                } else if (sectionKey === "upcoming") {
-                  const todayStart = new Date();
-                  todayStart.setHours(0, 0, 0, 0);
-                  const days = Math.max(
-                    1,
-                    Math.ceil((dueMs - todayStart.getTime()) / 86400000),
-                  );
-                  dateLabel = (
-                    <Text
-                      type="secondary"
-                      style={{ fontSize: 11, flexShrink: 0 }}
-                    >
-                      +{days} 天
-                    </Text>
-                  );
-                } else {
-                  // noDue：无截止日期，显示中性「无期限」标签
-                  dateLabel = (
-                    <Text
-                      type="secondary"
-                      style={{ fontSize: 11, flexShrink: 0 }}
-                    >
-                      无期限
-                    </Text>
-                  );
-                }
+            /** 单条任务（原型 .td）：方形勾选 · 标题 · 星标 / 子任务 / 优先级徽标 · 右侧时间 */
+            const renderTaskRow = (task: Task, sectionKey: TodoTab) => {
+              const due = new Date(task.due_date ?? Date.now());
+              const dueMs = due.getTime();
+              const desc = task.description?.trim();
+              const ctxActive = taskCtx.state.payload?.id === task.id;
+              const hasSubtasks = task.subtask_total > 0;
+              const expanded = expandedTodoIds.has(task.id);
 
-                return (
-                  <Fragment key={task.id}>
-                    <li
-                      className="flex items-start gap-2.5"
-                      style={{
-                        padding: "3px 6px",
-                        borderRadius: 4,
-                        background: ctxActive ? token.colorPrimaryBg : "transparent",
-                        transition: "background .12s",
-                      }}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        taskCtx.open(e.nativeEvent, task);
-                      }}
-                    >
-                      {hasSubtasks ? (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setExpandedTodoIds((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(task.id)) next.delete(task.id);
-                              else next.add(task.id);
-                              return next;
-                            });
-                          }}
-                          className="flex items-center justify-center hover:bg-black/5 rounded transition cursor-pointer"
-                          style={{
-                            width: 16,
-                            height: 16,
-                            marginTop: 3,
-                            flexShrink: 0,
-                            color: token.colorTextTertiary,
-                          }}
-                          title={expanded ? "折叠子任务" : "展开子任务"}
-                        >
-                          {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                        </button>
-                      ) : (
-                        <span style={{ width: 16, flexShrink: 0 }} />
-                      )}
-                      <input
-                        type="checkbox"
-                        onChange={() => handleToggleTask(task.id)}
-                        onClick={(e) => e.stopPropagation()}
-                        style={{ cursor: "pointer", flexShrink: 0, marginTop: 4 }}
-                      />
-                      <span
-                        style={{
-                          width: 6,
-                          height: 6,
-                          borderRadius: "50%",
-                          background: dotColor,
-                          flexShrink: 0,
-                          marginTop: 7,
-                        }}
-                      />
-                      <div
-                        className="flex-1 min-w-0 cursor-pointer"
-                        onClick={() => setTaskDetail(task)}
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <Text
-                            ellipsis
-                            style={{ fontSize: 13, flex: 1, minWidth: 0 }}
-                          >
-                            {task.title}
-                          </Text>
-                          {task.important && (
-                            <Star
-                              size={11}
-                              style={{ color: token.colorWarning, flexShrink: 0 }}
-                              fill={token.colorWarning}
-                            />
-                          )}
-                          {dateLabel}
-                        </div>
-                        {/* \u6CA1\u6709\u63CF\u8FF0\u5C31\u6574\u884C\u4E0D\u6E32\u67D3\u3002
-                            \u4EE5\u524D\u8FD9\u91CC\u7528 `desc || "\u00A0"` \u6491\u4E00\u4E2A 16px \u7A7A\u884C\u6765\u8BA9\u6240\u6709\u884C\u7B49\u9AD8\uFF0C
-                            \u4F46\u7EDD\u5927\u591A\u6570\u5F85\u529E\u90FD\u6CA1\u5199\u63CF\u8FF0 \u2014\u2014 \u7B49\u4E8E\u6BCF\u6761\u767D\u767D\u591A\u5360 16px\uFF0C
-                            \u901F\u89C8\u5361\u770B\u7740\u7A7A\u3001\u6761\u76EE\u4E00\u591A\u5C31\u5F97\u6EDA\u3002\u5B81\u53EF\u884C\u9AD8\u53C2\u5DEE\u4E5F\u8981\u7D27\u51D1\u3002 */}
-                        {desc && (
-                          <Text
-                            type="secondary"
-                            ellipsis
-                            style={{ fontSize: 11, display: "block" }}
-                          >
-                            {desc}
-                          </Text>
-                        )}
-                      </div>
-                    </li>
-                    {expanded && hasSubtasks && (
-                      <li
-                        className="list-none"
-                        style={{
-                          padding: "0 8px 4px 38px",
-                          marginTop: -2,
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <SubtaskList
-                          parentTaskId={task.id}
-                          compact
-                          onChanged={(done, total) =>
-                            patchTask(task.id, {
-                              subtask_done: done,
-                              subtask_total: total,
-                            })
-                          }
-                        />
-                      </li>
-                    )}
-                  </Fragment>
-                );
-              };
-
-              const sections: Array<{
-                key: "overdue" | "today" | "upcoming" | "noDue";
-                items: Task[];
-                total: number;
-                label: string;
-                icon: React.ReactNode;
-                color: string;
-              }> = [
-                {
-                  key: "overdue",
-                  items: todoGroups.overdue,
-                  total: todoGroups.overdueTotal,
-                  label: "逾期",
-                  icon: <AlertTriangle size={11} />,
-                  color: token.colorError,
-                },
-                {
-                  key: "today",
-                  items: todoGroups.today,
-                  total: todoGroups.todayTotal,
-                  label: "今日",
-                  icon: <CalendarDays size={11} />,
-                  color: token.colorPrimary,
-                },
-                {
-                  key: "upcoming",
-                  items: todoGroups.upcoming,
-                  total: todoGroups.upcomingTotal,
-                  label: "即将到期",
-                  icon: <Clock size={11} />,
-                  color: token.colorTextSecondary,
-                },
-                {
-                  key: "noDue",
-                  items: todoGroups.noDue,
-                  total: todoGroups.noDueTotal,
-                  label: "无截止日期",
-                  icon: <Inbox size={11} />,
-                  color: token.colorTextTertiary,
-                },
-              ];
+              // 右侧时间：逾期 = 红字「N 天前」；今日 = 时:分（已过点也标红）；即将 = +N 天；无期限
+              let dueText: string;
+              let dueBad = false;
+              if (sectionKey === "overdue") {
+                const todayStart = new Date();
+                todayStart.setHours(0, 0, 0, 0);
+                const days = Math.max(1, Math.round((todayStart.getTime() - dueMs) / 86400000));
+                dueText = days === 1 ? "昨天" : `${days} 天前`;
+                dueBad = true;
+              } else if (sectionKey === "today") {
+                const hh = String(due.getHours()).padStart(2, "0");
+                const mm = String(due.getMinutes()).padStart(2, "0");
+                dueText = hh === "00" && mm === "00" ? "今天" : `${hh}:${mm}`;
+                dueBad = dueMs < Date.now();
+              } else if (sectionKey === "upcoming") {
+                const todayStart = new Date();
+                todayStart.setHours(0, 0, 0, 0);
+                dueText = `+${Math.max(1, Math.ceil((dueMs - todayStart.getTime()) / 86400000))} 天`;
+              } else {
+                dueText = "无期限";
+              }
 
               return (
-                <div
-                  className="flex flex-col gap-3"
-                  // 卡片高度上限：420 时同屏只能看 5 条出头，一有逾期就得点进待办页；
-                  // 提到 480（约多 2 行）配合每段 6 条，超出仍可滚。
-                  style={{ maxHeight: 480, overflowY: "auto" }}
-                >
-                  {sections
-                    .filter((s) => s.items.length > 0)
-                    .map((s) => (
-                      <div key={s.key} className="flex flex-col gap-1">
-                        <div
-                          className="flex items-center gap-1.5"
-                          style={{
-                            fontSize: 11,
-                            color: s.color,
-                            fontWeight: 600,
-                          }}
-                        >
-                          {s.icon}
-                          <span>{s.label}</span>
-                          <Text
-                            type="secondary"
-                            style={{ fontSize: 11, fontWeight: 400 }}
-                          >
-                            · {s.total}
-                          </Text>
-                        </div>
-                        <ul className="flex flex-col gap-1 m-0 p-0 list-none">
-                          {s.items.map((t) => renderTaskRow(t, s.key))}
-                        </ul>
-                        {s.total > s.items.length && (
-                          <Button
-                            type="link"
-                            size="small"
-                            onClick={() => navigate("/tasks")}
-                            style={{
-                              padding: 0,
-                              fontSize: 11,
-                              alignSelf: "flex-start",
-                              marginLeft: 24,
-                            }}
-                          >
-                            + 还有 {s.total - s.items.length} 条…
-                          </Button>
-                        )}
-                      </div>
-                    ))}
-                </div>
+                <Fragment key={task.id}>
+                  <li
+                    className={"kb-hm-td" + (ctxActive ? " is-ctx" : "")}
+                    // 描述原来单独占一行，原型行高固定 40、不展示描述 → 收进悬停提示，信息不丢
+                    title={desc || undefined}
+                    onClick={() => setTaskDetail(task)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      taskCtx.open(e.nativeEvent, task);
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="kb-task-ck"
+                      aria-label="标记完成"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleToggleTask(task.id);
+                      }}
+                    />
+                    <span className="kb-hm-td-tx">{task.title}</span>
+                    {task.important && (
+                      <Star size={12} style={{ color: token.colorWarning, flexShrink: 0 }} fill={token.colorWarning} />
+                    )}
+                    {hasSubtasks && (
+                      <button
+                        type="button"
+                        className="kb-hm-badge is-btn"
+                        title={expanded ? "折叠子任务" : "展开子任务"}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setExpandedTodoIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(task.id)) next.delete(task.id);
+                            else next.add(task.id);
+                            return next;
+                          });
+                        }}
+                      >
+                        <CornerDownRight size={11} />
+                        {task.subtask_done}/{task.subtask_total}
+                      </button>
+                    )}
+                    {/* 优先级：紧急红徽标、低优先级灰徽标；普通不标（原来的彩色小圆点改成这两枚徽标） */}
+                    {task.priority === 0 && <span className="kb-hm-badge is-r">紧急</span>}
+                    {task.priority === 2 && <span className="kb-hm-badge">低</span>}
+                    <span className={"kb-hm-due" + (dueBad ? " is-bad" : "")}>{dueText}</span>
+                  </li>
+                  {expanded && hasSubtasks && (
+                    <li className="kb-hm-sub" onClick={(e) => e.stopPropagation()}>
+                      <SubtaskList
+                        parentTaskId={task.id}
+                        compact
+                        onChanged={(done, total) =>
+                          patchTask(task.id, { subtask_done: done, subtask_total: total })
+                        }
+                      />
+                    </li>
+                  )}
+                </Fragment>
               );
-            })()
-          )}
+            };
+
+            return (
+              <>
+                {/* 分组胶囊（原型 .pills）：原来四段竖排，现在一次看一段 */}
+                <div className="kb-hm-pills">
+                  {sections.map((s) => (
+                    <button
+                      key={s.key}
+                      type="button"
+                      className={s.key === activeKey ? "is-on" : undefined}
+                      onClick={() => setTodoTab(s.key)}
+                    >
+                      {s.label}
+                      <b className={s.key === "overdue" && s.total > 0 ? "is-bad" : undefined}>{s.total}</b>
+                    </button>
+                  ))}
+                </div>
+                {active.items.length === 0 ? (
+                  <div className="kb-hm-empty">
+                    {loading ? "加载中…" : totalTodoCount === 0 ? "暂无待办，享受当下 ✨" : `「${active.label}」里没有待办`}
+                  </div>
+                ) : (
+                  // 卡片高度上限沿用 480，超出可滚
+                  <ul className="kb-hm-list" style={{ maxHeight: 480, overflowY: "auto" }}>
+                    {active.items.map((t) => renderTaskRow(t, active.key))}
+                    {active.total > active.items.length && (
+                      <li className="kb-hm-more">
+                        <button type="button" onClick={() => navigate("/tasks")}>
+                          + 还有 {active.total - active.items.length} 条…
+                        </button>
+                      </li>
+                    )}
+                  </ul>
+                )}
+              </>
+            );
+          })()}
         </HideableCard>
         )}
 
@@ -1046,7 +893,7 @@ function DesktopHomePage() {
           widgetKey="recentNotes"
           size="small"
           className={tasksEnabled ? "col-span-4" : "col-span-7"}
-          styles={{ body: { padding: "8px 14px" } }}
+          styles={{ body: { padding: "0 8px 10px" } }}
           title={
             <span className="flex items-center gap-2 text-sm">
               <NotebookText size={14} style={{ color: token.colorPrimary }} />
@@ -1054,14 +901,10 @@ function DesktopHomePage() {
             </span>
           }
           extra={
-            <Button
-              type="link"
-              size="small"
-              onClick={() => navigate("/notes")}
-              style={{ padding: 0, fontSize: 12 }}
-            >
-              更多 <ArrowRight size={11} />
-            </Button>
+            <button type="button" className="kb-lnk" onClick={() => navigate("/notes")}>
+              更多
+              <ChevronRight size={12} />
+            </button>
           }
         >
           {displayedRecent.length === 0 ? (
@@ -1069,19 +912,14 @@ function DesktopHomePage() {
               description={loading ? "加载中…" : "还没有笔记"}
             />
           ) : (
-            <ul className="flex flex-col gap-1 m-0 p-0 list-none">
+            <ul className="kb-hm-list">
               {displayedRecent.map((note) => {
                 const ctxActive = noteCtx.state.payload?.id === note.id;
                 return (
                 <li
                   key={note.id}
-                  className="cursor-pointer"
-                  style={{
-                    padding: "3px 6px",
-                    borderRadius: 4,
-                    background: ctxActive ? token.colorPrimaryBg : "transparent",
-                    transition: "background .12s",
-                  }}
+                  className={"kb-hm-nr" + (ctxActive ? " is-ctx" : "")}
+                  title={`${note.title} · ${note.word_count} 字`}
                   onClick={() => navigate(`/notes/${note.id}`)}
                   onContextMenu={(e) => {
                     e.preventDefault();
@@ -1116,12 +954,7 @@ function DesktopHomePage() {
                     <Text ellipsis style={{ fontSize: 13.5, flex: 1, minWidth: 0 }}>
                       {note.title}
                     </Text>
-                    <Text
-                      type="secondary"
-                      style={{ fontSize: 11, flexShrink: 0 }}
-                    >
-                      {relativeTime(note.updated_at)} · {note.word_count} 字
-                    </Text>
+                    <time className="kb-hm-time">{relativeTime(note.updated_at)}</time>
                   </div>
                 </li>
               );
@@ -1134,38 +967,32 @@ function DesktopHomePage() {
           widgetKey="pinned"
           size="small"
           className={tasksEnabled ? "col-span-3" : "col-span-5"}
-          styles={{ body: { padding: "12px 14px" } }}
+          styles={{ body: { padding: "0 8px 10px" } }}
           title={
             <span className="flex items-center gap-2 text-sm">
               <Pin size={14} style={{ color: token.colorPrimary }} />
               置顶笔记
               {pinnedNotes.length > 0 && (
-                <Text type="secondary" style={{ fontSize: 12, fontWeight: "normal" }}>
-                  · {pinnedNotes.length}
-                </Text>
+                <span className="kb-card-n">{pinnedNotes.length}</span>
               )}
             </span>
           }
         >
           {pinnedNotes.length === 0 ? (
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              在笔记编辑器右上角可置顶
-            </Text>
+            <div className="kb-hm-empty">在笔记编辑器右上角可置顶</div>
           ) : (
-            <ul className="flex flex-col gap-1.5 m-0 p-0 list-none">
+            <ul className="kb-hm-list">
               {pinnedNotes.slice(0, 5).map((note) => (
                 <li
                   key={note.id}
-                  className="kb-nr cursor-pointer"
+                  className="kb-hm-nr"
                   onClick={() => navigate(`/notes/${note.id}`)}
                 >
-                  <Pin size={11} style={{ color: token.colorPrimary, flexShrink: 0 }} />
+                  <Pin size={14} style={{ color: token.colorPrimary, flexShrink: 0 }} />
                   <Text ellipsis style={{ fontSize: 13.5, flex: 1, minWidth: 0 }}>
                     {note.title}
                   </Text>
-                  <Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
-                    {relativeTime(note.updated_at)}
-                  </Text>
+                  <time className="kb-hm-time">{relativeTime(note.updated_at)}</time>
                 </li>
               ))}
             </ul>
@@ -1199,9 +1026,14 @@ function DesktopHomePage() {
           <MetricItem
             icon={<Type size={16} style={{ color: token.colorPrimary }} />}
             iconBg={tint(token.colorPrimary)}
-            value={vitalityMetrics.totalWords.toLocaleString()}
+            value={
+              vitalityMetrics.totalWords >= 10000
+                ? (vitalityMetrics.totalWords / 10000).toFixed(1)
+                : vitalityMetrics.totalWords.toLocaleString()
+            }
+            valueSuffix={vitalityMetrics.totalWords >= 10000 ? "万字" : "字"}
+            title={`${vitalityMetrics.totalWords.toLocaleString()} 字`}
             label="总字数"
-            isText
           />
           <MetricItem
             icon={<Flame size={16} style={{ color: token.colorWarning }} />}
@@ -1215,12 +1047,12 @@ function DesktopHomePage() {
             iconBg={tint(token.colorInfo)}
             value={vitalityMetrics.lastSinceLabel}
             label="距上次写作"
-            isText
           />
           <MetricItem
             icon={<TrendingUp size={16} style={{ color: token.colorSuccess }} />}
             iconBg={tint(token.colorSuccess)}
             value={vitalityMetrics.thisWeekWords.toLocaleString()}
+            valueSuffix="字"
             label="本周字数"
             extra={
               vitalityMetrics.weekDelta != null && (
@@ -1261,18 +1093,15 @@ function DesktopHomePage() {
             </span>
           }
           extra={
-            <Button
-              type="link"
-              size="small"
-              onClick={() => navigate("/ai")}
-              style={{ padding: 0, fontSize: 12 }}
-            >
-              所有会话 <ArrowRight size={11} />
-            </Button>
+            <button type="button" className="kb-lnk" onClick={() => navigate("/ai")}>
+              所有会话
+              <ChevronRight size={12} />
+            </button>
           }
         >
           <Input
-            placeholder="例如:总结我本周写的内容…"
+            className="kb-ask-in"
+            placeholder="基于你的笔记回答，回答附出处…"
             value={aiQuestion}
             onChange={(e) => setAiQuestion(e.target.value)}
             onPressEnter={handleAskAi}
@@ -1286,7 +1115,7 @@ function DesktopHomePage() {
                 onClick={handleAskAi}
               />
             }
-            style={{ borderRadius: 10, marginBottom: 8, height: 42 }}
+
           />
           {/* 推荐问题（v4 新增）：点一下填进输入框，用户确认 / 改一改再回车，不直接替用户发出去 */}
           <div className="kb-ask-sugs">
@@ -1298,21 +1127,12 @@ function DesktopHomePage() {
           </div>
           {recentChats.length > 0 ? (
             <>
-              <Text type="secondary" style={{ fontSize: 11 }}>
-                最近会话
-              </Text>
-              <ul className="flex flex-col gap-1 mt-1 m-0 p-0 list-none">
+              <ul className="kb-hm-list kb-ask-chats">
                 {recentChats.map((chat) => (
-                  <li
-                    key={chat.id}
-                    className="flex items-center gap-2 cursor-pointer hover:opacity-70 transition"
-                    onClick={() => navigate(`/ai?cid=${chat.id}`)}
-                    style={{ fontSize: 12 }}
-                  >
-                    <MessageCircle size={11} style={{ flexShrink: 0, opacity: 0.6 }} />
-                    <Text ellipsis style={{ fontSize: 12, flex: 1, minWidth: 0 }}>
-                      {chat.title || "未命名会话"}
-                    </Text>
+                  <li key={chat.id} className="kb-hm-nr is-sm" onClick={() => navigate(`/ai?cid=${chat.id}`)}>
+                    <MessageCircle size={13} style={{ flexShrink: 0, color: "var(--kb-text-tertiary)" }} />
+                    <span className="kb-hm-td-tx">{chat.title || "未命名会话"}</span>
+                    <time className="kb-hm-time">{relativeTime(chat.updated_at)}</time>
                   </li>
                 ))}
               </ul>
@@ -1387,6 +1207,9 @@ function tint(color: string): string {
 }
 
 /** 按小时给问候语 */
+/** 待办速览的四个分组 */
+type TodoTab = "overdue" | "today" | "upcoming" | "noDue";
+
 function greetingFor(hour: number): string {
   if (hour < 5) return "夜深了";
   if (hour < 9) return "早上好";
@@ -1434,7 +1257,7 @@ function MetricItem({
   valueSuffix,
   label,
   extra,
-  isText,
+  title,
 }: {
   icon: React.ReactNode;
   iconBg: string;
@@ -1442,7 +1265,8 @@ function MetricItem({
   valueSuffix?: string;
   label: string;
   extra?: React.ReactNode;
-  isText?: boolean;
+  /** 悬停提示：数字被换算（如「万字」）时放原值 */
+  title?: string;
 }) {
   // v4：原型的指标是「大号数字 + 小字说明」，不再画图标块；icon / iconBg 保留在签名里，
   // 只用作数字前的读屏说明，免得调用方大改
@@ -1451,14 +1275,12 @@ function MetricItem({
   return (
     <div className="kb-metric">
       <div className="min-w-0">
-        <div className="kb-metric-v" style={{ fontSize: isText ? 17 : 24 }}>
+        <div className="kb-metric-v" title={title}>
           {value}
-          {valueSuffix && (
-            <span className="text-xs font-normal ml-0.5" style={{ color: "var(--kb-text-tertiary)" }}>{valueSuffix}</span>
-          )}
+          {valueSuffix && <small>{valueSuffix}</small>}
           {extra && <span className="ml-1.5">{extra}</span>}
         </div>
-        <div className="text-[11px]" style={{ color: "var(--kb-text-secondary)" }}>{label}</div>
+        <div className="kb-metric-l">{label}</div>
       </div>
     </div>
   );

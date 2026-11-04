@@ -74,3 +74,28 @@ export function isFullBleedPath(pathname: string): boolean {
 export function isNoActivityPath(pathname: string): boolean {
   return pathname === "/settings" || pathname.startsWith("/settings/");
 }
+
+/** 原型里内容区是 `.scroll.tinted`（淡紫底 + 白卡片）的页面 —— 逐个对过 docs/design/ui-v4 的视图定义 */
+const TINTED_PATHS = new Set([
+  "/",
+  "/notes",
+  "/tasks",
+  "/cards",
+  "/search",
+  "/tags",
+  "/prompts",
+  "/push",
+  "/hidden",
+  "/trash",
+  "/about",
+]);
+
+/**
+ * 内容区该不该铺原型的淡紫底（.tinted）。
+ *
+ * 只认精确路径：/notes 列表页是，/notes/:id 编辑器不是（原型编辑器 / 日记 / 白板 / 图谱 /
+ * AI / 设置都是白纸或自带底色，铺了反而不对）。
+ */
+export function isTintedPath(pathname: string): boolean {
+  return TINTED_PATHS.has(pathname);
+}

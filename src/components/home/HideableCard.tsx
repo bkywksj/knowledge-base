@@ -47,17 +47,15 @@ export function HideableCard({ widgetKey, extra, children, ...cardProps }: Props
     >
       {/* disabled 的 antd Button 不派发鼠标事件，Tooltip 要靠外层 span 才触发 */}
       <span style={{ display: "inline-flex" }}>
+        {/* 图标表示「点了会怎样」（原型 .hide = 闭眼「隐藏此卡片」）；平时透明，悬停卡片才出现，已遮住时常亮 */}
         <Button
           type="text"
           size="small"
+          className={blurred ? "kb-card-hide is-on" : "kb-card-hide"}
           disabled={privacyMode}
           onClick={() => toggleBlur(widgetKey)}
-          icon={blurred ? <EyeOff size={13} /> : <Eye size={13} />}
-          style={{
-            padding: "0 4px",
-            height: 20,
-            color: blurred ? token.colorPrimary : token.colorTextTertiary,
-          }}
+          icon={blurred ? <Eye size={14} /> : <EyeOff size={14} />}
+          style={{ color: blurred ? token.colorPrimary : undefined }}
         />
       </span>
     </Tooltip>
@@ -67,7 +65,7 @@ export function HideableCard({ widgetKey, extra, children, ...cardProps }: Props
     <Card
       {...cardProps}
       extra={
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-1.5">
           {eyeBtn}
           {extra}
         </div>
