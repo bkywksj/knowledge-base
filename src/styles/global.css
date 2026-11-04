@@ -8892,3 +8892,111 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
 .kb-prompt-actions {
   gap: 8px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 对齐第三轮·推送：数值取自原型实测（推送卡片 .card / .badge / 编辑表单 .seg .pills）
+   ═══════════════════════════════════════════════════════════ */
+.kb-push-list {
+  gap: 12px;
+}
+/* 卡片：14 16、卡片投影 + 极淡渐变；编辑中淡主色内描边；停用整张 70% */
+.kb-push-card {
+  padding: 14px 16px;
+  background: linear-gradient(180deg, var(--kb-bg-raised, #fff), color-mix(in srgb, var(--kb-bg-raised, #fff) 98%, var(--kb-primary)));
+  box-shadow: var(--kb-shadow-card);
+}
+.kb-push-card:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kb-primary) 22%, transparent), var(--kb-shadow-card);
+}
+.kb-push-card.is-active {
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--kb-primary) 32%, transparent), var(--kb-shadow-card);
+}
+.kb-push-card.is-off {
+  opacity: 0.7;
+}
+.kb-push-card.is-off .kb-push-head > .kb-prompt-ico,
+.kb-push-card.is-off .kb-push-main,
+.kb-push-card.is-off .kb-push-chip,
+.kb-push-card.is-off .kb-push-next {
+  opacity: 1;
+}
+/* 图标 36（原型 .cico.lg）—— 提示词卡片的图标规则把它压成了 26，这里单独放回 */
+.kb-push-head {
+  gap: 10px;
+}
+.kb-push-head > .kb-prompt-ico {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+}
+.kb-push-name > b {
+  font-size: 14px;
+}
+.kb-push-prompt {
+  font-size: 12.5px;
+}
+/* 底部徽标（原型 .badge）：20 高、圆角 5、11.5px */
+.kb-push-chip {
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-size: 11.5px;
+}
+/* 立即运行一次 / 编辑 / 删除：26 高、12px、ink2 */
+[data-theme] .kb-push-actions .ant-btn {
+  height: 26px;
+  font-size: 12px;
+  color: var(--kb-ink2);
+}
+[data-theme] .kb-push-actions .ant-btn:not(.ant-btn-icon-only) {
+  padding: 0 10px;
+}
+[data-theme] .kb-push-actions .ant-btn-icon-only {
+  width: 26px;
+}
+[data-theme] .kb-push-actions .ant-btn-dangerous {
+  color: var(--ant-color-error);
+}
+/* 编辑表单：名称输入框、触发时间也套细圈 32 高（上轮规则只覆盖了 affix 输入框和下拉） */
+[data-theme] .kb-prompt-edit input.ant-input:not(.ant-input-sm),
+[data-theme] .kb-prompt-edit .ant-picker {
+  height: 32px;
+  border-color: transparent !important;
+  background: var(--kb-bg-raised, #fff) !important;
+  box-shadow: 0 0 0 0.5px var(--kb-border-strong), var(--kb-hi) !important;
+}
+[data-theme] .kb-prompt-edit .ant-input-affix-wrapper input.ant-input {
+  height: auto;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+[data-theme] .kb-prompt-edit input.ant-input:not(.ant-input-sm):focus,
+[data-theme] .kb-prompt-edit .ant-picker-focused {
+  box-shadow: 0 0 0 1px var(--kb-primary), 0 0 0 3px color-mix(in srgb, var(--kb-primary) 16%, transparent) !important;
+}
+/* 星期（原型 .pills）：34 × 26 胶囊、12px；选中浅紫底主色 600 */
+.kb-weekday {
+  height: 26px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+.kb-weekday.is-on {
+  font-weight: 600;
+}
+/* 推送方式：外观同分段控件（原型 .seg）—— 30 高、内边距 2、圆角 8；选中白底 + .24 描边 12 / 600（可多选保留） */
+.kb-channel-row {
+  gap: 0;
+  margin-bottom: 10px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--kb-primary-light);
+}
+.kb-channel {
+  height: 26px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+}
+.kb-channel.is-on {
+  box-shadow: inset 0 0 0 1px var(--kb-border-strong);
+}

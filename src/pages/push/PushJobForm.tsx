@@ -288,10 +288,23 @@ export default function PushJobForm({
         </div>
       </Form>
       <div className="kb-prompt-actions">
-        <Button disabled={(!dirty && !!editing) || saving} onClick={handleCancel}>
+        {/* 原型 .btn-o / .btn-p：30 高、圆角 6；关掉 antd 两字间自动空格（「取 消」「保 存」） */}
+        <Button
+          className="kb-bar-btn"
+          autoInsertSpace={false}
+          disabled={(!dirty && !!editing) || saving}
+          onClick={handleCancel}
+        >
           取消
         </Button>
-        <Button type="primary" loading={saving} disabled={!dirty} onClick={() => void handleSave()}>
+        <Button
+          type="primary"
+          className="kb-bar-btn-p"
+          autoInsertSpace={false}
+          loading={saving}
+          disabled={!dirty}
+          onClick={() => void handleSave()}
+        >
           {editing ? "保存" : "保存推送"}
         </Button>
       </div>

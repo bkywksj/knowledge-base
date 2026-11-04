@@ -132,7 +132,12 @@ export default function PushPage() {
         <h1>定时推送</h1>
         <span className="kb-page-sub">到点自动让 AI 跑你写的提示词，把结果推送给你</span>
         <span className="flex-1" />
-        <Button type="primary" icon={<Plus size={14} />} onClick={() => confirmLeave(() => select(null))}>
+        <Button
+          type="primary"
+          className="kb-bar-btn-p"
+          icon={<Plus size={14} />}
+          onClick={() => confirmLeave(() => select(null))}
+        >
           新建推送
         </Button>
       </div>
