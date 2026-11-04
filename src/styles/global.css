@@ -9366,3 +9366,22 @@ main.ant-layout-content:has(.kb-home) {
 .kb-qe-main:only-child {
   padding-right: 14px;
 }
+
+/* 全局树形下拉（标签 / 文件夹 / 待办分类等 TreeSelect）：antd 默认每级缩进 24 + 箭头槽 24，
+   一级就推进约 48，三四级就挤到右边（2026-11-04 用户指出）。
+   比照侧栏文件夹树（缩进 10 / 箭头 16）收紧：缩进 12（下拉面板宽，层级要看得清）、箭头槽 16，
+   黑实心三角改灰色小号 */
+.ant-select-tree .ant-select-tree-indent-unit {
+  width: 12px;
+}
+.ant-select-tree .ant-select-tree-switcher,
+.ant-select-tree .ant-select-tree-switcher-noop {
+  width: 16px;
+  margin-inline-end: 2px;
+}
+.ant-select-tree .ant-select-tree-switcher {
+  color: var(--kb-text-tertiary);
+}
+.ant-select-tree .ant-select-tree-switcher .ant-select-tree-switcher-icon {
+  font-size: 9px;
+}
