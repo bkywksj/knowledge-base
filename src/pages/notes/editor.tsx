@@ -29,10 +29,11 @@ import {
   theme as antdTheme,
 } from "antd";
 import { MoreHorizontal } from "lucide-react";
-import { ArrowLeft, Save, Trash2, Pin, FolderOpen, X, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, ChevronDown, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, MessageSquare, ListTree, Network, ExternalLink, BookOpen, FilePen, Presentation, Printer, Code2, History } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Pin, FolderOpen, X, Link2, Share, Maximize2, Minimize2, FileText as FileTextIcon, ChevronRight, ChevronDown, CornerUpLeft, Folder as FolderIcon, Eye, EyeOff, Lock, Unlock, MessageSquare, ListTree, Network, ExternalLink, BookOpen, FilePen, Presentation, Code2, History } from "lucide-react";
 import { CloseCircleFilled } from "@ant-design/icons";
 import { useAppStore, EDITOR_FONT_DEFAULTS } from "@/store";
 import { useCtrlWheelZoom } from "@/hooks/useCtrlWheelZoom";
+import { useCollapseOnWrap } from "@/hooks/useCollapseOnWrap";
 import { useTabsStore } from "@/store/tabs";
 import { noteApi, tagApi, folderApi, linkApi, exportApi, sourceFileApi, vaultApi, sourceWritebackApi } from "@/lib/api";
 import { printHtmlAsPdf } from "@/lib/exportPdf";
@@ -836,6 +837,10 @@ function DesktopNoteEditorPage() {
     [message],
   );
 
+  // 顶栏右侧放不下（换行）时，把隐藏 / 加密 / 删除收回「⋯」；90 ≈ 三个 30 图标 + 分隔线 − 「⋯」
+  const ebarRightRef = useRef<HTMLDivElement>(null);
+  const ebarCollapsed = useCollapseOnWrap(ebarRightRef, 90);
+
   useCtrlWheelZoom({
     target: editorBodyEl,
     onStep: useCallback(
@@ -1538,6 +1543,19 @@ function DesktopNoteEditorPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // 顶栏平铺图标的提示与「⋯」菜单共用同一份文案
+  const hiddenLabel = note?.is_hidden ? "取消隐藏（回到主列表）" : "隐藏此笔记（主列表 / 搜索 / 图谱不可见）";
+  const encryptLabel = note?.is_encrypted ? "取消加密（恢复为普通笔记）" : "加密此笔记（需先设置并解锁主密码）";
+  function confirmDeleteNote() {
+    modal.confirm({
+      title: "确认删除此笔记？",
+      okText: "删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: handleDelete,
+    });
+  }
+
   async function handleDelete() {
     try {
       await noteApi.delete(noteId);
@@ -2181,7 +2199,7 @@ function DesktopNoteEditorPage() {
       {/* 顶部条（v4 原型 .ebar）：左「← 面包屑 · 来源文件 · 保存状态」｜ 右「编辑/阅读/源码 · 专注 · 历史 · 置顶 · 大纲 ｜
           导图 · 幻灯片 · 新窗口 · 导出 ｜ 保存（有改动时） · 问 AI · ⋯」。
           隐藏 / 加密 / 打印 / 删除 收进「⋯」（用户确认的位置调整，功能不减）；「更新于」挪到底部状态栏 */}
-      <div className="editor-topbar kb-ebar">
+      <div className="editor-topbar kb-ebar kb-note-ebar">
         <div className="editor-topbar__left kb-ebar-left">
           <Tooltip title="返回">
             <Button
@@ -2308,56 +2326,45 @@ function DesktopNoteEditorPage() {
               </Space.Compact>
             )
           )}
-          <span className="kb-saved">
-          {/* 保存状态提示：优先级 保存中 > 保存失败 > 未保存 > 已保存 */}
+          {/* 保存状态（原型 .saved）：圆点 + 两三个字，快捷键 / 时间等说明放悬停提示，不占顶栏宽度。
+              优先级 保存中 > 保存失败 > 未保存 > 已保存。
+              「开启自动保存」入口挪到右侧保存按钮的下拉里（只有关了自动保存才出现那个按钮） */}
           {autoSaving || saving ? (
-            <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.2 }}>
-              {autoSaving ? "自动保存中…" : "保存中…"}
-            </Text>
+            <span className="kb-saved is-saving">
+              <Text>{autoSaving ? "自动保存中…" : "保存中…"}</Text>
+            </span>
           ) : saveError ? (
-            <Tooltip title={saveError}>
-              <Text
-                type="danger"
-                style={{ fontSize: 11, lineHeight: 1.2, cursor: "pointer" }}
-                onClick={() => void handleSave()}
-              >
-                保存失败 · 点此重试
-              </Text>
+            <Tooltip title={`${saveError}（点击重试）`}>
+              <span className="kb-saved is-error" style={{ cursor: "pointer" }} onClick={() => void handleSave()}>
+                <Text type="danger">保存失败</Text>
+              </span>
             </Tooltip>
           ) : dirty ? (
-            <Text type="warning" style={{ fontSize: 11, lineHeight: 1.2 }}>
-              {autoSaveEnabled ? (
-                "未保存"
-              ) : (
-                <>
-                  未保存 · Ctrl+S 保存 ·{" "}
-                  {/* 老用户升级后保留了「关闭自动保存」，不强制改设置，
-                      但在最容易丢内容的地方给一个就地开启的入口 */}
-                  <a
-                    title="打开后停止输入片刻即自动保存，可在设置 → 自动保存里关闭"
-                    onClick={() => {
-                      setAutoSaveEnabled(true);
-                      message.success("已开启自动保存");
-                    }}
-                  >
-                    开启自动保存
-                  </a>
-                </>
-              )}
-            </Text>
-          ) : lastAutoSavedAt ? (
-            <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.2 }}>
-              {autoSaveEnabled ? "已自动保存" : "已保存"} ·{" "}
-              {relativeTime(new Date(lastAutoSavedAt).toISOString())}
-            </Text>
+            <Tooltip
+              title={
+                autoSaveEnabled
+                  ? "停止输入片刻即自动保存；也可按 Ctrl+S 立即保存"
+                  : "按 Ctrl+S 保存。自动保存已关闭，可在右侧保存按钮的下拉里开启"
+              }
+            >
+              <span className="kb-saved is-dirty">
+                <Text>未保存</Text>
+              </span>
+            </Tooltip>
           ) : (
-            <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.2 }}>
-              {autoSaveEnabled ? "已自动保存" : "已保存"}
-            </Text>
+            <Tooltip
+              title={
+                (lastAutoSavedAt ? `${relativeTime(new Date(lastAutoSavedAt).toISOString())}保存 · ` : "") +
+                (autoSaveEnabled ? "停止输入片刻即自动保存，可在设置 → 自动保存里关闭" : "自动保存已关闭，按 Ctrl+S 保存")
+              }
+            >
+              <span className="kb-saved">
+                <Text>{autoSaveEnabled ? "已自动保存" : "已保存"}</Text>
+              </span>
+            </Tooltip>
           )}
-          </span>
         </div>
-        <div className="kb-ebar-right">
+        <div className="kb-ebar-right" ref={ebarRightRef}>
           {/* 编辑 / 阅读 / 源码 三态（原来是「阅读切换」「源码切换」两个按钮，合成一个；源码与阅读本就互斥） */}
           <Segmented
             size="small"
@@ -2506,16 +2513,47 @@ function DesktopNoteEditorPage() {
           <span className="kb-vsep" />
           {/* 保存：自动保存开着时平时不占位，只在有未保存改动（或关了自动保存）时出现；阅读模式下不需要 */}
           {!readingMode && (dirty || !autoSaveEnabled) && (
-            <Button
-              type="primary"
-              size="small"
-              icon={<Save size={14} />}
-              loading={saving}
-              onClick={() => handleSave()}
-              disabled={!dirty}
-            >
-              保存
-            </Button>
+            autoSaveEnabled ? (
+              <Button
+                type="primary"
+                size="small"
+                icon={<Save size={14} />}
+                loading={saving}
+                onClick={() => handleSave()}
+                disabled={!dirty}
+              >
+                保存
+              </Button>
+            ) : (
+              // 关了自动保存（老用户升级后保留的设置）：在最容易丢内容的地方给一个就地开启的入口，
+              // 原来这句「开启自动保存」常驻在左侧状态里占地方
+              <Space.Compact size="small" className="kb-split kb-save-split">
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<Save size={14} />}
+                  loading={saving}
+                  onClick={() => handleSave()}
+                  disabled={!dirty}
+                  title="保存 (Ctrl+S)"
+                >
+                  保存
+                </Button>
+                <Dropdown
+                  trigger={["click"]}
+                  placement="bottomRight"
+                  menu={{
+                    items: [{ key: "auto", label: "开启自动保存（停止输入片刻即保存）" }],
+                    onClick: () => {
+                      setAutoSaveEnabled(true);
+                      message.success("已开启自动保存，可在设置 → 自动保存里关闭");
+                    },
+                  }}
+                >
+                  <Button type="primary" size="small" icon={<ChevronDown size={13} />} title="保存选项" />
+                </Dropdown>
+              </Space.Compact>
+            )
           )}
           <Button
             size="small"
@@ -2530,50 +2568,63 @@ function DesktopNoteEditorPage() {
           >
             问 AI
           </Button>
-          {/* 更多：隐藏 / 加密 / 打印 / 删除（原来各占一个按钮，挪进来，行为不变） */}
-          <Dropdown
-            trigger={["click"]}
-            placement="bottomRight"
-            menu={{
-              items: [
-                {
-                  key: "hidden",
-                  icon: note?.is_hidden ? <EyeOff size={14} /> : <Eye size={14} />,
-                  label: note?.is_hidden ? "取消隐藏（回到主列表）" : "隐藏此笔记（主列表 / 搜索 / 图谱不可见）",
-                  onClick: () => void handleToggleHidden(),
-                },
-                {
-                  key: "encrypt",
-                  icon: note?.is_encrypted ? <Unlock size={14} /> : <Lock size={14} />,
-                  label: note?.is_encrypted ? "取消加密（恢复为普通笔记）" : "加密此笔记（需先设置并解锁主密码）",
-                  onClick: () => void handleToggleEncrypt(),
-                },
-                {
-                  key: "print",
-                  icon: <Printer size={14} />,
-                  label: "打印 / 打印成 PDF（所见即所得）",
-                  onClick: () => void handlePrint(),
-                },
-                { type: "divider" },
-                {
-                  key: "delete",
-                  icon: <Trash2 size={14} />,
-                  label: "删除笔记",
-                  danger: true,
-                  onClick: () =>
-                    modal.confirm({
-                      title: "确认删除此笔记？",
-                      okText: "删除",
-                      okButtonProps: { danger: true },
-                      cancelText: "取消",
-                      onOk: handleDelete,
-                    }),
-                },
-              ],
-            }}
-          >
-            <Button type="text" className="kb-ib" icon={<MoreHorizontal size={16} />} title="更多操作" />
-          </Dropdown>
+          {/* 隐藏 / 加密 / 删除：放得下就平铺（少点一下），顶栏挤到换行时收回「⋯」（useCollapseOnWrap）。
+              打印原来在这里也有一份，与导出菜单重复，只留导出菜单里那个 */}
+          {ebarCollapsed ? (
+            <Dropdown
+              trigger={["click"]}
+              placement="bottomRight"
+              menu={{
+                items: [
+                  {
+                    key: "hidden",
+                    icon: note?.is_hidden ? <EyeOff size={14} /> : <Eye size={14} />,
+                    label: hiddenLabel,
+                    onClick: () => void handleToggleHidden(),
+                  },
+                  {
+                    key: "encrypt",
+                    icon: note?.is_encrypted ? <Unlock size={14} /> : <Lock size={14} />,
+                    label: encryptLabel,
+                    onClick: () => void handleToggleEncrypt(),
+                  },
+                  { type: "divider" },
+                  {
+                    key: "delete",
+                    icon: <Trash2 size={14} />,
+                    label: "删除笔记",
+                    danger: true,
+                    onClick: confirmDeleteNote,
+                  },
+                ],
+              }}
+            >
+              <Button type="text" className="kb-ib" icon={<MoreHorizontal size={16} />} title="更多操作" />
+            </Dropdown>
+          ) : (
+            <>
+              <span className="kb-vsep" />
+              <Tooltip title={hiddenLabel}>
+                <Button
+                  type="text"
+                  className={note?.is_hidden ? "kb-ib is-on" : "kb-ib"}
+                  icon={note?.is_hidden ? <Eye size={16} /> : <EyeOff size={16} />}
+                  onClick={() => void handleToggleHidden()}
+                />
+              </Tooltip>
+              <Tooltip title={encryptLabel}>
+                <Button
+                  type="text"
+                  className={note?.is_encrypted ? "kb-ib is-on" : "kb-ib"}
+                  icon={note?.is_encrypted ? <Unlock size={16} /> : <Lock size={16} />}
+                  onClick={() => void handleToggleEncrypt()}
+                />
+              </Tooltip>
+              <Tooltip title="删除笔记（移到回收站）">
+                <Button type="text" className="kb-ib is-danger" icon={<Trash2 size={16} />} onClick={confirmDeleteNote} />
+              </Tooltip>
+            </>
+          )}
         </div>
       </div>
 

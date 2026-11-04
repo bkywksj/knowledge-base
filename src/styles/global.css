@@ -9400,3 +9400,36 @@ main.ant-layout-content:has(.kb-home) {
 .ant-select-tree .ant-select-tree-switcher .ant-select-tree-switcher-icon {
   font-size: 9px;
 }
+
+/* ═══ 笔记编辑器顶栏瘦身（2026-11-04）：状态压成「● 两三个字」，隐藏 / 加密 / 删除平铺 ═══ */
+/* 未保存：圆点与文字都用警示色（原型 .saved 未保存态）；原来圆点一直是绿的 */
+.kb-saved.is-dirty::before {
+  background: var(--ant-color-warning);
+}
+.kb-saved.is-dirty .ant-typography {
+  color: var(--ant-color-warning) !important;
+}
+/* 左侧保底 200：状态 + 一截面包屑。否则右侧按钮先把面包屑挤没，顶栏也不会换行，
+   「放不下就收回 ⋯」就永远不触发 */
+.kb-note-ebar > .kb-ebar-left {
+  min-width: 200px;
+}
+/* 删除图标：悬停变红，提示这是危险操作（点了仍会先确认） */
+.kb-ib.is-danger.ant-btn:not(:disabled):hover {
+  color: var(--ant-color-error) !important;
+  background: color-mix(in srgb, var(--ant-color-error) 10%, transparent) !important;
+}
+/* 关了自动保存时的「保存 ▾」分体按钮：与顶栏其他按钮同 30 高 */
+.kb-note-ebar .kb-split.ant-space-compact {
+  height: 30px;
+  border-radius: 6px;
+}
+[data-theme] .kb-note-ebar .kb-split.ant-space-compact > .ant-btn.ant-btn-primary.ant-btn-variant-solid {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12.5px;
+}
+[data-theme] .kb-note-ebar .kb-split.ant-space-compact > .ant-btn.ant-btn-primary.ant-btn-variant-solid + .ant-btn {
+  width: 24px;
+  padding: 0;
+}
