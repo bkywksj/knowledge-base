@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 68;
+pub const SCHEMA_VERSION: i32 = 69;
 
 /// `ai_models.max_context` 的历史默认值。v51 把旧默认 32000 统一抬到它，此后新建也默认填它 ——
 /// 所以存量里的 128000 分不清是用户填的还是默认值，v62 一律当作「未设置」。
@@ -23,6 +23,10 @@ pub fn set_version(conn: &Connection, version: i32) -> Result<(), AppError> {
 
 /// 执行数据库迁移
 pub fn migrate(conn: &Connection) -> Result<(), AppError> {
+    // 字数触发器调用的 kb_word_count()（v69 起）是连接级函数，每次打开都要重新注册。
+    // 放在这里是因为主连接的 init / reopen 都必经 migrate，不会漏
+    kb_core::plain_text::register_sql_functions(conn)?;
+
     let mut version = get_version(conn)?;
 
     // 🔴 必须是独立的错误类型而不是 Custom：调用方要靠它区分「应用比库旧」和「库坏了」。
@@ -104,6 +108,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             65 => migrate_v65_to_v66(conn)?,
             66 => migrate_v66_to_v67(conn)?,
             67 => migrate_v67_to_v68(conn)?,
+            68 => migrate_v68_to_v69(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2589,6 +2594,50 @@ fn migrate_v67_to_v68(conn: &Connection) -> Result<(), AppError> {
     Ok(())
 }
 
+/// v68 -> v69：字数改成与编辑器状态栏同一口径。
+///
+/// v5 的触发器按「原文去空格长度」算 word_count：`#` `**` HTML 标签全计入，
+/// 空日记 `<p><br></p>` 也有 11，首页写作活力 / 热力图 / 笔记列表字数都虚高几倍。
+/// 改为调 `kb_word_count()`（kb-core plain_text::count_words：中日文按字、其余按词）：
+/// - 白板数 search_text（画布上的文字），content 是 Excalidraw JSON
+/// - 加密笔记记 0（正文是密文）
+/// - 除 content 外，is_encrypted / search_text / note_type 变化也要重算
+///
+/// 重建两个触发器 + 全量重算一次。只写 word_count 一列：FTS 触发器只监听
+/// title / content / search_text，不会被连带触发（v5→v6 踩过的坑）。
+fn migrate_v68_to_v69(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v68 -> v69 (字数改为编辑器口径)");
+
+    conn.execute_batch(
+        "
+        DROP TRIGGER IF EXISTS notes_word_count_insert;
+        DROP TRIGGER IF EXISTS notes_word_count_update;
+
+        CREATE TRIGGER notes_word_count_insert AFTER INSERT ON notes BEGIN
+            UPDATE notes SET word_count = kb_word_count(
+                CASE WHEN new.note_type = 'whiteboard' THEN COALESCE(new.search_text, '') ELSE new.content END,
+                new.is_encrypted)
+            WHERE id = new.id;
+        END;
+
+        CREATE TRIGGER notes_word_count_update
+        AFTER UPDATE OF content, is_encrypted, search_text, note_type ON notes BEGIN
+            UPDATE notes SET word_count = kb_word_count(
+                CASE WHEN new.note_type = 'whiteboard' THEN COALESCE(new.search_text, '') ELSE new.content END,
+                new.is_encrypted)
+            WHERE id = new.id;
+        END;
+
+        UPDATE notes SET word_count = kb_word_count(
+            CASE WHEN note_type = 'whiteboard' THEN COALESCE(search_text, '') ELSE content END,
+            is_encrypted);
+        ",
+    )?;
+
+    set_version(conn, 69)?;
+    Ok(())
+}
+
 /// v61 -> v62：模型服务改由 ai-profile crate 提供。
 ///
 /// 三件事，都是「把旧语义写进数据」，让切换到 crate 后行为不变：
@@ -3773,5 +3822,130 @@ mod v54_rescan_tests {
             after.is_none(),
             "迁移后标记必须为 NULL，下次 push 才会重扫到 attachments/ 下的附件"
         );
+    }
+}
+
+#[cfg(test)]
+mod word_count_v69_tests {
+    //! v69：notes.word_count 与编辑器状态栏同口径，且全量重算不碰别的列
+
+    use crate::database::Database;
+    use crate::models::NoteInput;
+
+    fn wc(db: &Database, id: i64) -> i64 {
+        let conn = db.conn_lock().unwrap();
+        conn.query_row("SELECT word_count FROM notes WHERE id = ?1", [id], |r| r.get(0))
+            .unwrap()
+    }
+
+    fn note(db: &Database, content: &str) -> i64 {
+        db.create_note(&NoteInput {
+            title: "t".into(),
+            content: content.into(),
+            folder_id: None,
+        })
+        .unwrap()
+        .id
+    }
+
+    #[test]
+    fn trigger_counts_like_editor() {
+        let db = Database::init(":memory:").unwrap();
+        assert_eq!(wc(&db, note(&db, "<p><br></p>")), 0, "空笔记不该有字数");
+        let id = note(&db, "## 标题\n**你好** world");
+        assert_eq!(wc(&db, id), 5, "标题 2 + 你好 2 + world 1");
+
+        db.update_note(
+            id,
+            &NoteInput {
+                title: "t".into(),
+                content: "一二三".into(),
+                folder_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(wc(&db, id), 3, "改正文要重算");
+
+        {
+            let conn = db.conn_lock().unwrap();
+            conn.execute("UPDATE notes SET is_encrypted = 1 WHERE id = ?1", [id])
+                .unwrap();
+        }
+        assert_eq!(wc(&db, id), 0, "加密笔记正文是密文，记 0");
+    }
+
+    #[test]
+    fn whiteboard_counts_canvas_text() {
+        let db = Database::init(":memory:").unwrap();
+        let wb = db
+            .create_whiteboard(
+                &NoteInput {
+                    title: "流程".into(),
+                    content: r#"{"type":"excalidraw","elements":[{"text":"x"}]}"#.into(),
+                    folder_id: None,
+                },
+                "订单流程",
+            )
+            .unwrap();
+        assert_eq!(wc(&db, wb.id), 4, "白板数画布文字，不数 JSON");
+    }
+
+    /// 第二个连接（kb-mcp sidecar 走 kb-core `KbDb::open`）写笔记时同样要有 kb_word_count：
+    /// 没注册就整条 INSERT 失败；注册后（KbDb::open 里做的事）正常
+    #[test]
+    fn second_connection_needs_function_registered() {
+        let path = std::env::temp_dir().join(format!("kb-v69-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        drop(Database::init(path.to_str().unwrap()).unwrap());
+
+        let insert = "INSERT INTO notes (title, content) VALUES ('mcp', '你好 world')";
+        let raw = rusqlite::Connection::open(&path).unwrap();
+        let err = raw.execute(insert, []).unwrap_err().to_string();
+        assert!(err.contains("kb_word_count"), "未注册应报找不到函数: {}", err);
+
+        kb_core::plain_text::register_sql_functions(&raw).unwrap();
+        raw.execute(insert, []).unwrap();
+        let wc: i64 = raw
+            .query_row("SELECT word_count FROM notes WHERE title = 'mcp'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(wc, 3);
+        drop(raw);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// 迁移里的全量重算只能动 word_count：updated_at 变了会让笔记排序乱掉、
+    /// 同步把所有笔记当成改过
+    #[test]
+    fn recompute_leaves_other_columns_alone() {
+        let db = Database::init(":memory:").unwrap();
+        let id = note(&db, "你好");
+        let conn = db.conn_lock().unwrap();
+        conn.execute(
+            "UPDATE notes SET updated_at = '2020-01-01 00:00:00', word_count = 999 WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+        let before: (String, String) = conn
+            .query_row("SELECT updated_at, content_hash FROM notes WHERE id = ?1", [id], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+
+        conn.execute_batch(
+            "UPDATE notes SET word_count = kb_word_count(
+                CASE WHEN note_type = 'whiteboard' THEN COALESCE(search_text, '') ELSE content END,
+                is_encrypted);",
+        )
+        .unwrap();
+
+        let after: (String, String, i64) = conn
+            .query_row(
+                "SELECT updated_at, content_hash, word_count FROM notes WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((after.0, after.1), before);
+        assert_eq!(after.2, 2);
     }
 }

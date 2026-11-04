@@ -19,7 +19,8 @@ path = "src/lib.rs"
 # 主应用也可以用 tokio::io::duplex 当 transport 跑 in-memory server
 rmcp = { version = "1.5", features = ["server", "macros", "schemars"] }
 tokio = { version = "1", features = ["sync", "macros"] }
-rusqlite = { version = "0.31", features = ["bundled"] }
+# functions：注册 kb_word_count() 给字数触发器用（schema v69）
+rusqlite = { version = "0.31", features = ["bundled", "functions"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

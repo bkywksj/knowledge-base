@@ -32,6 +32,8 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+pub mod plain_text;
+
 use anyhow::{Context, Result};
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -66,6 +68,8 @@ impl KbDb {
 
         // busy_timeout：与主应用写事务并发时，等 5 秒再报 SQLITE_BUSY
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        // 字数触发器调用 kb_word_count()（schema v69 起），可写连接新建 / 改笔记时要用
+        plain_text::register_sql_functions(&conn)?;
 
         Ok(Self {
             conn: Mutex::new(conn),

@@ -1614,7 +1614,7 @@ impl Database {
             .map_err(|e| AppError::Custom(e.to_string()))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, daily_date, updated_at, content, is_encrypted
+            "SELECT id, title, daily_date, updated_at, word_count
              FROM notes
              WHERE is_daily = 1 AND is_deleted = 0 AND is_hidden = 0
                    AND daily_date IS NOT NULL
@@ -1623,20 +1623,13 @@ impl Database {
 
         let entries = stmt
             .query_map([], |row| {
-                // 字数现算而不读 word_count 列：那一列把 Markdown / HTML 符号也数进去了，
-                // 空日记都有 11。加密日记的 content 是密文，不算
-                let content: String = row.get(4)?;
-                let encrypted: bool = row.get(5)?;
                 Ok(DailyEntry {
                     id: row.get(0)?,
                     title: row.get(1)?,
                     daily_date: row.get(2)?,
                     updated_at: row.get(3)?,
-                    word_count: if encrypted {
-                        0
-                    } else {
-                        crate::services::plain_text::count_words(&content)
-                    },
+                    // v69 起由触发器按编辑器口径维护（加密笔记为 0）
+                    word_count: row.get(4)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
