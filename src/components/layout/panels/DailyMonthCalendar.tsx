@@ -118,9 +118,8 @@ export function DailyMonthCalendar({
             outline = `1.5px solid ${token.colorPrimary}`;
             color = token.colorPrimary;
             weight = 600;
-          } else if (hasEntry) {
-            weight = 500;
           }
+          // 有日记不加粗（原型 .cd.has 字重 400），只靠底部圆点区分
 
           return (
             <button

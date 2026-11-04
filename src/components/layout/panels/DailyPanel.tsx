@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button, Modal, Segmented, message, theme as antdTheme } from "antd";
-import { CalendarCheck, ChevronLeft, ChevronRight, Copy, Trash2 } from "lucide-react";
+import { Calendar, CalendarCheck, ChevronLeft, ChevronRight, Copy, Trash2 } from "lucide-react";
 import { dailyApi, trashApi } from "@/lib/api";
 import { todayYmd } from "@/lib/utils";
 import type { DailyEntry } from "@/types";
@@ -487,7 +487,6 @@ function DateRow({
   contextActive,
   onClick,
   onContextMenu,
-  token,
 }: {
   date: string;
   /**
@@ -510,95 +509,26 @@ function DateRow({
     colorBorderSecondary: string;
   };
 }) {
-  const { day } = parseDate(date);
-  // 「全部」视图传了标题就显示标题（含默认的「XXXX 的日记」）；月历视图没标题回退星期。
-  const shownTitle = title && title.trim() ? title.trim() : undefined;
+  // 原型 .row：一行「MM-DD · 周X」，右侧今天标「今天」；自定义标题放进悬停提示（不再占一行）
+  // 默认标题「YYYY-MM-DD 的日记」和日期重复，不进提示
+  const trimmed = title?.trim();
+  const shownTitle = trimmed && trimmed !== `${date} 的日记` ? trimmed : undefined;
+  const label = `${date.slice(5)} · ${weekdayOf(date)}`;
   return (
     <div
       onClick={onClick}
       onContextMenu={onContextMenu}
-      className="cursor-pointer"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "6px 10px",
-        borderRadius: 6,
-        background: selected ? `${token.colorPrimary}14` : "transparent",
-        color: selected ? token.colorPrimary : token.colorText,
-        fontWeight: selected ? 500 : undefined,
-        // 右键菜单指向本行 → 1px 实色描边提示
-        outline: contextActive ? `1px solid ${token.colorPrimary}` : "none",
-        outlineOffset: -1,
-        transition: "background .15s, outline .1s",
-      }}
+      className={
+        "kb-day-row" +
+        (selected ? " is-on" : "") +
+        (contextActive ? " is-ctx" : "") +
+        (hasEntry ? "" : " is-empty")
+      }
+      title={shownTitle ? `${shownTitle}（${date}）` : date}
     >
-      {/* 日期数字方块 */}
-      <div
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: 6,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: 13,
-          fontWeight: 600,
-          background: isToday
-            ? token.colorPrimary
-            : selected
-              ? `${token.colorPrimary}22`
-              : token.colorBorderSecondary,
-          color: isToday
-            ? "#fff"
-            : selected
-              ? token.colorPrimary
-              : token.colorTextSecondary,
-          flexShrink: 0,
-        }}
-      >
-        {day}
-      </div>
-      {/* 主行：有自定义标题显标题，否则显星期；次行补星期/日期 */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div
-          style={{
-            fontSize: 13,
-            // 标题可能较长，单行省略避免撑破窄面板
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-          title={shownTitle ?? weekdayOf(date)}
-        >
-          {shownTitle ?? weekdayOf(date)}
-        </div>
-        <div
-          style={{
-            fontSize: 11,
-            color: selected ? token.colorPrimary : token.colorTextTertiary,
-          }}
-        >
-          {shownTitle
-            ? `${weekdayOf(date)} · ${isToday ? "今天" : date}`
-            : isToday
-              ? "今天"
-              : date}
-        </div>
-      </div>
-      {/* 有日记的小圆点 */}
-      {hasEntry && (
-        <span
-          aria-label="有日记"
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            background: selected ? token.colorPrimary : token.colorTextTertiary,
-            flexShrink: 0,
-          }}
-        />
-      )}
+      <Calendar size={14} className="kb-day-row-ic" />
+      <span className="kb-day-row-lb">{label}</span>
+      {isToday && <span className="kb-day-row-ct">今天</span>}
     </div>
   );
 }
