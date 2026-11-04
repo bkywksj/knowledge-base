@@ -115,6 +115,7 @@ function DesktopCardsPage() {
         <h1>卡片复习</h1>
         <span className="flex-1" />
         <Button
+          className="kb-bar-btn"
           icon={<RotateCcw size={14} />}
           onClick={() => {
             setReviewKey((k) => k + 1);
@@ -124,7 +125,12 @@ function DesktopCardsPage() {
         >
           重新加载
         </Button>
-        <Button type="primary" icon={<Plus size={14} />} onClick={() => setCreateOpen(true)}>
+        <Button
+          type="primary"
+          className="kb-bar-btn-p"
+          icon={<Plus size={14} />}
+          onClick={() => setCreateOpen(true)}
+        >
           新建卡片
         </Button>
       </div>

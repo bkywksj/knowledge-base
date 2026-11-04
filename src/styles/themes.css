@@ -679,9 +679,14 @@ html[data-theme-category="dark"] .tiptap-toolbar .toolbar-btn-active:hover:not(:
    ═══════════════════════════════════════════════════════════ */
 [data-theme="light-lilac"] {
   --kb-grad: linear-gradient(135deg, #B3A3F6 0%, #937BE9 45%, #7C63DC 100%);
+  /* 原型 --grad-text（渐变文字）/ --grad-soft（答案框、徽标等浅渐变底） */
+  --kb-grad-text: linear-gradient(100deg, #9278EA 0%, #7C63DC 50%, #B482E8 100%);
+  --kb-grad-soft: linear-gradient(135deg, #F7F3FF 0%, #EFEAFE 100%);
 }
 [data-theme="dark-ember"] {
   --kb-grad: linear-gradient(135deg, #9C86F2 0%, #8269E4 45%, #6C52D2 100%);
+  --kb-grad-text: linear-gradient(100deg, #C2B2FF 0%, #A992FA 50%, #D3A6F2 100%);
+  --kb-grad-soft: linear-gradient(135deg, var(--kb-bg-card) 0%, var(--kb-bg-raised) 100%);
 }
 
 /* 开关打开 */

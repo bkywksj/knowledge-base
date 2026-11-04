@@ -8113,3 +8113,205 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   font-size: 11.5px;
   color: var(--kb-text-secondary);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 对齐第三轮·复习：数值取自原型实测（.stat4 / .rv / .rate / 新建卡片 .card-h .card-b / .li）
+   ═══════════════════════════════════════════════════════════ */
+/* 顶栏主按钮（原型 .btn-p）：30 高、圆角 6、12.5 / 600 */
+[data-theme] .kb-bar-btn-p.ant-btn {
+  height: 30px;
+  padding: 0 13px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+/* 统计四卡（原型 .stat4，标签页同款）：66 高、10 16、间距 12；卡片投影 + 极淡渐变；图标 36 渐变底；数字 22 */
+.kb-card-stats {
+  gap: 12px;
+}
+.kb-card-stat {
+  gap: 12px;
+  padding: 10px 16px;
+  background: linear-gradient(180deg, var(--kb-bg-raised, #fff), color-mix(in srgb, var(--kb-bg-raised, #fff) 98%, var(--kb-primary)));
+  box-shadow: var(--kb-shadow-card);
+}
+.kb-card-stat-ico,
+.kb-card-stat-ico.is-info,
+.kb-card-stat-ico.is-warn,
+.kb-card-stat-ico.is-ok {
+  width: 36px;
+  height: 36px;
+  background: linear-gradient(135deg, color-mix(in srgb, currentColor 8%, transparent), color-mix(in srgb, currentColor 16%, transparent));
+}
+.kb-card-stat-num {
+  font-size: 22px;
+  line-height: 1.2;
+}
+/* 「今日待复习」数字：原型 .gtext 渐变文字 */
+.kb-card-stat-num.is-primary {
+  background: var(--kb-grad-text, var(--kb-primary));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.kb-card-stat-lb {
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+}
+/* 复习卡（原型 .rv）*/
+.kb-cards-main {
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
+.kb-rv {
+  padding: 22px 26px 20px;
+}
+.kb-rv-head {
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+}
+.kb-rv-src {
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-size: 11.5px;
+}
+.kb-rv-progress {
+  border-radius: 2px;
+}
+.kb-rv-lb {
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+}
+/* 答案框（原型 .a）：浅渐变底 + 0.5px 主色细线 */
+.kb-rv-back {
+  padding: 16px 18px;
+  background: var(--kb-grad-soft, var(--kb-primary-light));
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--kb-primary) 32%, transparent);
+}
+/* 评分（原型 .rate）：54 高、圆角 12、深一档描边，整颗按钮着色；下行 11.5 二级色 */
+.kb-rv-rates {
+  gap: 10px;
+}
+.kb-rate {
+  height: 54px;
+  justify-content: center;
+  padding: 0 6px;
+  border: none;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--kb-border-strong);
+}
+.kb-rate > b {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: inherit !important;
+}
+.kb-rate > span {
+  font-size: 11.5px;
+  color: var(--kb-text-secondary);
+}
+.kb-rate.is-again { color: var(--ant-color-error); }
+.kb-rate.is-hard { color: var(--ant-color-warning); }
+.kb-rate.is-good { color: var(--ant-color-info); }
+.kb-rate.is-easy { color: var(--ant-color-success); }
+.kb-rate:hover {
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+/* 新建卡片（原型 .card-h 46 高 + .card-b 内边距 0 18 16、间距 10） */
+.kb-qc {
+  gap: 10px;
+  padding: 0 18px 16px;
+}
+.kb-qc-head {
+  height: 46px;
+  margin: 0 0 -10px;
+  font-weight: 600;
+}
+.kb-qc .kb-rv-lb {
+  margin: 0;
+}
+.kb-qc-note {
+  margin: 0;
+}
+/* 输入框 / 下拉（原型 .ta / .inp）：白底 + 0.5px 细圈 + 内高光，无 antd 边框 */
+[data-theme] .kb-qc textarea.ant-input,
+[data-theme] .kb-qc-note.ant-select,
+[data-theme] .kb-cl-search.ant-input-affix-wrapper {
+  border-color: transparent !important;
+  background: var(--kb-bg-raised, #fff) !important;
+  box-shadow: 0 0 0 0.5px var(--kb-border-strong), var(--kb-hi) !important;
+}
+[data-theme] .kb-qc textarea.ant-input:focus,
+[data-theme] .kb-qc-note.ant-select-focused,
+[data-theme] .kb-cl-search.ant-input-affix-wrapper-focused {
+  box-shadow: 0 0 0 1px var(--kb-primary), 0 0 0 3px color-mix(in srgb, var(--kb-primary) 16%, transparent) !important;
+}
+.kb-qc textarea.ant-input {
+  padding: 10px 12px;
+  min-height: 70px;
+}
+.kb-qc-note.ant-select {
+  height: 32px;
+}
+[data-theme] .kb-qc .ant-btn-block {
+  height: 30px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.kb-qc .kb-rv-hint {
+  margin-top: -2px;
+}
+/* 全部卡片（原型 .card-h + .list .li）：头 46 高；行 56 高、8 14、圆角 10；图标 26；徽标 20 */
+.kb-cl {
+  padding: 0 6px 8px;
+}
+.kb-cl-head {
+  height: 46px;
+  padding: 0 4px 0 12px;
+}
+.kb-cl-head > .kb-card-stat-ico {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+}
+.kb-cl-head > b {
+  font-weight: 600;
+}
+.kb-cl-count {
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+}
+.kb-cl-search.ant-input-affix-wrapper {
+  width: 200px;
+  height: 28px;
+}
+.kb-cl-row {
+  min-height: 56px;
+  padding: 8px 14px;
+  border-radius: 10px;
+}
+.kb-cl-row > .kb-card-stat-ico {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+}
+.kb-cl-sub {
+  color: var(--kb-text-secondary);
+}
+.kb-cl-due {
+  height: 20px;
+  line-height: 20px;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-size: 11.5px;
+}
+/* 行内两行文字行高（原型 .li b 20 / p 18 → 行高 56）；输入框高 70（rows=3 会撑到 84） */
+.kb-cl-front {
+  line-height: 20px;
+}
+.kb-cl-sub {
+  line-height: 18px;
+}
+.kb-qc textarea.ant-input {
+  height: 70px;
+}
