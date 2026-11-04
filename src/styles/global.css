@@ -7257,6 +7257,9 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   place-items: center;
   font-size: 11px;
   font-weight: 600;
+  /* 行高等于角标高：继承下来的 17.8 比 16 高，多出的一截把数字挤得偏下（待办页同款已是 16） */
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
   background: var(--kb-bg-active);
   color: var(--kb-text-secondary);
 }
