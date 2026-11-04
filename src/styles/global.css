@@ -9489,3 +9489,54 @@ main.ant-layout-content:has(.kb-home) {
   width: 24px;
   padding: 0;
 }
+
+/* ═══ 侧栏文件夹树按原型实测对齐（2026-11-04 用户：小三角和文件夹没对齐）═══
+   原型 .row / .cv / .ic / .kids（以树左边为 0）：箭头格 6..18（中心 12）、图标 22（14px）、
+   文字 43；每级缩进 15；行距 32（行高 30 + 上下 1）；箭头 / 图标 / 文字同在行中线。
+   原来：箭头格 22 高贴顶（箭头比图标高 4px）、箭头中心→图标 15.5（原型 10）、缩进 10 */
+.sidebar-folder-tree .ant-tree-list-holder-inner {
+  padding-left: 6px;
+}
+.sidebar-folder-tree .ant-tree-indent-unit {
+  width: 15px;
+}
+.sidebar-folder-tree .ant-tree-switcher,
+.sidebar-folder-tree .ant-tree-switcher-noop {
+  width: 12px;
+  height: 30px;
+  line-height: 30px;
+  align-self: center;
+  margin-inline-end: 0 !important;
+}
+/* 图标统一 14（原型 svg.sm），图标与文字间距 7（原型 .row gap） */
+.sidebar-folder-tree .ant-tree-title svg.lucide:first-child {
+  width: 14px;
+  height: 14px;
+}
+.sidebar-folder-tree .ant-tree-title .gap-1\.5 {
+  gap: 7px;
+}
+/* 层级连线跟着新尺寸重算：竖线在每个缩进单元 6px 处（= 上一级箭头中心）；
+   短横线从竖线连到箭头左缘（距离 = 缩进 15 − 箭头中心 6 = 9），叶子连到图标前（9 + 12 + 4 − 3） */
+.sidebar-folder-tree.kb-tree-guides .ant-tree-indent-unit::before {
+  left: 6px;
+}
+.sidebar-folder-tree.kb-tree-guides .ant-tree-indent:not(:empty) ~ .ant-tree-switcher::before {
+  left: -9px;
+  width: 9px;
+}
+.sidebar-folder-tree.kb-tree-guides .ant-tree-indent:not(:empty) ~ .ant-tree-switcher-noop::before {
+  width: 22px;
+}
+/* 笔记行（key 前缀 note:）：原型 .kids 里的笔记没有 .cv，图标对齐上一级文件夹图标（差 1）。
+   去掉空箭头位，内容区左移 4，图标落在「缩进起点」上；空文件夹仍保留箭头位（原型 .cv 空格子） */
+.sidebar-folder-tree .ant-tree-treenode:has([data-tree-key^="note:"]) .ant-tree-switcher-noop {
+  width: 0;
+}
+.sidebar-folder-tree .ant-tree-treenode:has([data-tree-key^="note:"]) .ant-tree-node-content-wrapper {
+  margin-left: -4px;
+}
+.sidebar-folder-tree.kb-tree-guides .ant-tree-treenode:has([data-tree-key^="note:"]) .ant-tree-indent:not(:empty) ~ .ant-tree-switcher-noop::before {
+  left: -9px;
+  width: 6px;
+}
