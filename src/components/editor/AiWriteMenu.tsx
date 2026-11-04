@@ -926,7 +926,8 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
             left: triggerPos.x,
             top: triggerPos.y,
             zIndex: 999,
-            maxWidth: "min(720px, calc(100vw - 24px))",
+            // 860：格式 + 复制 / 剪切 + AI 一排在常见宽度下放得下，不用横向滚动
+            maxWidth: "min(860px, calc(100vw - 24px))",
           }}
           // 阻止 mousedown 冒泡到 document → 避免编辑器选区被清掉
           onMouseDown={(e) => e.preventDefault()}
