@@ -9305,3 +9305,26 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   min-height: 0;
   overflow-y: auto;
 }
+
+/* 首页压高度第二轮（2026-11-04 用户：940 高窗口仍有滚动条） */
+/* 页头去掉上下内边距（原型 .hm-h 57 高，原来多 6） */
+.kb-home-head {
+  padding: 0;
+}
+/* 快速记一笔：聚焦不出光环（原型无框）。全局 [data-theme=…] .ant-input:focus 的 3px 光环
+   带 !important 且优先级 (0,3,0)，这里抬到 (0,4,0) 才盖得住；标题 / 底栏间距收紧到原型 139 高 */
+[data-theme] .kb-quick-card .kb-quick-input.ant-input,
+[data-theme] .kb-quick-card .kb-quick-input.ant-input:focus {
+  box-shadow: none !important;
+  padding: 2px 0 !important;
+}
+.kb-quick-card .kb-card-h {
+  margin-bottom: 2px;
+}
+.kb-quick-card .kb-quick-foot {
+  margin-top: 2px;
+}
+/* 「还有 N 条」与卡片底边留白，左缘与待办文字对齐 */
+.kb-hm-more {
+  padding-bottom: 6px;
+}

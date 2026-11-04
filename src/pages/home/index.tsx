@@ -535,7 +535,8 @@ function DesktopHomePage() {
       // 不再限内容最大宽度：横向留白统一交给 AppLayout Content 的 padding，
       // 跟知识图谱 / 笔记 / 待办 / 提示词 等页一个口径（历史上这里是 max-w-5xl →
       // max-w-7xl，都是在单独跟"两侧留白太多"较劲，现在全站统一由一处控制）
-      style={{ display: "flex", flexDirection: "column", gap: 12 }}
+      // 行距 10（原 12）：首页要在 1080p 默认窗口里一屏放下底部热力图
+      style={{ display: "flex", flexDirection: "column", gap: 10 }}
     >
 
       {/* ① 页头：日期 + 问候（今天写了多少字）｜ 搜索 + 新建笔记 + 隐私模式（原型 .hm-head） */}
@@ -652,6 +653,7 @@ function DesktopHomePage() {
       {dailyEnabled && (
       <Card
         size="small"
+        className="kb-quick-card"
         styles={{ body: { padding: "12px 14px" } }}
       >
         <div className="kb-card-h">
@@ -871,14 +873,23 @@ function DesktopHomePage() {
                 ) : (
                   // 卡片固定高（.kb-home-r4），展开子任务超出时在卡片内滚动
                   <ul className="kb-hm-list">
-                    {active.items.map((t) => renderTaskRow(t, active.key))}
-                    {active.total > active.items.length && (
-                      <li className="kb-hm-more">
-                        <button type="button" onClick={() => navigate("/tasks")}>
-                          + 还有 {active.total - active.items.length} 条…
-                        </button>
-                      </li>
-                    )}
+                    {(() => {
+                      // 放得下 4 条；超出时只列 3 条，留一行给「还有 N 条」，不被卡片底边裁掉
+                      const shown =
+                        active.total > active.items.length ? active.items.slice(0, 3) : active.items;
+                      return (
+                        <>
+                          {shown.map((t) => renderTaskRow(t, active.key))}
+                          {active.total > shown.length && (
+                            <li className="kb-hm-more">
+                              <button type="button" onClick={() => navigate("/tasks")}>
+                                + 还有 {active.total - shown.length} 条…
+                              </button>
+                            </li>
+                          )}
+                        </>
+                      );
+                    })()}
                   </ul>
                 )}
               </>
