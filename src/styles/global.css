@@ -9340,3 +9340,26 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
 main.ant-layout-content:has(.kb-home) {
   padding-bottom: 12px !important;
 }
+
+/* 快捷入口下拉箭头：原来按钮自带 6px 圆角又画左边框，线条两端顺着圆角弯进去，
+   看着像「边框只剩左边、其余被盖住」（2026-11-04 用户指出）。
+   改为按钮本身无边框，左侧单独画一条 16 高的直分隔线，左右各留 8 */
+.kb-qe-caret {
+  position: relative;
+  margin-left: 8px;
+  border-left: none !important;
+}
+.kb-qe-caret::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  width: 1px;
+  height: 16px;
+  margin-top: -8px;
+  background: var(--kb-border-strong);
+}
+/* 没有下拉箭头的入口（今日笔记 / AI 问答 / 知识图谱）：右侧数字离边 14（原型 .qn），原来只有 6 */
+.kb-qe-main:only-child {
+  padding-right: 14px;
+}
