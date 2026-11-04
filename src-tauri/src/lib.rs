@@ -1164,6 +1164,12 @@ pub fn run() {
                 });
             }
 
+            // 回收站自动清理：删除满 N 天（默认 30，回收站页可改）的笔记永久删除
+            let app_handle_purge = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                services::trash::run_auto_purge_loop(app_handle_purge).await;
+            });
+
             // 定时推送调度器（独立于待办提醒，骨架同源）
             let app_handle_push = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -1397,6 +1403,8 @@ pub fn run() {
             commands::trash::empty_trash,
             commands::trash::restore_notes_batch,
             commands::trash::permanent_delete_notes_batch,
+            commands::trash::get_trash_auto_purge,
+            commands::trash::set_trash_auto_purge,
             // 每日笔记模块
             commands::daily::get_daily,
             commands::daily::get_or_create_daily,

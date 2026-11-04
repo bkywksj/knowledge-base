@@ -5,6 +5,7 @@ import {
   Pagination,
   Popconfirm,
   Modal,
+  Select,
   Spin,
   message,
 } from "antd";
@@ -13,7 +14,8 @@ import { folderApi, trashApi } from "@/lib/api";
 import { useTabsStore } from "@/store/tabs";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { relativeTime } from "@/lib/utils";
-import type { Folder, PageResult, TrashNote } from "@/types";
+import { daysUntilPurge, purgeLabel } from "@/lib/trashPurge";
+import type { Folder, PageResult, TrashAutoPurge, TrashNote } from "@/types";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import {
   ContextMenuOverlay,
@@ -54,6 +56,21 @@ function DesktopTrashPage() {
     void loadTrash(1, pageSize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** 自动清理设置；读失败就当不知道，不显示倒计时（不影响列表） */
+  const [purge, setPurge] = useState<TrashAutoPurge | null>(null);
+  useEffect(() => {
+    trashApi.getAutoPurge().then(setPurge).catch(() => {});
+  }, []);
+
+  async function handlePurgeDaysChange(days: number) {
+    try {
+      setPurge(await trashApi.setAutoPurge(days));
+      message.success(days === 0 ? "已关闭自动清理" : `已改为删除满 ${days} 天自动永久删除，从现在起算`);
+    } catch (e) {
+      message.error(String(e));
+    }
+  }
 
   /** 文件夹 id → 名：列表行「原位置」用 */
   const [folderMap, setFolderMap] = useState<Map<number, string>>(new Map());
@@ -216,6 +233,23 @@ function DesktopTrashPage() {
         <h1>回收站</h1>
         <span className="kb-trash-count">{data.total} 篇</span>
         <span className="flex-1" />
+        {purge && (
+          <span className="kb-trash-purge">
+            自动清理
+            <Select
+              size="small"
+              value={purge.days}
+              onChange={handlePurgeDaysChange}
+              popupMatchSelectWidth={false}
+              options={[
+                { value: 0, label: "从不" },
+                { value: 7, label: "删除满 7 天" },
+                { value: 30, label: "删除满 30 天" },
+                { value: 90, label: "删除满 90 天" },
+              ]}
+            />
+          </span>
+        )}
         {data.items.length > 0 && (
           <Button className="kb-danger-soft kb-bar-btn-p" icon={<Trash2 size={14} />} onClick={handleEmptyTrash}>
             清空回收站
@@ -225,8 +259,10 @@ function DesktopTrashPage() {
 
       <div className="kb-trash-tip">
         <Info size={14} />
-        {/* 应用没有按时间自动清理回收站（原文案写「30 天后自动永久删除」与实际不符） */}
-        提示：回收站里的笔记会一直保留，不会自动删除；可以随时恢复，或手动永久删除。
+        {/* 文案跟着实际设置走，不写死天数 */}
+        {purge && purge.days > 0
+          ? `提示：回收站里的笔记删除满 ${purge.days} 天后会自动永久删除（连同图片和附件）；到期前可以随时恢复。`
+          : "提示：已关闭自动清理，回收站里的笔记会一直保留；可以随时恢复，或手动永久删除。"}
       </div>
 
       {/* 批量工具条：仅有选中时显示（原型 .selbar） */}
@@ -282,6 +318,9 @@ function DesktopTrashPage() {
                 const checked = selectedIds.includes(n.id);
                 const folderName =
                   n.folder_id == null ? "未分类" : folderMap.get(n.folder_id) ?? "已删除的文件夹";
+                const purgeText = purge
+                  ? purgeLabel(daysUntilPurge(n.deleted_at, purge.since, purge.days))
+                  : null;
                 return (
                   <div
                     key={n.id}
@@ -306,6 +345,7 @@ function DesktopTrashPage() {
                       <div className="kb-sr-title">{n.title || "(无标题)"}</div>
                       <div className="kb-sr-snippet is-one">
                         原位置：{folderName} · {n.word_count} 字
+                        {purgeText && <span className="kb-trash-purge-left"> · {purgeText}</span>}
                       </div>
                     </div>
                     {/* 显示删除时间；老数据没有删除时间时退回「修改于」 */}

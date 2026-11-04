@@ -1216,6 +1216,14 @@ export interface NoteTemplateInput {
 }
 
 /** 回收站列表项：Note 字段 + 删除时间（与 Rust TrashNote 对齐，serde flatten 平铺） */
+/** 回收站自动清理设置（与 Rust TrashAutoPurge 对齐） */
+export interface TrashAutoPurge {
+  /** 删除满多少天自动永久删除；0 = 从不 */
+  days: number;
+  /** 规则生效时间（本地 YYYY-MM-DD HH:MM:SS）；之前就在回收站里的从这一刻起算 */
+  since: string;
+}
+
 export interface TrashNote extends Note {
   /** 移入回收站的时间（本地时间 YYYY-MM-DD HH:MM:SS）；老数据可能为空 */
   deleted_at: string | null;

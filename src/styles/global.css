@@ -9272,3 +9272,21 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   font-size: 13px;
   font-weight: 600;
 }
+
+/* 回收站自动清理：顶栏「自动清理 [删除满 30 天]」，与顶栏描边按钮同高同字色 */
+.kb-trash-purge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 8px;
+  font-size: 12.5px;
+  color: var(--kb-ink2);
+}
+.kb-trash-purge .ant-select {
+  min-width: 128px;
+  height: 30px;
+}
+/* 行内倒计时：二级字色，不抢标题 */
+.kb-trash-purge-left {
+  color: var(--kb-text-secondary);
+}

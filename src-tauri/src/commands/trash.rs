@@ -1,4 +1,4 @@
-use crate::models::{PageResult, RestoreBatchResult, TrashNote};
+use crate::models::{PageResult, RestoreBatchResult, TrashAutoPurge, TrashNote};
 use crate::services::trash::TrashService;
 use crate::state::AppState;
 
@@ -57,4 +57,19 @@ pub fn permanent_delete_notes_batch(
 ) -> Result<usize, String> {
     TrashService::permanent_delete_batch(&state.db, &state.data_dir, &ids)
         .map_err(|e| e.to_string())
+}
+
+/// 读回收站自动清理设置（天数 + 生效时间）
+#[tauri::command(async)]
+pub fn get_trash_auto_purge(state: tauri::State<'_, AppState>) -> Result<TrashAutoPurge, String> {
+    TrashService::auto_purge_settings(&state.db).map_err(|e| e.to_string())
+}
+
+/// 改回收站自动清理天数（0 / 7 / 30 / 90；0 = 从不），生效时间重置为现在
+#[tauri::command(async)]
+pub fn set_trash_auto_purge(
+    state: tauri::State<'_, AppState>,
+    days: u32,
+) -> Result<TrashAutoPurge, String> {
+    TrashService::set_auto_purge_days(&state.db, days).map_err(|e| e.to_string())
 }

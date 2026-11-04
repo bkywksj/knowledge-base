@@ -1078,6 +1078,16 @@ pub struct TrashNote {
     pub deleted_at: Option<String>,
 }
 
+/// 回收站自动清理设置
+#[derive(Debug, Clone, Serialize)]
+pub struct TrashAutoPurge {
+    /// 删除满多少天自动永久删除；0 = 从不
+    pub days: u32,
+    /// 规则生效时间（本地时间 YYYY-MM-DD HH:MM:SS）。到期时间按
+    /// max(删除时间, 生效时间) + days 算，生效前就在回收站里的笔记从这一刻起算
+    pub since: String,
+}
+
 // ─── 通用 ─────────────────────────────────────
 
 /// 分页响应

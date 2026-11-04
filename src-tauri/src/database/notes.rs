@@ -1312,6 +1312,32 @@ impl Database {
         Ok((notes, total))
     }
 
+    /// 回收站里到了自动清理时间的笔记 id。
+    ///
+    /// 到期时间 = max(删除时间, 规则生效时间) + days 天：规则生效前就在回收站里的
+    /// 老笔记从生效那一刻起算，不会一上线就被成批删掉；没有删除时间的早期数据同理。
+    /// `since` / `now` 都是 `YYYY-MM-DD HH:MM:SS` 本地时间（与 deleted_at 同格式，可直接比较）。
+    pub fn list_expired_trash_ids(
+        &self,
+        days: u32,
+        since: &str,
+        now: &str,
+    ) -> Result<Vec<i64>, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "SELECT id FROM notes
+             WHERE is_deleted = 1
+               AND datetime(MAX(COALESCE(deleted_at, ?2), ?2), '+' || ?1 || ' days') <= datetime(?3)",
+        )?;
+        let ids = stmt
+            .query_map(params![days, since, now], |row| row.get(0))?
+            .collect::<Result<Vec<i64>, _>>()?;
+        Ok(ids)
+    }
+
     /// 清空回收站
     pub fn empty_trash(&self) -> Result<usize, AppError> {
         let conn = self

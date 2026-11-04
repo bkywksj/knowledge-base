@@ -2,10 +2,47 @@ use std::path::Path;
 
 use crate::database::Database;
 use crate::error::AppError;
-use crate::models::{PageResult, RestoreBatchResult, TrashNote};
+use crate::models::{PageResult, RestoreBatchResult, TrashAutoPurge, TrashNote};
 use crate::services::attachment::AttachmentService;
 use crate::services::image::ImageService;
 use crate::services::pdf::PdfService;
+
+/// 自动清理天数（app_config）；缺省 = [`DEFAULT_PURGE_DAYS`]，"0" = 从不
+const KEY_PURGE_DAYS: &str = "trash.auto_purge_days";
+/// 自动清理规则生效时间（app_config），见 [`TrashAutoPurge::since`]
+const KEY_PURGE_SINCE: &str = "trash.auto_purge_since";
+/// 默认删除满 30 天自动清理（2026-11-04 用户选定）
+const DEFAULT_PURGE_DAYS: u32 = 30;
+/// 界面上给的选项；别的值一律拒绝，免得手改配置写进 1 天这种一不小心就删光的值
+const PURGE_DAYS_CHOICES: [u32; 4] = [0, 7, 30, 90];
+
+fn now_local() -> String {
+    chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+/// 后台定时清理回收站：启动 1 分钟后跑一次（不跟启动抢 IO），之后每 6 小时一次。
+/// 精度要求低（按天算的规则），不必像待办提醒那样精确唤醒
+pub async fn run_auto_purge_loop(app: tauri::AppHandle) {
+    use tauri::Manager;
+    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    loop {
+        let app2 = app.clone();
+        let res = tokio::task::spawn_blocking(move || {
+            // setup 降级启动时可能没注册 AppState，用 try_state 别 panic
+            match app2.try_state::<crate::state::AppState>() {
+                Some(state) => TrashService::auto_purge(&state.db, &state.data_dir),
+                None => Ok(0),
+            }
+        })
+        .await;
+        match res {
+            Ok(Err(e)) => log::warn!("回收站自动清理失败: {}", e),
+            Err(e) => log::warn!("回收站自动清理任务异常: {}", e),
+            Ok(Ok(_)) => {}
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(6 * 3600)).await;
+    }
+}
 
 /// 回收站服务
 pub struct TrashService;
@@ -159,6 +196,61 @@ impl TrashService {
         Ok(count)
     }
 
+    /// 读自动清理设置。
+    ///
+    /// 第一次读（升级到带自动清理的版本后）把「现在」记成生效时间并落库：
+    /// 老用户回收站里的存量笔记从这一刻起算，不会一升级就被成批永久删除。
+    pub fn auto_purge_settings(db: &Database) -> Result<TrashAutoPurge, AppError> {
+        let days = db
+            .get_config(KEY_PURGE_DAYS)?
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .filter(|d| PURGE_DAYS_CHOICES.contains(d))
+            .unwrap_or(DEFAULT_PURGE_DAYS);
+        let since = match db.get_config(KEY_PURGE_SINCE)? {
+            Some(s) if !s.trim().is_empty() => s,
+            _ => {
+                let now = now_local();
+                db.set_config(KEY_PURGE_SINCE, &now)?;
+                now
+            }
+        };
+        Ok(TrashAutoPurge { days, since })
+    }
+
+    /// 改自动清理天数。生效时间同时重置为现在：
+    /// 改短天数不会让已在回收站里的笔记立刻被删，用户总有 days 天反悔
+    pub fn set_auto_purge_days(db: &Database, days: u32) -> Result<TrashAutoPurge, AppError> {
+        if !PURGE_DAYS_CHOICES.contains(&days) {
+            return Err(AppError::InvalidInput(format!(
+                "自动清理天数只能是 {:?} 之一",
+                PURGE_DAYS_CHOICES
+            )));
+        }
+        let since = now_local();
+        db.set_config(KEY_PURGE_DAYS, &days.to_string())?;
+        db.set_config(KEY_PURGE_SINCE, &since)?;
+        Ok(TrashAutoPurge { days, since })
+    }
+
+    /// 按设置永久删除到期的回收站笔记（连带图片 / 附件 / 源文件），返回删除条数
+    pub fn auto_purge(db: &Database, data_dir: &Path) -> Result<usize, AppError> {
+        Self::auto_purge_at(db, data_dir, &now_local())
+    }
+
+    fn auto_purge_at(db: &Database, data_dir: &Path, now: &str) -> Result<usize, AppError> {
+        let s = Self::auto_purge_settings(db)?;
+        if s.days == 0 {
+            return Ok(0);
+        }
+        let ids = db.list_expired_trash_ids(s.days, &s.since, now)?;
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let n = Self::permanent_delete_batch(db, data_dir, &ids)?;
+        log::info!("回收站自动清理：删除满 {} 天的 {} 篇笔记已永久删除", s.days, n);
+        Ok(n)
+    }
+
     /// 清空回收站（连带清理所有关联图片 + 源文件）
     pub fn empty(db: &Database, data_dir: &Path) -> Result<usize, AppError> {
         // 先拿到所有待删笔记的 (id, source_path)
@@ -178,5 +270,113 @@ impl TrashService {
             items.len()
         );
         Ok(affected)
+    }
+}
+
+#[cfg(test)]
+mod auto_purge_tests {
+    use super::*;
+    use crate::models::NoteInput;
+
+    fn trashed(db: &Database, deleted_at: Option<&str>) -> i64 {
+        let id = db
+            .create_note(&NoteInput {
+                title: "t".into(),
+                content: "x".into(),
+                folder_id: None,
+            })
+            .unwrap()
+            .id;
+        db.soft_delete_note(id).unwrap();
+        let conn = db.conn_lock().unwrap();
+        conn.execute(
+            "UPDATE notes SET deleted_at = ?1 WHERE id = ?2",
+            rusqlite::params![deleted_at, id],
+        )
+        .unwrap();
+        id
+    }
+
+    fn exists(db: &Database, id: i64) -> bool {
+        let conn = db.conn_lock().unwrap();
+        conn.query_row("SELECT COUNT(*) FROM notes WHERE id = ?1", [id], |r| {
+            r.get::<_, i64>(0)
+        })
+        .unwrap()
+            > 0
+    }
+
+    fn setup(days: &str, since: &str) -> (Database, std::path::PathBuf) {
+        let db = Database::init(":memory:").unwrap();
+        db.set_config(KEY_PURGE_DAYS, days).unwrap();
+        db.set_config(KEY_PURGE_SINCE, since).unwrap();
+        // 删资产目录时用；目录不存在只会 warn
+        let dir = std::env::temp_dir().join(format!("kb-purge-test-{}", std::process::id()));
+        (db, dir)
+    }
+
+    /// 生效前就在回收站里的笔记从生效时间起算：一升级不能把老东西成批删掉
+    #[test]
+    fn old_items_count_from_since_not_deleted_at() {
+        let (db, dir) = setup("30", "2026-11-01 00:00:00");
+        let old = trashed(&db, Some("2025-01-01 00:00:00"));
+        let no_time = trashed(&db, None);
+
+        assert_eq!(TrashService::auto_purge_at(&db, &dir, "2026-11-30 23:59:59").unwrap(), 0);
+        assert!(exists(&db, old) && exists(&db, no_time));
+
+        assert_eq!(TrashService::auto_purge_at(&db, &dir, "2026-12-01 00:00:00").unwrap(), 2);
+        assert!(!exists(&db, old) && !exists(&db, no_time));
+    }
+
+    #[test]
+    fn new_items_count_from_deleted_at() {
+        let (db, dir) = setup("7", "2026-01-01 00:00:00");
+        let a = trashed(&db, Some("2026-11-01 10:00:00"));
+        let b = trashed(&db, Some("2026-11-05 10:00:00"));
+        assert_eq!(TrashService::auto_purge_at(&db, &dir, "2026-11-08 10:00:00").unwrap(), 1);
+        assert!(!exists(&db, a));
+        assert!(exists(&db, b), "没满 7 天的不能删");
+    }
+
+    #[test]
+    fn zero_days_never_purges_and_live_notes_untouched() {
+        let (db, dir) = setup("0", "2020-01-01 00:00:00");
+        let t = trashed(&db, Some("2020-01-01 00:00:00"));
+        assert_eq!(TrashService::auto_purge_at(&db, &dir, "2030-01-01 00:00:00").unwrap(), 0);
+        assert!(exists(&db, t));
+
+        // 正常笔记无论多老都不碰
+        let (db, dir) = setup("7", "2020-01-01 00:00:00");
+        let live = db
+            .create_note(&NoteInput {
+                title: "活".into(),
+                content: "x".into(),
+                folder_id: None,
+            })
+            .unwrap()
+            .id;
+        TrashService::auto_purge_at(&db, &dir, "2030-01-01 00:00:00").unwrap();
+        assert!(exists(&db, live));
+    }
+
+    #[test]
+    fn first_read_records_since_and_defaults_to_30() {
+        let db = Database::init(":memory:").unwrap();
+        let s = TrashService::auto_purge_settings(&db).unwrap();
+        assert_eq!(s.days, 30);
+        assert_eq!(db.get_config(KEY_PURGE_SINCE).unwrap(), Some(s.since.clone()));
+        // 再读不会挪动生效时间
+        assert_eq!(TrashService::auto_purge_settings(&db).unwrap().since, s.since);
+    }
+
+    #[test]
+    fn set_days_validates_and_resets_since() {
+        let db = Database::init(":memory:").unwrap();
+        db.set_config(KEY_PURGE_SINCE, "2020-01-01 00:00:00").unwrap();
+        assert!(TrashService::set_auto_purge_days(&db, 1).is_err());
+        let s = TrashService::set_auto_purge_days(&db, 7).unwrap();
+        assert_eq!(s.days, 7);
+        assert_ne!(s.since, "2020-01-01 00:00:00", "改天数要重置生效时间");
     }
 }

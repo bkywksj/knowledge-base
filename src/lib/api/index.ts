@@ -24,6 +24,7 @@ import type {
   NoteInput,
   NoteQuery,
   PageResult,
+  TrashAutoPurge,
   TrashNote,
   Folder,
   EmptyFolderInfo,
@@ -671,6 +672,10 @@ export const trashApi = {
   /** 批量永久删除；返回实际删除条数 */
   permanentDeleteBatch: (ids: number[]) =>
     invoke<number>("permanent_delete_notes_batch", { ids }),
+  /** 自动清理设置（首次读取会记下生效时间） */
+  getAutoPurge: () => invoke<TrashAutoPurge>("get_trash_auto_purge"),
+  /** 改自动清理天数（0 / 7 / 30 / 90）；生效时间重置为现在，不会立刻删已有的 */
+  setAutoPurge: (days: number) => invoke<TrashAutoPurge>("set_trash_auto_purge", { days }),
 };
 
 /** 每日笔记 API */
