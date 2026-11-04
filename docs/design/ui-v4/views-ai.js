@@ -21,7 +21,22 @@ KB.add('ai', {
       .mchip{height:28px;display:flex;align-items:center;gap:6px;padding:0 10px;border-radius:999px;background:#fff;box-shadow:var(--sh-raised);font-size:12px;color:var(--ink2);cursor:default}
       .mchip .p{width:6px;height:6px;border-radius:50%;background:var(--ok)}
       .tgl{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink2);padding:0 6px}
+      .msgs-w{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
       .msgs{flex:1;overflow:auto;padding:22px 0 10px;scrollbar-gutter:stable both-edges}
+      /* 提问导航（应用 components/ai/AskNav.tsx）：右边缘细短线，悬停展开提问列表；≥3 条提问才出现，Alt+↑/↓ 上下跳 */
+      .asknav{position:absolute;right:8px;top:50%;transform:translateY(-50%);z-index:5}
+      .asknav .ticks{display:flex;flex-direction:column;align-items:flex-end;gap:6px;padding:8px 4px}
+      .asknav .ticks i{width:14px;height:2px;border-radius:1px;background:var(--hair2)}
+      .asknav .ticks i.on{width:20px;background:var(--accent)}
+      .asknav .pnl{display:none;position:absolute;right:0;top:50%;transform:translateY(-50%);width:260px;padding:6px;border-radius:12px;background:#fff;box-shadow:0 0 0 .5px var(--hair2),0 12px 32px -12px rgba(40,30,90,.3)}
+      .asknav:hover .pnl{display:block}
+      .asknav .pnl .h{display:flex;justify-content:space-between;padding:4px 8px 6px;font-size:11.5px;color:var(--ink4)}
+      .asknav .pnl .it{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:6px;font-size:12.5px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .asknav .pnl .it:hover{background:var(--hover)}
+      .asknav .pnl .it.on{color:var(--accent);background:var(--accent-soft)}
+      .asknav .pnl .it small{min-width:16px;font-size:11.5px;color:var(--ink4)}
+      .asknav .pnl .it span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+      .asknav .pnl .it.on small{color:inherit}
       .mi-in{max-width:1020px;margin:0 auto;padding:0 30px}
       .um{display:flex;justify-content:flex-end;align-items:flex-start;gap:6px;margin-bottom:18px}
       .um .bub{max-width:72%;padding:10px 14px;border-radius:14px 14px 4px 14px;background:var(--grad);color:#fff;font-size:14.5px;line-height:1.7;box-shadow:0 4px 14px -6px rgba(124,99,220,.5)}
@@ -83,7 +98,7 @@ KB.add('ai', {
           <button class="btn btn-t sm" title="把所有回复的执行过程收成一行摘要">${I('collapse', 'sm')}收起过程</button>
           <button class="btn btn-o sm" title="把整个对话归档成一篇笔记">${I('save', 'sm')}存为笔记</button>
         </div>
-        <div class="msgs"><div class="mi-in">
+        <div class="msgs-w"><div class="msgs"><div class="mi-in">
           <div class="um"><div class="acts"><button class="ib sm hv" title="把这条提问放回输入框修改后重发（会撤回它之后的消息）">${I('pen', 'xs')}</button><button class="ib sm hv" title="复制">${I('copy', 'xs')}</button></div>
             <div class="bub">所有权和借用到底差在哪？结合我自己的笔记讲，别给我教科书。</div></div>
           <div class="turn">
@@ -114,6 +129,10 @@ KB.add('ai', {
               <span class="sp"></span><span>23:18</span>
             </div>
           </div>
+        </div></div>
+        <div class="asknav" title="">
+          <div class="ticks"><i class="on"></i><i></i><i></i><i></i><i></i></div>
+          <div class="pnl"><div class="h">提问 5 条<span>Alt+↑ / ↓</span></div><div class="it on"><small>1</small><span>所有权和借用到底差在哪？结合我自己的笔记讲</span></div><div class="it"><small>2</small><span>函数传参时的移动怎么理解</span></div><div class="it"><small>3</small><span>把生命周期那段补进 Rust 所有权笔记</span></div><div class="it"><small>4</small><span>📎 帮我统计一下这张表</span></div><div class="it"><small>5</small><span>下周学习计划排一下</span></div></div>
         </div></div>
         <div class="cmp"><div class="cmp-in">
           <div class="att">
