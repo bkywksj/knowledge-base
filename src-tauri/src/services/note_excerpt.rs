@@ -74,35 +74,12 @@ pub fn for_notes(db: &Database, note_ids: &[i64]) -> Result<Vec<NoteExcerpt>, Ap
     Ok(out)
 }
 
-/// 正文 → 适合摊在卡片上的纯文本。
+/// 正文 → 适合摊在卡片上的纯文本（保留换行，卡片多行展示）。
 ///
-/// 去掉 HTML 标签与常见 Markdown 标记：卡片是给人扫一眼的，
-/// 留着 `##` `**` 这些符号只会干扰阅读。
+/// 卡片是给人扫一眼的，留着 `##` `**` 这些符号只会干扰阅读；
+/// 规则与搜索摘要共用，见 `plain_text`。
 fn to_plain_text(content: &str) -> String {
-    let mut out = String::with_capacity(content.len());
-    let mut in_tag = false;
-    for ch in content.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => out.push(ch),
-            _ => {}
-        }
-    }
-
-    // 逐行清掉行首的标题 / 引用 / 列表符号，行内的强调符号也去掉。
-    // 刻意不做完整的 Markdown 解析：卡片只要"看着像正文"，
-    // 为此引一个解析器不值得，且解析失败的边角情况反而更难处理。
-    let cleaned: Vec<String> = out
-        .lines()
-        .map(|line| {
-            let t = line.trim();
-            let t = t.trim_start_matches(['#', '>', '-', '*', '+']).trim_start();
-            t.replace("**", "").replace("`", "")
-        })
-        .filter(|l| !l.is_empty())
-        .collect();
-    cleaned.join("\n")
+    super::plain_text::markdown_to_plain(content, true)
 }
 
 /// 按**字符**（不是字节）截断，中文才不会被切成乱码。

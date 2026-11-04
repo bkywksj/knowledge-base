@@ -69,6 +69,8 @@ pub mod ocr;
 pub mod mac_ocr;
 pub mod orphan_scan;
 pub mod pdf;
+// Markdown 正文 → 纯文本（搜索摘要、白板笔记卡片共用）
+pub mod plain_text;
 // 笔记 pop-out 窗口仅桌面端（移动端改 Modal）
 #[cfg(desktop)]
 pub mod popout_window;

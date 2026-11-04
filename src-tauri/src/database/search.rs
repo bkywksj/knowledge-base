@@ -194,15 +194,23 @@ impl Database {
 
         let results = stmt
             .query_map(&*binds_ref, |row| {
+                // snippet() 取的是 fts5 第 1 列 = fts_body 生成列
+                // (= COALESCE(search_text, content))，白板拿到画布文字而非 JSON
+                let snippet: String = row.get(2)?;
+                let note_type: String = row.get(5)?;
                 Ok(SearchResult {
                     id: row.get(0)?,
                     title: row.get(1)?,
-                    // snippet() 取的是 fts5 第 1 列 = fts_body 生成列
-                    // (= COALESCE(search_text, content))，白板拿到画布文字而非 JSON
-                    snippet: row.get(2)?,
+                    // 普通笔记的片段切自 Markdown 原文，带着 ** [ ## 这些符号，
+                    // 去掉再给人看（<mark> 高亮保留）；白板本来就是画布纯文字
+                    snippet: if note_type == crate::models::note_type::WHITEBOARD {
+                        snippet
+                    } else {
+                        crate::services::plain_text::snippet_to_plain(&snippet)
+                    },
                     updated_at: row.get(3)?,
                     folder_id: row.get(4)?,
-                    note_type: row.get(5)?,
+                    note_type,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -360,7 +368,13 @@ impl Database {
         let results = results
             .into_iter()
             .map(|(id, title, body, updated_at, folder_id, note_type)| {
-                let snippet = build_highlight_snippet(&body, &highlight_terms);
+                // 先转纯文本再定位关键词：在 Markdown 原文上截会把 ** [ 等符号带进摘要
+                let snippet = if note_type == crate::models::note_type::WHITEBOARD {
+                    build_highlight_snippet(&body, &highlight_terms)
+                } else {
+                    let plain = crate::services::plain_text::markdown_to_plain(&body, false);
+                    build_highlight_snippet(&plain, &highlight_terms)
+                };
                 SearchResult {
                     id,
                     title,
@@ -577,6 +591,27 @@ mod tests {
             "snippet 必须有高亮，实际: {}",
             hits[0].snippet
         );
+    }
+
+    /// 摘要不能带 Markdown 符号 —— dev 库实际搜出过 `**\[11:06\]** 你好` 这种片段。
+    /// 两字词与长词分别覆盖 LIKE 回退和 FTS snippet() 两条路径
+    #[test]
+    fn snippet_has_no_markdown_markers() {
+        let db = temp_db();
+        add(
+            &db,
+            "对话归档",
+            "## 记录\n**\\[11:06\\]** 你好，今天写日记\n- 见 [开发日志](https://x.y/z) 第二条",
+        );
+        for q in ["日记", "开发日志"] {
+            let hits = db.search_notes(q, 20).unwrap();
+            assert_eq!(hits.len(), 1, "「{}」应召回 1 条", q);
+            let s = &hits[0].snippet;
+            assert!(s.contains("<mark>"), "「{}」的摘要应保留高亮: {}", q, s);
+            for bad in ["**", "\\[", "##", "](", "https://"] {
+                assert!(!s.contains(bad), "「{}」的摘要不该含 {}: {}", q, bad, s);
+            }
+        }
     }
 
     // ─── P1-2 筛选维度 ───────────────────────────────
