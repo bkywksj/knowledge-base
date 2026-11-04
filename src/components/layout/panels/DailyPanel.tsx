@@ -443,6 +443,7 @@ export function DailyPanel() {
                       key={e.daily_date}
                       date={e.daily_date}
                       title={e.title}
+                      wordCount={e.word_count}
                       selected={selectedDate === e.daily_date}
                       isToday={e.daily_date === today}
                       hasEntry
@@ -481,6 +482,7 @@ export function DailyPanel() {
 function DateRow({
   date,
   title,
+  wordCount,
   selected,
   isToday,
   hasEntry,
@@ -494,6 +496,8 @@ function DateRow({
    * 月历视图只有日期串、拿不到标题，留空回退为「星期 + 日期」。
    */
   title?: string;
+  /** 正文字数，仅「全部」视图有；今天那行仍显示「今天」，0 字不显示 */
+  wordCount?: number;
   selected: boolean;
   isToday: boolean;
   hasEntry: boolean;
@@ -528,7 +532,11 @@ function DateRow({
     >
       <Calendar size={14} className="kb-day-row-ic" />
       <span className="kb-day-row-lb">{label}</span>
-      {isToday && <span className="kb-day-row-ct">今天</span>}
+      {isToday ? (
+        <span className="kb-day-row-ct">今天</span>
+      ) : wordCount ? (
+        <span className="kb-day-row-ct">{wordCount.toLocaleString("en-US")} 字</span>
+      ) : null}
     </div>
   );
 }

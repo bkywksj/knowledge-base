@@ -1184,6 +1184,8 @@ export interface DailyEntry {
   /** YYYY-MM-DD */
   daily_date: string;
   updated_at: string;
+  /** 正文字数，日记列表行尾显示 */
+  word_count: number;
 }
 
 // ─── 写作趋势 ─────────────────────────────────

@@ -50,6 +50,21 @@ pub fn snippet_to_plain(snippet: &str) -> String {
         .replace(MARK_CLOSE, "</mark>")
 }
 
+/// 字数，与编辑器状态栏同一口径（`src/lib/textStats.ts` 的 calcTextStats）：
+/// 中文（含扩展 A）/ 日文假名每个算 1 字，其余按空白分词每词算 1 字。
+///
+/// notes.word_count 列是触发器按「原文去空格长度」算的，`#` `**` HTML 标签都计入，
+/// 空日记 `<p><br></p>` 也有 11，给人看的地方不能用它。
+pub fn count_words(content: &str) -> usize {
+    let plain = markdown_to_plain(content, true);
+    let is_cjk = |c: char| {
+        matches!(c, '\u{4e00}'..='\u{9fff}' | '\u{3400}'..='\u{4dbf}' | '\u{3040}'..='\u{309f}' | '\u{30a0}'..='\u{30ff}')
+    };
+    let cjk = plain.chars().filter(|&c| is_cjk(c)).count();
+    let non_cjk: String = plain.chars().map(|c| if is_cjk(c) { ' ' } else { c }).collect();
+    cjk + non_cjk.split_whitespace().count()
+}
+
 /// 去掉 `<…>` 标签（正文里可能混有 HTML）
 fn strip_html_tags(content: &str) -> String {
     let mut out = String::with_capacity(content.len());
@@ -74,6 +89,9 @@ fn strip_line_prefix(line: &str) -> &str {
         let rest = &t[digits..];
         if let Some(r) = rest.strip_prefix(". ").or_else(|| rest.strip_prefix(") ")) {
             t = r.trim_start();
+        } else if rest == "." || rest == ")" {
+            // 空列表项「1.」（行已 trim，后面的空格没了）
+            return "";
         }
     }
     // 任务框「[ ] 」「[x] 」
@@ -202,6 +220,17 @@ mod tests {
         // dev 库实际出现过：AI 对话归档的时间戳行尾带硬换行，标注块带 [!info]
         let md = "> [!info] 🕐 14:58\\\n你好";
         assert_eq!(markdown_to_plain(md, false), "🕐 14:58 你好");
+    }
+
+    #[test]
+    fn count_words_matches_editor_rules() {
+        assert_eq!(count_words("<p><br></p>"), 0, "空日记不该有字数");
+        assert_eq!(count_words("# \n\n<p><br></p>"), 0);
+        // 会议模板里的空有序列表项，编辑器不计
+        assert_eq!(count_words("1. <p><br></p>\n\n- <p><br></p>"), 0);
+        // 中文按字、英文按词；符号不计
+        assert_eq!(count_words("**\\[11:06\\]** 你好"), 3);
+        assert_eq!(count_words("## 会议\n用 Rust 写 hello world"), 7);
     }
 
     #[test]

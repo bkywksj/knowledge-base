@@ -8106,6 +8106,9 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   flex: none;
   font-size: 12px;
   color: var(--kb-text-secondary);
+  /* 原型 .num：行尾字数等宽数字，上下行对齐 */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 /* 小节标题「本月 / N 月」（原型 .sec）：11.5 / 700、二级色、30 高 */
 .kb-daily-sec {

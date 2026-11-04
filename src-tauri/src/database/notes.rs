@@ -1614,7 +1614,7 @@ impl Database {
             .map_err(|e| AppError::Custom(e.to_string()))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, daily_date, updated_at
+            "SELECT id, title, daily_date, updated_at, content, is_encrypted
              FROM notes
              WHERE is_daily = 1 AND is_deleted = 0 AND is_hidden = 0
                    AND daily_date IS NOT NULL
@@ -1623,11 +1623,20 @@ impl Database {
 
         let entries = stmt
             .query_map([], |row| {
+                // 字数现算而不读 word_count 列：那一列把 Markdown / HTML 符号也数进去了，
+                // 空日记都有 11。加密日记的 content 是密文，不算
+                let content: String = row.get(4)?;
+                let encrypted: bool = row.get(5)?;
                 Ok(DailyEntry {
                     id: row.get(0)?,
                     title: row.get(1)?,
                     daily_date: row.get(2)?,
                     updated_at: row.get(3)?,
+                    word_count: if encrypted {
+                        0
+                    } else {
+                        crate::services::plain_text::count_words(&content)
+                    },
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -2356,5 +2365,48 @@ mod trash_list_tests {
         assert_eq!(v["title"], "t");
         assert!(v["deleted_at"].is_string());
         assert!(v.get("note").is_none(), "Note 字段应平铺，不能嵌在 note 下");
+    }
+}
+
+#[cfg(test)]
+mod daily_list_tests {
+    //! 日记列表行尾要显示字数；回收站 / 隐藏的日记不进列表
+
+    use super::*;
+
+    #[test]
+    fn list_all_dailies_carries_word_count() {
+        let db = Database::init(":memory:").expect("init :memory: 应成功");
+        let a = db.get_or_create_daily("2026-11-01").unwrap();
+        db.update_note(
+            a.id,
+            &NoteInput {
+                title: a.title.clone(),
+                content: "今天写了五个字".into(),
+                folder_id: a.folder_id,
+            },
+        )
+        .unwrap();
+        let b = db.get_or_create_daily("2026-11-02").unwrap();
+        let c = db.get_or_create_daily("2026-11-03").unwrap();
+        db.soft_delete_note(b.id).unwrap();
+        {
+            let conn = db.conn_lock().unwrap();
+            conn.execute("UPDATE notes SET is_hidden = 1 WHERE id = ?1", [c.id])
+                .unwrap();
+        }
+
+        let list = db.list_all_dailies().unwrap();
+        assert_eq!(list.len(), 1, "回收站 / 隐藏的日记不该在列表里");
+        assert_eq!(list[0].daily_date, "2026-11-01");
+        assert_eq!(list[0].word_count, 7);
+
+        // 加密日记的正文是密文，不能数出字数来
+        {
+            let conn = db.conn_lock().unwrap();
+            conn.execute("UPDATE notes SET is_encrypted = 1 WHERE id = ?1", [a.id])
+                .unwrap();
+        }
+        assert_eq!(db.list_all_dailies().unwrap()[0].word_count, 0);
     }
 }

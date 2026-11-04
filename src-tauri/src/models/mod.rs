@@ -1029,6 +1029,9 @@ pub struct DailyEntry {
     /// YYYY-MM-DD
     pub daily_date: String,
     pub updated_at: String,
+    /// 正文字数（与编辑器状态栏同口径，见 plain_text::count_words），日记列表行尾显示；
+    /// 加密日记为 0
+    pub word_count: usize,
 }
 
 // ─── 写作趋势 ─────────────────────────────────
