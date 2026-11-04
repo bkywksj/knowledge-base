@@ -7678,10 +7678,12 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   min-width: 28px !important;
   color: var(--kb-ink2);
 }
-/* 标题（原型 .doc-title）：34 / 700，字距 -0.015em */
+/* 标题：原型 .doc-title 34 / 700，字距 -0.015em。
+   2026-11-04 用户要小一点 → 30（长标题少折行，仍比正文 H1 的 25.6 大一档），
+   并恢复跟随「界面缩放」（写死 34px 时丢了 ui-scale） */
 .editor-title.ant-input,
 .editor-title .ant-input {
-  font-size: 34px !important;
+  font-size: calc(30px * var(--ui-scale, 1)) !important;
   letter-spacing: -0.015em;
 }
 /* 元数据行（原型 .doc-meta）：标题下 14、正文上 26；文件夹块 / 标签胶囊 / + 标签 */
