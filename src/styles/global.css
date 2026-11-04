@@ -9324,7 +9324,12 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
 .kb-quick-card .kb-quick-foot {
   margin-top: 2px;
 }
-/* 「还有 N 条」与卡片底边留白，左缘与待办文字对齐 */
-.kb-hm-more {
-  padding-bottom: 6px;
+/* 待办速览放 4 条 + 「还有 N 条」正好 256 高：胶囊下距 6 → 4，「还有 N 条」压成 20 高 */
+.kb-home-r4 .kb-hm-pills {
+  padding-bottom: 4px;
+}
+.kb-home-r4 .kb-hm-more > button {
+  height: 20px;
+  padding: 0 10px;
+  line-height: 20px;
 }

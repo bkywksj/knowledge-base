@@ -717,7 +717,8 @@ function DesktopHomePage() {
           widgetKey="todo"
           size="small"
           className="col-span-5"
-          styles={{ body: { padding: "0 8px 10px" } }}
+          // 底部只留 2：4 条 + 「还有 N 条」要正好放进 256 高的卡片
+          styles={{ body: { padding: "0 8px 2px" } }}
           title={
             <span className="flex items-center gap-2 text-sm">
               <CheckSquare size={14} style={{ color: token.colorSuccess }} />
@@ -873,23 +874,15 @@ function DesktopHomePage() {
                 ) : (
                   // 卡片固定高（.kb-home-r4），展开子任务超出时在卡片内滚动
                   <ul className="kb-hm-list">
-                    {(() => {
-                      // 放得下 4 条；超出时只列 3 条，留一行给「还有 N 条」，不被卡片底边裁掉
-                      const shown =
-                        active.total > active.items.length ? active.items.slice(0, 3) : active.items;
-                      return (
-                        <>
-                          {shown.map((t) => renderTaskRow(t, active.key))}
-                          {active.total > shown.length && (
-                            <li className="kb-hm-more">
-                              <button type="button" onClick={() => navigate("/tasks")}>
-                                + 还有 {active.total - shown.length} 条…
-                              </button>
-                            </li>
-                          )}
-                        </>
-                      );
-                    })()}
+                    {active.items.map((t) => renderTaskRow(t, active.key))}
+                    {/* 紧凑 20 高：卡头 42 + 胶囊 30 + 4 条 × 40 + 本行 20 + 底 2 + 边框 2 = 256 */}
+                    {active.total > active.items.length && (
+                      <li className="kb-hm-more">
+                        <button type="button" onClick={() => navigate("/tasks")}>
+                          + 还有 {active.total - active.items.length} 条…
+                        </button>
+                      </li>
+                    )}
                   </ul>
                 )}
               </>
