@@ -8315,3 +8315,122 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
 .kb-qc textarea.ant-input {
   height: 70px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 对齐第三轮·搜索：数值取自原型实测（.inp.big / .fl / .pills / .card .li / mark）
+   ═══════════════════════════════════════════════════════════ */
+/* 页面纵向节奏：搜索框 → 筛选 10，筛选 → 胶囊 14，胶囊 → 结果 10 */
+.kb-search-page {
+  gap: 10px;
+}
+.kb-search-page > .kb-filter-bar {
+  margin-bottom: 4px;
+}
+/* 大搜索框（原型 .inp.big）：48 高、圆角 11、卡片投影、0 10、间距 8 */
+.kb-search-bar {
+  height: 48px;
+  gap: 8px;
+  padding: 0 10px 0 4px;
+  border-radius: 11px;
+  box-shadow: var(--kb-shadow-card);
+}
+.kb-search-bar:focus-within {
+  box-shadow: 0 0 0 1px var(--kb-primary), 0 0 0 3px var(--kb-primary-light);
+}
+.kb-search-bar > .ant-input-affix-wrapper,
+.kb-search-bar > .ant-input-affix-wrapper .ant-input {
+  font-size: 15px;
+}
+.kb-search-sep {
+  height: 16px;
+  margin: 0 6px;
+  background: var(--kb-border-strong);
+}
+.kb-search-titleonly {
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--kb-ink2);
+}
+/* 筛选条（原型 .fl）：12 14、圆角 12、卡片投影；标签 12px 二级色；控件 28 高细圈 */
+.kb-filter-bar {
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  box-shadow: var(--kb-shadow-card);
+}
+.kb-filter-title {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.kb-filter-lb {
+  margin-left: 0;
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+}
+[data-theme] .kb-filter-bar .ant-select {
+  min-height: 28px;
+  height: 28px;
+  border-color: transparent !important;
+  background: var(--kb-bg-raised, #fff) !important;
+  box-shadow: 0 0 0 0.5px var(--kb-border-strong), var(--kb-hi) !important;
+  font-size: 12.5px;
+}
+[data-theme] .kb-filter-bar .ant-select-focused {
+  box-shadow: 0 0 0 1px var(--kb-primary), 0 0 0 3px color-mix(in srgb, var(--kb-primary) 16%, transparent) !important;
+}
+[data-theme] .kb-filter-bar .kb-bar-btn.ant-btn:not(.ant-btn-icon-only) {
+  height: 28px;
+}
+.kb-filter-bar .kb-mode-seg {
+  margin-right: 0;
+}
+/* 结果卡片（原型 .card padding 6）+ 行（.li：56 高、8 14、圆角 10；图标 26） */
+.kb-search-board {
+  padding: 6px;
+  box-shadow: var(--kb-shadow-card);
+}
+.kb-sr-row {
+  min-height: 56px;
+  padding: 8px 14px;
+  border-radius: 10px;
+}
+.kb-sr-ico,
+.kb-sr-ico.is-info,
+.kb-sr-ico.is-ok,
+.kb-sr-ico.is-err {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, color-mix(in srgb, currentColor 8%, transparent), color-mix(in srgb, currentColor 16%, transparent));
+}
+.kb-sr-title {
+  font-size: 13.5px;
+  line-height: 20px;
+}
+.kb-sr-snippet {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 18px;
+}
+.kb-sr-snippet.is-one {
+  color: var(--kb-text-secondary);
+}
+/* 命中高亮（原型 mark）：下半截荧光笔，字色不变 */
+.kb-sr-row mark {
+  border-radius: 2px !important;
+  background: linear-gradient(180deg, transparent 45%, color-mix(in srgb, var(--kb-primary) 22%, transparent) 45%) !important;
+  color: inherit !important;
+}
+/* 文件夹徽标（原型 .badge）/ 时间（原型 time） */
+.kb-sr-folder {
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-size: 11.5px;
+}
+.kb-sr-time {
+  width: auto;
+  min-width: 64px;
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+}

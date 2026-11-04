@@ -422,7 +422,13 @@ function DesktopSearchPage() {
           <Switch size="small" checked={titleOnly} onChange={setTitleOnly} />
           仅搜标题
         </label>
-        <Button type="primary" onClick={() => handleInputChange(query)}>
+        <Button
+          type="primary"
+          className="kb-bar-btn-p"
+          // antd 默认在两个汉字间插空格（「搜 索」），原型没有
+          autoInsertSpace={false}
+          onClick={() => handleInputChange(query)}
+        >
           搜索
         </Button>
       </div>
@@ -523,6 +529,8 @@ function DesktopSearchPage() {
           {/* 只有笔记 / 白板两种：单选与原多选等价（两个都选 = 全部） */}
           <Segmented
             size="small"
+            // 原型 .seg：30 高、圆角 8、选中白底描边（与编辑器模式切换同款）
+            className="kb-mode-seg"
             value={pickedTypes.length === 1 ? pickedTypes[0] : "all"}
             onChange={(v) => setPickedTypes(v === "all" ? [] : [v as NoteType])}
             options={[
