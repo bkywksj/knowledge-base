@@ -79,7 +79,7 @@ export type ActiveView =
 /** SidePanel 宽度范围（px），避免用户拖到极端值 */
 export const SIDE_PANEL_MIN_WIDTH = 200;
 export const SIDE_PANEL_MAX_WIDTH = 480;
-export const SIDE_PANEL_DEFAULT_WIDTH = 240;
+export const SIDE_PANEL_DEFAULT_WIDTH = 260;
 
 /** 最近搜索历史保留条数 */
 const RECENT_SEARCHES_MAX = 10;

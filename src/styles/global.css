@@ -7424,3 +7424,169 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   flex: 1;
   min-width: 0;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 对齐第三轮·笔记列表：数值取自原型实测（.bar / .li / .pager / 侧栏 .ph .sec .row .search）
+   ═══════════════════════════════════════════════════════════ */
+/* A. 页面顶栏（原型 .bar：高 48、渐变底）—— 11 个页面共用 */
+.kb-page-bar {
+  min-height: 48px;
+  padding: 0 16px 0 24px;
+  background: var(--kb-bar-grad);
+}
+/* 输入框（原型 .inp）：白底 + 0.5px 细圈 + 顶部内高光，无 antd 描边 */
+[data-theme] .kb-bar-search.ant-input-affix-wrapper,
+[data-theme] .kb-panel-search.ant-input-affix-wrapper {
+  border-color: transparent !important;
+  background: var(--kb-bg-raised, #fff) !important;
+  box-shadow: 0 0 0 0.5px var(--kb-border-strong), var(--kb-hi) !important;
+}
+[data-theme] .kb-bar-search.ant-input-affix-wrapper-focused,
+[data-theme] .kb-panel-search.ant-input-affix-wrapper-focused {
+  box-shadow: 0 0 0 1px var(--kb-primary), 0 0 0 3px color-mix(in srgb, var(--kb-primary) 16%, transparent) !important;
+}
+.kb-bar-search.ant-input-affix-wrapper {
+  width: 220px;
+}
+/* 顶栏文字按钮 → 描边按钮（原型 .btn-o：高 30、圆角 6、1px 内描边、ink2 字）；纯图标按钮保持透明 */
+[data-theme] .kb-bar-btn.ant-btn:not(.ant-btn-icon-only) {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border-color: transparent !important;
+  background: var(--kb-bg-raised, #fff) !important;
+  box-shadow: inset 0 0 0 1px var(--kb-border-strong);
+  font-size: 12.5px;
+  color: var(--kb-ink2);
+}
+[data-theme] .kb-bar-btn.ant-btn:not(.ant-btn-icon-only):hover {
+  color: var(--kb-primary) !important;
+}
+/* 顶栏分段控件（原型 .seg：高 30、圆角 8、内边距 2；选中 = 白底 + 1px 内描边） */
+.kb-page-bar .ant-segmented {
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--kb-primary-light);
+}
+.kb-page-bar .ant-segmented .ant-segmented-item {
+  border-radius: 6px;
+}
+.kb-page-bar .ant-segmented .ant-segmented-item-label {
+  min-height: 26px;
+  line-height: 26px;
+  font-size: 12px;
+}
+.kb-page-bar .ant-segmented .ant-segmented-item-selected,
+.kb-page-bar .ant-segmented .ant-segmented-thumb {
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: inset 0 0 0 1px var(--kb-border-strong);
+}
+.kb-page-bar .ant-segmented .ant-segmented-item-selected {
+  color: var(--kb-primary);
+  font-weight: 600;
+}
+
+/* B. 笔记列表（原型 .card > .list > .li）：卡片投影 + 内边距 6；行高 56、圆角 10、无分隔线 */
+.notes-list-flat .ant-table-tbody > tr > td {
+  padding-top: 8px !important;
+  padding-bottom: 8px !important;
+  border-bottom: none !important;
+}
+.notes-list-flat .ant-table-tbody > tr > td:first-child {
+  padding-left: 14px !important;
+  border-radius: 10px 0 0 10px;
+}
+.notes-list-flat .ant-table-tbody > tr > td:last-child {
+  padding-right: 14px !important;
+  border-radius: 0 10px 10px 0;
+}
+.notes-list-flat .ant-table,
+.notes-list-flat .ant-table-container {
+  background: transparent !important;
+}
+/* 预览行 / 时间：原型二级字色（比三级深一档） */
+.kb-note-preview,
+.notes-list-flat td.ant-table-cell:has(> .ant-typography) {
+  color: var(--kb-text-secondary);
+}
+/* 标签胶囊（原型 .tg）：0.5px 细圈、7px 圆点 */
+.kb-tagchip {
+  box-shadow: 0 0 0 0.5px var(--kb-border-strong);
+}
+.kb-tagchip > i {
+  width: 7px;
+  height: 7px;
+}
+/* 文件夹徽标（原型 .badge）：高 20、圆角 5、浅紫底 */
+.kb-folder-chip {
+  height: 20px !important;
+  padding: 0 7px !important;
+  border-radius: 5px !important;
+  font-size: 11.5px !important;
+  background: var(--kb-bg-hover) !important;
+  color: var(--kb-text-secondary) !important;
+}
+/* 悬停操作（原型 .acts）：从右侧渐显，左缘渐变遮住底下内容 */
+.notes-list-flat .ant-table-tbody > tr > td.kb-col-actions .ant-space {
+  padding-left: 20px;
+  background: linear-gradient(90deg, transparent 0, var(--kb-bg-hover) 20px);
+}
+
+/* C. 分页条（原型 .pager：高 44、渐变底、上边线；当前页 28×28 渐变方块） */
+.kb-pager {
+  min-height: 44px;
+  padding: 0 16px 0 22px !important;
+  background: var(--kb-bar-grad) !important;
+}
+.kb-pager-total {
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+}
+.kb-pager .ant-pagination-item,
+.kb-pager .ant-pagination-prev,
+.kb-pager .ant-pagination-next {
+  min-width: 28px !important;
+  height: 28px !important;
+  line-height: 28px !important;
+  border-radius: 7px !important;
+}
+.kb-pager .ant-pagination-item a {
+  font-size: 12.5px;
+  color: var(--kb-ink2);
+  font-variant-numeric: tabular-nums;
+}
+[data-theme] .kb-pager .ant-pagination-item-active {
+  border-color: transparent !important;
+  background: var(--kb-grad, var(--kb-primary)) !important;
+}
+[data-theme] .kb-pager .ant-pagination-item-active a {
+  color: #fff !important;
+}
+
+/* D. 侧栏面板（原型 .ph / .sec / .row）：面板头 34、小节标题二级色、树行 30、选中行 1px 深一档描边 */
+.kb-ph {
+  height: 34px;
+}
+.kb-panel-sec {
+  color: var(--kb-text-secondary);
+}
+.sidebar-folder-tree .ant-tree-node-content-wrapper {
+  min-height: 30px;
+  line-height: 30px;
+}
+.sidebar-folder-tree .ant-tree-node-content-wrapper.ant-tree-node-selected {
+  box-shadow: inset 0 0 0 1px var(--kb-border-strong);
+}
+/* 行高统一 56（原型 .li 两行：标题 + 摘要）；没有摘要的行也撑到 56，列表不会高低不齐 */
+.notes-list-flat .ant-table-tbody > tr > td {
+  height: 56px;
+}
+/* 标题 + 摘要两行按原型 .li .tx：标题 20、摘要 18，不留额外上下间距，整行正好 56 */
+.notes-list-flat .kb-note-cell {
+  padding: 0;
+  line-height: 20px;
+}
+.notes-list-flat .kb-note-preview {
+  margin-top: 0;
+  line-height: 18px;
+}

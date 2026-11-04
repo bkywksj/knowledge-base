@@ -1977,10 +1977,12 @@ function DesktopNoteListPage() {
         <div
           className="flex-1 flex flex-col min-h-0 notes-list-flat kb-surface"
           style={{
-            background: token.colorBgContainer,
-            // v4 原型：列表是一张圆角白卡，细描边圈出轮廓
-            borderRadius: 12,
-            boxShadow: "inset 0 0 0 1px var(--kb-border)",
+            // 卡片色而不是 colorBgContainer：暖炭下后者比页面底色还暗，卡片像陷进去
+            background: "var(--kb-bg-card)",
+            // v4 原型 .card：圆角 14 白卡 + 卡片投影，内边距 6 让行的悬停圆角不贴边
+            borderRadius: 14,
+            boxShadow: "var(--kb-shadow-card)",
+            padding: 6,
             marginBottom: 16,
             overflow: "hidden",
           }}

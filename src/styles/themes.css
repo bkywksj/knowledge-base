@@ -41,6 +41,12 @@
   --kb-rail-ink: #4A4462;
   /* 深一档描边（原型 --hair2）：快捷入口卡、键帽等 */
   --kb-border-strong: rgba(110,85,200,.24);
+  /* 页面顶栏 / 底部分页条（原型 .bar / .pager） */
+  --kb-bar-grad: linear-gradient(180deg, #FBFAFF 0%, #F4F0FD 100%);
+  /* 输入框顶部内高光（原型 --hi），与 0.5px 细圈一起用 */
+  --kb-hi: inset 0 1px 0 rgba(255,255,255,.85);
+  /* 二级墨色（原型 --ink2）：描边按钮文字等，比二级文字色深一档 */
+  --kb-ink2: #4A4462;
   --kb-scrollbar-thumb: rgba(124,99,220,0.18);
   --kb-scrollbar-hover: rgba(124,99,220,0.32);
   color-scheme: light;
@@ -179,6 +185,9 @@
   --kb-bg-tint: #21201E;
   --kb-rail-ink: #C4BEB4;
   --kb-border-strong: rgba(255,245,230,.12);
+  --kb-bar-grad: linear-gradient(180deg, #21201E 0%, #1D1C1A 100%);
+  --kb-hi: inset 0 1px 0 rgba(255,245,230,.03);
+  --kb-ink2: #C4BEB4;
   --kb-scrollbar-thumb: rgba(255,245,230,0.12);
   --kb-scrollbar-hover: rgba(255,245,230,0.22);
   color-scheme: dark;
