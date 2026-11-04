@@ -6819,7 +6819,8 @@ body.sidebar-resizing .kb-panel-resizer {
   padding: 0 10px;
   border-radius: 8px;
   font-size: 12.5px;
-  color: var(--kb-text-secondary) !important;
+  /* 原型 .st-nav a：未选中 ink2（!important 压过 a 标签的链接色） */
+  color: var(--kb-ink2) !important;
   cursor: pointer;
   user-select: none;
 }
@@ -9153,4 +9154,118 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
 /* 推荐应用卡片（原型 .rec）：深一档描边 */
 .kb-reco > * {
   box-shadow: inset 0 0 0 1px var(--kb-border-strong);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   v4 对齐第三轮·设置：数值取自原型实测（.st-nav / .ss .card-h / .sb / .sr / .seg / .btn-o）
+   24 个分区都是 antd Card + 各自写的行，这里只统一公共外观，不逐个改分区代码
+   ═══════════════════════════════════════════════════════════ */
+/* 左侧导航：浅渐变底；搜索框细圈 32；未选中 ink2；选中白底 + .24 内描边 */
+.kb-set-nav {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--kb-bg-panel) 60%, var(--kb-bg-raised, #fff)), var(--kb-bg-panel));
+}
+.kb-set-nav-sub {
+  color: var(--kb-text-secondary);
+}
+[data-theme] .kb-set-search.ant-input-affix-wrapper {
+  height: 32px;
+  border-color: transparent !important;
+  background: var(--kb-bg-raised, #fff) !important;
+  box-shadow: 0 0 0 0.5px var(--kb-border-strong), var(--kb-hi) !important;
+}
+[data-theme] .kb-set-search.ant-input-affix-wrapper-focused {
+  box-shadow: 0 0 0 1px var(--kb-primary), 0 0 0 3px color-mix(in srgb, var(--kb-primary) 16%, transparent) !important;
+}
+.kb-set-nav-i.is-on {
+  box-shadow: inset 0 0 0 1px var(--kb-border-strong);
+}
+/* 分区卡片头（原型 .card-h）：46 高、0 10 0 18；标题 15 / 700 */
+.kb-set-inner > .ant-card > .ant-card-head {
+  min-height: 46px;
+  padding: 0 10px 0 18px;
+}
+.kb-set-inner > .ant-card > .ant-card-head .ant-card-head-title {
+  font-size: 15px;
+}
+/* 卡片体（原型 .sb）：0 18 8 */
+.kb-set-inner > .ant-card > .ant-card-body {
+  padding: 0 18px 8px;
+}
+/* 行（原型 .sr）：上下各 12；行间 1px 细线保留（各分区自带的 border-top），统一成 .14 */
+.kb-set-inner > .ant-card > .ant-card-body > .flex.items-center.justify-between,
+.kb-set-inner > .ant-card > .ant-card-body > .py-1.mt-2 {
+  margin-top: 0 !important;
+  padding-top: 12px !important;
+  padding-bottom: 12px !important;
+  border-top-color: var(--kb-border) !important;
+}
+/* 行标题 13 / 600；行说明 12px 二级色、行高 18 */
+.kb-set-inner > .ant-card > .ant-card-body > .flex.items-center.justify-between > div:first-child > div:first-child {
+  font-size: 13px;
+  font-weight: 600;
+}
+.kb-set-inner > .ant-card > .ant-card-body .ant-typography-secondary {
+  color: var(--kb-text-secondary);
+  line-height: 18px;
+}
+/* 按钮（原型 .btn-o / .btn-p）：30 高、圆角 6、12.5px；小号按钮（.btn.sm）26 高、12px */
+[data-theme] .kb-set-inner .ant-btn-default:not(.ant-btn-icon-only):not(.ant-btn-sm):not(.ant-btn-lg) {
+  height: 30px;
+  padding: 0 13px;
+  border-color: transparent !important;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--kb-border-strong);
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--kb-ink2);
+}
+[data-theme] .kb-set-inner .ant-btn-default:not(.ant-btn-icon-only):not(.ant-btn-sm):not(.ant-btn-lg):hover {
+  color: var(--kb-primary) !important;
+}
+[data-theme] .kb-set-inner .ant-btn-default.ant-btn-dangerous:not(.ant-btn-icon-only) {
+  color: var(--ant-color-error);
+}
+[data-theme] .kb-set-inner .ant-btn-primary:not(.ant-btn-icon-only):not(.ant-btn-sm):not(.ant-btn-lg) {
+  height: 30px;
+  padding: 0 13px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+[data-theme] .kb-set-inner .ant-btn-sm:not(.ant-btn-icon-only):not(.ant-btn-link) {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+/* 多选一按钮组（原型 .seg）：30 高、内边距 2、圆角 8；选中白底 + .24 描边、主色 600 */
+.kb-set-inner .ant-radio-group.ant-radio-group-solid,
+.kb-set-inner .ant-radio-group.ant-radio-group-outline {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--kb-primary-light);
+}
+[data-theme] .kb-set-inner .ant-radio-group .ant-radio-button-wrapper {
+  height: 26px;
+  padding: 0 12px;
+  border: none !important;
+  border-radius: 6px !important;
+  background: transparent;
+  font-size: 12px;
+  line-height: 26px;
+  color: var(--kb-text-secondary);
+}
+[data-theme] .kb-set-inner .ant-radio-group .ant-radio-button-wrapper::before {
+  display: none !important;
+}
+[data-theme] .kb-set-inner .ant-radio-group .ant-radio-button-wrapper-checked:not(.ant-radio-button-wrapper-disabled) {
+  background: var(--kb-bg-raised, #fff) !important;
+  box-shadow: inset 0 0 0 1px var(--kb-border-strong) !important;
+  color: var(--kb-primary) !important;
+  font-weight: 600;
+}
+/* 带额外内容（下拉 / 说明块）的行多包了一层 .py-1.mt-2 > .flex，标题同样 13 / 600 */
+.kb-set-inner > .ant-card > .ant-card-body > .py-1.mt-2 > .flex > div:first-child > div:first-child {
+  font-size: 13px;
+  font-weight: 600;
 }

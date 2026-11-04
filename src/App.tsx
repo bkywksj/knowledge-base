@@ -168,6 +168,8 @@ function App() {
   return (
     <ConfigProvider
       locale={zhCN}
+      // antd 默认把两个汉字的按钮显示成「取 消」「保 存」，v4 原型没有这个空格，全局关掉
+      button={{ autoInsertSpace: false }}
       theme={{
         algorithm:
           themeCategory === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm,
