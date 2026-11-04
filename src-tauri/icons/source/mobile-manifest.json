@@ -1,0 +1,7 @@
+{
+  "default": "mobile-full.svg",
+  "bg_color": "#9C86EA",
+  "android_bg": "android-bg.svg",
+  "android_fg": "android-fg.svg",
+  "android_fg_scale": 100
+}

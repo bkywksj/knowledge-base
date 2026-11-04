@@ -1,0 +1,13 @@
+<!-- Android 自适应图标前景：只有书页 + K，透明底（背景见 android-bg.svg）。
+     书页中心 (59,61) 放在画布正中，画布 162 → 书页约占启动器可视区（中间 72/108）的六成，裁圆 / 圆角都不会切到 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-22 -20 162 162">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#B9A8F7"/>
+      <stop offset="1" stop-color="#7C63DC"/>
+    </linearGradient>
+  </defs>
+  <path d="M40 28h28l16 16v44a6 6 0 0 1-6 6H40a6 6 0 0 1-6-6V34a6 6 0 0 1 6-6z" fill="#fff"/>
+  <path d="M68 28v10a6 6 0 0 0 6 6h10" fill="#E4DBFD"/>
+  <path d="M48 46v38M50 66l17-18M54 62l14 22" stroke="url(#g)" stroke-width="6.5" stroke-linecap="round" fill="none"/>
+</svg>

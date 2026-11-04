@@ -1,0 +1,13 @@
+<!-- 桌面应用图标：L08「K · 书页负形」，四周留约 3% 边距（viewBox 2..118）。重新生成步骤见同目录 README.md -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="2 2 116 116">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#B9A8F7"/>
+      <stop offset="1" stop-color="#7C63DC"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="108" height="108" rx="28" fill="url(#g)"/>
+  <path d="M40 28h28l16 16v44a6 6 0 0 1-6 6H40a6 6 0 0 1-6-6V34a6 6 0 0 1 6-6z" fill="#fff"/>
+  <path d="M68 28v10a6 6 0 0 0 6 6h10" fill="#E4DBFD"/>
+  <path d="M48 46v38M50 66l17-18M54 62l14 22" stroke="url(#g)" stroke-width="6.5" stroke-linecap="round" fill="none"/>
+</svg>
