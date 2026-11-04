@@ -9401,14 +9401,32 @@ main.ant-layout-content:has(.kb-home) {
 }
 .ant-select-tree .ant-select-tree-switcher,
 .ant-select-tree .ant-select-tree-switcher-noop {
-  width: 16px !important;
+  width: 20px !important;
   margin-inline-end: 2px !important;
+}
+/* 悬停方块：antd 用固定 24×24、贴左的 ::before 画，格子变窄后方块往右溢出，箭头不在正中。
+   改成与格子同宽的 20×20、上下居中（行高 24） */
+.ant-select-tree .ant-select-tree-switcher::before {
+  width: 100% !important;
+  height: 20px !important;
+  top: 2px !important;
+  border-radius: 5px !important;
+}
+/* 整棵树离下拉框左边留 6，最外层箭头左侧不再贴边 */
+.ant-tree-select-dropdown .ant-select-tree-list {
+  padding-inline-start: 6px;
 }
 .ant-select-tree .ant-select-tree-switcher {
   color: var(--kb-text-tertiary);
 }
 .ant-select-tree .ant-select-tree-switcher .ant-select-tree-switcher-icon {
   font-size: 9px;
+}
+/* antd 按文字基线摆箭头，比悬停方块中线低 1px；格子改成 flex 居中 */
+.ant-select-tree .ant-select-tree-switcher {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
 }
 
 /* ═══ 笔记编辑器顶栏瘦身（2026-11-04）：状态压成「● 两三个字」，隐藏 / 加密 / 删除平铺 ═══ */
