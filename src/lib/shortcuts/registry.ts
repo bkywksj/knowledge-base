@@ -76,6 +76,9 @@ export const SHORTCUTS: ShortcutDef[] = [
   { id: "app.exitFocus", scope: "app", defaultAccel: "Escape", group: "应用内", desc: "退出专注模式" },
   { id: "app.back", scope: "app", defaultAccel: "Alt+ArrowLeft", group: "应用内", desc: "历史后退" },
   { id: "app.forward", scope: "app", defaultAccel: "Alt+ArrowRight", group: "应用内", desc: "历史前进" },
+  // 监听在 components/ai/AskNav.tsx（只在 AI 问答页、至少 2 条提问时生效）
+  { id: "app.askPrev", scope: "app", defaultAccel: "Alt+ArrowUp", group: "应用内", desc: "AI 问答：跳到上一条提问" },
+  { id: "app.askNext", scope: "app", defaultAccel: "Alt+ArrowDown", group: "应用内", desc: "AI 问答：跳到下一条提问" },
 
   // ─── 编辑器 - 文本格式 ───
   { id: "editor.bold", scope: "editor", defaultAccel: "CommandOrControl+B", group: "编辑器 - 文本格式", desc: "粗体" },

@@ -9552,3 +9552,110 @@ main.ant-layout-content:has(.kb-home) {
   color: var(--kb-text-tertiary);
   font-variant-numeric: tabular-nums;
 }
+
+/* ═══ AI 会话提问导航（components/ai/AskNav.tsx）═══
+   右边缘一排细短线（一条 = 一次提问），悬停展开列表；不随消息滚动 */
+.kb-asknav {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+}
+.kb-asknav-ticks {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  max-height: 60vh;
+  overflow: hidden;
+  padding: 8px 4px;
+}
+.kb-asknav-tick {
+  flex: none;
+  width: 14px;
+  height: 2px;
+  padding: 0;
+  border: none;
+  border-radius: 1px;
+  background: var(--kb-border-strong);
+  cursor: pointer;
+  transition: width 0.15s ease, background-color 0.15s ease;
+}
+.kb-asknav-tick:hover {
+  background: var(--kb-text-tertiary);
+}
+.kb-asknav-tick.is-on {
+  width: 20px;
+  background: var(--kb-primary);
+}
+/* 列表浮层：盖在短线上（鼠标不用离开就能挪进去），宽 260，超出内部滚动 */
+.kb-asknav-panel {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 260px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: 0 0 0 0.5px var(--kb-border-strong), 0 12px 32px -12px rgba(40, 30, 90, 0.3);
+}
+.kb-asknav-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 6px;
+  font-size: 11.5px;
+  color: var(--kb-text-tertiary);
+}
+.kb-asknav-item {
+  width: 100%;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--kb-ink2, var(--kb-text-secondary));
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.kb-asknav-item:hover {
+  background: var(--kb-bg-hover);
+}
+.kb-asknav-item.is-on {
+  color: var(--kb-primary);
+  background: var(--kb-primary-light);
+}
+.kb-asknav-item .n {
+  flex: none;
+  min-width: 16px;
+  font-size: 11.5px;
+  color: var(--kb-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.kb-asknav-item.is-on .n {
+  color: inherit;
+}
+.kb-asknav-item .t {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 跳到某条提问后闪一下，方便在屏幕上找到它 */
+@keyframes kb-ask-flash {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--kb-primary) 0%, transparent); }
+  25% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--kb-primary) 35%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--kb-primary) 0%, transparent); }
+}
+.kb-ask-flash .kb-user-bubble {
+  animation: kb-ask-flash 1.2s ease-out;
+}

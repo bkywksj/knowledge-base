@@ -61,6 +61,7 @@ import type {
 } from "@/types";
 import { AttachmentChip } from "@/components/ai/AttachmentChip";
 import { TurnCard } from "@/components/ai/TurnCard";
+import { AskNav } from "@/components/ai/AskNav";
 import {
   liveAppendReasoning,
   liveAppendToken,
@@ -181,6 +182,11 @@ function DesktopAiChatPage() {
     }
   }
   const [messages, setMessages] = useState<AiMessage[]>([]);
+  // 提问导航只列用户提问（AI 回答太长没法扫读）
+  const askItems = useMemo(
+    () => messages.filter((m) => m.role === "user").map((m) => ({ id: m.id, content: m.content })),
+    [messages],
+  );
   const [models, setModels] = useState<AiModel[]>([]);
   // 区分「还没加载完」和「确实没配模型」：前者不能闪出配置引导
   const [modelsLoaded, setModelsLoaded] = useState(false);
@@ -277,6 +283,8 @@ function DesktopAiChatPage() {
   }, [msgCtx.state.payload]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // 消息滚动区：提问导航（AskNav）据此算当前位置、跳转
+  const threadRef = useRef<HTMLDivElement>(null);
   // 跟踪组件挂载状态（防 setState on unmounted）
   const mountedRef = useRef(true);
   // activeConvId 的 ref 镜像 —— 给 mount-once 的 ai:* 事件 handler 用，避免闭包陷阱
@@ -1302,8 +1310,9 @@ function DesktopAiChatPage() {
               </div>
             </div>
 
-            {/* 消息列表 */}
-            <div className="flex-1 overflow-auto kb-ai-thread">
+            {/* 消息列表；外层 relative 给右边缘的提问导航定位（导航不随内容滚动） */}
+            <div className="flex-1 min-h-0 relative flex flex-col">
+            <div ref={threadRef} className="flex-1 overflow-auto kb-ai-thread">
               <div className="kb-ai-thread-inner">
               {messages.length === 0 && !streaming && (
                 <div className="flex items-center justify-center h-full">
@@ -1324,15 +1333,17 @@ function DesktopAiChatPage() {
 
               {messages.map((msg, idx) =>
                 msg.role === "user" ? (
-                  <UserBubble
-                    key={msg.id}
-                    message={msg}
-                    editing={editingFrom?.id === msg.id}
-                    canEdit={!streaming && !isOptimisticId(msg.id)}
-                    onEdit={() => startEdit(msg)}
-                    onContextMenu={(e, m) => msgCtx.open(e.nativeEvent, m)}
-                    contextActive={msgCtx.state.payload?.id === msg.id}
-                  />
+                  // data-ask-id：提问导航按它定位、跳转
+                  <div key={msg.id} data-ask-id={msg.id}>
+                    <UserBubble
+                      message={msg}
+                      editing={editingFrom?.id === msg.id}
+                      canEdit={!streaming && !isOptimisticId(msg.id)}
+                      onEdit={() => startEdit(msg)}
+                      onContextMenu={(e, m) => msgCtx.open(e.nativeEvent, m)}
+                      contextActive={msgCtx.state.payload?.id === msg.id}
+                    />
+                  </div>
                 ) : (
                   <div key={msg.id} className="mb-4">
                     <TurnCard
@@ -1363,6 +1374,8 @@ function DesktopAiChatPage() {
 
               <div ref={messagesEndRef} />
               </div>
+            </div>
+            <AskNav scrollRef={threadRef} items={askItems} />
             </div>
 
             {/* 输入区（v4 原型 .composer）：一张大卡片 = 顶部小标签行（限定文件夹 / 已附加笔记 / 本次附件，各带 ×）
