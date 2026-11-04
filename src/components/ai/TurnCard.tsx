@@ -175,7 +175,7 @@ export function TurnCard({
 
       {!view.live && (
         <div
-          className="flex items-center gap-0.5 px-2 py-1"
+          className="kb-turn-foot flex items-center gap-0.5 px-2 py-1"
           style={{ borderTop: `1px solid ${token.colorBorderSecondary}` }}
         >
           <ActionButton icon={<Copy size={13} />} label="复制" disabled={!view.answer} onClick={() => copy(false)} />

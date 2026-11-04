@@ -932,7 +932,8 @@ function DesktopAiChatPage() {
           <Button
             type="primary"
             icon={<Plus size={14} />}
-            className="flex-1"
+            // 原型 .btn-p：30 高、圆角 6、12.5 / 600
+            className="flex-1 kb-bar-btn-p"
             onClick={handleNewConversation}
           >
             新对话
@@ -963,13 +964,15 @@ function DesktopAiChatPage() {
             placement="bottomRight"
           >
             <Tooltip title="批量清理">
-              <Button icon={<MoreHorizontal size={14} />} />
+              <Button className="kb-ai-ghost" icon={<MoreHorizontal size={14} />} />
             </Tooltip>
           </Dropdown>
         </div>
         {/* 搜索会话（新增）：只按标题过滤 */}
         <div className="px-3 pb-2 shrink-0">
           <Input
+            // 原型 .search：32 高、圆角 8、细圈 + 内高光
+            className="kb-panel-search"
             allowClear
             prefix={<Search size={14} />}
             placeholder="搜索会话"
@@ -1271,8 +1274,8 @@ function DesktopAiChatPage() {
                 {/* B 方向：把整个对话归档成笔记 */}
                 <Tooltip title="把整个对话归档成一篇笔记">
                   <Button
-                    size="small"
-                    type="text"
+                    // 原型 .btn-o.sm：小号描边按钮
+                    className="kb-bar-btn is-sm"
                     icon={<Save size={14} />}
                     disabled={messages.length === 0 || streaming}
                     onClick={() => {

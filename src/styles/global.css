@@ -8587,3 +8587,175 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   font-size: 12px;
   font-weight: 600;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 对齐第三轮·AI：数值取自原型实测（.ai-l / .sess / .ch / .mchip / .msgs / .um .bub / .turn / .cmp）
+   ═══════════════════════════════════════════════════════════ */
+/* 左侧会话列表（原型 .ai-l）：浅渐变底、12 10；搜索框 32 细圈；分组标题 / 会话行按原型 */
+.kb-ai-convs {
+  padding-top: 0;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--kb-bg-panel) 60%, var(--kb-bg-raised, #fff)), var(--kb-bg-panel));
+}
+.kb-ai-convs > .p-3 {
+  padding: 12px 10px 10px;
+  gap: 6px;
+}
+.kb-ai-convs > .px-3 {
+  padding: 0 10px 2px;
+}
+.kb-ai-convs > .px-2 {
+  padding: 0 10px 8px;
+}
+.kb-ai-convs .kb-panel-search.ant-input-affix-wrapper {
+  height: 32px;
+  border-radius: 8px;
+}
+[data-theme] .kb-ai-ghost.ant-btn {
+  width: 46px;
+  border-color: transparent !important;
+  box-shadow: inset 0 0 0 1px var(--kb-border-strong);
+  color: var(--kb-ink2);
+}
+.kb-conv-group {
+  min-height: 30px;
+  padding: 8px 2px 0 8px;
+  font-size: 11.5px;
+  color: var(--kb-text-secondary);
+}
+.kb-conv-item {
+  min-height: 55px;
+  padding: 8px 10px;
+  border-radius: 9px;
+}
+.kb-conv-item .text-sm {
+  font-size: 13px;
+}
+.kb-conv-item .text-xs {
+  font-size: 11.5px;
+  color: var(--kb-text-tertiary) !important;
+}
+.kb-conv-item.is-active {
+  box-shadow: inset 0 0 0 1px var(--kb-border-strong);
+}
+/* 会话顶栏（原型 .ch）：50 高、渐变底、底部细线、0 14 0 24 */
+.editor-topbar.kb-ebar.kb-ai-bar {
+  min-height: 50px;
+  padding: 0 14px 0 24px !important;
+  background: var(--kb-bar-grad) !important;
+  border-bottom: 1px solid var(--kb-border) !important;
+}
+.kb-ai-title {
+  font-size: 14.5px;
+}
+/* 模型 / 角色胶囊（原型 .mchip）：28 高、12px、1px 深一档描边 */
+[data-theme] .kb-ai-page .kb-ai-bar .kb-pill-select.ant-select {
+  height: 28px;
+  padding: 0 10px;
+  border-color: transparent !important;
+  background: var(--kb-bg-raised, #fff) !important;
+  box-shadow: inset 0 0 0 1px var(--kb-border-strong) !important;
+  font-size: 12px;
+  color: var(--kb-ink2);
+}
+.kb-ai-page .kb-ai-bar .text-xs {
+  color: var(--kb-ink2) !important;
+}
+/* 顶栏小按钮（原型 .btn-t.sm / .btn-o.sm）：26 高、12px */
+[data-theme] .kb-ai-page .kb-ai-bar .ant-btn-sm {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--kb-ink2);
+}
+/* 消息区（原型 .msgs .mi-in）：内容最大 780、左右 30 */
+.kb-ai-thread-inner {
+  max-width: 780px;
+  padding: 22px 30px 10px;
+}
+.kb-user-bubble {
+  max-width: 72% !important;
+  padding: 10px 14px;
+  font-size: 14.5px;
+  box-shadow: 0 4px 14px -6px color-mix(in srgb, var(--kb-primary) 50%, transparent);
+}
+/* 回答卡片（原型 .turn）：卡片投影，不要边框 */
+.kb-ai-thread .kb-turn {
+  border: none !important;
+  box-shadow: var(--kb-shadow-card);
+}
+.kb-ai-thread .kb-turn-head {
+  padding: 9px 14px !important;
+  font-size: 12px;
+}
+.kb-ai-thread .kb-turn-ico {
+  width: 22px;
+  height: 22px;
+}
+/* 正文（原型 .turn-b）：14.5px、行高 1.85，段落 / 列表段后 10 */
+.kb-ai-thread .kb-turn .ai-markdown {
+  padding: 14px 18px 6px !important;
+  font-size: 14.5px;
+  line-height: 1.85;
+}
+.kb-ai-thread .kb-turn .ai-markdown p,
+.kb-ai-thread .kb-turn .ai-markdown ul,
+.kb-ai-thread .kb-turn .ai-markdown ol {
+  margin: 0 0 10px;
+}
+.kb-ai-thread .kb-turn .ai-markdown li {
+  margin: 0;
+}
+/* 卡片底栏（原型 .turn-f）：4 10；按钮 26 高、12px、ink2 */
+.kb-ai-thread .kb-turn-foot {
+  padding: 4px 10px !important;
+  gap: 2px !important;
+}
+[data-theme] .kb-ai-thread .kb-turn-foot .ant-btn {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--kb-ink2);
+}
+/* 输入区（原型 .cmp / .cmp-in）：最大 780、圆角 16、0.5px 细圈 + 浮层投影；输入 14.5；底栏按钮 26 高 */
+.kb-composer-wrap {
+  max-width: 840px;
+  padding: 6px 30px 16px;
+}
+.kb-composer {
+  padding: 4px 8px 8px 12px;
+  box-shadow: 0 0 0 0.5px var(--kb-border-strong), 0 10px 30px -12px color-mix(in srgb, var(--kb-primary) 30%, transparent);
+}
+.kb-composer:focus-within {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--kb-primary) 55%, transparent),
+    0 0 0 3px var(--kb-primary-light), 0 10px 30px -12px color-mix(in srgb, var(--kb-primary) 30%, transparent);
+}
+.kb-composer-input.ant-input {
+  font-size: 14.5px;
+}
+.kb-composer-bar {
+  gap: 4px;
+}
+[data-theme] .kb-composer-bar > .ant-btn-sm:not(.ant-btn-icon-only) {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--kb-ink2);
+}
+.kb-composer-hint {
+  color: var(--kb-text-secondary);
+}
+.kb-composer-send.ant-btn {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 10px !important;
+}
+/* 附加笔记 / 限定文件夹胶囊（原型 .att span）：24 高、圆角 7、浅渐变底 + 主色细线、12px ink2 */
+.kb-cchip {
+  height: 24px;
+  padding: 0 6px 0 9px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--kb-ink2);
+  background: var(--kb-grad-soft, var(--kb-bg-hover));
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--kb-primary) 32%, transparent);
+}
