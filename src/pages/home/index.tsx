@@ -21,7 +21,6 @@ import {
   Flame,
   Clock,
   TrendingUp,
-  Sparkles,
   MessageCircle,
   Check,
   Star,
@@ -476,18 +475,18 @@ function DesktopHomePage() {
       if (new Date(t.due_date!).getTime() < todayStartMs) overdue.push(t);
       else today.push(t);
     }
-    // 每段条数上限：原 5 条太少（卡片下方留白），一度提到 8 条又显得压迫，
-    // 折中取 6 条；即将到期优先级次之给 4 条。
+    // 每段条数上限：按原型取 4 条 —— 这一行三卡固定 256 高（原型实测），
+    // 首页才能一屏放下底部热力图（2026-11-04 用户要求不滚动）。
     // 超出部分仍由段尾「+ 还有 N 条…」引导去待办页，不改"速览"的定位。
     return {
-      overdue: overdue.slice(0, 6),
+      overdue: overdue.slice(0, 4),
       overdueTotal: overdue.length,
-      today: today.slice(0, 6),
+      today: today.slice(0, 4),
       todayTotal: today.length,
       // 即将到期去掉 7 天上限后，只展示最靠近今天的几条
       upcoming: upcomingTasks.slice(0, 4),
       upcomingTotal: upcomingTasks.length,
-      noDue: noDueTasks.slice(0, 6),
+      noDue: noDueTasks.slice(0, 4),
       noDueTotal: noDueTasks.length,
     };
   }, [todayTasks, upcomingTasks, noDueTasks]);
@@ -496,9 +495,8 @@ function DesktopHomePage() {
     todoGroups.todayTotal +
     todoGroups.upcomingTotal +
     todoGroups.noDueTotal;
-  // 与左侧待办速览卡同处一行 grid（等高拉伸）：条数跟着左卡一起走，
-  // 差太多会让某一侧底部空一大片。
-  const displayedRecent = useMemo(() => recentNotes.slice(0, 6), [recentNotes]);
+  // 与左侧待办速览卡同处一行（固定 256 高）：原型最近笔记 5 条正好放满
+  const displayedRecent = useMemo(() => recentNotes.slice(0, 5), [recentNotes]);
 
   // 全局隐私模式快捷键（Ctrl/⌘+Shift+H）：一键遮住首页所有卡片，
   // 用于「有人走过来了 / 要投屏」这类临时场景。
@@ -710,7 +708,7 @@ function DesktopHomePage() {
 
       {/* ④ 一行三卡：待办速览 5 ｜ 最近笔记 4 ｜ 置顶笔记 3（12 栏，原型 .cols.g12.r2）
           待办关闭时：最近笔记 7 ｜ 置顶笔记 5 */}
-      <div className="grid grid-cols-12 gap-3">
+      <div className="grid grid-cols-12 gap-3 kb-home-r4">
 
         {tasksEnabled && (
         <HideableCard
@@ -808,7 +806,8 @@ function DesktopHomePage() {
                     />
                     <span className="kb-hm-td-tx">{task.title}</span>
                     {task.important && (
-                      <Star size={12} style={{ color: token.colorWarning, flexShrink: 0 }} fill={token.colorWarning} />
+                      // 主题主色（淡紫 / 暖炭自动切）：原黄色在淡紫主题里很跳
+                      <Star size={12} style={{ color: token.colorPrimary, flexShrink: 0 }} fill={token.colorPrimary} />
                     )}
                     {hasSubtasks && (
                       <button
@@ -870,8 +869,8 @@ function DesktopHomePage() {
                     {loading ? "加载中…" : totalTodoCount === 0 ? "暂无待办，享受当下 ✨" : `「${active.label}」里没有待办`}
                   </div>
                 ) : (
-                  // 卡片高度上限沿用 480，超出可滚
-                  <ul className="kb-hm-list" style={{ maxHeight: 480, overflowY: "auto" }}>
+                  // 卡片固定高（.kb-home-r4），展开子任务超出时在卡片内滚动
+                  <ul className="kb-hm-list">
                     {active.items.map((t) => renderTaskRow(t, active.key))}
                     {active.total > active.items.length && (
                       <li className="kb-hm-more">
@@ -982,7 +981,7 @@ function DesktopHomePage() {
             <div className="kb-hm-empty">在笔记编辑器右上角可置顶</div>
           ) : (
             <ul className="kb-hm-list">
-              {pinnedNotes.slice(0, 5).map((note) => (
+              {pinnedNotes.slice(0, 4).map((note) => (
                 <li
                   key={note.id}
                   className="kb-hm-nr"
@@ -1008,9 +1007,12 @@ function DesktopHomePage() {
         styles={{ body: { padding: "12px 14px" } }}
       >
         <div className="flex items-center justify-between mb-3">
-          <span className="flex items-center gap-2 text-sm font-medium">
-            <Sparkles size={14} style={{ color: token.colorWarning }} />
-            写作活力
+          {/* 原型 .card-h：橙色图标块 + 火焰，与其它卡片头同字号 */}
+          <span className="kb-card-h" style={{ marginBottom: 0 }}>
+            <span className="kb-cico sm is-warn">
+              <Flame size={14} />
+            </span>
+            <b>写作活力</b>
           </span>
           <Text type="secondary" style={{ fontSize: 11 }}>
             近一年

@@ -7060,7 +7060,9 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   overflow: hidden;
   background: var(--kb-grad, var(--kb-primary));
 }
-[data-theme] .kb-split.ant-space-compact > .ant-btn {
+/* 选择器多带 .ant-btn-primary.ant-btn-variant-solid：全局主按钮渐变规则优先级 (0,5,0) 且 !important，
+   原来 (0,4,0) 压不过，下拉段会自己再画一遍渐变（2026-11-04 用户指出） */
+[data-theme] .kb-split.ant-space-compact > .ant-btn.ant-btn-primary.ant-btn-variant-solid {
   background: transparent !important;
   border: none !important;
   border-radius: 0 !important;
@@ -7068,7 +7070,7 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   color: #fff !important;
   font-weight: 600;
 }
-[data-theme] .kb-split.ant-space-compact > .ant-btn:hover {
+[data-theme] .kb-split.ant-space-compact > .ant-btn.ant-btn-primary.ant-btn-variant-solid:hover {
   background: rgba(255, 255, 255, 0.12) !important;
 }
 [data-theme] .kb-split.ant-space-compact > .ant-btn + .ant-btn {
@@ -9289,4 +9291,17 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
 /* 行内倒计时：二级字色，不抢标题 */
 .kb-trash-purge-left {
   color: var(--kb-text-secondary);
+}
+
+/* 首页第四行（待办速览 / 最近笔记 / 置顶笔记）：固定原型实测高 256，内容超出在卡片内滚动，
+   不再被列表撑高 —— 首页一屏放下底部热力图（2026-11-04 用户要求） */
+.kb-home-r4 > .ant-card {
+  height: 256px;
+  display: flex;
+  flex-direction: column;
+}
+.kb-home-r4 > .ant-card > .ant-card-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
