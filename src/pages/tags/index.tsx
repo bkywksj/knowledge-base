@@ -198,7 +198,7 @@ function DesktopTagsPage() {
           description="删除标签不会删除关联的笔记"
           onConfirm={() => handleDelete(selectedTag)}
         >
-          <Button className="kb-danger-soft" icon={<Trash2 size={14} />}>
+          <Button className="kb-danger-soft kb-bar-btn-p" icon={<Trash2 size={14} />}>
             删除
           </Button>
         </Popconfirm>
@@ -383,7 +383,16 @@ function TagEditPanel({ tag, allTags }: { tag: Tag; allTags: Tag[] }) {
       <div className="kb-tag-tip">不选则为顶层标签</div>
       <div className="kb-rv-lb">颜色</div>
       <TagColorPicker value={color} onChange={setColor} allowClear />
-      <Button type="primary" block loading={saving} disabled={!dirty} onClick={() => void save()} style={{ marginTop: 14 }}>
+      <Button
+        type="primary"
+        block
+        // antd 默认在两个汉字间插空格（「保 存」），原型没有
+        autoInsertSpace={false}
+        loading={saving}
+        disabled={!dirty}
+        onClick={() => void save()}
+        style={{ marginTop: 6 }}
+      >
         保存
       </Button>
     </section>

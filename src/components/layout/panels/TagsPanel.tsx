@@ -13,7 +13,6 @@ import {
 import type { DataNode } from "antd/es/tree";
 import {
   Plus,
-  Tags as TagsIcon,
   Check,
   Edit3,
   Trash2,
@@ -581,9 +580,10 @@ export function TagsPanel() {
         {!isEditing && (
           <span
             style={{
-              fontSize: 11,
-              color: token.colorTextTertiary,
+              fontSize: 12,
+              color: "var(--kb-text-secondary)",
               flexShrink: 0,
+              fontVariantNumeric: "tabular-nums",
             }}
           >
             {tag.note_count}
@@ -603,39 +603,23 @@ export function TagsPanel() {
         e.preventDefault();
       }}
     >
-      {/* 视图标题 */}
-      <div
-        className="flex items-center gap-2 px-3 py-2.5 shrink-0"
-        style={{ borderBottom: `1px solid ${token.colorBorderSecondary}` }}
-      >
-        <TagsIcon size={15} style={{ color: token.colorPrimary }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: token.colorText }}>
-          标签
-        </span>
-        <span
-          style={{
-            fontSize: 11,
-            color: token.colorTextTertiary,
-            marginLeft: 2,
-          }}
-        >
-          · {tags.length}
-        </span>
-        <div style={{ flex: 1 }} />
+      {/* 视图标题（原型 .ph：与其他面板同款，只有标题 + 新建） */}
+      <div className="kb-ph">
+        <span className="kb-ph-title">标签</span>
         <Button
           type="text"
-          size="small"
-          icon={<Plus size={14} />}
+          className="kb-ib"
+          icon={<Plus size={15} />}
           onClick={() => openCreateModal(null)}
-          style={{ width: 24, height: 24, padding: 0 }}
           title="新建标签"
         />
       </div>
 
       {/* 搜索框 */}
-      <div style={{ padding: "8px 12px", flexShrink: 0 }}>
+      <div style={{ padding: "2px 12px 8px", flexShrink: 0 }}>
         <Input
-          size="small"
+          // 原型 .search：32 高、圆角 8、细圈 + 内高光（样式见 .kb-panel-search）
+          className="kb-panel-search"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="筛选标签..."
