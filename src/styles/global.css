@@ -4168,6 +4168,21 @@ body.sidebar-resizing .kb-panel-resizer {
   background: color-mix(in srgb, var(--kb-primary) 18%, transparent) !important;
   color: var(--kb-primary) !important;
 }
+/* antd 的 .ant-btn:not(:disabled):not(.ant-btn-disabled):hover 会把边框写回 0.67px 实线，
+   优先级 (0,4,0) 压过上面的 border:none，悬停时按钮变宽、旁边按钮跟着挪（抖一下） */
+/* 同样写了 border:none 的按钮一并处理：回收站清空 / 批量删除 / 批量恢复、锁屏解锁、AI 发送 */
+.kb-ask-btn.ant-btn:not(:disabled):hover,
+.kb-ask-btn.ant-btn:not(:disabled):active,
+.kb-danger-soft.ant-btn:not(:disabled):hover,
+.kb-danger-soft.ant-btn:not(:disabled):active,
+.kb-selbar-btn.ant-btn:not(:disabled):hover,
+.kb-selbar-btn.ant-btn:not(:disabled):active,
+.kb-lock-btn.ant-btn:not(:disabled):hover,
+.kb-lock-btn.ant-btn:not(:disabled):active,
+.kb-composer-send.ant-btn:not(:disabled):hover,
+.kb-composer-send.ant-btn:not(:disabled):active {
+  border: none !important;
+}
 /* 底部状态栏：通栏 30px，左「模式 · 创建 · 修改」中「链出 / 链入 / 断链」右「字数 · 字符 · 阅读」 */
 .kb-statusbar {
   height: 30px;
