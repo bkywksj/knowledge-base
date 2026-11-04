@@ -454,6 +454,8 @@ export function AppLayout() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [asrCaptureOpen, setAsrCaptureOpen] = useState(false);
   const [quickNoteOpen, setQuickNoteOpen] = useState(false);
+  // 主题菜单打开时收起「切换主题」提示：鼠标还停在按钮上，提示会一直盖着菜单顶部
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const updater = useUpdater();
   const update = updater?.update ?? null;
   const updatePhase = updater?.phase ?? "idle";
@@ -679,8 +681,12 @@ export function AppLayout() {
                 />
               </Tooltip>
               <SyncStatusButton />
-              <Dropdown menu={{ items: themeMenuItems, onClick: handleThemeSelect, selectedKeys: [activeTheme] }} trigger={["click"]}>
-                <Tooltip title="切换主题">
+              <Dropdown
+                menu={{ items: themeMenuItems, onClick: handleThemeSelect, selectedKeys: [activeTheme] }}
+                trigger={["click"]}
+                onOpenChange={setThemeMenuOpen}
+              >
+                <Tooltip title="切换主题" open={themeMenuOpen ? false : undefined}>
                   <Button type="text" className="kb-tb-btn" icon={<Palette size={16} />} />
                 </Tooltip>
               </Dropdown>
