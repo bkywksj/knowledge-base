@@ -217,7 +217,7 @@ function DesktopTrashPage() {
         <span className="kb-trash-count">{data.total} 篇</span>
         <span className="flex-1" />
         {data.items.length > 0 && (
-          <Button className="kb-danger-soft" icon={<Trash2 size={14} />} onClick={handleEmptyTrash}>
+          <Button className="kb-danger-soft kb-bar-btn-p" icon={<Trash2 size={14} />} onClick={handleEmptyTrash}>
             清空回收站
           </Button>
         )}
@@ -316,6 +316,8 @@ function DesktopTrashPage() {
                       <Button
                         type="text"
                         size="small"
+                        // 原型 .btn-s：浅紫底主色字
+                        className="kb-act-soft"
                         icon={<RotateCcw size={13} />}
                         onClick={() => handleRestore(n.id)}
                       >
@@ -326,7 +328,8 @@ function DesktopTrashPage() {
                         description="此操作不可恢复"
                         onConfirm={() => handlePermanentDelete(n.id)}
                       >
-                        <Button type="text" size="small" danger icon={<Trash2 size={13} />}>
+                        {/* 原型 .btn-d：浅红底红字 */}
+                        <Button type="text" size="small" danger className="kb-act-danger" icon={<Trash2 size={13} />}>
                           永久删除
                         </Button>
                       </Popconfirm>

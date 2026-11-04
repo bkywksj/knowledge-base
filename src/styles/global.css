@@ -9042,3 +9042,38 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
 .kb-hidden-pager {
   padding: 8px 8px 2px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 对齐第三轮·回收站：数值取自原型实测（.bar .badge / .notice / .li .badge / .btn-s / .btn-d）
+   ═══════════════════════════════════════════════════════════ */
+/* 篇数 / 时间徽标（原型 .badge）：20 高、圆角 5、11.5px、0 7 */
+.kb-trash-count,
+.kb-trash-time {
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  line-height: 20px;
+}
+/* 提示条（原型 .notice）：浅渐变底 + 0.5px 主色细线、圆角 10、12.5px ink2 */
+.kb-trash-tip {
+  border-radius: 10px;
+  background: var(--kb-grad-soft, var(--kb-primary-light));
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--kb-primary) 32%, transparent);
+  font-size: 12.5px;
+  color: var(--kb-ink2);
+}
+/* 行内操作（原型 .btn-s / .btn-d）：恢复浅紫底主色、永久删除浅红底红字，600 */
+[data-theme] .kb-hidden-acts .kb-act-soft.ant-btn {
+  background: var(--kb-primary-light) !important;
+  color: var(--kb-primary);
+  font-weight: 600;
+}
+[data-theme] .kb-hidden-acts .kb-act-danger.ant-btn {
+  background: color-mix(in srgb, var(--ant-color-error) 9%, transparent) !important;
+  color: var(--ant-color-error);
+  font-weight: 600;
+}
+.kb-hidden-acts:has(.kb-act-soft) {
+  gap: 6px;
+}
