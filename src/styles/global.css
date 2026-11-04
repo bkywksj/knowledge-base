@@ -9296,7 +9296,8 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
 /* 首页第四行（待办速览 / 最近笔记 / 置顶笔记）：固定原型实测高 256，内容超出在卡片内滚动，
    不再被列表撑高 —— 首页一屏放下底部热力图（2026-11-04 用户要求） */
 .kb-home-r4 > .ant-card {
-  height: 256px;
+  /* 原型 256；+10 用首页底部留白换来，给待办「还有 N 条」和底边留口气 */
+  height: 266px;
   display: flex;
   flex-direction: column;
 }
@@ -9332,4 +9333,10 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   height: 20px;
   padding: 0 10px;
   line-height: 20px;
+}
+
+/* 首页底部留白 24 → 12（只首页）：省下的空间给第四行卡片 +10（2026-11-04 用户：底部边距太大） */
+/* AppLayout 的 Content 内边距是行内样式，要 !important 才盖得住 */
+main.ant-layout-content:has(.kb-home) {
+  padding-bottom: 12px !important;
 }

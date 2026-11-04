@@ -717,8 +717,8 @@ function DesktopHomePage() {
           widgetKey="todo"
           size="small"
           className="col-span-5"
-          // 底部只留 2：4 条 + 「还有 N 条」要正好放进 256 高的卡片
-          styles={{ body: { padding: "0 8px 2px" } }}
+          // 底部留 8：4 条 + 「还有 N 条」放进 266 高的卡片后，与底边还有约 12
+          styles={{ body: { padding: "0 8px 8px" } }}
           title={
             <span className="flex items-center gap-2 text-sm">
               <CheckSquare size={14} style={{ color: token.colorSuccess }} />
@@ -875,7 +875,7 @@ function DesktopHomePage() {
                   // 卡片固定高（.kb-home-r4），展开子任务超出时在卡片内滚动
                   <ul className="kb-hm-list">
                     {active.items.map((t) => renderTaskRow(t, active.key))}
-                    {/* 紧凑 20 高：卡头 42 + 胶囊 30 + 4 条 × 40 + 本行 20 + 底 2 + 边框 2 = 256 */}
+                    {/* 紧凑 20 高：卡头 42 + 胶囊 30 + 4 条 × 40 + 本行 20 + 底 8 + 边框 2 = 262 ≤ 266 */}
                     {active.total > active.items.length && (
                       <li className="kb-hm-more">
                         <button type="button" onClick={() => navigate("/tasks")}>
