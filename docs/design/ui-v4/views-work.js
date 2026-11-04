@@ -38,19 +38,28 @@ KB.add('home', {
     const hide = `<button class="ib sm hv hide" title="隐藏此卡片">${I('eyeoff', 'sm')}</button>`;
     return `
     <style>
-      .hm{padding:26px 32px 40px}
-      .hm-h{display:flex;align-items:flex-end;gap:12px;margin-bottom:18px}
+      /* 2026-11-04 照应用实际回写：内边距 20 24 12、块间距 10（一屏放下底部热力图） */
+      .hm{padding:20px 24px 12px}
+      .hm-h{display:flex;align-items:flex-end;gap:12px;margin-bottom:10px}
       .hm-h .eb{font-size:12.5px;color:var(--ink3);margin-bottom:4px;letter-spacing:.03em}
       .hm-h h1{font:700 26px/1.3 var(--ff-ui);letter-spacing:-.01em}
-      .qa{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+      .qa{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:10px}
       .qb{height:46px;display:flex;align-items:center;gap:10px;padding:0 6px 0 14px;border-radius:12px;background:linear-gradient(180deg,#fff,#FCFBFF);box-shadow:var(--sh-card);font-size:13px;font-weight:600}
       .qb:hover{box-shadow:0 0 0 1px var(--accent-line),var(--sh-card)}
       .qb .lb{flex:1;text-align:left}
-      .qb .dd{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;color:var(--ink4);border-left:1px solid var(--hair)}
+      .qb .dd{position:relative;width:26px;height:26px;margin-left:8px;border-radius:6px;display:grid;place-items:center;color:var(--ink4)}
+      .qb .dd::before{content:"";position:absolute;left:-8px;top:5px;width:1px;height:16px;background:var(--hair2)}
       .cap textarea{display:block;width:100%;border:0;outline:0;resize:none;background:transparent;padding:0 18px;font-size:14.5px;line-height:1.75;min-height:40px}
       .cap textarea::placeholder{color:var(--ink4)}
       .cap-bar{display:flex;align-items:center;gap:4px;padding:6px 10px 10px 18px;font-size:12px;color:var(--ink4)}
-      .cols{display:grid;gap:14px;margin-bottom:14px}
+      .cols{display:grid;gap:14px;margin-bottom:10px}
+      .hm .cols.g12{gap:10px 12px}
+      /* 待办 / 最近 / 置顶一行固定 266，内容超出（展开子任务）在卡片内滚动 */
+      .hm .cols.r2 > .card{height:266px;display:flex;flex-direction:column}
+      .hm .cols.r2 > .card > div:last-child{flex:1;min-height:0;overflow:auto}
+      .td .star{color:var(--accent);display:grid}
+      .td .star svg{fill:currentColor}
+      .td-more{height:20px;line-height:20px;padding:0 10px;font-size:12px;color:var(--accent);cursor:default}
       .td{display:flex;align-items:center;gap:10px;height:40px;padding:0 10px;border-radius:var(--r-m)}
       .td:hover{background:var(--hover)}
       .td .tx{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px}
@@ -85,7 +94,7 @@ KB.add('home', {
         <button class="qb hv" data-go="ai"><span class="cico v">${I('bot')}</span><span class="lb">AI 问答</span><span class="qn">12 个会话</span></button>
         <button class="qb hv" data-go="graph"><span class="cico b">${I('graph')}</span><span class="lb">知识图谱</span><span class="qn">1,284 节点</span></button>
       </div>
-      <div class="card cap" style="margin-bottom:14px">
+      <div class="card cap" style="margin-bottom:10px">
         <div class="card-h" style="height:42px"><span class="cico v">${I('pen')}</span><h3>快速记一笔</h3><span class="n">追加到「今日笔记」</span></div>
         <textarea placeholder="想到什么先记下来…"></textarea>
         <div class="cap-bar">Ctrl + Enter 保存<span class="sp"></span><button class="ib hv" title="语音输入">${I('mic')}</button><button class="btn btn-p">${I('tick', 'sm')}保存</button></div>
@@ -93,12 +102,13 @@ KB.add('home', {
       <div class="cols g12 r2">
         <div class="card">
           <div class="card-h"><span class="cico g">${I('check')}</span><h3>待办速览</h3><span class="n num">共 11 条</span><span class="sp"></span>${hide}<span class="lnk" data-go="tasks">全部待办${I('right', 'xs')}</span></div>
-          <div class="pills" style="padding:0 14px 6px"><button class="bad">逾期<b>2</b></button><button class="on">今日<b>3</b></button><button>即将到期<b>2</b></button><button>无截止日期<b>4</b></button></div>
+          <div class="pills" style="padding:0 14px 4px"><button class="bad">逾期<b>2</b></button><button class="on">今日<b>3</b></button><button>即将到期<b>2</b></button><button>无截止日期<b>4</b></button></div>
           <div style="padding:0 8px 10px">
-            <div class="td"><span class="ck">${I('tick')}</span><span class="tx">复习 Rust 卡片 20 张</span><span class="badge r">紧急</span><span class="due num">21:00</span></div>
+            <div class="td"><span class="ck">${I('tick')}</span><span class="tx">复习 Rust 卡片 20 张</span><span class="star" title="重要">${I('star', 'xs')}</span><span class="badge r">紧急</span><span class="due num">21:00</span></div>
             <div class="td"><span class="ck">${I('tick')}</span><span class="tx">把多窗口方案写进路线图</span><span class="badge" title="子任务">${I('sub', 'xs')}1/3</span><span class="badge o">普通</span><span class="due num">23:30</span></div>
             <div class="td done"><span class="ck">${I('tick')}</span><span class="tx">写周复盘</span><span class="due num">22:00</span></div>
             <div class="td"><span class="ck">${I('tick')}</span><span class="tx">给《深入理解计算机系统》第 3 章补摘要</span><span class="due num">18:00</span></div>
+            <div class="td-more">+ 还有 7 条…</div>
           </div>
         </div>
         <div class="card">
