@@ -9394,13 +9394,15 @@ main.ant-layout-content:has(.kb-home) {
    一级就推进约 48，三四级就挤到右边（2026-11-04 用户指出）。
    比照侧栏文件夹树（缩进 10 / 箭头 16）收紧：缩进 12（下拉面板宽，层级要看得清）、箭头槽 16，
    黑实心三角改灰色小号 */
+/* !important：antd 的 :where(.css-xxx).ant-select-tree .ant-select-tree-indent-unit 优先级相同、
+   且是运行时插在页面最后的，不加会被它盖回 24（2026-11-04 第一次改时就是这样没生效） */
 .ant-select-tree .ant-select-tree-indent-unit {
-  width: 12px;
+  width: 12px !important;
 }
 .ant-select-tree .ant-select-tree-switcher,
 .ant-select-tree .ant-select-tree-switcher-noop {
-  width: 16px;
-  margin-inline-end: 2px;
+  width: 16px !important;
+  margin-inline-end: 2px !important;
 }
 .ant-select-tree .ant-select-tree-switcher {
   color: var(--kb-text-tertiary);
