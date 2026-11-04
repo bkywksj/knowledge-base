@@ -8759,3 +8759,136 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   background: var(--kb-grad-soft, var(--kb-bg-hover));
   box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--kb-primary) 32%, transparent);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 对齐第三轮·提示词：数值取自原型实测（.pgrid / .pc / 编辑提示词 .card-b / .iconpick / .ta / .seg）
+   编辑表单类（.kb-prompt-edit 等）定时推送也在用，推送页按同一原型样式
+   ═══════════════════════════════════════════════════════════ */
+.kb-prompts-page .kb-page-sub {
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+}
+/* 卡片网格（原型 .pgrid）：2 列、间距 12 */
+.kb-prompt-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+/* 卡片（原型 .pc）：卡片投影 + 极淡渐变底；编辑中 1.5px 主色 .32 内描边；停用整张 62% */
+.kb-prompt-card {
+  background: linear-gradient(180deg, var(--kb-bg-raised, #fff), color-mix(in srgb, var(--kb-bg-raised, #fff) 98%, var(--kb-primary)));
+  box-shadow: var(--kb-shadow-card);
+}
+.kb-prompt-card:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kb-primary) 22%, transparent), var(--kb-shadow-card);
+}
+.kb-prompt-card.is-active {
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--kb-primary) 32%, transparent), var(--kb-shadow-card);
+}
+.kb-prompt-card.is-off {
+  opacity: 0.62;
+}
+.kb-prompt-card.is-off .kb-prompt-ico,
+.kb-prompt-card.is-off .kb-prompt-title,
+.kb-prompt-card.is-off .kb-prompt-desc,
+.kb-prompt-card.is-off .kb-prompt-foot {
+  opacity: 1;
+}
+.kb-prompt-card-head {
+  gap: 10px;
+}
+.kb-prompt-ico {
+  width: 26px;
+  height: 26px;
+  background: linear-gradient(135deg, color-mix(in srgb, currentColor 8%, transparent), color-mix(in srgb, currentColor 16%, transparent));
+}
+.kb-prompt-desc {
+  font-size: 12.5px;
+  line-height: 20px;
+}
+/* 插入方式徽标（原型 .badge）：20 高、圆角 5、11.5px */
+.kb-prompt-mode {
+  padding: 0 7px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  line-height: 20px;
+}
+/* 编辑表单（原型 .card-b gap 9）：字段标签 12px 二级色；标签与控件、字段之间都是 9 */
+.kb-prompt-edit .ant-form-item {
+  margin-bottom: 9px;
+}
+.kb-prompt-edit .ant-form-item-label {
+  padding: 0 0 9px !important;
+}
+.kb-prompt-edit .ant-form-item-label > label {
+  height: 18px;
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+}
+/* 输入框（原型 .inp）：32 高、细圈 + 内高光 */
+[data-theme] .kb-prompt-edit .ant-input-affix-wrapper:not(.ant-input-affix-wrapper-sm),
+[data-theme] .kb-prompt-edit .ant-select:not(.ant-select-sm) {
+  min-height: 32px;
+  border-color: transparent !important;
+  background: var(--kb-bg-raised, #fff) !important;
+  box-shadow: 0 0 0 0.5px var(--kb-border-strong), var(--kb-hi) !important;
+}
+[data-theme] .kb-prompt-edit .ant-input-affix-wrapper:not(.ant-input-affix-wrapper-sm) {
+  height: 32px;
+}
+[data-theme] .kb-prompt-edit .ant-input-affix-wrapper-focused,
+[data-theme] .kb-prompt-edit .ant-select-focused {
+  box-shadow: 0 0 0 1px var(--kb-primary), 0 0 0 3px color-mix(in srgb, var(--kb-primary) 16%, transparent) !important;
+}
+.kb-prompt-edit textarea.ant-input {
+  font-size: 12.5px !important;
+  /* 原型 --ff-mono：等宽英文 + 雅黑中文；只写 monospace 时中文会回退成宋体 */
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, "Microsoft YaHei UI", monospace !important;
+}
+/* 图标选择（原型 .iconpick）：32、圆角 8；选中浅紫底 + 主色细圈 */
+.kb-icon-grid {
+  gap: 4px;
+}
+.kb-icon-opt {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px var(--kb-border);
+}
+.kb-icon-opt:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kb-primary) 45%, transparent);
+}
+.kb-icon-opt.is-on {
+  background: color-mix(in srgb, var(--kb-primary) 13%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kb-primary) 32%, transparent);
+}
+/* 插入方式分段（原型 .seg）：30 高、内边距 2、圆角 8；选中白底描边 12px / 600 */
+.kb-prompt-edit .ant-segmented {
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--kb-primary-light);
+}
+.kb-prompt-edit .ant-segmented .ant-segmented-item {
+  border-radius: 6px;
+}
+.kb-prompt-edit .ant-segmented .ant-segmented-item-label {
+  min-height: 26px !important;
+  line-height: 26px !important;
+  font-size: 12px;
+}
+.kb-prompt-edit .ant-segmented .ant-segmented-item-selected,
+.kb-prompt-edit .ant-segmented .ant-segmented-thumb {
+  background: var(--kb-bg-raised, #fff);
+}
+.kb-prompt-edit .ant-segmented .ant-segmented-item-selected {
+  color: var(--kb-primary);
+  font-weight: 600;
+}
+/* 启用开关行（原型 label 12.5）；底部按钮间距 8 */
+.kb-prompt-enable {
+  margin: 2px 0 10px;
+  font-size: 12.5px;
+}
+.kb-prompt-actions {
+  gap: 8px;
+}

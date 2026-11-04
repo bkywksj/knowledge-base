@@ -348,6 +348,7 @@ export default function PromptsPage() {
         />
         <Button
           type="primary"
+          className="kb-bar-btn-p"
           icon={<Plus size={14} />}
           onClick={() => confirmLeave(openCreate)}
         >
@@ -551,10 +552,23 @@ export default function PromptsPage() {
             </div>
           </Form>
           <div className="kb-prompt-actions">
-            <Button disabled={!dirty || saving} onClick={handleCancel}>
+            {/* 原型 .btn-o / .btn-p：30 高、圆角 6；关掉 antd 两字间自动空格（「取 消」「保 存」） */}
+            <Button
+              className="kb-bar-btn"
+              autoInsertSpace={false}
+              disabled={!dirty || saving}
+              onClick={handleCancel}
+            >
               取消
             </Button>
-            <Button type="primary" loading={saving} disabled={!dirty} onClick={() => void handleSubmit()}>
+            <Button
+              type="primary"
+              className="kb-bar-btn-p"
+              autoInsertSpace={false}
+              loading={saving}
+              disabled={!dirty}
+              onClick={() => void handleSubmit()}
+            >
               保存
             </Button>
           </div>
