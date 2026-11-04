@@ -7939,3 +7939,124 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
 .kb-aside-sec {
   padding-left: 10px;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 对齐第三轮·待办：数值取自原型实测（.bar .btn-p / .pills / .card / .tg-h / .tk / .badge / 侧栏 .row .sec）
+   ═══════════════════════════════════════════════════════════ */
+/* 顶栏新建分体按钮（原型 .btn-p）：高 30、圆角 6、12.5px —— 笔记页顶栏同款 */
+.kb-page-bar .kb-split.ant-space-compact {
+  height: 30px;
+  border-radius: 6px;
+}
+[data-theme] .kb-page-bar .kb-split.ant-space-compact > .ant-btn {
+  height: 30px;
+  padding: 0 13px;
+  font-size: 12.5px;
+}
+[data-theme] .kb-page-bar .kb-split.ant-space-compact > .ant-btn + .ant-btn {
+  width: 26px;
+  padding: 0;
+}
+/* 分组胶囊（原型 .pills）：高 26、0 10、12px；数字角标 16 高、圆角 8 */
+.kb-task-chip {
+  height: 26px;
+  gap: 5px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.kb-task-chip > b {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  line-height: 16px;
+  background: var(--kb-bg-active);
+  color: var(--kb-text-secondary);
+}
+.kb-task-chip.is-bad > b {
+  background: color-mix(in srgb, var(--ant-color-error) 9%, transparent);
+  color: var(--ant-color-error);
+}
+.kb-task-chips-hint {
+  color: var(--kb-text-secondary);
+}
+/* 列表卡片（原型 .card）：内边距 4 6 8、卡片投影、极淡渐变底 */
+.kb-task-board {
+  padding: 4px 6px 8px;
+  background: linear-gradient(180deg, var(--kb-bg-raised, #fff), color-mix(in srgb, var(--kb-bg-raised, #fff) 98%, var(--kb-primary)));
+  box-shadow: var(--kb-shadow-card);
+}
+/* 分组标题（原型 .tg-h）：12 / 700、ink2；数字同字号、二级色 */
+.kb-task-sec-head {
+  gap: 8px;
+  font-size: 12px;
+  color: var(--kb-ink2);
+}
+.kb-task-sec-head > b {
+  font-weight: 700;
+  color: var(--kb-text-secondary);
+}
+/* 任务行（原型 .tk）：最小高 48、内边距 7 14、圆角 10、垂直居中 */
+.kb-task-row {
+  align-items: center;
+  min-height: 48px;
+  padding: 7px 14px;
+  border-radius: 10px;
+}
+/* 勾选框（原型 .ck）：16、1.5px 内描边 */
+.kb-task-ck {
+  width: 16px;
+  height: 16px;
+  margin-top: 0;
+  border: none;
+  box-shadow: inset 0 0 0 1.5px var(--kb-border-strong);
+}
+.kb-task-ck:hover {
+  box-shadow: inset 0 0 0 1.5px var(--kb-primary);
+}
+.kb-task-ck.is-done {
+  box-shadow: none;
+}
+.kb-task-ck.is-abandoned {
+  box-shadow: none;
+  border: 1.5px dashed var(--kb-border-strong);
+}
+/* 描述行（原型 .tx p）：二级色 */
+.kb-task-desc.ant-typography {
+  color: var(--kb-text-secondary) !important;
+}
+/* 徽标（原型 .badge）：高 20、圆角 5 */
+.kb-task-chip-sm {
+  height: 20px;
+  border-radius: 5px;
+}
+.kb-task-chip-sm.is-link {
+  background: var(--kb-primary-light);
+}
+.kb-task-chip-sm.is-warn {
+  background: color-mix(in srgb, var(--ant-color-warning) 12%, transparent);
+}
+/* 截止时间（原型 .due）：12px、二级色、最小宽 56 */
+.kb-task-due {
+  width: auto;
+  min-width: 56px;
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+}
+/* 侧栏待办面板（原型 .row / .sec）：行 30 高、0 8、圆角 6，选中深一档描边；计数与小节标题二级色 */
+.kb-tp-row {
+  min-height: 30px;
+  padding: 0 8px;
+  border-radius: 6px;
+}
+.kb-tp-row.is-active {
+  box-shadow: inset 0 0 0 1px var(--kb-border-strong);
+}
+.kb-tp-count {
+  color: var(--kb-text-secondary);
+}
+.kb-tp-sec {
+  min-height: 30px;
+  padding: 8px 2px 0 8px;
+  font-size: 11.5px;
+  color: var(--kb-text-secondary);
+}

@@ -809,6 +809,8 @@ function DesktopTasksPage() {
               }}
               title={multiSelect ? "退出多选" : "进入多选模式（批量删除/完成）"}
               type={multiSelect ? "primary" : "default"}
+              // 原型 .btn-o 描边按钮；多选进行中仍是主色实心，提示「正在多选」
+              className={multiSelect ? undefined : "kb-bar-btn"}
             >
               {multiSelect ? "退出多选" : "多选"}
             </Button>
@@ -920,7 +922,10 @@ function DesktopTasksPage() {
             <button
               key={k}
               type="button"
-              className={groupPick === k ? "kb-task-chip is-on" : "kb-task-chip"}
+              // 原型 .pills button.bad：逾期的数字角标红底红字
+              className={
+                "kb-task-chip" + (groupPick === k ? " is-on" : "") + (k === "overdue" ? " is-bad" : "")
+              }
               disabled={k !== "all" && n === 0}
               onClick={() => setGroupPick(k)}
             >
@@ -1528,7 +1533,7 @@ function TaskRow({
             e.stopPropagation();
             onToggleExpand?.();
           }}
-          className="mt-0.5 shrink-0 flex items-center justify-center cursor-pointer hover:bg-black/5 rounded transition"
+          className="shrink-0 flex items-center justify-center cursor-pointer hover:bg-black/5 rounded transition"
           style={{
             width: 18,
             height: 18,
@@ -1549,7 +1554,6 @@ function TaskRow({
           checked={isSelected}
           onChange={() => onToggleSelect?.(task.id)}
           onClick={(e) => e.stopPropagation()}
-          style={{ marginTop: 2 }}
         />
       ) : (
         <Tooltip
@@ -1586,7 +1590,6 @@ function TaskRow({
           width: 8,
           height: 8,
           background: priorityColor(task.priority, token),
-          marginTop: 6,
           opacity: inactive ? 0.35 : 1,
         }}
       />
