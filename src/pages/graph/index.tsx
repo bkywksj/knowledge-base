@@ -51,16 +51,17 @@ export default function GraphPage() {
   const [locateText, setLocateText] = useState("");
 
   /**
-   * 原型配色（v4）：普通笔记 = 主色半透明、热门 = 主色 + 光晕、日记 = 蓝、置顶 = 琥珀、文件夹 = 绿。
-   * 日记蓝主题里没有现成令牌（colorInfo 跟主色一样），单独给一个两套主题都看得清的蓝。
+   * 原型配色（v4 .legend 实测）：普通 #B9A9F1、日记 #8DAEEA、置顶 #E6BC6E、文件夹 #7CC1A4 —— 中等明度的柔和色，
+   * 淡紫 / 暖炭两套底色上都看得清，所以不随主题切换。
+   * 热门在原型里是主按钮渐变，画布上画不了渐变 → 用主色实心 + 光晕代替（图例仍画渐变）。
    */
   const palette: Record<NodeKind, string> = useMemo(
     () => ({
-      normal: token.colorPrimary,
+      normal: "#B9A9F1",
       hot: token.colorPrimary,
-      daily: "#7A9CE6",
-      pinned: token.colorWarning,
-      folder: token.colorSuccess,
+      daily: "#8DAEEA",
+      pinned: "#E6BC6E",
+      folder: "#7CC1A4",
     }),
     [token],
   );
@@ -201,7 +202,8 @@ export default function GraphPage() {
             if (k === "folder") return d.data?.folderColor || palette.folder;
             return palette[k];
           },
-          fillOpacity: (d: any) => (kindOf(d.data) === "normal" ? 0.55 : 1),
+          // 普通笔记原来靠半透明主色变浅，现在本身就是浅紫，不再叠透明度
+          fillOpacity: 1,
           lineWidth: 0,
           // 热门笔记一圈柔光（原型里的「热门」）
           halo: (d: any) => kindOf(d.data) === "hot",
@@ -474,6 +476,8 @@ export default function GraphPage() {
           <span className="kb-graph-title">知识图谱</span>
           <Segmented
             size="small"
+            // 原型 .seg：30 高、圆角 8、选中白底描边（与编辑器模式切换同款）
+            className="kb-mode-seg"
             value={layout}
             options={[
               { label: "力导向", value: "d3-force" },
@@ -502,13 +506,13 @@ export default function GraphPage() {
           >
             <Input allowClear prefix={<Search size={14} />} placeholder="定位节点" />
           </AutoComplete>
-          <Button icon={<Maximize2 size={14} />} onClick={handleFitView}>
+          <Button className="kb-bar-btn" icon={<Maximize2 size={14} />} onClick={handleFitView}>
             适应画布
           </Button>
-          <Button icon={<Crosshair size={14} />} onClick={handleFitCenter}>
+          <Button className="kb-bar-btn" icon={<Crosshair size={14} />} onClick={handleFitCenter}>
             居中
           </Button>
-          <Button icon={<RotateCcw size={14} />} onClick={handleRefresh}>
+          <Button className="kb-bar-btn" icon={<RotateCcw size={14} />} onClick={handleRefresh}>
             刷新数据
           </Button>
         </div>
@@ -522,7 +526,8 @@ export default function GraphPage() {
         <div className="kb-graph-legend">
           {LEGEND.map((l) => (
             <span key={l.label}>
-              <i style={{ background: palette[l.key], opacity: l.key === "normal" ? 0.55 : 1 }} />
+              {/* 热门：原型图例是主按钮渐变 */}
+              <i style={{ background: l.key === "hot" ? "var(--kb-grad, " + palette.hot + ")" : palette[l.key] }} />
               {l.label}
             </span>
           ))}
@@ -550,7 +555,11 @@ export default function GraphPage() {
               >
                 {selectedInfo.nodeType === "note" ? "打开笔记" : "打开文件夹"}
               </Button>
-              <Button size="small" icon={<Crosshair size={13} />} onClick={() => void locate(selectedInfo.gid)}>
+              <Button
+                className="kb-bar-btn is-sm"
+                icon={<Crosshair size={13} />}
+                onClick={() => void locate(selectedInfo.gid)}
+              >
                 居中此节点
               </Button>
             </div>

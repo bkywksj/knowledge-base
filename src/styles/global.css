@@ -8511,3 +8511,79 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
 .tags-tree-panel .ant-tree {
   background: transparent !important;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   v4 对齐第三轮·图谱：数值取自原型实测（.bar / .seg / .inp / .gp / .legend / .nodecard）
+   ═══════════════════════════════════════════════════════════ */
+/* 顶栏按页面顶栏（原型 .bar）：48 高、渐变底、底部细线、0 16 0 24；标题 17 */
+.editor-topbar.kb-ebar.kb-graph-bar {
+  min-height: 48px;
+  padding: 0 16px 0 24px !important;
+  background: var(--kb-bar-grad) !important;
+  border-bottom: 1px solid var(--kb-border) !important;
+}
+.kb-graph-title {
+  font-size: 17px;
+}
+.kb-graph-hint {
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+}
+.kb-graph-bar .kb-mode-seg {
+  margin-right: 0;
+}
+/* 定位节点（原型 .inp）：200 × 32、细圈 + 内高光 */
+.kb-graph-locate {
+  width: 200px;
+}
+[data-theme] .kb-graph-locate .ant-input-affix-wrapper {
+  height: 32px;
+  border-color: transparent !important;
+  background: var(--kb-bg-raised, #fff) !important;
+  box-shadow: 0 0 0 0.5px var(--kb-border-strong), var(--kb-hi) !important;
+}
+[data-theme] .kb-graph-locate .ant-input-affix-wrapper-focused {
+  box-shadow: 0 0 0 1px var(--kb-primary), 0 0 0 3px color-mix(in srgb, var(--kb-primary) 16%, transparent) !important;
+}
+/* 画布底（原型 .gp）：中心偏亮的淡紫径向渐变 */
+.kb-graph-stage {
+  background: radial-gradient(800px 500px at 50% 45%, color-mix(in srgb, var(--kb-bg-raised, #fff) 98%, var(--kb-primary)), color-mix(in srgb, var(--kb-bg-raised, #fff) 91%, var(--kb-primary)));
+}
+/* 图例（原型 .legend）：10 14、卡片投影、90% 底；12px ink2；色点 10 */
+.kb-graph-legend {
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--kb-bg-raised, #fff) 90%, transparent);
+  box-shadow: var(--kb-shadow-card);
+  font-size: 12px;
+  color: var(--kb-ink2);
+}
+.kb-graph-legend i {
+  width: 10px;
+  height: 10px;
+}
+/* 节点卡片（原型 .nodecard）：宽 230、12 14、圆角 12、浮层投影；标题 13.5；说明 12 二级色；按钮 26 高 */
+.kb-graph-card {
+  width: 230px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  box-shadow: 0 0 0 0.5px var(--kb-border), 0 4px 12px rgba(110, 85, 200, 0.08), 0 20px 44px -12px rgba(110, 85, 200, 0.26);
+}
+.kb-graph-card-title {
+  font-size: 13.5px;
+}
+.kb-graph-card-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+}
+.kb-graph-card-actions {
+  gap: 6px;
+  margin-top: 10px;
+}
+[data-theme] .kb-graph-card .ant-btn-primary {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
