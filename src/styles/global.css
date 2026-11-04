@@ -7868,6 +7868,12 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   color: var(--kb-text-tertiary) !important;
   font-size: 12px;
 }
+/* 外框压到 26 后，内容区仍按 antd 小号多选的 20 高贴顶排，占位「+ 标签」上 1 下 7 偏上；
+   让内容区在外框里垂直居中 */
+[data-theme] .kb-tag-add .ant-select {
+  align-items: center;
+  padding-block: 0 !important;
+}
 .kb-tag-add:not(:focus-within) .ant-select-suffix {
   display: none;
 }
