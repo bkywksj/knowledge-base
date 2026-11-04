@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { theme as antdTheme, message } from "antd";
-import { EyeOff, Folder as FolderIcon, FolderX, Layers, Check } from "lucide-react";
+import { Folder as FolderIcon, FolderX, Layers, Check } from "lucide-react";
 import { folderApi, hiddenApi } from "@/lib/api";
 import type { Folder } from "@/types";
 
@@ -111,66 +111,34 @@ export function HiddenPanel() {
       // 本面板纯目录导航 + 无 input → 顶层兜底吞 WebView 默认菜单
       onContextMenu={(e) => e.preventDefault()}
     >
-      {/* 视图标题 */}
-      <div
-        className="flex items-center gap-2 px-3 py-2.5 shrink-0"
-        style={{ borderBottom: `1px solid ${token.colorBorderSecondary}` }}
-      >
-        <EyeOff size={15} style={{ color: token.colorPrimary }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: token.colorText }}>
-          隐藏笔记
-        </span>
-        <span
-          style={{
-            fontSize: 11,
-            color: token.colorTextTertiary,
-            marginLeft: 2,
-          }}
-        >
-          · {entries.length - 1}{/* 减去 "全部" 那一项 */}
-        </span>
+      {/* 视图标题（原型 .ph：与其他面板同款，只有标题） */}
+      <div className="kb-ph">
+        <span className="kb-ph-title">隐藏笔记</span>
       </div>
 
       {/* 扁平目录列表 */}
       <div
         className="flex-1 overflow-auto"
-        style={{ minHeight: 0, padding: "6px 8px 8px" }}
+        style={{ minHeight: 0, padding: "2px 8px 8px" }}
       >
-        {entries.map((entry) => {
+        {/* 行样式复用待办面板 .kb-tp-row（原型 .row：30 高、选中白底 + 深一档描边） */}
+        {entries.map((entry, i) => {
           const active = selectedKey === entry.key;
           return (
-            <div
-              key={entry.key}
-              onClick={() => handleSelect(entry.key)}
-              className="cursor-pointer"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "6px 10px",
-                borderRadius: 6,
-                background: active ? `${token.colorPrimary}14` : "transparent",
-                color: active ? token.colorPrimary : token.colorText,
-                fontWeight: active ? 500 : undefined,
-                fontSize: 13,
-                transition: "background .15s",
-              }}
-            >
-              <span
-                style={{
-                  flexShrink: 0,
-                  opacity: active ? 1 : 0.7,
-                  display: "inline-flex",
-                  alignItems: "center",
-                }}
+            <Fragment key={entry.key}>
+              {/* 原型：「全部隐藏笔记」下面是「文件夹」小节 */}
+              {i === 1 && <div className="kb-tp-sec">文件夹</div>}
+              <div
+                onClick={() => handleSelect(entry.key)}
+                className={active ? "kb-tp-row is-active" : "kb-tp-row"}
               >
-                {entry.icon}
-              </span>
-              <span className="truncate" style={{ flex: 1 }}>
-                {entry.label}
-              </span>
-              {active && <Check size={12} strokeWidth={3} />}
-            </div>
+                <span className="kb-tp-ic" style={active ? { color: "var(--kb-primary)" } : undefined}>
+                  {entry.icon}
+                </span>
+                <span className="kb-tp-lb">{entry.label}</span>
+                {active && <Check size={12} strokeWidth={3} />}
+              </div>
+            </Fragment>
           );
         })}
 
