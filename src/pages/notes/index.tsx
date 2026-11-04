@@ -253,9 +253,10 @@ function foldersToAntTree(folders: Folder[]): FolderTreeNode[] {
   return folders.map((f) => ({
     key: f.id,
     title: (
-      <span className="inline-flex items-center gap-1.5" style={{ fontSize: 13 }}>
-        <FolderIcon size={13} style={{ opacity: 0.6 }} />
-        {f.name}
+      // 长名单行省略、悬停看全名；图标 flex:none，否则折行时会被挤成一个小点
+      <span className="kb-pick-title" title={f.name}>
+        <FolderIcon size={13} />
+        <span>{f.name}</span>
       </span>
     ),
     children: f.children?.length ? foldersToAntTree(f.children) : undefined,
@@ -320,6 +321,7 @@ function BatchMoveButton({
             ) : (
               <Tree
                 blockNode
+                className="kb-pick-tree"
                 treeData={treeData}
                 expandedKeys={expandedKeys}
                 onExpand={(keys) => setExpandedKeys(keys)}
@@ -611,6 +613,7 @@ function FolderChangeCell({
         ) : (
           <Tree
             blockNode
+            className="kb-pick-tree"
             treeData={treeData}
             selectedKeys={currentFolderId != null ? [currentFolderId] : []}
             expandedKeys={expandedKeys}

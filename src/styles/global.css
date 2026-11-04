@@ -9390,43 +9390,71 @@ main.ant-layout-content:has(.kb-home) {
   padding-right: 14px;
 }
 
-/* 全局树形下拉（标签 / 文件夹 / 待办分类等 TreeSelect）：antd 默认每级缩进 24 + 箭头槽 24，
-   一级就推进约 48，三四级就挤到右边（2026-11-04 用户指出）。
-   比照侧栏文件夹树（缩进 10 / 箭头 16）收紧：缩进 12（下拉面板宽，层级要看得清）、箭头槽 16，
-   黑实心三角改灰色小号 */
-/* !important：antd 的 :where(.css-xxx).ant-select-tree .ant-select-tree-indent-unit 优先级相同、
-   且是运行时插在页面最后的，不加会被它盖回 24（2026-11-04 第一次改时就是这样没生效） */
-.ant-select-tree .ant-select-tree-indent-unit {
+/* 树形选择统一外观：TreeSelect 下拉（标签 / 文件夹 / 待办分类，.ant-select-tree）
+   + 「移动到」弹层里的 Tree（.kb-pick-tree，笔记列表的文件夹标签 / 批量移动）。
+   antd 默认每级缩进 24 + 箭头槽 24，一级就推进约 48（2026-11-04 用户指出）。
+   比照侧栏文件夹树收紧：缩进 12、箭头槽 20，黑实心三角改灰色小号。
+   !important：antd 的 :where(.css-xxx).ant-tree-select-dropdown .ant-select-tree .ant-select-tree-indent-unit
+   优先级 (0,3,0) 且运行时插在页面最后，不加会被盖回 24（第一次改时就是这样没生效） */
+.ant-select-tree .ant-select-tree-indent-unit,
+.kb-pick-tree .ant-tree-indent-unit {
   width: 12px !important;
 }
 .ant-select-tree .ant-select-tree-switcher,
-.ant-select-tree .ant-select-tree-switcher-noop {
+.ant-select-tree .ant-select-tree-switcher-noop,
+.kb-pick-tree .ant-tree-switcher,
+.kb-pick-tree .ant-tree-switcher-noop {
   width: 20px !important;
   margin-inline-end: 2px !important;
-}
-/* 悬停方块：antd 用固定 24×24、贴左的 ::before 画，格子变窄后方块往右溢出，箭头不在正中。
-   改成与格子同宽的 20×20、上下居中（行高 24） */
-.ant-select-tree .ant-select-tree-switcher::before {
-  width: 100% !important;
-  height: 20px !important;
-  top: 2px !important;
-  border-radius: 5px !important;
-}
-/* 整棵树离下拉框左边留 6，最外层箭头左侧不再贴边 */
-.ant-tree-select-dropdown .ant-select-tree-list {
-  padding-inline-start: 6px;
-}
-.ant-select-tree .ant-select-tree-switcher {
-  color: var(--kb-text-tertiary);
-}
-.ant-select-tree .ant-select-tree-switcher .ant-select-tree-switcher-icon {
-  font-size: 9px;
-}
-/* antd 按文字基线摆箭头，比悬停方块中线低 1px；格子改成 flex 居中 */
-.ant-select-tree .ant-select-tree-switcher {
+  /* antd 按文字基线摆箭头，比悬停方块中线低 1px；格子改成 flex 居中 */
   display: inline-flex !important;
   align-items: center;
   justify-content: center;
+  color: var(--kb-text-tertiary);
+}
+/* 悬停方块：antd 用固定 24×24、贴左的 ::before 画，格子变窄后方块往右溢出，箭头不在正中。
+   改成与格子同宽的 20×20、上下居中 */
+.ant-select-tree .ant-select-tree-switcher::before,
+.kb-pick-tree .ant-tree-switcher::before {
+  width: 100% !important;
+  height: 20px !important;
+  /* 按行高居中而不是写死距顶 2：行高不总是 24 */
+  top: 50% !important;
+  transform: translateY(-50%);
+  border-radius: 5px !important;
+}
+.ant-select-tree .ant-select-tree-switcher .ant-select-tree-switcher-icon,
+.kb-pick-tree .ant-tree-switcher .ant-tree-switcher-icon {
+  font-size: 9px;
+}
+/* 整棵树离下拉框左边留 6，最外层箭头左侧不再贴边（「移动到」弹层自带内边距，只补 2） */
+.ant-tree-select-dropdown .ant-select-tree-list {
+  padding-inline-start: 6px;
+}
+.kb-pick-tree .ant-tree-list {
+  padding-inline-start: 2px;
+}
+/* 文件夹节点标题：长名单行省略（悬停看全名），图标固定尺寸不被挤成一个小点 */
+.kb-pick-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+}
+.kb-pick-title > svg {
+  flex: none;
+  opacity: 0.6;
+}
+.kb-pick-title > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kb-pick-tree .ant-tree-node-content-wrapper,
+.ant-select-tree .ant-select-tree-node-content-wrapper {
+  min-width: 0;
 }
 
 /* ═══ 笔记编辑器顶栏瘦身（2026-11-04）：状态压成「● 两三个字」，隐藏 / 加密 / 删除平铺 ═══ */
