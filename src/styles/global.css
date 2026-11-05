@@ -9723,9 +9723,11 @@ main.ant-layout-content:has(.kb-home) {
   align-items: center;
   gap: 2px;
   box-sizing: border-box;
-  margin: 0 2px 6px;
+  /* 上方留 4：它是卡片滚动区的第一个元素，聚焦时 1px 框 + 3px 光环画在框外，不留空顶边会被裁掉。
+     高度 32 → 30、下距 6 → 4 把这 4 抵掉，300 高的卡片仍放得下 4 条待办 */
+  margin: 4px 2px 4px;
   padding: 0 2px 0 4px;
-  height: 32px;
+  height: 30px;
   border-radius: 8px;
   background: var(--kb-bg-elevated, var(--ant-color-bg-container));
   box-shadow: 0 0 0 1px var(--ant-color-border-secondary);

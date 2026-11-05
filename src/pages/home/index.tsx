@@ -110,6 +110,8 @@ function DesktopHomePage() {
   // ─── 数据状态 ─────────────────────────────────────
   const [recentNotes, setRecentNotes] = useState<Note[]>([]);
   const [pinnedNotes, setPinnedNotes] = useState<Note[]>([]);
+  /** 笔记总数（笔记列表口径：不含日记 / 隐藏），笔记卡显示「共 N 篇」和「还有 N 篇」 */
+  const [notesTotal, setNotesTotal] = useState(0);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [trend, setTrend] = useState<DailyWritingStat[]>([]);
   /** 今日待办速览(今天 + 逾期,前端筛 / 切片) */
@@ -165,6 +167,7 @@ function DesktopHomePage() {
           dailyApi.get(todayYmd()).catch(() => null),
         ]);
       setRecentNotes(notesResult.items.filter((n) => !n.is_pinned));
+      setNotesTotal(notesResult.total);
       setPinnedNotes(notesResult.items.filter((n) => n.is_pinned));
       setStats(dashStats);
       setTrend(trendData);
@@ -478,8 +481,8 @@ function DesktopHomePage() {
   }, []);
   // 卡头 42 + 快速添加 38 + 胶囊 30 +「还有 N 条」20 + 底边 10（实测，300 高正好放 4 条）；每条 40
   const todoRows = Math.max(3, Math.floor((r4Height - 140) / 40));
-  // 卡头 42 + 底边 12；每条 40
-  const noteRows = Math.max(4, Math.floor((r4Height - 54) / 40));
+  // 卡头 42 +「还有 N 篇」20 + 底边 12；每条 40
+  const noteRows = Math.max(4, Math.floor((r4Height - 74) / 40));
 
   // ─── 派生指标(纯前端从 trend 计算) ────────────────
   const vitalityMetrics = useMemo(() => {
@@ -965,6 +968,7 @@ function DesktopHomePage() {
                   },
                 ]}
               />
+              {notesTotal > 0 && <span className="kb-card-n">共 {notesTotal} 篇</span>}
             </span>
           }
           extra={
@@ -976,6 +980,10 @@ function DesktopHomePage() {
         >
           {(() => {
             const list = noteTab === "recent" ? displayedRecent : pinnedNotes.slice(0, noteRows);
+            // 置顶排在列表最前，拉回来的 24 条里已含全部置顶（置顶超过 24 篇时这里会少算，可接受）
+            const tabTotal =
+              noteTab === "recent" ? Math.max(0, notesTotal - pinnedNotes.length) : pinnedNotes.length;
+            const remaining = tabTotal - list.length;
             if (list.length === 0) {
               return noteTab === "recent" ? (
                 <EmptyState description={loading ? "加载中…" : "还没有笔记"} />
@@ -1012,6 +1020,14 @@ function DesktopHomePage() {
                     </li>
                   );
                 })}
+                {/* 与待办卡同款：放不下的引导去笔记列表 */}
+                {remaining > 0 && (
+                  <li className="kb-hm-more">
+                    <button type="button" onClick={() => navigate("/notes")}>
+                      + 还有 {remaining} 篇…
+                    </button>
+                  </li>
+                )}
               </ul>
             );
           })()}
