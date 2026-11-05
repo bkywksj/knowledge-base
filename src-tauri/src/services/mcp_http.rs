@@ -60,7 +60,27 @@ pub struct McpHttpState {
 struct RunningServer {
     addr: SocketAddr,
     cancel: CancellationToken,
+    params: StartParams,
+    task: tauri::async_runtime::JoinHandle<()>,
+    session_dbs: SessionDbs,
 }
+
+/// 各 HTTP 会话打开的数据库连接（弱引用，会话结束自然失效）
+type SessionDbs = Arc<std::sync::Mutex<Vec<std::sync::Weak<kb_core::KbDb>>>>;
+
+/// [`start`] 的入参。暂停时留着，恢复时原样再起一次
+#[derive(Debug, Clone)]
+pub struct StartParams {
+    pub db_path: std::path::PathBuf,
+    pub port: u16,
+    pub token: String,
+    pub writable: bool,
+    pub bind_lan: bool,
+}
+
+/// 暂停后等服务真正退出的上限。axum 优雅停机要等手上的请求处理完；
+/// 等不到就强行结束，导入那边仍有「文件被占用」的报错兜底
+const PAUSE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// 对前端暴露的运行状态
 #[derive(Debug, Clone, serde::Serialize)]
@@ -96,6 +116,41 @@ impl McpHttpState {
         if let Some(s) = guard.take() {
             log::info!("[mcp-http] 停止服务 {}", s.addr);
             s.cancel.cancel();
+        }
+    }
+
+    /// 临时停掉服务并**等它真正退出**，返回恢复用的参数；没在跑返回 None。
+    ///
+    /// 导入 / 整包拉取要替换 app.db，而每个 HTTP 会话各开着一条连接，
+    /// 不关掉就删不掉 -wal，导入只能中止（2026-11-06 用户反馈）。
+    /// 和 [`stop`](Self::stop) 的区别：stop 只发停机信号就返回，这里要等连接都放掉；
+    /// 也不改 `mcp_http_enabled`，用户的开关状态不受影响
+    pub async fn pause(&self) -> Option<StartParams> {
+        let s = self.inner.lock().await.take()?;
+        log::info!("[mcp-http] 暂停服务 {}（替换数据库期间）", s.addr);
+        s.cancel.cancel();
+        let mut task = s.task;
+        if tokio::time::timeout(PAUSE_WAIT, &mut task).await.is_err() {
+            log::warn!("[mcp-http] {:?} 内没有停完，强制结束", PAUSE_WAIT);
+            task.abort();
+            let _ = task.await;
+        }
+        // 服务停了，会话却是 rmcp 在后台慢慢销毁的，连接可能还开着 ——
+        // 实测此时 -wal 仍删不掉。这里当场把还活着的连接切到内存库
+        if let Ok(list) = s.session_dbs.lock() {
+            for db in list.iter().filter_map(|w| w.upgrade()) {
+                if let Err(e) = db.release() {
+                    log::warn!("[mcp-http] 释放会话数据库连接失败: {e}");
+                }
+            }
+        }
+        Some(s.params)
+    }
+
+    /// 按 [`pause`](Self::pause) 返回的参数重新启动
+    pub async fn resume(&self, params: StartParams) {
+        if let Err(e) = start(self, params).await {
+            log::warn!("[mcp-http] 恢复服务失败: {e}");
         }
     }
 }
@@ -179,14 +234,14 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// 启动 HTTP MCP 服务。
 ///
 /// 已在运行时先停旧的再起新的（改端口 / 改只读开关后重启即可生效）。
-pub async fn start(
-    state: &McpHttpState,
-    db_path: std::path::PathBuf,
-    port: u16,
-    token: String,
-    writable: bool,
-    bind_lan: bool,
-) -> Result<McpHttpStatus, AppError> {
+pub async fn start(state: &McpHttpState, params: StartParams) -> Result<McpHttpStatus, AppError> {
+    let StartParams {
+        db_path,
+        port,
+        token,
+        writable,
+        bind_lan,
+    } = params.clone();
     if token.trim().is_empty() {
         // 没 token 就不给起 —— 局域网下裸奔等于把整个知识库敞开
         return Err(AppError::InvalidInput(
@@ -227,12 +282,22 @@ pub async fn start(
 
     // 每个会话新开一个 KbServer：各自独立 SQLite 连接（WAL + busy_timeout 保证并发安全），
     // 与 stdio / in-memory 用的是同一份 KbServer 实现和同一套工具白名单。
+    // 每条连接都登记下来：会话的销毁是 rmcp 内部异步做的，停服后不知道何时真正关掉，
+    // 暂停时要靠它当场放开文件（见 McpHttpState::pause）
+    let session_dbs: SessionDbs = Default::default();
+    let session_dbs_for_factory = session_dbs.clone();
     let mcp_service = StreamableHttpService::new(
         move || {
-            let db = kb_core::KbDb::open(&db_path, writable)
-                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            let db = Arc::new(
+                kb_core::KbDb::open(&db_path, writable)
+                    .map_err(|e| std::io::Error::other(e.to_string()))?,
+            );
+            if let Ok(mut list) = session_dbs_for_factory.lock() {
+                list.retain(|w| w.strong_count() > 0);
+                list.push(Arc::downgrade(&db));
+            }
             let keep = db.read_tool_whitelist();
-            Ok(kb_core::KbServer::new_filtered(db, writable, keep))
+            Ok(kb_core::KbServer::new_shared(db, writable, keep))
         },
         Arc::new(LocalSessionManager::default()),
         cfg,
@@ -250,7 +315,7 @@ pub async fn start(
         .map_err(|e| AppError::Custom(e.to_string()))?;
 
     let cancel_for_task = cancel.clone();
-    tauri::async_runtime::spawn(async move {
+    let task = tauri::async_runtime::spawn(async move {
         let server = axum::serve(listener, app.into_make_service())
             .with_graceful_shutdown(async move { cancel_for_task.cancelled().await });
         if let Err(e) = server.await {
@@ -268,7 +333,13 @@ pub async fn start(
 
     {
         let mut guard = state.inner.lock().await;
-        *guard = Some(RunningServer { addr: bound, cancel });
+        *guard = Some(RunningServer {
+            addr: bound,
+            cancel,
+            params,
+            task,
+            session_dbs,
+        });
     }
     Ok(state.status().await)
 }
@@ -329,6 +400,73 @@ mod tests {
             // 明确告诉用户这是 MCP 协议，避免再拿思源 API 那套来接
             assert!(text.contains("MCP"), "{reason}: 应写明协议类型");
         }
+    }
+
+    /// 发一次 MCP initialize，服务端随之建会话并打开一条数据库连接。返回 HTTP 状态码
+    async fn mcp_initialize(port: u16, token: &str) -> u16 {
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"pause-test","version":"1"}}}"#;
+        let resp = reqwest::Client::new()
+            .post(format!("http://127.0.0.1:{port}/mcp"))
+            .bearer_auth(token)
+            .header(header::ACCEPT, "application/json, text/event-stream")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        resp.status().as_u16()
+    }
+
+    /// 导入替换数据库前的暂停：会话的连接必须真的放掉（-wal 删得掉），
+    /// 恢复后按原配置还能连上。Windows 下打开着的文件删不掉，正好拿来判断连接有没有关
+    #[cfg(windows)]
+    #[test]
+    fn pause_releases_session_connections_and_resume_restarts() {
+        let dir = std::env::temp_dir().join(format!(
+            "kb-mcp-http-pause-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("app.db");
+        let wal = dir.join("app.db-wal");
+        let main_db = crate::database::Database::init(db_path.to_str().unwrap()).unwrap();
+
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let params = StartParams {
+            db_path: db_path.clone(),
+            port,
+            token: "t".repeat(64),
+            writable: true,
+            bind_lan: false,
+        };
+        let state = McpHttpState::default();
+
+        tauri::async_runtime::block_on(async {
+            start(&state, params.clone()).await.unwrap();
+            assert_eq!(mcp_initialize(port, &params.token).await, 200);
+            // 主连接关掉后 -wal 还在，说明会话那条连接确实开着
+            drop(main_db);
+            assert!(wal.exists(), "会话连接开着时 -wal 应还在");
+            assert!(std::fs::remove_file(&wal).is_err(), "会话开着时 -wal 应删不掉");
+
+            let paused = state.pause().await.expect("在运行的服务应返回恢复参数");
+            assert!(!state.status().await.running);
+            if wal.exists() {
+                std::fs::remove_file(&wal).expect("暂停后会话连接应已关闭，-wal 可删");
+            }
+
+            state.resume(paused).await;
+            assert!(state.status().await.running, "恢复后应在运行");
+            assert_eq!(mcp_initialize(port, &params.token).await, 200, "恢复后应能再连上");
+            state.stop().await;
+            assert!(state.pause().await.is_none(), "没在跑时 pause 返回 None");
+        });
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

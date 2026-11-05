@@ -1184,15 +1184,14 @@ pub fn run() {
                     }
                     let port = get(h::KEY_PORT).parse::<u16>().unwrap_or(h::DEFAULT_PORT);
                     let db_path = state.data_dir.join(db_file_name());
-                    if let Err(e) = h::start(
-                        &state.mcp_http,
+                    let params = h::StartParams {
                         db_path,
                         port,
                         token,
-                        get(h::KEY_WRITABLE) == "1",
-                        get(h::KEY_BIND_LAN) == "1",
-                    )
-                    .await
+                        writable: get(h::KEY_WRITABLE) == "1",
+                        bind_lan: get(h::KEY_BIND_LAN) == "1",
+                    };
+                    if let Err(e) = h::start(&state.mcp_http, params).await
                     {
                         log::warn!("[mcp-http] 自动启动失败: {e}");
                     }

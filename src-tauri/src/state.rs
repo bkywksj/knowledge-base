@@ -58,6 +58,12 @@ pub struct AppState {
     _lock_file: Option<File>,
 }
 
+/// [`AppState::pause_mcp_http`] 的返回值；移动端没有 HTTP MCP，恒为 None
+#[cfg(desktop)]
+pub type PausedMcpHttp = Option<crate::services::mcp_http::StartParams>;
+#[cfg(not(desktop))]
+pub type PausedMcpHttp = Option<()>;
+
 impl AppState {
     /// 放开本进程所有数据库连接，整库替换前调用。
     ///
@@ -80,6 +86,44 @@ impl AppState {
                 log::error!("[mcp-internal] 重开数据库连接失败，AI 工具需重启应用后恢复: {e}");
             }
         }
+    }
+
+    /// 整库替换前暂停 HTTP MCP 服务：它的每个会话各开一条连接，同样会让 `-wal` 删不掉。
+    /// 没在跑返回 None；替换完用 [`resume_mcp_http`](Self::resume_mcp_http) 按原配置拉起
+    pub async fn pause_mcp_http(&self) -> PausedMcpHttp {
+        #[cfg(desktop)]
+        {
+            self.mcp_http.pause().await
+        }
+        #[cfg(not(desktop))]
+        {
+            None
+        }
+    }
+
+    /// 按暂停前的配置拉起，并把这份配置写回（可能刚被整库替换掉的）新库。
+    /// 端口 / token / 是否开放局域网是这台机器自己的设置：导入的备份可能来自别的设备、
+    /// 或是开启服务之前导出的，不写回的话设置页显示「未开启」、token 对不上，
+    /// 重启后服务也不会再自动拉起，外部客户端全部断连
+    pub async fn resume_mcp_http(&self, paused: PausedMcpHttp) {
+        #[cfg(desktop)]
+        if let Some(params) = paused {
+            use crate::services::mcp_http as h;
+            for (key, value) in [
+                (h::KEY_ENABLED, "1".to_string()),
+                (h::KEY_PORT, params.port.to_string()),
+                (h::KEY_TOKEN, params.token.clone()),
+                (h::KEY_WRITABLE, if params.writable { "1" } else { "0" }.to_string()),
+                (h::KEY_BIND_LAN, if params.bind_lan { "1" } else { "0" }.to_string()),
+            ] {
+                if let Err(e) = self.db.set_config(key, &value) {
+                    log::warn!("[mcp-http] 写回配置 {key} 失败: {e}");
+                }
+            }
+            self.mcp_http.resume(params).await;
+        }
+        #[cfg(not(desktop))]
+        let _ = paused;
     }
 
     pub fn new(

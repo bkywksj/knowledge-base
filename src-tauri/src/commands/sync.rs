@@ -40,8 +40,8 @@ pub fn sync_export_to_file(
     result.map_err(|e| e.to_string())
 }
 
-#[tauri::command(async)]
-pub fn sync_import_from_file(
+#[tauri::command]
+pub async fn sync_import_from_file(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
     source_path: String,
@@ -57,6 +57,8 @@ pub fn sync_import_from_file(
 
     // 必须先释放 db 文件占用，否则 Windows 上 SQLite 的 mmap 会让
     // apply 阶段替换 app.db 时报 ERROR_USER_MAPPED_FILE (1224)
+    // HTTP MCP 的会话也各持一条连接，一并暂停（异步等它停完，所以本命令是 async）
+    let paused_mcp_http = state.pause_mcp_http().await;
     state.release_db_connections();
 
     let result = SyncService::import_from_file(
@@ -84,6 +86,7 @@ pub fn sync_import_from_file(
         }
     }
     state.reopen_mcp_internal_db(&db_path);
+    state.resume_mcp_http(paused_mcp_http).await;
 
     record_manifest_history(&state, "import", &started_at, &result);
     result.map_err(|e| e.to_string())
@@ -175,6 +178,7 @@ pub async fn sync_webdav_pull(
 
     // 同 sync_import_from_file：必须先释放 db 文件占用，否则 Windows mmap 会让
     // apply 阶段替换 app.db 时报 ERROR_USER_MAPPED_FILE (1224)
+    let paused_mcp_http = state.pause_mcp_http().await;
     state.release_db_connections();
 
     let result = SyncService::webdav_pull(
@@ -205,6 +209,7 @@ pub async fn sync_webdav_pull(
         }
     }
     state.reopen_mcp_internal_db(&db_path);
+    state.resume_mcp_http(paused_mcp_http).await;
 
     record_manifest_history(&state, "pull", &started_at, &result);
     result.map_err(|e| e.to_string())

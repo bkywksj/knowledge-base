@@ -1085,7 +1085,14 @@ pub async fn start_mcp_http(
     set(h::KEY_ENABLED, "1")?;
 
     let db_path = state.data_dir.join(crate::db_file_name());
-    h::start(&state.mcp_http, db_path, port, token, writable, bind_lan)
+    let params = h::StartParams {
+        db_path,
+        port,
+        token,
+        writable,
+        bind_lan,
+    };
+    h::start(&state.mcp_http, params)
         .await
         .map_err(|e| e.to_string())
 }

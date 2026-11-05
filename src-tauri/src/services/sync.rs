@@ -495,7 +495,7 @@ impl SyncService {
                         return Err(AppError::Custom(format!(
                             "清理 {} 失败，已中止导入（原数据未受影响）。\
                              常见原因：接入了知识库的外部 AI 工具（Claude、Cursor 等，进程名 kb-mcp）\
-                             或已开启的 MCP HTTP 服务正打开着数据库，请关闭后重试: {}",
+                             正打开着数据库，请先退出这些工具再重试: {}",
                             side.display(),
                             e
                         )));
