@@ -77,7 +77,7 @@ pub fn convert_doc_to_docx(src: &Path, dst_dir: &Path) -> Result<PathBuf, AppErr
     }
     std::fs::create_dir_all(dst_dir)?;
 
-    match detect_converter() {
+    let out = match detect_converter() {
         DocConverter::LibreOffice => convert_via_libreoffice(src, dst_dir),
         DocConverter::WindowsCom => {
             #[cfg(target_os = "windows")]
@@ -93,7 +93,40 @@ pub fn convert_doc_to_docx(src: &Path, dst_dir: &Path) -> Result<PathBuf, AppErr
             "未检测到 .doc 转换器，请安装 Microsoft Office 或 WPS Office（含 OLE 自动化组件）"
                 .into(),
         )),
+    }?;
+    ensure_docx(&out)?;
+    Ok(out)
+}
+
+/// 校验输出确实是 docx（zip 容器，头 4 字节 `PK\x03\x04`）
+///
+/// 转换器「报成功但没存成 docx」时（老版 Word 把 doc 二进制写成 `.docx`），
+/// 不拦下来的话前端 mammoth 只会抛一句看不懂的 "Can't find end of central directory"。
+fn ensure_docx(path: &Path) -> Result<(), AppError> {
+    let mut head = [0u8; 4];
+    let n = std::fs::File::open(path)
+        .and_then(|mut f| std::io::Read::read(&mut f, &mut head))
+        .unwrap_or(0);
+    if n == 4 && head == *b"PK\x03\x04" {
+        return Ok(());
     }
+    let _ = std::fs::remove_file(path);
+    let hint = if n == 4 && head == [0xD0, 0xCF, 0x11, 0xE0] {
+        "转换器存出的仍是老 .doc 格式（常见于 Office 2003 等不支持 docx 的旧版 Word），\
+         请安装 Office 2007+ / WPS，或先用 WPS 另存为 .docx 再导入"
+    } else {
+        "转换器输出的不是 docx 文件（文件可能已加密或转换器不支持），\
+         可先用 WPS / Word 另存为 .docx 再导入"
+    };
+    Err(AppError::Custom(format!(
+        "{}（文件头: {}）",
+        hint,
+        head[..n]
+            .iter()
+            .map(|b| format!("{:02X}", b))
+            .collect::<Vec<_>>()
+            .join(" ")
+    )))
 }
 
 // ─── 诊断报告（前端可调用） ──────────────────────────
@@ -226,6 +259,10 @@ fn detect_word_com_progid() -> Option<String> {
 }
 
 /// 实测一个 ProgId 是否能创建 + 退出。失败时返回 stderr 内容（含 HRESULT 等）
+///
+/// 主版本号 < 12（Office 2003 及更早）也算失败：它占着 `Word.Application`，
+/// 却存不出 docx，会把老 doc 二进制写成 `.docx` 还报成功。判掉它，检测才会
+/// 落到后面的 WPS ProgId（WPS 自报 12.0）。stderr 走控制台代码页，提示用英文免乱码。
 #[cfg(target_os = "windows")]
 fn try_instantiate(progid: &str) -> Result<(), String> {
     let escaped = progid.replace('\'', "''");
@@ -235,7 +272,12 @@ fn try_instantiate(progid: &str) -> Result<(), String> {
              $w = New-Object -ComObject '{escaped}'; \
              $w.Visible = $false; \
              $w.DisplayAlerts = 0; \
-             $w.Quit() \
+             $ver = [string]$w.Version; \
+             $w.Quit(); \
+             if ([int]($ver.Split('.')[0]) -lt 12) {{ \
+                 [Console]::Error.WriteLine('Version ' + $ver + ' is too old (< 12, e.g. Office 2003), cannot save .docx'); \
+                 exit 1 \
+             }} \
          }} catch {{ \
              [Console]::Error.WriteLine($_.Exception.Message); \
              exit 1 \
@@ -267,7 +309,8 @@ fn convert_via_windows_com(src: &Path, dst_dir: &Path) -> Result<PathBuf, AppErr
     let dst_str = ps_escape(&out_path.to_string_lossy());
     let progid_escaped = progid.replace('\'', "''");
 
-    // wdFormatXMLDocument = 16 (.docx)
+    // wdFormatXMLDocument = 12：固定存 .docx。原先写的 16 其实是 wdFormatDocumentDefault，
+    // 即「按软件默认格式存」，默认格式被改成 .doc 时就不是 docx 了
     let script = format!(
         "$ErrorActionPreference='Stop'; \
          $word = New-Object -ComObject '{progid_escaped}'; \
@@ -275,7 +318,7 @@ fn convert_via_windows_com(src: &Path, dst_dir: &Path) -> Result<PathBuf, AppErr
          $word.DisplayAlerts = 0; \
          try {{ \
              $doc = $word.Documents.Open('{src}', $false, $true); \
-             $doc.SaveAs([ref] '{dst}', [ref] 16); \
+             $doc.SaveAs([ref] '{dst}', [ref] 12); \
              $doc.Close($false) \
          }} finally {{ $word.Quit() }}",
         src = src_str,
@@ -331,3 +374,54 @@ fn add_no_window(cmd: &mut Command) {
 
 #[cfg(not(target_os = "windows"))]
 fn add_no_window(_cmd: &mut Command) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_tmp(name: &str, bytes: &[u8]) -> PathBuf {
+        let dir = std::env::temp_dir().join("kb_converter_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join(name);
+        std::fs::write(&p, bytes).unwrap();
+        p
+    }
+
+    #[test]
+    fn ensure_docx_accepts_zip() {
+        let p = write_tmp("ok.docx", b"PK\x03\x04rest");
+        assert!(ensure_docx(&p).is_ok());
+        assert!(p.exists());
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn ensure_docx_rejects_ole_doc_with_hint() {
+        // 老版 Word 把 doc 二进制存成 .docx 的情形
+        let p = write_tmp("ole.docx", &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1]);
+        let err = ensure_docx(&p).unwrap_err().to_string();
+        assert!(err.contains("老 .doc 格式"), "{err}");
+        assert!(err.contains("D0 CF 11 E0"), "{err}");
+        assert!(!p.exists(), "坏输出应被删掉");
+    }
+
+    #[test]
+    fn ensure_docx_rejects_short_or_other() {
+        let p = write_tmp("short.docx", b"PK");
+        let err = ensure_docx(&p).unwrap_err().to_string();
+        assert!(err.contains("不是 docx"), "{err}");
+    }
+
+    /// 真机冒烟：要本机装 Office / WPS，默认不跑。
+    /// `KB_DOC_SAMPLE=<某个 .doc> cargo test -- --ignored real_doc_convert --nocapture`
+    #[test]
+    #[ignore]
+    fn real_doc_convert() {
+        let src = PathBuf::from(std::env::var("KB_DOC_SAMPLE").expect("设 KB_DOC_SAMPLE"));
+        println!("{:#?}", diagnose());
+        let dir = std::env::temp_dir().join("kb_converter_test");
+        let out = convert_doc_to_docx(&src, &dir).expect("转换失败");
+        println!("ok: {}", out.display());
+        let _ = std::fs::remove_file(&out);
+    }
+}
