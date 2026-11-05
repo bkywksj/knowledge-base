@@ -73,7 +73,11 @@
         "displayLanguageSelector": true,
         "languages": ["SimpChinese", "English"],
         "installerIcon": "icons/icon.ico",
-        "installerHooks": "./installer-hooks.nsi"
+        "installerHooks": "./installer-hooks.nsi",
+        "customLanguageFiles": {
+          "SimpChinese": "./nsis/SimpChinese.nsh",
+          "English": "./nsis/English.nsh"
+        }
       }
     },
     "macOS": {
