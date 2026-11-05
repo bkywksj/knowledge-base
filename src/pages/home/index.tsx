@@ -684,7 +684,7 @@ function DesktopHomePage() {
         <Input.TextArea
           variant="borderless"
           className="kb-quick-input"
-          rows={1}
+          rows={2}
           placeholder="想到什么先记下来…"
           value={quickNote}
           onChange={(e) => setQuickNote(e.target.value)}
@@ -695,8 +695,9 @@ function DesktopHomePage() {
               else handleQuickSaveAsNote();
             }
           }}
-          // 默认一行：空着的时候不占地方，打字时自动长高（首页要一屏放下底部热力图）
-          autoSize={{ minRows: 1, maxRows: 5 }}
+          // 默认两行（用户要求比待办 / 笔记多给一行），打字时自动长高；
+          // 第二行卡片撑满剩余高度，这里高出来的会自动从待办 / 笔记卡里扣掉
+          autoSize={{ minRows: 2, maxRows: 5 }}
         />
         <div className="kb-quick-foot">
           <Text type="secondary" style={{ fontSize: 12 }}>
