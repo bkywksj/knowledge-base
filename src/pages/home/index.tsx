@@ -469,20 +469,32 @@ function DesktopHomePage() {
     }
   }, [aiQuestion, navigate, message]);
 
-  // ─── 第二行（待办 / 笔记）实际高度：撑满首页剩余高度，按它决定每张卡放几条 ───
+  // ─── 第二行（待办 / 笔记）：两张卡共用一套行高，逐行对齐 ───
+  // 左卡：快速添加 · 分组胶囊 · 待办 × (N-2)；右卡：笔记 × N。最后各一行 24 高的「还有 N 条」。
+  // 行高 = 可用高度 ÷ N（40~48），余量均摊到每一行，底部不再空一截（2026-11-05 用户反馈）。
+  // 量的是卡片 body 的实际高度（两张卡同高），所以卡头 / 边框多高都不用写死。
   const r4Ref = useRef<HTMLDivElement>(null);
-  const [r4Height, setR4Height] = useState(300);
+  const [rowBodyHeight, setRowBodyHeight] = useState(258);
   useEffect(() => {
     const el = r4Ref.current;
     if (!el) return;
-    const ro = new ResizeObserver(([entry]) => setR4Height(Math.round(entry.contentRect.height)));
+    const measure = () => {
+      const body = el.querySelector<HTMLElement>(".ant-card-body");
+      if (body) setRowBodyHeight(body.clientHeight);
+    };
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
+    measure();
     return () => ro.disconnect();
   }, []);
-  // 卡头 42 + 快速添加 38 + 胶囊 30 +「还有 N 条」20 + 底边 10（实测，300 高正好放 4 条）；每条 40
-  const todoRows = Math.max(3, Math.floor((r4Height - 140) / 40));
-  // 卡头 42 +「还有 N 篇」20 + 底边 12；每条 40
-  const noteRows = Math.max(4, Math.floor((r4Height - 74) / 40));
+  const { rowCount, rowHeight } = useMemo(() => {
+    // 扣掉底部内边距 8 和「还有 N 条」一行 24
+    const avail = rowBodyHeight - 8 - 24;
+    const n = Math.max(5, Math.floor(avail / 40));
+    return { rowCount: n, rowHeight: Math.min(48, Math.max(40, Math.floor(avail / n))) };
+  }, [rowBodyHeight]);
+  const todoRows = rowCount - 2;
+  const noteRows = rowCount;
 
   // ─── 派生指标(纯前端从 trend 计算) ────────────────
   const vitalityMetrics = useMemo(() => {
@@ -740,7 +752,11 @@ function DesktopHomePage() {
       </Card>
 
       {/* ③ 一行两卡：待办 5 ｜ 笔记 7（12 栏）；待办关闭时笔记占满 */}
-      <div ref={r4Ref} className="grid grid-cols-12 gap-3 kb-home-r4">
+      <div
+        ref={r4Ref}
+        className="grid grid-cols-12 gap-3 kb-home-r4"
+        style={{ "--kb-hm-row": `${rowHeight}px` } as React.CSSProperties}
+      >
 
         {tasksEnabled && (
         <HideableCard
@@ -948,7 +964,7 @@ function DesktopHomePage() {
           widgetKey="recentNotes"
           size="small"
           className={tasksEnabled ? "col-span-7" : "col-span-12"}
-          styles={{ body: { padding: "0 8px 10px" } }}
+          styles={{ body: { padding: "0 8px 8px" } }}
           title={
             <span className="flex items-center gap-2 text-sm">
               <NotebookText size={14} style={{ color: token.colorPrimary }} />

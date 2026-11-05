@@ -9331,7 +9331,8 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
      行高固定成 1fr、卡片 min-height 0：内容多了只在卡片里滚，不会反过来把这一行撑高；
      显示几条由首页按实际高度算（见 index.tsx 的 r4Height） */
   flex: 1 1 0;
-  min-height: 300px;
+  /* 314 = 卡头 + 6 行 × 40 + 「还有 N 条」24 + 底边 8：左右对齐后最矮也放得下 4 条待办 */
+  min-height: 314px;
   grid-template-rows: minmax(0, 1fr);
 }
 .kb-home-r4 > .ant-card {
@@ -9778,4 +9779,32 @@ main.ant-layout-content:has(.kb-home) {
   padding: 6px 10px 0;
   font-size: 12px;
   color: var(--ant-color-text-tertiary);
+}
+
+/* 首页第二行逐行对齐（2026-11-05）：行高由 index.tsx 算好写进 --kb-hm-row（40~48）。
+   左卡的快速添加、分组胶囊各占一行，和右卡的笔记逐行对齐；「还有 N 条」两边都是 24 高 */
+.kb-home-r4 .kb-hm-td,
+.kb-home-r4 .kb-hm-nr {
+  height: var(--kb-hm-row, 40px);
+}
+.kb-home-r4 .kb-nr {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.kb-home-r4 .kb-hm-add {
+  height: calc(var(--kb-hm-row, 40px) - 8px);
+  margin: 4px 2px;
+}
+.kb-home-r4 .kb-hm-pills {
+  box-sizing: border-box;
+  height: var(--kb-hm-row, 40px);
+  padding: 0 6px;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+.kb-home-r4 .kb-hm-more {
+  display: flex;
+  align-items: center;
+  height: 24px;
 }
