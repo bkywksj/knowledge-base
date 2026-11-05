@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, Fragment } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Card,
@@ -155,7 +155,8 @@ function DesktopHomePage() {
         await Promise.all([
           // 拉 12 条而不是 8：这一批还要被 is_pinned 拆成「最近笔记」和「置顶笔记」
           // 两卡，置顶多的用户按 8 条拉会让「最近笔记」凑不够要显示的 8 条。
-          noteApi.list({ page: 1, page_size: 12 }),
+          // 拉 24 条：要拆成「最近」和「置顶」两组，窗口高时每组最多能放十几条
+          noteApi.list({ page: 1, page_size: 24 }),
           systemApi.getDashboardStats(),
           // 371 天 = 53 周：写作活力的年度热力图要一整年；连续写作 / 本周字数也从这批里算
           systemApi.getWritingTrend(371),
@@ -465,6 +466,21 @@ function DesktopHomePage() {
     }
   }, [aiQuestion, navigate, message]);
 
+  // ─── 第二行（待办 / 笔记）实际高度：撑满首页剩余高度，按它决定每张卡放几条 ───
+  const r4Ref = useRef<HTMLDivElement>(null);
+  const [r4Height, setR4Height] = useState(300);
+  useEffect(() => {
+    const el = r4Ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => setR4Height(Math.round(entry.contentRect.height)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  // 卡头 42 + 快速添加 38 + 胶囊 30 +「还有 N 条」20 + 底边 10（实测，300 高正好放 4 条）；每条 40
+  const todoRows = Math.max(3, Math.floor((r4Height - 140) / 40));
+  // 卡头 42 + 底边 12；每条 40
+  const noteRows = Math.max(4, Math.floor((r4Height - 54) / 40));
+
   // ─── 派生指标(纯前端从 trend 计算) ────────────────
   const vitalityMetrics = useMemo(() => {
     // trend 是按日期升序,只含有笔记的日期（后端已含日记、排除导入）
@@ -542,25 +558,26 @@ function DesktopHomePage() {
     // 每段条数上限：按原型取 4 条 —— 这一行三卡固定 256 高（原型实测），
     // 首页才能一屏放下底部热力图（2026-11-04 用户要求不滚动）。
     // 超出部分仍由段尾「+ 还有 N 条…」引导去待办页，不改"速览"的定位。
+    // 条数随卡片高度变（todoRows），放不下的仍由「+ 还有 N 条…」引导去待办页
     return {
-      overdue: overdue.slice(0, 4),
+      overdue: overdue.slice(0, todoRows),
       overdueTotal: overdue.length,
-      today: today.slice(0, 4),
+      today: today.slice(0, todoRows),
       todayTotal: today.length,
       // 即将到期去掉 7 天上限后，只展示最靠近今天的几条
-      upcoming: upcomingTasks.slice(0, 4),
+      upcoming: upcomingTasks.slice(0, todoRows),
       upcomingTotal: upcomingTasks.length,
-      noDue: noDueTasks.slice(0, 4),
+      noDue: noDueTasks.slice(0, todoRows),
       noDueTotal: noDueTasks.length,
     };
-  }, [todayTasks, upcomingTasks, noDueTasks]);
+  }, [todayTasks, upcomingTasks, noDueTasks, todoRows]);
   const totalTodoCount =
     todoGroups.overdueTotal +
     todoGroups.todayTotal +
     todoGroups.upcomingTotal +
     todoGroups.noDueTotal;
   // 与左侧待办速览卡同处一行（固定 256 高）：原型最近笔记 5 条正好放满
-  const displayedRecent = useMemo(() => recentNotes.slice(0, 5), [recentNotes]);
+  const displayedRecent = useMemo(() => recentNotes.slice(0, noteRows), [recentNotes, noteRows]);
 
   // 全局隐私模式快捷键（Ctrl/⌘+Shift+H）：一键遮住首页所有卡片，
   // 用于「有人走过来了 / 要投屏」这类临时场景。
@@ -588,7 +605,7 @@ function DesktopHomePage() {
       // 不属于内层 div，事件不会冒泡。把 onContextMenu 放在撑满的 wrapper 上
       // 才能拦到这部分空白的右键
       className="kb-home"
-      style={{ width: "100%", minHeight: "100%" }}
+      style={{ width: "100%", minHeight: "100%", display: "flex", flexDirection: "column" }}
       onContextMenu={(e) => {
         const t = e.target as HTMLElement;
         if (t.closest("input, textarea, [contenteditable='true']")) return;
@@ -600,7 +617,8 @@ function DesktopHomePage() {
       // 跟知识图谱 / 笔记 / 待办 / 提示词 等页一个口径（历史上这里是 max-w-5xl →
       // max-w-7xl，都是在单独跟"两侧留白太多"较劲，现在全站统一由一处控制）
       // 行距 10（原 12）：首页要在 1080p 默认窗口里一屏放下底部热力图
-      style={{ display: "flex", flexDirection: "column", gap: 10 }}
+      // flex 1：撑满首页高度，第二行（kb-home-r4）再用 flex 吃掉剩下的
+      style={{ display: "flex", flexDirection: "column", gap: 10, flex: 1 }}
     >
 
       {/* ① 页头：日期 + 问候（今天写了多少字）｜ 搜索 + 新建笔记 + 隐私模式（原型 .hm-head） */}
@@ -718,7 +736,7 @@ function DesktopHomePage() {
       </Card>
 
       {/* ③ 一行两卡：待办 5 ｜ 笔记 7（12 栏）；待办关闭时笔记占满 */}
-      <div className="grid grid-cols-12 gap-3 kb-home-r4">
+      <div ref={r4Ref} className="grid grid-cols-12 gap-3 kb-home-r4">
 
         {tasksEnabled && (
         <HideableCard
@@ -905,7 +923,7 @@ function DesktopHomePage() {
                   // 卡片固定高（.kb-home-r4），展开子任务超出时在卡片内滚动
                   <ul className="kb-hm-list">
                     {active.items.map((t) => renderTaskRow(t, active.key))}
-                    {/* 紧凑 20 高：卡头 42 + 胶囊 30 + 4 条 × 40 + 本行 20 + 底 8 + 边框 2 = 262 ≤ 266 */}
+                    {/* 紧凑 20 高；条数由 todoRows 按卡片高度算，保证这一行不被挤出卡片 */}
                     {active.total > active.items.length && (
                       <li className="kb-hm-more">
                         <button type="button" onClick={() => navigate("/tasks")}>
@@ -957,7 +975,7 @@ function DesktopHomePage() {
           }
         >
           {(() => {
-            const list = noteTab === "recent" ? displayedRecent : pinnedNotes.slice(0, 5);
+            const list = noteTab === "recent" ? displayedRecent : pinnedNotes.slice(0, noteRows);
             if (list.length === 0) {
               return noteTab === "recent" ? (
                 <EmptyState description={loading ? "加载中…" : "还没有笔记"} />

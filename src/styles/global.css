@@ -9326,10 +9326,17 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
 
 /* 首页第四行（待办速览 / 最近笔记 / 置顶笔记）：固定原型实测高 256，内容超出在卡片内滚动，
    不再被列表撑高 —— 首页一屏放下底部热力图（2026-11-04 用户要求） */
+.kb-home-r4 {
+  /* 2026-11-05：这一行撑满首页剩下的高度（窗口高时不再在底部空一截），最矮 300。
+     行高固定成 1fr、卡片 min-height 0：内容多了只在卡片里滚，不会反过来把这一行撑高；
+     显示几条由首页按实际高度算（见 index.tsx 的 r4Height） */
+  flex: 1 1 0;
+  min-height: 300px;
+  grid-template-rows: minmax(0, 1fr);
+}
 .kb-home-r4 > .ant-card {
-  /* 原型 256；+10 用首页底部留白换来，给待办「还有 N 条」和底边留口气。
-     2026-11-05 去掉快捷按钮行（省下 56），待办卡顶部多了一行快速添加，这里加回 34 */
-  height: 300px;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -9715,7 +9722,8 @@ main.ant-layout-content:has(.kb-home) {
   display: flex;
   align-items: center;
   gap: 2px;
-  margin: 0 6px 6px;
+  box-sizing: border-box;
+  margin: 0 2px 6px;
   padding: 0 2px 0 4px;
   height: 32px;
   border-radius: 8px;
@@ -9723,11 +9731,20 @@ main.ant-layout-content:has(.kb-home) {
   box-shadow: 0 0 0 1px var(--ant-color-border-secondary);
 }
 .kb-hm-add:focus-within {
-  box-shadow: 0 0 0 1px var(--kb-primary);
+  box-shadow: 0 0 0 1px var(--kb-primary), 0 0 0 3px color-mix(in srgb, var(--kb-primary) 16%, transparent);
 }
+/* 只要外面这一圈框：输入框自己的边框和聚焦光环去掉，否则聚焦时是两层框。
+   全局聚焦光环带 !important（themes.css [data-theme] .ant-input-affix-wrapper-focused），这里同样要抬优先级 */
 .kb-hm-add .ant-input-affix-wrapper {
   flex: 1;
   min-width: 0;
+}
+[data-theme] .kb-hm-add .ant-input-affix-wrapper,
+[data-theme] .kb-hm-add .ant-input-affix-wrapper-focused,
+[data-theme] .kb-hm-add .ant-input-affix-wrapper:hover {
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 .kb-hm-add .ant-input-prefix {
   color: var(--ant-color-text-quaternary);
