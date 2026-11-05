@@ -910,6 +910,9 @@ export const aiChatApi = {
    */
   forkConversation: (conversationId: number, upToMessageId?: number) =>
     invoke<AiConversation>("fork_ai_conversation", { conversationId, upToMessageId }),
+  /** 置顶 / 取消置顶（不改会话的更新时间） */
+  setPinned: (conversationId: number, pinned: boolean) =>
+    invoke<void>("set_ai_conversation_pinned", { conversationId, pinned }),
   /** 整个会话导出成 Markdown（「复制为 Markdown」），格式与「存为笔记」一致 */
   getConversationMarkdown: (conversationId: number) =>
     invoke<string>("get_ai_conversation_markdown", { conversationId }),

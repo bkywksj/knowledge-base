@@ -1482,6 +1482,7 @@ pub fn run() {
             commands::ai::archive_ai_conversation_to_note,
             commands::ai::fork_ai_conversation,
             commands::ai::get_ai_conversation_markdown,
+            commands::ai::set_ai_conversation_pinned,
             commands::ai::get_or_create_companion_conversation,
             commands::ai::ai_resolve_import,
             // 提示词库模块

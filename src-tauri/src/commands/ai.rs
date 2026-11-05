@@ -697,6 +697,17 @@ pub fn fork_ai_conversation(
         .map_err(|e| e.to_string())
 }
 
+/// 置顶 / 取消置顶会话
+#[tauri::command(async)]
+pub fn set_ai_conversation_pinned(
+    state: State<'_, AppState>,
+    conversation_id: i64,
+    pinned: bool,
+) -> Result<(), String> {
+    crate::services::ai_conversation::ConversationService::set_pinned(&state.db, conversation_id, pinned)
+        .map_err(|e| e.to_string())
+}
+
 /// 整个会话导出成 Markdown 文本（「复制为 Markdown」），格式与「存为笔记」一致
 #[tauri::command(async)]
 pub fn get_ai_conversation_markdown(

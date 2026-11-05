@@ -662,6 +662,8 @@ export interface AiConversation {
   preset_id: number | null;
   created_at: string;
   updated_at: string;
+  /** 置顶（v70）：会话列表最上面的「置顶」分组 */
+  is_pinned: boolean;
 }
 
 /** AI 消息 */

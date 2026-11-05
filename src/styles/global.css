@@ -9659,3 +9659,9 @@ main.ant-layout-content:has(.kb-home) {
 .kb-ask-flash .kb-user-bubble {
   animation: kb-ask-flash 1.2s ease-out;
 }
+
+/* 会话列表右键中的那条：主色细描边（同日记列表 .kb-day-row.is-ctx），看得出菜单是给谁的 */
+.kb-conv-item.is-ctx,
+.kb-conv-item.is-active.is-ctx {
+  box-shadow: inset 0 0 0 1px var(--kb-primary);
+}

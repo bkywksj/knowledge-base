@@ -83,11 +83,12 @@ fn row_to_ai_conversation(row: &rusqlite::Row) -> rusqlite::Result<AiConversatio
         preset_id: row.get(5)?,
         created_at: row.get(6)?,
         updated_at: row.get(7)?,
+        is_pinned: row.get::<_, i64>(8)? != 0,
     })
 }
 
 const AI_CONV_COLS: &str =
-    "id, title, model_id, attached_note_ids, scope_folder_id, preset_id, created_at, updated_at";
+    "id, title, model_id, attached_note_ids, scope_folder_id, preset_id, created_at, updated_at, is_pinned";
 
 /// ai_messages 行 → AiMessage
 ///
@@ -824,7 +825,8 @@ impl Database {
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
         let sql = format!(
-            "SELECT {} FROM ai_conversations ORDER BY updated_at DESC",
+            // 置顶的排最前（各自内部仍按最近更新）；updated_at 只精确到秒，同秒的用 id 兜底，新的在前
+            "SELECT {} FROM ai_conversations ORDER BY is_pinned DESC, updated_at DESC, id DESC",
             AI_CONV_COLS
         );
         let mut stmt = conn.prepare(&sql)?;
@@ -1207,6 +1209,22 @@ impl Database {
         let conv = tx.query_row(&sql, [new_id], row_to_ai_conversation)?;
         tx.commit()?;
         Ok(conv)
+    }
+
+    /// 置顶 / 取消置顶。不动 updated_at：置顶只是排位，不该让会话显得「刚聊过」
+    pub fn set_ai_conversation_pinned(&self, id: i64, pinned: bool) -> Result<(), AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let n = conn.execute(
+            "UPDATE ai_conversations SET is_pinned = ?1 WHERE id = ?2",
+            rusqlite::params![pinned as i64, id],
+        )?;
+        if n == 0 {
+            return Err(AppError::NotFound(format!("会话 {} 不存在", id)));
+        }
+        Ok(())
     }
 
     /// 删除会话里从 `from_id` 起（含）的所有消息，返回删除条数

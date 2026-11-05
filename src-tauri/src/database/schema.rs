@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 69;
+pub const SCHEMA_VERSION: i32 = 70;
 
 /// `ai_models.max_context` 的历史默认值。v51 把旧默认 32000 统一抬到它，此后新建也默认填它 ——
 /// 所以存量里的 128000 分不清是用户填的还是默认值，v62 一律当作「未设置」。
@@ -109,6 +109,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             66 => migrate_v66_to_v67(conn)?,
             67 => migrate_v67_to_v68(conn)?,
             68 => migrate_v68_to_v69(conn)?,
+            69 => migrate_v69_to_v70(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2591,6 +2592,21 @@ fn migrate_v67_to_v68(conn: &Connection) -> Result<(), AppError> {
     }
 
     set_version(conn, 68)?;
+    Ok(())
+}
+
+/// v69 -> v70：AI 会话置顶（ai_conversations.is_pinned）。
+///
+/// 会话不参与多端同步，加列不影响同步清单。幂等：列已存在则跳过。
+fn migrate_v69_to_v70(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v69 -> v70 (AI 会话置顶)");
+    let cols = list_columns(conn, "ai_conversations")?;
+    if !cols.iter().any(|c| c == "is_pinned") {
+        conn.execute_batch(
+            "ALTER TABLE ai_conversations ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    set_version(conn, 70)?;
     Ok(())
 }
 

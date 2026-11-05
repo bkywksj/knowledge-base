@@ -35,6 +35,8 @@ import {
   GitBranch,
   CopyPlus,
   FileText,
+  Pin,
+  PinOff,
 } from "lucide-react";
 import { CloseCircleFilled } from "@ant-design/icons";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -239,6 +241,8 @@ function DesktopAiChatPage() {
   const [scopePick, setScopePick] = useState<number | undefined>(undefined);
   // 归档（B 方向）：把对话存为笔记的 Modal
   const [archiveOpen, setArchiveOpen] = useState(false);
+  // 会话列表右键菜单正指向哪条（高亮用）
+  const [ctxConvId, setCtxConvId] = useState<number | null>(null);
   // 归档哪个会话：顶栏按钮 = 当前会话；会话列表右键 = 被右键的那条（不必先切过去）
   const [archiveConvId, setArchiveConvId] = useState<number | null>(null);
   const [archiveTitle, setArchiveTitle] = useState("");
@@ -595,6 +599,15 @@ function DesktopAiChatPage() {
     }
   }
 
+  async function handleTogglePin(conversationId: number, pinned: boolean) {
+    try {
+      await aiChatApi.setPinned(conversationId, pinned);
+      await loadConversations();
+    } catch (e) {
+      message.error(`${pinned ? "置顶" : "取消置顶"}失败：${e}`);
+    }
+  }
+
   /** 分叉 / 克隆：建好后刷新列表并切到新会话（分叉通常就是为了马上在新会话里接着问） */
   async function handleFork(conversationId: number, upToMessageId?: number) {
     try {
@@ -946,7 +959,7 @@ function DesktopAiChatPage() {
   const activeConv = conversations.find((c) => c.id === activeConvId);
 
   // ─── 会话列表：搜索 + 分组（v4 原型 .conv-list）────────────
-  // 搜索只按标题在前端过滤；分组按最后活动时间（updated_at）落到 今天 / 本周 / 更早
+  // 搜索只按标题在前端过滤；置顶的单独成组放最前，其余按最后活动时间（updated_at）落到 今天 / 本周 / 更早
   const convKwTrim = convKw.trim().toLowerCase();
   const convGroups = (() => {
     const list = convKwTrim
@@ -956,13 +969,18 @@ function DesktopAiChatPage() {
     const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const startWeek = startToday - 6 * 86400000;
     const groups: { label: string; items: typeof conversations }[] = [
+      { label: "置顶", items: [] },
       { label: "今天", items: [] },
       { label: "本周", items: [] },
       { label: "更早", items: [] },
     ];
     for (const c of list) {
+      if (c.is_pinned) {
+        groups[0].items.push(c);
+        continue;
+      }
       const t = new Date(c.updated_at.replace(" ", "T")).getTime();
-      groups[t >= startToday ? 0 : t >= startWeek ? 1 : 2].items.push(c);
+      groups[t >= startToday ? 1 : t >= startWeek ? 2 : 3].items.push(c);
     }
     return groups.filter((g) => g.items.length > 0);
   })();
@@ -1060,6 +1078,15 @@ function DesktopAiChatPage() {
                   },
                 },
                 {
+                  key: "pin",
+                  label: conv.is_pinned ? "取消置顶" : "置顶",
+                  icon: conv.is_pinned ? <PinOff size={12} /> : <Pin size={12} />,
+                  onClick: (e) => {
+                    e.domEvent.stopPropagation();
+                    void handleTogglePin(conv.id, !conv.is_pinned);
+                  },
+                },
+                {
                   key: "clone",
                   label: "克隆会话",
                   icon: <CopyPlus size={12} />,
@@ -1108,12 +1135,17 @@ function DesktopAiChatPage() {
                 key={conv.id}
                 menu={{ items: convMenuItems }}
                 trigger={["contextMenu"]}
+                // 记下菜单正指向哪条：右键后高亮它，不然看不出菜单是给谁的
+                onOpenChange={(open) =>
+                  setCtxConvId((cur) => (open ? conv.id : cur === conv.id ? null : cur))
+                }
               >
               <div
                 // v4 原型：选中白底细描边 + 标题主色加粗（样式见 global.css .kb-conv-item）
                 className={
                   "ai-conv-item kb-conv-item flex items-center gap-2 cursor-pointer group" +
-                  (isActive ? " is-active" : "")
+                  (isActive ? " is-active" : "") +
+                  (ctxConvId === conv.id ? " is-ctx" : "")
                 }
                 onClick={() => setActiveConvId(conv.id)}
               >

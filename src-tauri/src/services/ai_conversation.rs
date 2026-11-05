@@ -23,6 +23,11 @@ impl ConversationService {
         db.fork_ai_conversation(source_id, up_to_message_id, &format!("{}{}", src.title, suffix))
     }
 
+    /// 置顶 / 取消置顶
+    pub fn set_pinned(db: &Database, conversation_id: i64, pinned: bool) -> Result<(), AppError> {
+        db.set_ai_conversation_pinned(conversation_id, pinned)
+    }
+
     /// 整个会话 → Markdown（「复制为 Markdown」用）：`# 标题` + 各轮问答。
     pub fn markdown(db: &Database, conversation_id: i64) -> Result<String, AppError> {
         let conv = db.get_ai_conversation(conversation_id)?;
@@ -124,6 +129,26 @@ mod tests {
         let before = db.list_ai_conversations().unwrap().len();
         assert!(ConversationService::fork(&db, src, Some(foreign)).is_err());
         assert_eq!(db.list_ai_conversations().unwrap().len(), before, "失败不能留下半个会话");
+    }
+
+    #[test]
+    fn pinned_conversations_list_first_and_keep_updated_at() {
+        let (db, src, _) = setup();
+        let other = ConversationService::fork(&db, src, None).unwrap();
+        // 克隆出来的是最近更新的，未置顶时排第一
+        assert_eq!(db.list_ai_conversations().unwrap()[0].id, other.id);
+        assert!(!other.is_pinned, "克隆出的新会话不继承置顶");
+
+        let before = db.get_ai_conversation(src).unwrap().updated_at;
+        ConversationService::set_pinned(&db, src, true).unwrap();
+        let list = db.list_ai_conversations().unwrap();
+        assert_eq!(list[0].id, src, "置顶的排最前");
+        assert!(list[0].is_pinned);
+        assert_eq!(list[0].updated_at, before, "置顶不改更新时间");
+
+        ConversationService::set_pinned(&db, src, false).unwrap();
+        assert_eq!(db.list_ai_conversations().unwrap()[0].id, other.id);
+        assert!(ConversationService::set_pinned(&db, 99999, true).is_err());
     }
 
     #[test]

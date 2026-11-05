@@ -727,6 +727,9 @@ pub struct AiConversation {
     pub preset_id: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
+    /// 置顶（v70）：会话列表里固定在最上面的「置顶」分组
+    #[serde(default)]
+    pub is_pinned: bool,
 }
 
 /// AI 消息
