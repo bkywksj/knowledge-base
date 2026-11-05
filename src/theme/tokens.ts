@@ -20,7 +20,7 @@ export type ThemeMode =
   | "light-paper"
   | "dark-ember"
   | "dark-ocean"
-  | "dark-forest"
+  | "dark-amber"
   | "dark-black";
 
 /** 主题分类 */
@@ -92,11 +92,11 @@ export const themes: ThemeMeta[] = [
     colors: ["#171D26", "#5AA9F0", "#6FD3C6", "#E6ECF3"],
   },
   {
-    key: "dark-forest",
-    label: "墨绿",
+    key: "dark-amber",
+    label: "琥珀",
     category: "dark",
-    description: "深松绿炭底 + 薄荷绿点缀，护眼",
-    colors: ["#171D19", "#6FCF97", "#E3B160", "#E6EEE8"],
+    description: "暖褐炭底 + 琥珀金点缀，像夜里的台灯",
+    colors: ["#1A1611", "#E5A84B", "#E08A6A", "#F0E8DC"],
   },
   {
     key: "dark-black",
@@ -287,24 +287,25 @@ const PALETTES: Record<ThemeMode, Palette> = {
     raised: "#283140",
     tooltip: "#2C3644",
   },
-  "dark-forest": {
-    primary: "#6FCF97",
-    link: "#8EDBAD",
+  "dark-amber": {
+    // 主色本身是琥珀，警告色换成偏柠檬的黄，免得和主色混在一起
+    primary: "#E5A84B",
+    link: "#F0BE6E",
     success: "#62C79B",
-    warning: "#E3B160",
+    warning: "#E8C95A",
     error: "#F0808F",
-    bgLayout: "#121714",
-    bgContainer: "#171D19",
-    bgElevated: "#28322B",
-    bgMask: "rgba(8,12,10,0.55)",
-    text: "#E6EEE8",
-    text2: "#B6C4BA",
-    text3: "#86968A",
-    text4: "#5F6D63",
-    primaryRgb: "111,207,151",
-    hairRgb: "210,245,220",
-    raised: "#28322B",
-    tooltip: "#2C3730",
+    bgLayout: "#14110D",
+    bgContainer: "#1A1611",
+    bgElevated: "#2E261E",
+    bgMask: "rgba(12,9,6,0.55)",
+    text: "#F0E8DC",
+    text2: "#C9BBA6",
+    text3: "#998B77",
+    text4: "#6B604F",
+    primaryRgb: "229,168,75",
+    hairRgb: "255,236,205",
+    raised: "#2E261E",
+    tooltip: "#3A3128",
   },
   "dark-black": {
     primary: "#A992FA",

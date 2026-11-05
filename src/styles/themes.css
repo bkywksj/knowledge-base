@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════
    主题 CSS 变量 + 强制 Ant Design 覆盖（v4 界面重设计，见 docs/design/ui-v4）
    亮色：淡紫 light-lilac（默认）/ 青瓷 / 晨雾蓝 / 杏桃 / 素白
-   暗色：暖炭 dark-ember（默认）/ 深海 / 墨绿 / 纯黑
+   暗色：暖炭 dark-ember（默认）/ 深海 / 琥珀 / 纯黑
    - 每套主题只定义变量；组件覆盖写一份通用规则（本段末尾），按变量取色
    - antd 那一侧的颜色在 tokens.ts PALETTES，改色时两边一起改
    - 旧的 5 套主题已下线，老用户保存的旧 id 由 tokens.ts normalizeThemeMode 归一
@@ -383,48 +383,50 @@
   color-scheme: dark;
 }
 
-/* ─── 暗色 · 墨绿（深松绿炭底 + 薄荷绿点缀）── 结构同暖炭 ── */
-[data-theme="dark-forest"] {
-  --kb-bg-app: #121714;
-  --kb-bg-card: #1F2721;
-  --kb-bg-card-solid: #1F2721;
-  --kb-bg-sidebar: #121714;
-  --kb-bg-header: #121714;
-  --kb-bg-content: #171D19;
-  --kb-bg-panel: #1B221D;
-  --kb-bg-raised: #28322B;
-  --kb-folder-icon: #6FCF97;
-  --kb-shadow-sheet: 0 0 0 .5px rgba(210,245,220,.07), 0 18px 40px -16px rgba(0,0,0,.6);
-  --kb-bg-hover: rgba(210,245,220,0.05);
-  --kb-bg-active: rgba(111,207,151,0.14);
-  --kb-text-primary: #E6EEE8;
-  --kb-text-secondary: #B6C4BA;
-  --kb-text-tertiary: #86968A;
-  --kb-border: rgba(210,245,220,0.09);
-  --kb-border-card: rgba(210,245,220,0.08);
-  --kb-border-sidebar: rgba(210,245,220,0.07);
-  --kb-primary: #6FCF97;
-  --kb-primary-light: rgba(111,207,151,0.12);
-  --kb-accent: #E3B160;
+/* ─── 暗色 · 琥珀（暖褐炭底 + 琥珀金点缀）── 结构同暖炭 ──
+   琥珀金很亮、上面放白字看不清：文字 / 链接 / 选中用亮琥珀 #E5A84B，
+   主按钮 / 用户气泡这类铺满主色的地方用压深的铜琥珀渐变（--kb-grad），白字才清楚 */
+[data-theme="dark-amber"] {
+  --kb-bg-app: #14110D;
+  --kb-bg-card: #221C16;
+  --kb-bg-card-solid: #221C16;
+  --kb-bg-sidebar: #14110D;
+  --kb-bg-header: #14110D;
+  --kb-bg-content: #1A1611;
+  --kb-bg-panel: #1E1914;
+  --kb-bg-raised: #2E261E;
+  --kb-folder-icon: #E5A84B;
+  --kb-shadow-sheet: 0 0 0 .5px rgba(255,236,205,.07), 0 18px 40px -16px rgba(0,0,0,.6);
+  --kb-bg-hover: rgba(255,236,205,0.05);
+  --kb-bg-active: rgba(229,168,75,0.14);
+  --kb-text-primary: #F0E8DC;
+  --kb-text-secondary: #C9BBA6;
+  --kb-text-tertiary: #998B77;
+  --kb-border: rgba(255,236,205,0.09);
+  --kb-border-card: rgba(255,236,205,0.08);
+  --kb-border-sidebar: rgba(255,236,205,0.07);
+  --kb-primary: #E5A84B;
+  --kb-primary-light: rgba(229,168,75,0.12);
+  --kb-accent: #E08A6A;
   --kb-glass-blur: 0px;
-  --kb-shadow-sm: 0 0 0 .5px rgba(210,245,220,.08), 0 1px 2px rgba(0,0,0,.35);
-  --kb-shadow-md: 0 0 0 .5px rgba(210,245,220,.08), 0 10px 26px -16px rgba(0,0,0,.55);
-  --kb-shadow-card: 0 0 0 .5px rgba(210,245,220,.08), 0 10px 26px -16px rgba(0,0,0,.55);
-  --kb-bg-tint: #1B221D;
-  --kb-rail-ink: #B6C4BA;
-  --kb-border-strong: rgba(210,245,220,.12);
-  --kb-bar-grad: linear-gradient(180deg, #1B221D 0%, #171D19 100%);
-  --kb-hi: inset 0 1px 0 rgba(210,245,220,.03);
-  --kb-ink2: #B6C4BA;
-  --kb-fmt-bg: #1F2721;
-  --kb-scrollbar-thumb: rgba(210,245,220,0.12);
-  --kb-scrollbar-hover: rgba(210,245,220,0.22);
-  --kb-body-bg: #121714;
+  --kb-shadow-sm: 0 0 0 .5px rgba(255,236,205,.08), 0 1px 2px rgba(0,0,0,.35);
+  --kb-shadow-md: 0 0 0 .5px rgba(255,236,205,.08), 0 10px 26px -16px rgba(0,0,0,.55);
+  --kb-shadow-card: 0 0 0 .5px rgba(255,236,205,.08), 0 10px 26px -16px rgba(0,0,0,.55);
+  --kb-bg-tint: #1E1914;
+  --kb-rail-ink: #C9BBA6;
+  --kb-border-strong: rgba(255,236,205,.12);
+  --kb-bar-grad: linear-gradient(180deg, #1E1914 0%, #1A1611 100%);
+  --kb-hi: inset 0 1px 0 rgba(255,236,205,.03);
+  --kb-ink2: #C9BBA6;
+  --kb-fmt-bg: #221C16;
+  --kb-scrollbar-thumb: rgba(255,236,205,0.12);
+  --kb-scrollbar-hover: rgba(255,236,205,0.22);
+  --kb-body-bg: #14110D;
   --kb-layout-bg: var(--kb-bg-app);
   --kb-header-bg: var(--kb-bg-header);
-  --kb-input-bg: #141A16;
-  --kb-input-border: rgba(210,245,220,0.14);
-  --kb-focus-ring: rgba(111,207,151,0.16);
+  --kb-input-bg: #16120E;
+  --kb-input-border: rgba(255,236,205,0.14);
+  --kb-focus-ring: rgba(229,168,75,0.16);
   --kb-topbar-bg: var(--kb-bg-panel);
   --kb-btn-hover: brightness(1.08);
   color-scheme: dark;
@@ -755,8 +757,8 @@ body.has-custom-bg .activity-bar {
 [data-theme="dark-ocean"] {
   --kb-surface-base: 31, 38, 49;
 }
-[data-theme="dark-forest"] {
-  --kb-surface-base: 31, 39, 33;
+[data-theme="dark-amber"] {
+  --kb-surface-base: 34, 28, 22;
 }
 [data-theme="dark-black"] {
   --kb-surface-base: 23, 23, 26;
@@ -1021,9 +1023,9 @@ html[data-theme-category="dark"] .tiptap-toolbar .toolbar-btn-active:hover:not(:
   --kb-grad-text: linear-gradient(100deg, #9BCBF7 0%, #5AA9F0 50%, #6FD3C6 100%);
   --kb-grad-soft: linear-gradient(135deg, var(--kb-bg-card) 0%, var(--kb-bg-raised) 100%);
 }
-[data-theme="dark-forest"] {
-  --kb-grad: linear-gradient(135deg, #5DB585 0%, #459C6E 45%, #33845A 100%);
-  --kb-grad-text: linear-gradient(100deg, #9BE2B8 0%, #6FCF97 50%, #E3B160 100%);
+[data-theme="dark-amber"] {
+  --kb-grad: linear-gradient(135deg, #C88A35 0%, #AD6F22 45%, #925A18 100%);
+  --kb-grad-text: linear-gradient(100deg, #F6D08A 0%, #E5A84B 50%, #E08A6A 100%);
   --kb-grad-soft: linear-gradient(135deg, var(--kb-bg-card) 0%, var(--kb-bg-raised) 100%);
 }
 [data-theme="dark-black"] {
