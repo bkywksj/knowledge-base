@@ -117,7 +117,10 @@ export function ContextMenuOverlay({
     if (!open) return;
     const el = menuRef.current;
     if (!el) return;
-    const rect = el.getBoundingClientRect();
+    // 🔴 用 offsetWidth / offsetHeight 而不是 getBoundingClientRect：弹出动画从 scale(0.95) 起，
+    // 这一帧量到的 rect 只有真实尺寸的 95%，往上挪得不够 —— 长菜单（文件夹菜单带色板）
+    // 底部会被裁掉一截（2026-11-05 用户指出「删除」看不见）。offset* 不受 transform 影响
+    const rect = { width: el.offsetWidth, height: el.offsetHeight };
     const margin = 8;
     let left = x;
     let top = y;
