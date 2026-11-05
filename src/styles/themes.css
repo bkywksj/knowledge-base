@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════
    主题 CSS 变量 + 强制 Ant Design 覆盖（v4 界面重设计，见 docs/design/ui-v4）
-   亮色：淡紫 light-lilac（默认）/ 青瓷 / 晨雾蓝 / 杏桃 / 素白
+   亮色：淡紫 light-lilac（默认）/ 青瓷 / 晨雾蓝 / 杏桃 / 香槟
    暗色：暖炭 dark-ember（默认）/ 深海 / 琥珀 / 纯黑
    - 每套主题只定义变量；组件覆盖写一份通用规则（本段末尾），按变量取色
    - antd 那一侧的颜色在 tokens.ts PALETTES，改色时两边一起改
@@ -232,56 +232,58 @@
   color-scheme: light;
 }
 
-/* ─── 亮色 · 素白（中性灰白底 + 石墨色点缀）── 结构同淡紫 ── */
-[data-theme="light-paper"] {
-  --kb-bg-app: #EDEDEB;
+/* ─── 亮色 · 香槟（香槟浅底 + 金色点缀）── 结构同淡紫 ──
+   与暗色「琥珀」同一套金：主按钮 / 徽标这类铺满主色的地方用同款亮金渐变配深棕字（--kb-on-primary）；
+   亮金放在白底上当文字看不清（对比度不到 2），所以文字 / 链接 / 选中用深一档的金 #A87B1E */
+[data-theme="light-gold"] {
+  --kb-bg-app: #F5EEDC;
   --kb-bg-card: #FFFFFF;
   --kb-bg-card-solid: #FFFFFF;
-  --kb-bg-sidebar: #EDEDEB;
-  --kb-bg-header: #EDEDEB;
+  --kb-bg-sidebar: #F5EEDC;
+  --kb-bg-header: #F5EEDC;
   --kb-bg-content: #FFFFFF;
-  --kb-bg-panel: #F7F7F6;
+  --kb-bg-panel: #FBF7EC;
   --kb-bg-raised: #FFFFFF;
-  --kb-folder-icon: #8D939E;
-  --kb-shadow-sheet: 0 0 0 .5px rgba(60,64,72,.10), 0 1px 2px rgba(60,64,72,.035), 0 14px 36px -14px rgba(60,64,72,.20);
-  --kb-bg-hover: rgba(74,84,104,0.055);
-  --kb-bg-active: rgba(74,84,104,0.1);
-  --kb-text-primary: #222326;
-  --kb-text-secondary: #6B6E76;
-  --kb-text-tertiary: #9DA0A7;
-  --kb-border: rgba(60,64,72,0.14);
-  --kb-border-card: rgba(60,64,72,0.12);
-  --kb-border-sidebar: rgba(60,64,72,0.14);
-  --kb-primary: #4A5468;
-  --kb-primary-light: rgba(74,84,104,0.08);
-  --kb-accent: #8A8F99;
+  --kb-folder-icon: #D6A748;
+  --kb-shadow-sheet: 0 0 0 .5px rgba(150,115,40,.10), 0 1px 2px rgba(150,115,40,.035), 0 14px 36px -14px rgba(150,115,40,.20);
+  --kb-bg-hover: rgba(168,123,30,0.055);
+  --kb-bg-active: rgba(168,123,30,0.1);
+  --kb-text-primary: #33291A;
+  --kb-text-secondary: #7C6D55;
+  --kb-text-tertiary: #A89A80;
+  --kb-border: rgba(150,115,40,0.14);
+  --kb-border-card: rgba(150,115,40,0.12);
+  --kb-border-sidebar: rgba(150,115,40,0.14);
+  --kb-primary: #A87B1E;
+  --kb-primary-light: rgba(168,123,30,0.08);
+  --kb-accent: #C9874A;
   --kb-glass-blur: 0px;
-  --kb-shadow-sm: 0 0 0 .5px rgba(60,64,72,.10), 0 1px 2px rgba(60,64,72,.035);
-  --kb-shadow-md: 0 0 0 .5px rgba(60,64,72,.10), 0 8px 24px -14px rgba(60,64,72,.18);
-  --kb-shadow-card: 0 0 0 1px rgba(60,64,72,.12), 0 1px 2px rgba(60,64,72,.04), 0 8px 24px -14px rgba(60,64,72,.2);
-  --kb-bg-tint: linear-gradient(180deg, #F8F8F7 0%, #F3F3F2 100%);
-  --kb-rail-ink: #44464C;
-  --kb-border-strong: rgba(60,64,72,.24);
-  --kb-bar-grad: linear-gradient(180deg, #FCFCFB 0%, #F3F3F2 100%);
+  --kb-shadow-sm: 0 0 0 .5px rgba(150,115,40,.10), 0 1px 2px rgba(150,115,40,.035);
+  --kb-shadow-md: 0 0 0 .5px rgba(150,115,40,.10), 0 8px 24px -14px rgba(150,115,40,.18);
+  --kb-shadow-card: 0 0 0 1px rgba(150,115,40,.12), 0 1px 2px rgba(150,115,40,.04), 0 8px 24px -14px rgba(150,115,40,.2);
+  --kb-bg-tint: linear-gradient(180deg, #FDFAF2 0%, #F9F3E4 100%);
+  --kb-rail-ink: #54472F;
+  --kb-border-strong: rgba(150,115,40,.24);
+  --kb-bar-grad: linear-gradient(180deg, #FFFDF7 0%, #F8F1E1 100%);
   --kb-hi: inset 0 1px 0 rgba(255,255,255,.85);
-  --kb-ink2: #44464C;
-  --kb-fmt-bg: #FCFCFB;
-  --kb-scrollbar-thumb: rgba(74,84,104,0.18);
-  --kb-scrollbar-hover: rgba(74,84,104,0.32);
+  --kb-ink2: #54472F;
+  --kb-fmt-bg: #FFFDF7;
+  --kb-scrollbar-thumb: rgba(168,123,30,0.18);
+  --kb-scrollbar-hover: rgba(168,123,30,0.32);
   --kb-body-bg:
-    radial-gradient(700px 420px at 0% 0%, #F4F4F3 0%, transparent 70%),
-    radial-gradient(620px 420px at 100% 0%, #F0F0EE 0%, transparent 70%),
-    radial-gradient(900px 520px at 70% 110%, #E4E4E1 0%, transparent 70%),
-    #EDEDEB;
+    radial-gradient(700px 420px at 0% 0%, #FAF4E4 0%, transparent 70%),
+    radial-gradient(620px 420px at 100% 0%, #F7EDD3 0%, transparent 70%),
+    radial-gradient(900px 520px at 70% 110%, #EFE2C2 0%, transparent 70%),
+    #F5EEDC;
   --kb-layout-bg: transparent;
   --kb-header-bg: transparent;
   --kb-input-bg: #FFFFFF;
-  --kb-input-border: rgba(60,64,72,0.24);
-  --kb-focus-ring: rgba(74,84,104,0.12);
-  --kb-topbar-bg: #FCFCFB;
+  --kb-input-border: rgba(150,115,40,0.24);
+  --kb-focus-ring: rgba(168,123,30,0.12);
+  --kb-topbar-bg: #FFFDF7;
   --kb-btn-hover: brightness(1.05);
-  --kb-switch-off: #DCDCDA;
-  --kb-switch-off-hover: #D0D0CD;
+  --kb-switch-off: #E8DFCB;
+  --kb-switch-off-hover: #DED3BA;
   color-scheme: light;
 }
 
@@ -751,7 +753,7 @@ body.has-custom-bg .activity-bar {
 [data-theme="light-peach"] {
   --kb-surface-base: 255, 255, 255;
 }
-[data-theme="light-paper"] {
+[data-theme="light-gold"] {
   --kb-surface-base: 255, 255, 255;
 }
 [data-theme="dark-ocean"] {
@@ -1013,10 +1015,12 @@ html[data-theme-category="dark"] .tiptap-toolbar .toolbar-btn-active:hover:not(:
   --kb-grad-text: linear-gradient(100deg, #DD7E62 0%, #C65F45 50%, #E0A23C 100%);
   --kb-grad-soft: linear-gradient(135deg, #FFF6F1 0%, #FCEAE1 100%);
 }
-[data-theme="light-paper"] {
-  --kb-grad: linear-gradient(135deg, #7A8396 0%, #5D677B 45%, #4A5468 100%);
-  --kb-grad-text: linear-gradient(100deg, #5D677B 0%, #4A5468 50%, #8A8F99 100%);
-  --kb-grad-soft: linear-gradient(135deg, #F8F8F7 0%, #EFEFED 100%);
+[data-theme="light-gold"] {
+  /* 与琥珀同款亮金，配深棕字 */
+  --kb-grad: linear-gradient(135deg, #F3D27E 0%, #E9B95A 45%, #D9A23E 100%);
+  --kb-grad-text: linear-gradient(100deg, #D9A23E 0%, #A87B1E 50%, #C9874A 100%);
+  --kb-grad-soft: linear-gradient(135deg, #FFF9EA 0%, #FBF0D6 100%);
+  --kb-on-primary: #2B1F0C;
 }
 [data-theme="dark-ocean"] {
   --kb-grad: linear-gradient(135deg, #6DB3F2 0%, #4C94DF 45%, #3A7FCC 100%);

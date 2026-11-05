@@ -17,7 +17,7 @@ export type ThemeMode =
   | "light-celadon"
   | "light-mist"
   | "light-peach"
-  | "light-paper"
+  | "light-gold"
   | "dark-ember"
   | "dark-ocean"
   | "dark-amber"
@@ -71,11 +71,11 @@ export const themes: ThemeMeta[] = [
     colors: ["#F6E9E1", "#C65F45", "#E0A23C", "#3A2925"],
   },
   {
-    key: "light-paper",
-    label: "素白",
+    key: "light-gold",
+    label: "香槟",
     category: "light",
-    description: "中性灰白底 + 石墨色点缀，几乎不带彩色",
-    colors: ["#EDEDEB", "#4A5468", "#8A8F99", "#222326"],
+    description: "香槟浅底 + 金色点缀，与暗色「琥珀」同一套金",
+    colors: ["#F5EEDC", "#E9B95A", "#A87B1E", "#33291A"],
   },
   {
     key: "dark-ember",
@@ -230,24 +230,26 @@ const PALETTES: Record<ThemeMode, Palette> = {
     raised: "#FFFFFF",
     tooltip: "#3A2925",
   },
-  "light-paper": {
-    primary: "#4A5468",
-    link: "#3B4557",
+  "light-gold": {
+    // 亮金在白底上当文字看不清，antd 的主色（链接 / 选中 / 勾选）用深一档的金；
+    // 主按钮的亮金渐变在 themes.css（--kb-grad）。警告色偏橙，免得和金色主色混在一起
+    primary: "#A87B1E",
+    link: "#8F6814",
     success: "#3E9A72",
-    warning: "#C38D33",
+    warning: "#C9772E",
     error: "#D65A6E",
-    bgLayout: "#EDEDEB",
+    bgLayout: "#F5EEDC",
     bgContainer: "#FFFFFF",
     bgElevated: "#FFFFFF",
-    bgMask: "rgba(237,237,235,0.62)",
-    text: "#222326",
-    text2: "#6B6E76",
-    text3: "#9DA0A7",
-    text4: "#C3C5CA",
-    primaryRgb: "74,84,104",
-    hairRgb: "60,64,72",
+    bgMask: "rgba(245,238,220,0.62)",
+    text: "#33291A",
+    text2: "#7C6D55",
+    text3: "#A89A80",
+    text4: "#CCC1AA",
+    primaryRgb: "168,123,30",
+    hairRgb: "150,115,40",
     raised: "#FFFFFF",
-    tooltip: "#2A2C31",
+    tooltip: "#33291A",
   },
   "dark-ember": {
     primary: "#A992FA",
