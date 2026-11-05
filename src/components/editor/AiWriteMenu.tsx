@@ -754,7 +754,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
             className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap"
             style={{
               background: token.colorPrimary,
-              color: "#fff",
+              color: "var(--kb-on-primary, #fff)",
               border: "none",
               cursor: "pointer",
             }}

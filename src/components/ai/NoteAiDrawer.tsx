@@ -470,7 +470,7 @@ function MiniBubble({
         className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-xs font-bold"
         style={{
           background: isUser ? token.colorPrimary : token.colorPrimaryBg,
-          color: isUser ? "#fff" : token.colorPrimary,
+          color: isUser ? "var(--kb-on-primary, #fff)" : token.colorPrimary,
         }}
       >
         {isUser ? "我" : "AI"}

@@ -384,51 +384,51 @@
 }
 
 /* ─── 暗色 · 琥珀（暖褐炭底 + 琥珀金点缀）── 结构同暖炭 ──
-   琥珀金很亮、上面放白字看不清：文字 / 链接 / 选中用亮琥珀 #E5A84B，
-   主按钮 / 用户气泡这类铺满主色的地方用压深的铜琥珀渐变（--kb-grad），白字才清楚 */
+   主按钮 / 用户气泡这类铺满主色的地方用亮金渐变，配深棕字（--kb-on-primary，见下方渐变段）；
+   其余主题没定义 --kb-on-primary，主色底上一律白字 */
 [data-theme="dark-amber"] {
-  --kb-bg-app: #14110D;
-  --kb-bg-card: #221C16;
-  --kb-bg-card-solid: #221C16;
-  --kb-bg-sidebar: #14110D;
-  --kb-bg-header: #14110D;
-  --kb-bg-content: #1A1611;
-  --kb-bg-panel: #1E1914;
-  --kb-bg-raised: #2E261E;
-  --kb-folder-icon: #E5A84B;
+  --kb-bg-app: #17130E;
+  --kb-bg-card: #261F18;
+  --kb-bg-card-solid: #261F18;
+  --kb-bg-sidebar: #17130E;
+  --kb-bg-header: #17130E;
+  --kb-bg-content: #1D1813;
+  --kb-bg-panel: #211B15;
+  --kb-bg-raised: #32291F;
+  --kb-folder-icon: #E9B95A;
   --kb-shadow-sheet: 0 0 0 .5px rgba(255,236,205,.07), 0 18px 40px -16px rgba(0,0,0,.6);
   --kb-bg-hover: rgba(255,236,205,0.05);
-  --kb-bg-active: rgba(229,168,75,0.14);
+  --kb-bg-active: rgba(233,185,90,0.14);
   --kb-text-primary: #F0E8DC;
   --kb-text-secondary: #C9BBA6;
   --kb-text-tertiary: #998B77;
   --kb-border: rgba(255,236,205,0.09);
   --kb-border-card: rgba(255,236,205,0.08);
   --kb-border-sidebar: rgba(255,236,205,0.07);
-  --kb-primary: #E5A84B;
-  --kb-primary-light: rgba(229,168,75,0.12);
+  --kb-primary: #E9B95A;
+  --kb-primary-light: rgba(233,185,90,0.12);
   --kb-accent: #E08A6A;
   --kb-glass-blur: 0px;
   --kb-shadow-sm: 0 0 0 .5px rgba(255,236,205,.08), 0 1px 2px rgba(0,0,0,.35);
   --kb-shadow-md: 0 0 0 .5px rgba(255,236,205,.08), 0 10px 26px -16px rgba(0,0,0,.55);
   --kb-shadow-card: 0 0 0 .5px rgba(255,236,205,.08), 0 10px 26px -16px rgba(0,0,0,.55);
-  --kb-bg-tint: #1E1914;
+  --kb-bg-tint: #211B15;
   --kb-rail-ink: #C9BBA6;
   --kb-border-strong: rgba(255,236,205,.12);
-  --kb-bar-grad: linear-gradient(180deg, #1E1914 0%, #1A1611 100%);
+  --kb-bar-grad: linear-gradient(180deg, #211B15 0%, #1D1813 100%);
   --kb-hi: inset 0 1px 0 rgba(255,236,205,.03);
   --kb-ink2: #C9BBA6;
-  --kb-fmt-bg: #221C16;
+  --kb-fmt-bg: #261F18;
   --kb-scrollbar-thumb: rgba(255,236,205,0.12);
   --kb-scrollbar-hover: rgba(255,236,205,0.22);
-  --kb-body-bg: #14110D;
+  --kb-body-bg: #17130E;
   --kb-layout-bg: var(--kb-bg-app);
   --kb-header-bg: var(--kb-bg-header);
-  --kb-input-bg: #16120E;
+  --kb-input-bg: #1A1510;
   --kb-input-border: rgba(255,236,205,0.14);
-  --kb-focus-ring: rgba(229,168,75,0.16);
+  --kb-focus-ring: rgba(233,185,90,0.16);
   --kb-topbar-bg: var(--kb-bg-panel);
-  --kb-btn-hover: brightness(1.08);
+  --kb-btn-hover: brightness(1.05);
   color-scheme: dark;
 }
 
@@ -567,7 +567,7 @@
 /* 主按钮：主色渐变（--kb-grad，见下方「v4 通用控件」）配白字，无投影 */
 [data-theme] .ant-btn-primary:not(:disabled):not(.ant-btn-dangerous):not(.ant-btn-background-ghost) {
   background: var(--kb-grad) !important;
-  color: #FFFFFF !important;
+  color: var(--kb-on-primary, #fff) !important;
   box-shadow: none !important;
 }
 [data-theme] .ant-btn-primary:not(:disabled):not(.ant-btn-dangerous):not(.ant-btn-background-ghost):hover {
@@ -758,7 +758,7 @@ body.has-custom-bg .activity-bar {
   --kb-surface-base: 31, 38, 49;
 }
 [data-theme="dark-amber"] {
-  --kb-surface-base: 34, 28, 22;
+  --kb-surface-base: 38, 31, 24;
 }
 [data-theme="dark-black"] {
   --kb-surface-base: 23, 23, 26;
@@ -912,12 +912,12 @@ body.has-custom-bg :is(.kb-surface, .ant-layout-content .ant-card) .ant-list-ite
  * 用 html[...] 前缀拉高选择器特异性，避免被 global.css 中 .tiptap-toolbar .ant-btn:hover 等同特异性规则覆盖 */
 html[data-theme-category="dark"] .tiptap-toolbar .toolbar-btn-active,
 html[data-theme-category="dark"] .tiptap-toolbar .toolbar-btn-active:not(:disabled) {
-  color: #ffffff !important;
+  color: var(--kb-on-primary, #fff) !important;
   background: color-mix(in srgb, var(--kb-primary, #a78bfa) 55%, transparent) content-box !important;
   padding: 2px !important;
 }
 html[data-theme-category="dark"] .tiptap-toolbar .toolbar-btn-active:hover:not(:disabled) {
-  color: #ffffff !important;
+  color: var(--kb-on-primary, #fff) !important;
   background: color-mix(in srgb, var(--kb-primary, #a78bfa) 70%, transparent) content-box !important;
 }
 [data-theme-category="dark"] .tiptap mark {
@@ -1024,9 +1024,11 @@ html[data-theme-category="dark"] .tiptap-toolbar .toolbar-btn-active:hover:not(:
   --kb-grad-soft: linear-gradient(135deg, var(--kb-bg-card) 0%, var(--kb-bg-raised) 100%);
 }
 [data-theme="dark-amber"] {
-  --kb-grad: linear-gradient(135deg, #C88A35 0%, #AD6F22 45%, #925A18 100%);
-  --kb-grad-text: linear-gradient(100deg, #F6D08A 0%, #E5A84B 50%, #E08A6A 100%);
+  --kb-grad: linear-gradient(135deg, #F3D27E 0%, #E9B95A 45%, #D9A23E 100%);
+  --kb-grad-text: linear-gradient(100deg, #F6D08A 0%, #E9B95A 50%, #E08A6A 100%);
   --kb-grad-soft: linear-gradient(135deg, var(--kb-bg-card) 0%, var(--kb-bg-raised) 100%);
+  /* 亮金底上白字看不清，主色铺底处（主按钮 / 气泡 / 徽标）文字改深棕 */
+  --kb-on-primary: #2B1F0C;
 }
 [data-theme="dark-black"] {
   --kb-grad: linear-gradient(135deg, #9C86F2 0%, #8269E4 45%, #6C52D2 100%);
@@ -1044,6 +1046,9 @@ html[data-theme-category="dark"] .tiptap-toolbar .toolbar-btn-active:hover:not(:
   background: var(--kb-grad) !important;
   border-color: transparent !important;
 }
+[data-theme] .ant-checkbox-checked:not(.ant-checkbox-disabled) .ant-checkbox-inner::after {
+  border-color: var(--kb-on-primary, #fff) !important;
+}
 [data-theme] .ant-radio-checked:not(.ant-radio-disabled) .ant-radio-inner {
   border-color: var(--kb-primary) !important;
 }
@@ -1058,7 +1063,7 @@ html[data-theme-category="dark"] .tiptap-toolbar .toolbar-btn-active:hover:not(:
   border-color: transparent !important;
 }
 [data-theme] .ant-pagination .ant-pagination-item-active a {
-  color: #FFFFFF !important;
+  color: var(--kb-on-primary, #fff) !important;
   font-weight: 600;
 }
 /* 分段切换选中项：细描边代替投影（原型 .seg button.on 用深一档描边 .24） */

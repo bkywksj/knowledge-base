@@ -244,7 +244,7 @@ export function ImportConfigModal({
                 {!scanning ? (
                   <button
                     onClick={startScan}
-                    className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[var(--kb-primary)] py-2 text-sm font-medium text-white active:scale-95"
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[var(--kb-primary)] py-2 text-sm font-medium text-[var(--kb-on-primary,#fff)] active:scale-95"
                   >
                     <ScanLine size={14} /> 启动摄像头
                   </button>
@@ -322,7 +322,7 @@ export function ImportConfigModal({
         <button
           onClick={doImport}
           disabled={!parsed || importing}
-          className="flex-1 rounded-lg bg-[var(--kb-primary)] py-2 text-sm font-medium text-white disabled:opacity-50"
+          className="flex-1 rounded-lg bg-[var(--kb-primary)] py-2 text-sm font-medium text-[var(--kb-on-primary,#fff)] disabled:opacity-50"
         >
           {importing ? "导入中…" : "导入"}
         </button>

@@ -951,7 +951,7 @@ body,
  * background-clip: content-box + padding 2px：紫色块比按钮小一圈，hit area 和图标位置不变 */
 .tiptap-toolbar .toolbar-btn-active,
 .tiptap-toolbar .toolbar-btn-active.ant-btn {
-  color: #ffffff !important;
+  color: var(--kb-on-primary, #fff) !important;
   background: var(--kb-primary, var(--ant-color-primary, #1677ff)) content-box !important;
   border-color: transparent !important;
   border-radius: 8px !important;
@@ -960,7 +960,7 @@ body,
 
 .tiptap-toolbar .toolbar-btn-active:hover:not(:disabled),
 .tiptap-toolbar .toolbar-btn-active.ant-btn:hover:not(:disabled) {
-  color: #ffffff !important;
+  color: var(--kb-on-primary, #fff) !important;
   /* hover 时主题色叠 12% 黑加深，给"按下更深"的反馈 */
   background: color-mix(in srgb, var(--kb-primary, var(--ant-color-primary, #1677ff)) 88%, #000) content-box !important;
   border-color: transparent !important;
@@ -4482,7 +4482,7 @@ body.sidebar-resizing .kb-panel-resizer {
   color: var(--kb-text-secondary);
 }
 .kb-ph .kb-daily-today.is-on.ant-btn {
-  color: #fff !important;
+  color: var(--kb-on-primary, #fff) !important;
   background: var(--kb-grad, var(--kb-primary)) !important;
 }
 .kb-cal-card {
@@ -4737,7 +4737,7 @@ body.sidebar-resizing .kb-panel-resizer {
 }
 .kb-task-chip.is-on > b {
   background: var(--kb-grad, var(--kb-primary));
-  color: #fff;
+  color: var(--kb-on-primary, #fff);
 }
 .kb-task-chip:disabled {
   opacity: 0.45;
@@ -4799,7 +4799,8 @@ body.sidebar-resizing .kb-panel-resizer {
   border: 1.5px solid var(--ant-color-border);
   border-radius: 5px;
   background: var(--kb-bg-raised, #fff);
-  color: #fff;
+  /* 勾选后底色是主色渐变，对勾颜色跟随「主色上的文字色」（琥珀是深棕） */
+  color: var(--kb-on-primary, #fff);
   cursor: pointer;
   transition: border-color 0.12s ease, background 0.12s ease;
 }
@@ -5692,7 +5693,7 @@ body.sidebar-resizing .kb-panel-resizer {
   padding: 10px 16px;
   border-radius: 14px 14px 4px 14px;
   background: var(--kb-grad, var(--kb-primary));
-  color: #fff;
+  color: var(--kb-on-primary, #fff);
   font-size: 14px;
   line-height: 1.6;
   box-shadow: 0 6px 18px -8px color-mix(in srgb, var(--kb-primary) 60%, transparent);
@@ -5714,7 +5715,7 @@ body.sidebar-resizing .kb-panel-resizer {
   display: inline-grid;
   place-items: center;
   border-radius: 7px;
-  color: #fff;
+  color: var(--kb-on-primary, #fff);
   background: var(--kb-grad, var(--kb-primary));
 }
 .kb-turn-refs {
@@ -6701,7 +6702,7 @@ body.sidebar-resizing .kb-panel-resizer {
   border-radius: 8px;
   font-size: 12px;
   font-weight: 700;
-  color: #fff;
+  color: var(--kb-on-primary, #fff);
   background: var(--kb-grad, var(--kb-primary));
 }
 .kb-way b {
@@ -7084,7 +7085,7 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   border: none !important;
   border-radius: 0 !important;
   box-shadow: none !important;
-  color: #fff !important;
+  color: var(--kb-on-primary, #fff) !important;
   font-weight: 600;
 }
 [data-theme] .kb-split.ant-space-compact > .ant-btn.ant-btn-primary.ant-btn-variant-solid:hover {
@@ -7234,7 +7235,7 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
 [data-theme] .kb-quick-foot .ant-btn-primary:disabled {
   background: var(--kb-grad, var(--kb-primary)) !important;
   border-color: transparent !important;
-  color: #fff !important;
+  color: var(--kb-on-primary, #fff) !important;
   opacity: 0.5;
 }
 /* 待办分组胶囊（原型 .pills） */
@@ -7286,7 +7287,7 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
 }
 .kb-hm-pills > button.is-on b {
   background: var(--kb-grad, var(--kb-primary));
-  color: #fff;
+  color: var(--kb-on-primary, #fff);
 }
 /* 列表（原型 .td / .nr）：行高 40、圆角 8、悬停底 */
 .kb-hm-list {
@@ -7583,7 +7584,7 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   background: var(--kb-grad, var(--kb-primary)) !important;
 }
 [data-theme] .kb-pager .ant-pagination-item-active a {
-  color: #fff !important;
+  color: var(--kb-on-primary, #fff) !important;
 }
 
 /* D. 侧栏面板（原型 .ph / .sec / .row）：面板头 34、小节标题二级色、树行 30、选中行 1px 深一档描边 */

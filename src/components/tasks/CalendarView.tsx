@@ -377,7 +377,7 @@ export function CalendarView({
                           {isToday && (
                             <span
                               className="text-[10px] leading-none px-1 py-0.5 rounded"
-                              style={{ background: token.colorPrimary, color: "#fff" }}
+                              style={{ background: token.colorPrimary, color: "var(--kb-on-primary, #fff)" }}
                             >
                               今
                             </span>
