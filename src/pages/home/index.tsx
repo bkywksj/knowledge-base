@@ -37,6 +37,7 @@ import {
   EyeOff,
   FilePlus2,
   Plus,
+  X,
 } from "lucide-react";
 import { Tooltip as AntTooltip } from "antd";
 import {
@@ -46,6 +47,7 @@ import {
   taskApi,
   trashApi,
   aiChatApi,
+  imageApi,
 } from "@/lib/api";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import {
@@ -74,7 +76,13 @@ import { CreateTaskModal } from "@/components/tasks/CreateTaskModal";
 import { HideableCard } from "@/components/home/HideableCard";
 import { WritingHeatmap } from "@/components/home/WritingHeatmap";
 import { useHomeWidgetsStore } from "@/store/homeWidgets";
-import { escapeHtml, quickTextToNote } from "@/lib/quickNote";
+import {
+  escapeHtml,
+  fileToBase64,
+  imageFilesFrom,
+  quickImagesHtml,
+  quickTextToNote,
+} from "@/lib/quickNote";
 
 const { Text } = Typography;
 
@@ -132,8 +140,12 @@ function DesktopHomePage() {
   const [quickNote, setQuickNote] = useState("");
   const [quickNoteSaving, setQuickNoteSaving] = useState(false);
   const [aiQuestion, setAiQuestion] = useState("");
+  /** 随手记里粘贴的图片（保存时才存进对应笔记的素材目录）；url 是预览用的 blob 地址 */
+  const [quickImages, setQuickImages] = useState<{ file: File; url: string }[]>([]);
   /** 待办卡顶部的快速添加 */
   const [quickTodo, setQuickTodo] = useState("");
+  /** 往快速添加框里粘了截图：打开完整新建弹窗，带上已打的字和截图 */
+  const [todoPasteDraft, setTodoPasteDraft] = useState<{ title: string; files: File[] } | null>(null);
   const [quickTodoSaving, setQuickTodoSaving] = useState(false);
   /** 笔记卡当前看哪个标签 */
   const [noteTab, setNoteTab] = useState<"recent" | "pinned">("recent");
@@ -227,10 +239,38 @@ function DesktopHomePage() {
     }
   }, [navigate, message]);
 
+  // ─── 随手记的图片：粘贴进来先只做预览，保存时才存进目标笔记 ───────────
+  const addQuickImages = useCallback((files: File[]) => {
+    setQuickImages((prev) => [...prev, ...files.map((file) => ({ file, url: URL.createObjectURL(file) }))]);
+  }, []);
+  const removeQuickImage = useCallback((url: string) => {
+    URL.revokeObjectURL(url);
+    setQuickImages((prev) => prev.filter((i) => i.url !== url));
+  }, []);
+  const clearQuickImages = useCallback(() => {
+    setQuickImages((prev) => {
+      prev.forEach((i) => URL.revokeObjectURL(i.url));
+      return [];
+    });
+  }, []);
+  /** 把随手记里的图片存进这篇笔记的素材目录，返回正文里要追加的片段 */
+  const saveQuickImagesTo = useCallback(
+    async (noteId: number) => {
+      const rels: string[] = [];
+      for (const { file } of quickImages) {
+        const ext = (file.type.split("/")[1] || "png").replace("jpeg", "jpg");
+        rels.push(await imageApi.save(noteId, file.name || `image.${ext}`, await fileToBase64(file)));
+      }
+      return quickImagesHtml(rels);
+    },
+    [quickImages],
+  );
+  const quickHasContent = quickNote.trim() !== "" || quickImages.length > 0;
+
   // ─── 快速记一笔:追加到今日 daily ───────────────────
   const handleQuickSaveNote = useCallback(async () => {
     const text = quickNote.trim();
-    if (!text) return;
+    if (!text && quickImages.length === 0) return;
     setQuickNoteSaving(true);
     try {
       const today = todayYmd();
@@ -238,7 +278,9 @@ function DesktopHomePage() {
       const now = new Date();
       const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
       // 用时间戳前缀分隔多条快速记录,内容追加到 content 末尾(content 是 HTML)
-      const appendBlock = `<p><strong>[${hhmm}]</strong> ${escapeHtml(text).replace(/\n/g, "<br>")}</p>`;
+      const appendBlock =
+        `<p><strong>[${hhmm}]</strong>${text ? " " + escapeHtml(text).replace(/\n/g, "<br>") : ""}</p>` +
+        (await saveQuickImagesTo(daily.id));
       const newContent = (daily.content || "") + appendBlock;
       await noteApi.update(daily.id, {
         title: daily.title,
@@ -247,6 +289,7 @@ function DesktopHomePage() {
       });
       message.success("已记到今天的日记");
       setQuickNote("");
+      clearQuickImages();
       // 也刷新最近笔记列表(daily 会出现在最近)
       loadDashboard();
       // getOrCreate 可能新建今日日记 → 让左侧 NotesPanel / 笔记列表重拉，新日记立即出现
@@ -256,18 +299,26 @@ function DesktopHomePage() {
     } finally {
       setQuickNoteSaving(false);
     }
-  }, [quickNote, message, loadDashboard]);
+  }, [quickNote, quickImages.length, message, loadDashboard, saveQuickImagesTo, clearQuickImages]);
 
   // ─── 随手记：存为新笔记（第一行当标题） ─────────────
   const handleQuickSaveAsNote = useCallback(async () => {
     const text = quickNote.trim();
-    if (!text) return;
+    if (!text && quickImages.length === 0) return;
     setQuickNoteSaving(true);
     try {
-      const { title, content } = quickTextToNote(text);
-      await noteApi.create({ title, content, folder_id: null });
+      const { title, content } = text
+        ? quickTextToNote(text)
+        : { title: `随手记 ${todayYmd()}`, content: "" };
+      const note = await noteApi.create({ title, content, folder_id: null });
+      // 图片要存在这篇笔记的目录下，所以先建笔记、再存图、再补进正文
+      if (quickImages.length > 0) {
+        const imagesHtml = await saveQuickImagesTo(note.id);
+        await noteApi.update(note.id, { title, content: content + imagesHtml, folder_id: null });
+      }
       message.success(`已存为新笔记「${title}」`);
       setQuickNote("");
+      clearQuickImages();
       loadDashboard();
       useAppStore.getState().bumpNotesRefresh();
     } catch (e) {
@@ -275,7 +326,7 @@ function DesktopHomePage() {
     } finally {
       setQuickNoteSaving(false);
     }
-  }, [quickNote, message, loadDashboard]);
+  }, [quickNote, quickImages.length, message, loadDashboard, saveQuickImagesTo, clearQuickImages]);
 
   // ─── 待办卡顶部快速添加：默认今天到期，完整选项走旁边的「详细新建」 ───
   const handleQuickAddTodo = useCallback(async () => {
@@ -700,6 +751,13 @@ function DesktopHomePage() {
           placeholder="想到什么先记下来…"
           value={quickNote}
           onChange={(e) => setQuickNote(e.target.value)}
+          // 粘贴截图 / 图片：进下面的缩略图条，保存时存进目标笔记；图文混合时文字照常粘进来
+          onPaste={(e) => {
+            const files = imageFilesFrom(e.clipboardData);
+            if (files.length === 0) return;
+            if (!e.clipboardData.getData("text/plain").trim()) e.preventDefault();
+            addQuickImages(files);
+          }}
           onKeyDown={(e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
               e.preventDefault();
@@ -711,9 +769,21 @@ function DesktopHomePage() {
           // 第二行卡片撑满剩余高度，这里高出来的会自动从待办 / 笔记卡里扣掉
           autoSize={{ minRows: 2, maxRows: 5 }}
         />
+        {quickImages.length > 0 && (
+          <div className="kb-quick-imgs">
+            {quickImages.map((img) => (
+              <span key={img.url} className="kb-quick-img">
+                <img src={img.url} alt="" />
+                <button type="button" title="移除" onClick={() => removeQuickImage(img.url)}>
+                  <X size={12} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="kb-quick-foot">
           <Text type="secondary" style={{ fontSize: 12 }}>
-            Ctrl / ⌘ + Enter {dailyEnabled ? "记到今天的日记" : "保存"}
+            Ctrl / ⌘ + Enter {dailyEnabled ? "记到今天的日记" : "保存"} · 可粘贴图片
           </Text>
           <span className="flex-1" />
           {quickNote.trim() && (
@@ -730,7 +800,7 @@ function DesktopHomePage() {
             type={dailyEnabled ? "default" : "primary"}
             icon={<FilePlus2 size={14} />}
             loading={quickNoteSaving}
-            disabled={!quickNote.trim()}
+            disabled={!quickHasContent}
             onClick={handleQuickSaveAsNote}
             title="单独建一篇笔记，第一行作标题"
           >
@@ -741,7 +811,7 @@ function DesktopHomePage() {
               type="primary"
               icon={<CalendarDays size={14} />}
               loading={quickNoteSaving}
-              disabled={!quickNote.trim()}
+              disabled={!quickHasContent}
               onClick={handleQuickSaveNote}
               title="带上时间追加到今天的日记末尾"
             >
@@ -912,6 +982,14 @@ function DesktopHomePage() {
                     disabled={quickTodoSaving}
                     onChange={(e) => setQuickTodo(e.target.value)}
                     onPressEnter={handleQuickAddTodo}
+                    // 粘贴截图：这一行放不下图片，直接打开完整新建弹窗，带上已打的字和截图
+                    onPaste={(e) => {
+                      const files = imageFilesFrom(e.clipboardData);
+                      if (files.length === 0) return;
+                      e.preventDefault();
+                      const text = e.clipboardData.getData("text/plain").trim();
+                      setTodoPasteDraft({ title: [quickTodo.trim(), text].filter(Boolean).join(" "), files });
+                    }}
                   />
                   <NewTodoButton
                     variant="inline"
@@ -1265,6 +1343,21 @@ function DesktopHomePage() {
           patchTask(id, { subtask_done: done, subtask_total: total });
         }}
         onEdit={(t) => setEditingTask(t)}
+      />
+      {/* 待办快速添加里粘了截图 → 完整新建弹窗（截图已在附件条里） */}
+      <CreateTaskModal
+        open={!!todoPasteDraft}
+        presetTitle={todoPasteDraft?.title}
+        presetFiles={todoPasteDraft?.files}
+        presetDueDate={todayYmd()}
+        onClose={() => setTodoPasteDraft(null)}
+        onSaved={() => {
+          setTodoPasteDraft(null);
+          setQuickTodo("");
+          setTodoTab("today");
+          refreshTaskStats();
+          void loadDashboard();
+        }}
       />
       {/* 详情 Modal 点「编辑」→ CreateTaskModal 编辑态；保存后重拉首页数据 */}
       <CreateTaskModal

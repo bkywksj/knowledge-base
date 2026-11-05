@@ -81,6 +81,10 @@ interface Props {
   presetDueDate?: string;
   /** 新建时预设分类 ID；null 表示未分类 */
   presetCategoryId?: number | null;
+  /** 新建时预设标题（首页快速添加框里已经打的字） */
+  presetTitle?: string;
+  /** 新建时预设附件（首页快速添加框里粘贴的截图），打开后放进附件条 */
+  presetFiles?: File[];
   onClose: () => void;
   /** 主任务"保存按钮"成功后触发（父组件通常会同时关闭 Modal） */
   onSaved: () => void;
@@ -99,6 +103,8 @@ export function CreateTaskModal({
   presetImportant,
   presetDueDate,
   presetCategoryId,
+  presetTitle,
+  presetFiles,
   onClose,
   onSaved,
   onSubtaskChanged,
@@ -308,7 +314,7 @@ export function CreateTaskModal({
         setRepeatCount(10);
       }
     } else {
-      setTitle("");
+      setTitle(presetTitle ?? "");
       setDescription("");
       setPriority(presetPriority ?? 1);
       setImportant(presetImportant ?? false);
@@ -345,7 +351,13 @@ export function CreateTaskModal({
     setDraftSubInput("");
     setProjectCreating(false);
     setNewProjectName("");
-  }, [open, editing, presetPriority, presetImportant, presetDueDate, presetCategoryId]);
+    // 预设附件要等上面清空草稿之后再放，否则会被一起清掉
+    if (!editing && presetFiles && presetFiles.length > 0) {
+      const files = presetFiles;
+      setTimeout(() => void attachmentsRef.current?.addFiles(files), 0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- discardDraftAttachments / resetRecognition 每次渲染都是新函数，加进来会反复重置
+  }, [open, editing, presetPriority, presetImportant, presetDueDate, presetCategoryId, presetTitle, presetFiles]);
 
   /** 拉候选笔记：keyword 空 → 最近 8 条，非空 → 模糊搜前 10 条 */
   const loadNoteCandidates = useCallback(async (keyword: string) => {
@@ -972,7 +984,12 @@ export function CreateTaskModal({
               // 像快递地址识别：往标题粘一整段通知 → 原文进描述，标题 / 截止时间自动回填
               onPaste={(e) => {
                 const text = e.clipboardData.getData("text/plain").trim();
-                if (text.length < 30 && !text.includes("\n")) return;
+                if (text.length < 30 && !text.includes("\n")) {
+                  // 截图 / 短文字带图：图片进附件条，短文字照常粘进标题。
+                  // 弹窗打开时焦点默认就在标题框，以前这里直接 return，粘截图没有任何反应
+                  attachmentsRef.current?.handlePaste(e, { keepText: true });
+                  return;
+                }
                 attachmentsRef.current?.handlePaste(e, { keepText: true });
                 e.preventDefault();
                 setDescription((prev) => (prev.trim() ? `${prev}\n${text}` : text));
