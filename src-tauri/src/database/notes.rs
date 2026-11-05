@@ -170,6 +170,22 @@ impl Database {
     /// （避免隐藏笔记拉到新端变可见这个隐私问题）。反方向（远端可见、本地隐藏）不动 ——
     /// 不主动取消本地隐藏，免得误把用户刚在本端隐藏的笔记又改回可见。
     /// 不动 `updated_at`（元数据对齐，不算内容变更）。
+    /// 把文件夹移动时间设成远端的值（同步拉取后用）。
+    ///
+    /// 写 folder_id 时触发器会记成「现在」，不还原的话本机会以为自己刚移动过，
+    /// 之后把别的设备更新的位置盖回去
+    pub fn set_note_folder_moved_at(&self, id: i64, at: Option<&str>) -> Result<(), AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        conn.execute(
+            "UPDATE notes SET folder_moved_at = ?2 WHERE id = ?1",
+            params![id, at],
+        )?;
+        Ok(())
+    }
+
     pub fn sync_note_hidden_state(&self, id: i64, is_hidden: bool) -> Result<(), AppError> {
         if !is_hidden {
             return Ok(()); // 单向：只做"远端隐藏 → 本地也隐藏"

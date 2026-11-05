@@ -2152,6 +2152,12 @@ pub struct ManifestEntry {
     /// （与改造前行为一致，向后兼容）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note_type: Option<String>,
+    /// 最后一次换文件夹的时间（notes.folder_moved_at，v71）。
+    ///
+    /// 内容 hash 不含文件夹，只移动时靠它判断哪边的位置更新。None = 没有记录
+    /// （旧客户端 / 升级前移动过），比任何有值的都旧，两边都是 None 时不改文件夹。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder_moved_at: Option<String>,
 }
 
 /// V1 同步 manifest 顶层的附件清单条目（T-S022 sidecar CAS 附件同步）

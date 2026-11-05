@@ -366,6 +366,17 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
         .iter()
         .map(|e| (e.stable_id.as_str(), e.updated_at.as_str()))
         .collect();
+    // 本地每条笔记的文件夹和移动时间：拉内容时若本地移动得更晚，保留本地位置
+    let local_folder_by_uuid: std::collections::HashMap<&str, (&str, Option<&str>)> = local
+        .entries
+        .iter()
+        .map(|e| {
+            (
+                e.stable_id.as_str(),
+                (e.folder_path.as_str(), e.folder_moved_at.as_deref()),
+            )
+        })
+        .collect();
     let remote_states = db.list_remote_state(backend_id)?;
 
     // ── 处理 to_pull（远端独有 / 远端较新）
@@ -391,7 +402,28 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
                 continue;
             }
         };
-        let folder_id = ensure_folder_path(db, &entry.folder_path)?;
+        let (folder_path, keep_local_folder) =
+            match local_folder_by_uuid.get(entry.stable_id.as_str()) {
+                Some(&(path, moved_at))
+                    if super::manifest::folder_move_is_newer(
+                        moved_at,
+                        entry.folder_moved_at.as_deref(),
+                    ) =>
+                {
+                    (path, true)
+                }
+                _ => (entry.folder_path.as_str(), false),
+            };
+        let folder_id = ensure_folder_path(db, folder_path)?;
+        // 用了远端位置：移动时间也照远端记，见 set_note_folder_moved_at
+        let restore_folder_moved_at = |local_id: i64, errors: &mut Vec<String>| {
+            if keep_local_folder {
+                return;
+            }
+            if let Err(e) = db.set_note_folder_moved_at(local_id, entry.folder_moved_at.as_deref()) {
+                errors.push(format!("对齐文件夹移动时间失败 {}: {}", entry.title, e));
+            }
+        };
 
         // T-S014：加密笔记走密文 upsert 分支
         if entry.encrypted {
@@ -453,6 +485,7 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
             ) {
                 Ok(local_id) => {
                     result.downloaded += 1;
+                    restore_folder_moved_at(local_id, &mut result.errors);
                     if let Err(e) = db.upsert_remote_state(
                         backend_id,
                         local_id,
@@ -622,6 +655,7 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
 
         if let Some(local_id) = local_id_for_state {
             result.downloaded += 1;
+            restore_folder_moved_at(local_id, &mut result.errors);
             if let Err(e) = db.upsert_remote_state(
                 backend_id,
                 local_id,

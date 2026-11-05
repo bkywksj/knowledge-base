@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 70;
+pub const SCHEMA_VERSION: i32 = 71;
 
 /// `ai_models.max_context` 的历史默认值。v51 把旧默认 32000 统一抬到它，此后新建也默认填它 ——
 /// 所以存量里的 128000 分不清是用户填的还是默认值，v62 一律当作「未设置」。
@@ -110,6 +110,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             67 => migrate_v67_to_v68(conn)?,
             68 => migrate_v68_to_v69(conn)?,
             69 => migrate_v69_to_v70(conn)?,
+            70 => migrate_v70_to_v71(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2592,6 +2593,31 @@ fn migrate_v67_to_v68(conn: &Connection) -> Result<(), AppError> {
     }
 
     set_version(conn, 68)?;
+    Ok(())
+}
+
+/// v70 -> v71：记录笔记最后一次换文件夹的时间（notes.folder_moved_at），同步据此判断文件夹谁新。
+///
+/// 以前只移动文件夹时内容 hash 不变，同步认为没变化：另一台设备拉不到新位置，
+/// 没移动的那台推送时还会把远端盖回旧文件夹（2026-11-05 客户反馈）。
+/// 用触发器记录而不是改 updated_at：主应用和 kb-core（MCP）的所有移动路径都能盖到，
+/// 也不会因为移动一下，旧内容就在同步里胜过别处更新的编辑。
+/// 升级前的移动没有记录，要重新移动一次才会同步。
+fn migrate_v70_to_v71(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v70 -> v71 (记录笔记移动文件夹的时间)");
+    let cols = list_columns(conn, "notes")?;
+    if !cols.iter().any(|c| c == "folder_moved_at") {
+        conn.execute_batch("ALTER TABLE notes ADD COLUMN folder_moved_at TEXT;")?;
+    }
+    conn.execute_batch(
+        "CREATE TRIGGER IF NOT EXISTS notes_folder_moved
+         AFTER UPDATE OF folder_id ON notes
+         WHEN OLD.folder_id IS NOT NEW.folder_id
+         BEGIN
+             UPDATE notes SET folder_moved_at = datetime('now', 'localtime') WHERE id = NEW.id;
+         END;",
+    )?;
+    set_version(conn, 71)?;
     Ok(())
 }
 

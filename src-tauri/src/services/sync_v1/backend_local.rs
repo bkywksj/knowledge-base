@@ -216,6 +216,7 @@ mod tests {
                 is_hidden: false,
                 tags: None,
                 note_type: None,
+                folder_moved_at: None,
             }],
             hash_algo: Some(SyncManifestV1::HASH_ALGO_V2.into()),
             vault: None,

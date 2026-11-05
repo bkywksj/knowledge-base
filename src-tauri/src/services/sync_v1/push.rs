@@ -738,6 +738,7 @@ mod tests {
             is_hidden: false,
             tags: None,
             note_type: None,
+            folder_moved_at: None,
         }
     }
 

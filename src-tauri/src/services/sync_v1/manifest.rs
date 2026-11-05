@@ -176,7 +176,8 @@ pub fn compute_local_manifest(
     }
     let mut stmt = conn.prepare(
         "SELECT id, stable_uuid, title, content_hash, updated_at, folder_id, is_deleted, deleted_at,
-                is_encrypted, encrypted_blob, is_daily, daily_date, is_hidden, note_type
+                is_encrypted, encrypted_blob, is_daily, daily_date, is_hidden, note_type,
+                folder_moved_at
          FROM notes
          WHERE stable_uuid IS NOT NULL
            AND (is_deleted = 0 OR (is_deleted = 1 AND deleted_at IS NOT NULL AND deleted_at >= ?1))",
@@ -197,6 +198,7 @@ pub fn compute_local_manifest(
         Option<String>, // daily_date
         i64,            // is_hidden
         String,         // note_type
+        Option<String>, // folder_moved_at
     )> = stmt
         .query_map(rusqlite::params![tombstone_cutoff], |row| {
             // 所有 TEXT 列走降级读（`get_text_lossy`）而非 `row.get::<_, String>`：
@@ -222,6 +224,7 @@ pub fn compute_local_manifest(
                 get_opt_text_lossy(row, 11, "notes.daily_date")?,
                 row.get::<_, i64>(12)?,
                 get_text_lossy(row, 13, "notes.note_type")?,
+                get_opt_text_lossy(row, 14, "notes.folder_moved_at")?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -265,6 +268,7 @@ pub fn compute_local_manifest(
         daily_date,
         is_hidden_int,
         note_type_col,
+        folder_moved_at,
     ) in rows
     {
         let path = folder_path_for(&folders_by_id, folder_id);
@@ -319,6 +323,7 @@ pub fn compute_local_manifest(
             } else {
                 Some(note_type_col)
             },
+            folder_moved_at,
         });
     }
 
@@ -622,8 +627,18 @@ pub fn merge_manifests(local: &SyncManifestV1, remote: &SyncManifestV1) -> SyncM
     // （修 push 回滚远端较新笔记 / 复活远端已删笔记）
     for le in &local.entries {
         match remote_map.get(le.stable_id.as_str()) {
-            Some(re) if re.updated_at > le.updated_at => merged.push((*re).clone()),
-            _ => merged.push(le.clone()),
+            Some(re) => {
+                let mut chosen = if re.updated_at > le.updated_at {
+                    (*re).clone()
+                } else {
+                    le.clone()
+                };
+                // 文件夹单独比：内容按 updated_at 选，位置按谁移动得晚选，
+                // 否则没移动的一端推送时会把远端盖回旧文件夹
+                adopt_newer_folder(&mut chosen, le, re);
+                merged.push(chosen);
+            }
+            None => merged.push(le.clone()),
         }
     }
     // 远端独有 → 补（别的设备已 push 但本机还没 pull 到）
@@ -764,6 +779,29 @@ fn merge_task_category_entries(
 ///
 /// **本算法不直接判定"本地是否有变更"**：那是 sync_remote_state 的活，由上层 push/pull 决定
 /// 是否真正调 backend.put / put_note。这个 diff 只回答"两份 manifest 不一致的项是哪些"。
+/// 文件夹移动时间 `a` 是否比 `b` 新。None = 没有记录，比任何有值的都旧
+pub(crate) fn folder_move_is_newer(a: Option<&str>, b: Option<&str>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => a > b,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
+/// 两边谁移动得晚，就用谁的文件夹；都没记录或一样新时不动
+fn adopt_newer_folder(target: &mut ManifestEntry, a: &ManifestEntry, b: &ManifestEntry) {
+    let (a_at, b_at) = (a.folder_moved_at.as_deref(), b.folder_moved_at.as_deref());
+    let newer = if folder_move_is_newer(a_at, b_at) {
+        a
+    } else if folder_move_is_newer(b_at, a_at) {
+        b
+    } else {
+        return;
+    };
+    target.folder_path = newer.folder_path.clone();
+    target.folder_moved_at = newer.folder_moved_at.clone();
+}
+
 pub fn diff_manifests(local: &SyncManifestV1, remote: &SyncManifestV1) -> ManifestDiff {
     let local_map: HashMap<&str, &ManifestEntry> = local
         .entries
@@ -845,7 +883,13 @@ pub fn diff_manifests(local: &SyncManifestV1, remote: &SyncManifestV1) -> Manife
                     _ => false, // 任一为 None（旧 manifest / 加密 / tombstone）→ 不据此触发
                 };
                 let pull_for_tags = tags_differ && re.updated_at >= le.updated_at;
-                if meta_recover || pull_for_tags {
+                // 只移动了文件夹：远端移动得更晚才拉；本地更晚的由 push 的 merge 写到远端
+                let pull_for_folder = le.folder_path != re.folder_path
+                    && folder_move_is_newer(
+                        re.folder_moved_at.as_deref(),
+                        le.folder_moved_at.as_deref(),
+                    );
+                if meta_recover || pull_for_tags || pull_for_folder {
                     diff.to_pull.push((*re).clone());
                 }
                 continue;
@@ -987,6 +1031,7 @@ mod tests {
             is_hidden: false,
             tags: None,
             note_type: None,
+            folder_moved_at: None,
         }
     }
 
@@ -2285,5 +2330,126 @@ mod tests {
         assert_eq!(back.tasks[0].stable_id, "t1");
         assert_eq!(back.task_categories.len(), 1);
         assert_eq!(back.task_categories[0].stable_id, "c1");
+    }
+}
+
+/// 2026-11-05 客户反馈：只移动文件夹时，另一台设备拉不到，没移动的一端推送还会把远端盖回旧文件夹
+#[cfg(test)]
+mod folder_move_tests {
+    use super::*;
+    use crate::models::NoteInput;
+
+    fn entry(folder: &str, moved_at: Option<&str>) -> ManifestEntry {
+        ManifestEntry {
+            stable_id: "u1".into(),
+            title: "t".into(),
+            content_hash: "h".into(),
+            updated_at: "2026-11-05 10:00:00".into(),
+            remote_path: "notes/u1.md".into(),
+            tombstone: false,
+            folder_path: folder.into(),
+            encrypted: false,
+            is_daily: false,
+            daily_date: None,
+            is_hidden: false,
+            tags: None,
+            note_type: None,
+            folder_moved_at: moved_at.map(String::from),
+        }
+    }
+
+    fn manifest(e: ManifestEntry) -> SyncManifestV1 {
+        SyncManifestV1 {
+            manifest_version: SyncManifestV1::VERSION,
+            app_version: String::new(),
+            device: String::new(),
+            generated_at: String::new(),
+            entries: vec![e],
+            hash_algo: None,
+            vault: None,
+            attachments: vec![],
+            projects: vec![],
+            tasks: vec![],
+            task_categories: vec![],
+        }
+    }
+
+    #[test]
+    fn pull_when_remote_moved_later() {
+        let local = manifest(entry("旧", None));
+        let remote = manifest(entry("DESKTOP-LIN", Some("2026-11-05 11:00:00")));
+        assert_eq!(diff_manifests(&local, &remote).to_pull.len(), 1);
+    }
+
+    #[test]
+    fn no_pull_when_local_moved_later_or_no_record() {
+        let local = manifest(entry("新", Some("2026-11-05 12:00:00")));
+        let remote = manifest(entry("旧", Some("2026-11-05 11:00:00")));
+        assert!(diff_manifests(&local, &remote).to_pull.is_empty());
+        // 升级前的移动都没记录：保持原来的行为，不改文件夹
+        let d = diff_manifests(&manifest(entry("A", None)), &manifest(entry("B", None)));
+        assert!(d.to_pull.is_empty() && d.to_push.is_empty());
+    }
+
+    #[test]
+    fn merge_keeps_the_later_move_both_ways() {
+        let moved = entry("DESKTOP-LIN", Some("2026-11-05 11:00:00"));
+        let stale = entry("旧", None);
+        // 没移动的一端推送：远端已有的新位置不能被盖回去
+        let m = merge_manifests(&manifest(stale.clone()), &manifest(moved.clone()));
+        assert_eq!(m.entries[0].folder_path, "DESKTOP-LIN");
+        // 移动的一端推送：写上新位置
+        let m = merge_manifests(&manifest(moved), &manifest(stale));
+        assert_eq!(m.entries[0].folder_path, "DESKTOP-LIN");
+        assert_eq!(m.entries[0].folder_moved_at.as_deref(), Some("2026-11-05 11:00:00"));
+    }
+
+    #[test]
+    fn merge_takes_content_and_folder_from_different_sides() {
+        // 远端改了内容（updated_at 更新），本地移动了文件夹：两样都要留下
+        let mut remote = entry("旧", None);
+        remote.content_hash = "h2".into();
+        remote.updated_at = "2026-11-05 12:00:00".into();
+        let local = entry("新", Some("2026-11-05 11:00:00"));
+        let m = merge_manifests(&manifest(local), &manifest(remote));
+        assert_eq!(m.entries[0].content_hash, "h2");
+        assert_eq!(m.entries[0].folder_path, "新");
+    }
+
+    fn folder_state(db: &Database, id: i64) -> (Option<String>, String) {
+        db.conn_lock()
+            .unwrap()
+            .query_row(
+                "SELECT folder_moved_at, updated_at FROM notes WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn every_move_path_is_recorded_without_touching_updated_at() {
+        let db = Database::init(":memory:").unwrap();
+        let folder = db.create_folder("DESKTOP-LIN", None).unwrap();
+        let note = db
+            .create_note(&NoteInput { title: "t".into(), content: "c".into(), folder_id: None })
+            .unwrap();
+        let (moved, updated_before) = folder_state(&db, note.id);
+        assert!(moved.is_none(), "新建不算移动");
+
+        // 批量移动（客户用的路径）：要记移动时间，但不能改 updated_at
+        db.move_notes_batch(&[note.id], Some(folder.id)).unwrap();
+        let (moved, updated_after) = folder_state(&db, note.id);
+        assert!(moved.is_some());
+        assert_eq!(updated_before, updated_after);
+
+        let m = compute_local_manifest(&db, "t", "d").unwrap();
+        assert_eq!(m.entries[0].folder_path, "DESKTOP-LIN");
+        assert_eq!(m.entries[0].folder_moved_at, moved);
+
+        // 拉取后还原成远端的时间；文件夹没变的更新不重新记
+        db.set_note_folder_moved_at(note.id, Some("2020-01-01 00:00:00")).unwrap();
+        db.move_notes_batch(&[note.id], Some(folder.id)).unwrap();
+        assert_eq!(folder_state(&db, note.id).0.as_deref(), Some("2020-01-01 00:00:00"));
     }
 }

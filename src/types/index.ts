@@ -1743,6 +1743,8 @@ export interface ManifestEntry {
    * - ["a", "b"]：替换为该列表
    */
   tags?: string[] | null;
+  /** 最后一次换文件夹的时间（v71）；没有记录时缺省 */
+  folderMovedAt?: string | null;
 }
 
 export interface SyncManifestV1 {
