@@ -9667,3 +9667,15 @@ main.ant-layout-content:has(.kb-home) {
 .kb-conv-item.is-active.is-ctx {
   box-shadow: inset 0 0 0 1px var(--kb-primary);
 }
+
+/* 待办子任务进度角标可点（展开 / 收起子任务）：按钮外观同原角标，悬停变主色提示可点 */
+.kb-task-chip-sm.is-btn {
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.kb-task-chip-sm.is-btn:hover {
+  background: var(--kb-primary-light);
+  color: var(--kb-primary);
+}

@@ -1611,18 +1611,34 @@ function TaskRow({
 
       {/* 右侧小标签（原型 .tk .meta）：子任务进度 · 关联 · 循环 · 重要 · 附件 · 分类 */}
       <div className="kb-task-meta" onClick={(e) => e.stopPropagation()}>
-        {task.subtask_total > 0 && (
-          <span
-            className={
-              "kb-task-chip-sm" +
-              (task.subtask_done === task.subtask_total ? " is-ok" : "")
-            }
-            title={`子任务进度：${task.subtask_done}/${task.subtask_total}`}
-          >
-            <CornerDownRight size={11} />
-            {task.subtask_done}/{task.subtask_total}
-          </span>
-        )}
+        {task.subtask_total > 0 &&
+          (onToggleExpand ? (
+            // 点进度角标 = 展开 / 收起子任务（同左侧箭头；首页待办速览也是这么点的）
+            <button
+              type="button"
+              className={
+                "kb-task-chip-sm is-btn" +
+                (task.subtask_done === task.subtask_total ? " is-ok" : "")
+              }
+              title={`${expanded ? "收起" : "展开"}子任务（已完成 ${task.subtask_done}/${task.subtask_total}）`}
+              aria-expanded={!!expanded}
+              onClick={() => onToggleExpand()}
+            >
+              <CornerDownRight size={11} />
+              {task.subtask_done}/{task.subtask_total}
+            </button>
+          ) : (
+            <span
+              className={
+                "kb-task-chip-sm" +
+                (task.subtask_done === task.subtask_total ? " is-ok" : "")
+              }
+              title={`子任务进度：${task.subtask_done}/${task.subtask_total}`}
+            >
+              <CornerDownRight size={11} />
+              {task.subtask_done}/{task.subtask_total}
+            </span>
+          ))}
         {task.links.slice(0, 2).map((l) => (
           <button
             key={l.id}
