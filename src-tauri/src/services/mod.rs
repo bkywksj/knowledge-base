@@ -1,4 +1,6 @@
 pub mod ai;
+// AI 会话整体操作：分叉 / 克隆、导出 Markdown
+pub mod ai_conversation;
 pub mod ai_import;
 pub mod anthropic;
 pub mod app_lock;

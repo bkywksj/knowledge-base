@@ -905,6 +905,15 @@ export const aiChatApi = {
   setPreset: (conversationId: number, presetId: number | null) =>
     invoke<void>("set_ai_conversation_preset", { conversationId, presetId }),
   /**
+   * 分叉 / 克隆会话：upToMessageId 给了就从那条回答处分叉（只带到那里），不给就整个克隆。
+   * 模型、角色、附加笔记、限定文件夹、执行过程都一起带过去。返回新会话。
+   */
+  forkConversation: (conversationId: number, upToMessageId?: number) =>
+    invoke<AiConversation>("fork_ai_conversation", { conversationId, upToMessageId }),
+  /** 整个会话导出成 Markdown（「复制为 Markdown」），格式与「存为笔记」一致 */
+  getConversationMarkdown: (conversationId: number) =>
+    invoke<string>("get_ai_conversation_markdown", { conversationId }),
+  /**
    * B 方向：把整个对话归档成笔记。title 为空时取对话当前标题；
    * folder_id 为空时落到根。返回新建的 Note。
    */

@@ -1150,6 +1150,65 @@ impl Database {
         Ok(msg)
     }
 
+    /// 复制一个会话（分叉 / 克隆）：新建会话并带上模型、角色、附加笔记、限定文件夹，
+    /// 再把消息（含执行过程 skill_calls、引用、收尾信息）原样复制过去。
+    ///
+    /// - `up_to_message_id = Some(id)`：只复制到这条（含）为止 —— 「从这里分叉」
+    /// - `None`：复制全部 —— 「克隆会话」
+    ///
+    /// 消息的 created_at 保留原值：列表按 (created_at, id) 排序，新 id 递增且与原顺序一致，
+    /// 次序不会乱。一个事务里做完，中途失败不会留下只复制了一半的会话。
+    pub fn fork_ai_conversation(
+        &self,
+        source_id: i64,
+        up_to_message_id: Option<i64>,
+        title: &str,
+    ) -> Result<AiConversation, AppError> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let tx = conn.transaction()?;
+
+        if let Some(mid) = up_to_message_id {
+            // 防前端传错 id：分叉点必须属于源会话
+            let owned: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM ai_messages WHERE id = ?1 AND conversation_id = ?2",
+                rusqlite::params![mid, source_id],
+                |r| r.get(0),
+            )?;
+            if owned == 0 {
+                return Err(AppError::InvalidInput("分叉点不在这个会话里".into()));
+            }
+        }
+
+        let inserted = tx.execute(
+            "INSERT INTO ai_conversations (title, model_id, attached_note_ids, scope_folder_id, preset_id)
+             SELECT ?1, model_id, attached_note_ids, scope_folder_id, preset_id
+             FROM ai_conversations WHERE id = ?2",
+            rusqlite::params![title, source_id],
+        )?;
+        if inserted == 0 {
+            return Err(AppError::NotFound(format!("会话 {} 不存在", source_id)));
+        }
+        let new_id = tx.last_insert_rowid();
+
+        tx.execute(
+            "INSERT INTO ai_messages
+                (conversation_id, role, content, references_json, skill_calls_json, turn_meta_json, created_at)
+             SELECT ?1, role, content, references_json, skill_calls_json, turn_meta_json, created_at
+             FROM ai_messages
+             WHERE conversation_id = ?2 AND (?3 IS NULL OR id <= ?3)
+             ORDER BY created_at, id",
+            rusqlite::params![new_id, source_id, up_to_message_id],
+        )?;
+
+        let sql = format!("SELECT {} FROM ai_conversations WHERE id = ?1", AI_CONV_COLS);
+        let conv = tx.query_row(&sql, [new_id], row_to_ai_conversation)?;
+        tx.commit()?;
+        Ok(conv)
+    }
+
     /// 删除会话里从 `from_id` 起（含）的所有消息，返回删除条数
     ///
     /// 给「重新生成 / 编辑重发」用：把那条提问连同之后的回答一起撤掉，再重新发送。

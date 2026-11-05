@@ -685,6 +685,28 @@ pub fn get_or_create_companion_conversation(
     db.get_ai_conversation(conv.id).map_err(|e| e.to_string())
 }
 
+/// 分叉 / 克隆会话：`up_to_message_id` 给了就从那条回答处分叉，不给就整个克隆。
+/// 返回新会话（前端切过去）
+#[tauri::command(async)]
+pub fn fork_ai_conversation(
+    state: State<'_, AppState>,
+    conversation_id: i64,
+    up_to_message_id: Option<i64>,
+) -> Result<AiConversation, String> {
+    crate::services::ai_conversation::ConversationService::fork(&state.db, conversation_id, up_to_message_id)
+        .map_err(|e| e.to_string())
+}
+
+/// 整个会话导出成 Markdown 文本（「复制为 Markdown」），格式与「存为笔记」一致
+#[tauri::command(async)]
+pub fn get_ai_conversation_markdown(
+    state: State<'_, AppState>,
+    conversation_id: i64,
+) -> Result<String, String> {
+    crate::services::ai_conversation::ConversationService::markdown(&state.db, conversation_id)
+        .map_err(|e| e.to_string())
+}
+
 /// B 方向：把整个 AI 对话归档为一篇笔记
 ///
 /// 对话内所有消息按用户/AI 顺序拼成 markdown，落库到 `notes` 表，
@@ -709,28 +731,13 @@ pub fn archive_ai_conversation_to_note(
         return Err("对话还没有任何消息，无法归档".to_string());
     }
 
-    // 拼 markdown：> 元信息行 + 每轮 Q/A 块
+    // 拼 markdown：> 元信息行 + 每轮 Q/A 块（与「复制为 Markdown」共用同一份拼法）
     let mut md = String::new();
     md.push_str(&format!(
         "> 由 AI 对话归档于 {}\n\n",
         chrono::Local::now().format("%Y-%m-%d %H:%M")
     ));
-    // 失败 / 空的回复卡片不归档：笔记里出现一段空白的「## AI」只会让人困惑
-    for msg in messages.iter().filter(|m| crate::services::ai::usable_in_history(m)) {
-        let label = match msg.role.as_str() {
-            "user" => "## 我",
-            "assistant" => "## AI",
-            other => {
-                // system / tool 消息归档成普通 markdown 引用块（很少见但兼容）
-                md.push_str(&format!("> [{}]\n{}\n\n", other, msg.content));
-                continue;
-            }
-        };
-        md.push_str(label);
-        md.push_str("\n\n");
-        md.push_str(&msg.content);
-        md.push_str("\n\n");
-    }
+    md.push_str(&crate::services::ai_conversation::messages_markdown(&messages));
 
     let final_title = title
         .map(|t| t.trim().to_string())

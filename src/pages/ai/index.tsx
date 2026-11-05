@@ -32,6 +32,9 @@ import {
   Copy,
   Quote,
   FolderOpen,
+  GitBranch,
+  CopyPlus,
+  FileText,
 } from "lucide-react";
 import { CloseCircleFilled } from "@ant-design/icons";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -236,6 +239,8 @@ function DesktopAiChatPage() {
   const [scopePick, setScopePick] = useState<number | undefined>(undefined);
   // 归档（B 方向）：把对话存为笔记的 Modal
   const [archiveOpen, setArchiveOpen] = useState(false);
+  // 归档哪个会话：顶栏按钮 = 当前会话；会话列表右键 = 被右键的那条（不必先切过去）
+  const [archiveConvId, setArchiveConvId] = useState<number | null>(null);
   const [archiveTitle, setArchiveTitle] = useState("");
   const [archiving, setArchiving] = useState(false);
   // 路线 A 会话附件：当前输入框「待发送」的附件列表（Excel/Text/PDF 混合），发送后清空
@@ -278,9 +283,24 @@ function DesktopAiChatPage() {
             .catch((e) => message.error(`复制失败：${e}`));
         },
       },
+      // 从这里分叉：只在 AI 回答上给（在提问上分叉，新会话会停在一个没回答的问题上）；
+      // 生成中 / 还没落库的临时消息没有真实 id，不给
+      ...(m.role === "assistant" && streamingConvId !== m.conversation_id && !isOptimisticId(m.id)
+        ? [
+            {
+              key: "fork",
+              label: "从这里分叉",
+              icon: <GitBranch size={13} />,
+              onClick: () => {
+                msgCtx.close();
+                void handleFork(m.conversation_id, m.id);
+              },
+            },
+          ]
+        : []),
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [msgCtx.state.payload]);
+  }, [msgCtx.state.payload, streamingConvId]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   // 消息滚动区：提问导航（AskNav）据此算当前位置、跳转
@@ -555,11 +575,12 @@ function DesktopAiChatPage() {
 
   /** B 方向：归档当前对话为一篇笔记 */
   async function handleArchiveConfirm() {
-    if (!activeConvId) return;
+    const targetId = archiveConvId ?? activeConvId;
+    if (!targetId) return;
     setArchiving(true);
     try {
       const note = await aiChatApi.archiveToNote(
-        activeConvId,
+        targetId,
         archiveTitle.trim() || undefined,
       );
       message.success("已归档为笔记");
@@ -571,6 +592,28 @@ function DesktopAiChatPage() {
       message.error(`归档失败: ${e}`);
     } finally {
       setArchiving(false);
+    }
+  }
+
+  /** 分叉 / 克隆：建好后刷新列表并切到新会话（分叉通常就是为了马上在新会话里接着问） */
+  async function handleFork(conversationId: number, upToMessageId?: number) {
+    try {
+      const conv = await aiChatApi.forkConversation(conversationId, upToMessageId);
+      await loadConversations();
+      setActiveConvId(conv.id);
+      message.success(upToMessageId ? "已从这里分叉出新会话" : "已克隆为新会话");
+    } catch (e) {
+      message.error(`${upToMessageId ? "分叉" : "克隆"}失败：${e}`);
+    }
+  }
+
+  async function handleCopyConversationMarkdown(conversationId: number) {
+    try {
+      const md = await aiChatApi.getConversationMarkdown(conversationId);
+      await navigator.clipboard.writeText(md);
+      message.success("已复制为 Markdown");
+    } catch (e) {
+      message.error(`复制失败：${e}`);
     }
   }
 
@@ -1017,6 +1060,39 @@ function DesktopAiChatPage() {
                   },
                 },
                 {
+                  key: "clone",
+                  label: "克隆会话",
+                  icon: <CopyPlus size={12} />,
+                  // 这条会话正在生成时不克隆：复制到的会是半截回答
+                  disabled: streamingConvId === conv.id,
+                  onClick: (e) => {
+                    e.domEvent.stopPropagation();
+                    void handleFork(conv.id);
+                  },
+                },
+                {
+                  key: "archive",
+                  label: "存为笔记",
+                  icon: <Save size={12} />,
+                  disabled: streamingConvId === conv.id,
+                  onClick: (e) => {
+                    e.domEvent.stopPropagation();
+                    setArchiveConvId(conv.id);
+                    setArchiveTitle(conv.title);
+                    setArchiveOpen(true);
+                  },
+                },
+                {
+                  key: "copy-md",
+                  label: "复制为 Markdown",
+                  icon: <FileText size={12} />,
+                  onClick: (e) => {
+                    e.domEvent.stopPropagation();
+                    void handleCopyConversationMarkdown(conv.id);
+                  },
+                },
+                { type: "divider" },
+                {
                   key: "delete",
                   label: "删除",
                   danger: true,
@@ -1289,6 +1365,7 @@ function DesktopAiChatPage() {
                     onClick={() => {
                       // 默认标题用对话现有 title（首问截短）
                       const conv = conversations.find((c) => c.id === activeConvId);
+                      setArchiveConvId(null);
                       setArchiveTitle(conv?.title ?? "");
                       setArchiveOpen(true);
                     }}
