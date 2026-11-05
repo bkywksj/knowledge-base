@@ -43,6 +43,8 @@ pub struct AppState {
     /// In-memory MCP client（指向同进程内的 KbServer）。
     /// `Option` 是因为初始化失败不应阻断主应用启动 —— None 时 mcp_internal_* 命令会报"未就绪"。
     pub mcp_internal: Option<Arc<InternalMcpClient>>,
+    /// 内置 MCP 自己的数据库连接。它和 `db` 是两条连接，整库替换时要一起放开
+    pub mcp_internal_db: Option<Arc<kb_core::KbDb>>,
     /// 外部 MCP server client 缓存（M5-2）。每个用户加的 server 对应一个子进程 + client。
     /// 进程级单例：第一次访问时 spawn，后续请求复用。
     /// 仅桌面端：移动端 fork/spawn 受限，没有外部 MCP 概念
@@ -57,10 +59,34 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// 放开本进程所有数据库连接，整库替换前调用。
+    ///
+    /// 只放主连接不够：内置 MCP 开着第二条连接，Windows 上 `-wal` 删不掉，
+    /// 导入永远失败（2026-11-05 客户反馈，隔离版对照实验确认）。
+    pub fn release_db_connections(&self) {
+        let _ = self.db.release();
+        if let Some(mcp_db) = &self.mcp_internal_db {
+            if let Err(e) = mcp_db.release() {
+                log::warn!("[mcp-internal] 释放数据库连接失败: {e}");
+            }
+        }
+    }
+
+    /// 替换完成后把内置 MCP 接回数据库。主连接由调用方先 reopen（它要跑迁移），
+    /// 所以这里排在主连接之后；失败只影响 AI 工具，不影响主功能
+    pub fn reopen_mcp_internal_db(&self, db_path: &std::path::Path) {
+        if let Some(mcp_db) = &self.mcp_internal_db {
+            if let Err(e) = mcp_db.reopen(db_path, /* writable */ true) {
+                log::error!("[mcp-internal] 重开数据库连接失败，AI 工具需重启应用后恢复: {e}");
+            }
+        }
+    }
+
     pub fn new(
         db: Database,
         data_dir: PathBuf,
         mcp_internal: Option<Arc<InternalMcpClient>>,
+        mcp_internal_db: Option<Arc<kb_core::KbDb>>,
         lock_file: Option<File>,
     ) -> Self {
         Self {
@@ -74,6 +100,7 @@ impl AppState {
             pending_open_md_path: Mutex::new(None),
             vault: RwLock::new(VaultState::default()),
             mcp_internal,
+            mcp_internal_db,
             #[cfg(desktop)]
             mcp_external: Arc::new(crate::services::mcp_client::McpClientManager::new()),
             #[cfg(desktop)]

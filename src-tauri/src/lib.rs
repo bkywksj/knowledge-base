@@ -135,7 +135,10 @@ fn extract_md_paths_from_args<I: IntoIterator<Item = String>>(args: I) -> Vec<St
 /// `writable=true`：自家应用本身就有完整写权限，写工具默认开启。
 fn setup_internal_mcp(
     db_path: &Path,
-) -> Result<std::sync::Arc<state::InternalMcpClient>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<
+    (std::sync::Arc<state::InternalMcpClient>, std::sync::Arc<kb_core::KbDb>),
+    Box<dyn std::error::Error + Send + Sync>,
+> {
     use rmcp::ServiceExt;
 
     let db_path = db_path.to_path_buf();
@@ -148,7 +151,9 @@ fn setup_internal_mcp(
             .map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(e.to_string()))?;
         // 工具白名单（#5）：构造时按 app_config 裁剪工具集（改白名单后重启应用生效）
         let keep = kb_db.read_tool_whitelist();
-        let kb_server = kb_core::KbServer::new_filtered(kb_db, /* writable */ true, keep);
+        let kb_db = std::sync::Arc::new(kb_db);
+        let kb_server =
+            kb_core::KbServer::new_shared(kb_db.clone(), /* writable */ true, keep);
 
         // 后台 task：跑 server，永远不退出（除非 client 断开）
         tauri::async_runtime::spawn(async move {
@@ -168,7 +173,7 @@ fn setup_internal_mcp(
             .await
             .map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(e.to_string()))?;
 
-        Ok(std::sync::Arc::new(client))
+        Ok((std::sync::Arc::new(client), kb_db))
     })
 }
 
@@ -1024,9 +1029,19 @@ pub fn run() {
                     Some(c)
                 },
             );
+            let (mcp_internal, mcp_internal_db) = match mcp_internal {
+                Some((client, db)) => (Some(client), Some(db)),
+                None => (None, None),
+            };
 
             // 注册全局状态
-            let state = AppState::new(db, data_dir_root.clone(), mcp_internal, lock_file);
+            let state = AppState::new(
+                db,
+                data_dir_root.clone(),
+                mcp_internal,
+                mcp_internal_db,
+                lock_file,
+            );
 
             // 若由"双击 md 文件"启动，暂存路径到 state，
             // 等前端 mount 完成后通过 take_pending_open_md_path 取走并打开

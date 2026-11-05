@@ -57,7 +57,7 @@ pub fn sync_import_from_file(
 
     // 必须先释放 db 文件占用，否则 Windows 上 SQLite 的 mmap 会让
     // apply 阶段替换 app.db 时报 ERROR_USER_MAPPED_FILE (1224)
-    let _ = state.db.release();
+    state.release_db_connections();
 
     let result = SyncService::import_from_file(
         &state.data_dir,
@@ -83,6 +83,7 @@ pub fn sync_import_from_file(
             );
         }
     }
+    state.reopen_mcp_internal_db(&db_path);
 
     record_manifest_history(&state, "import", &started_at, &result);
     result.map_err(|e| e.to_string())
@@ -152,7 +153,7 @@ pub async fn sync_webdav_pull(
 
     // 同 sync_import_from_file：必须先释放 db 文件占用，否则 Windows mmap 会让
     // apply 阶段替换 app.db 时报 ERROR_USER_MAPPED_FILE (1224)
-    let _ = state.db.release();
+    state.release_db_connections();
 
     let result = SyncService::webdav_pull(
         &state.data_dir,
@@ -181,6 +182,7 @@ pub async fn sync_webdav_pull(
             );
         }
     }
+    state.reopen_mcp_internal_db(&db_path);
 
     record_manifest_history(&state, "pull", &started_at, &result);
     result.map_err(|e| e.to_string())

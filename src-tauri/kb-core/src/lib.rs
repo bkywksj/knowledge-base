@@ -58,22 +58,33 @@ impl KbDb {
     /// - 可写：用 `SQLITE_OPEN_READ_WRITE`，依赖主应用已建好库（不创建新库）
     /// - 不调 PRAGMA journal_mode：WAL 由主应用维持，sidecar 自动跟随
     pub fn open(path: &Path, writable: bool) -> Result<Self> {
-        let mode = if writable {
-            OpenFlags::SQLITE_OPEN_READ_WRITE
-        } else {
-            OpenFlags::SQLITE_OPEN_READ_ONLY
-        };
-        let conn = Connection::open_with_flags(path, mode | OpenFlags::SQLITE_OPEN_NO_MUTEX)
-            .with_context(|| format!("打开 SQLite 失败: {}", path.display()))?;
-
-        // busy_timeout：与主应用写事务并发时，等 5 秒再报 SQLITE_BUSY
-        conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        // 字数触发器调用 kb_word_count()（schema v69 起），可写连接新建 / 改笔记时要用
-        plain_text::register_sql_functions(&conn)?;
-
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: Mutex::new(open_connection(path, writable)?),
         })
+    }
+
+    /// 临时放开数据库文件（切到内存库）。
+    ///
+    /// 主应用整库替换 `app.db` 前要调：Windows 上只要还有连接开着，`-wal` 就删不掉（os error 32）。
+    /// 放开期间工具调用查的是空内存库、会报错，替换完马上 [`reopen`](Self::reopen)。
+    pub fn release(&self) -> Result<()> {
+        let mut guard = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("db lock: {e}"))?;
+        *guard = Connection::open_in_memory()?;
+        Ok(())
+    }
+
+    /// 重新打开数据库文件，配合 [`release`](Self::release) 使用
+    pub fn reopen(&self, path: &Path, writable: bool) -> Result<()> {
+        let conn = open_connection(path, writable)?;
+        let mut guard = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("db lock: {e}"))?;
+        *guard = conn;
+        Ok(())
     }
 
     /// 读 app_config 里的 MCP 工具白名单（key = `mcp_tool_whitelist`，value = JSON 字符串数组）。
@@ -97,6 +108,22 @@ impl KbDb {
             Some(set)
         }
     }
+}
+
+fn open_connection(path: &Path, writable: bool) -> Result<Connection> {
+    let mode = if writable {
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+    } else {
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+    };
+    let conn = Connection::open_with_flags(path, mode | OpenFlags::SQLITE_OPEN_NO_MUTEX)
+        .with_context(|| format!("打开 SQLite 失败: {}", path.display()))?;
+
+    // busy_timeout：与主应用写事务并发时，等 5 秒再报 SQLITE_BUSY
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    // 字数触发器调用 kb_word_count()（schema v69 起），可写连接新建 / 改笔记时要用
+    plain_text::register_sql_functions(&conn)?;
+    Ok(conn)
 }
 
 // ─── 容错反序列化：接受 number 或 string 形式的整数 ────────────────
@@ -554,6 +581,16 @@ impl KbServer {
         writable: bool,
         keep: Option<std::collections::HashSet<String>>,
     ) -> Self {
+        Self::new_shared(Arc::new(db), writable, keep)
+    }
+
+    /// 同 [`new_filtered`](Self::new_filtered)，但调用方留一份 `Arc<KbDb>`，
+    /// 主应用整库替换时要靠它放开这条连接
+    pub fn new_shared(
+        db: Arc<KbDb>,
+        writable: bool,
+        keep: Option<std::collections::HashSet<String>>,
+    ) -> Self {
         let mut tool_router = Self::tool_router();
         if let Some(keep) = keep {
             if !keep.is_empty() {
@@ -570,7 +607,7 @@ impl KbServer {
             }
         }
         Self {
-            db: Arc::new(db),
+            db,
             writable,
             tool_router,
         }

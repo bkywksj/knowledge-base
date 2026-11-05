@@ -492,7 +492,8 @@ impl SyncService {
                         let _ = fs::remove_file(tmp_path);
                         return Err(AppError::Custom(format!(
                             "清理 {} 失败，已中止导入（原数据未受影响）。\
-                             常见原因：另一个进程（如 kb-mcp）正打开着数据库，请关闭后重试: {}",
+                             常见原因：接入了知识库的外部 AI 工具（Claude、Cursor 等，进程名 kb-mcp）\
+                             或已开启的 MCP HTTP 服务正打开着数据库，请关闭后重试: {}",
                             side.display(),
                             e
                         )));
@@ -2298,6 +2299,41 @@ mod backup_wal_tests {
         let mut wal = bak.into_os_string();
         wal.push("-wal");
         assert_eq!(fs::read(std::path::PathBuf::from(wal)).unwrap(), b"old-wal");
+    }
+
+    /// 2026-11-05 客户反馈：内置 MCP 的第二条连接没放开时，Windows 上导入必失败
+    #[test]
+    fn replace_succeeds_after_internal_mcp_connection_released() {
+        let dir = temp_dir("mcp-conn");
+        let db_path = dir.join("app.db");
+        let db = crate::database::Database::init(db_path.to_str().unwrap()).unwrap();
+        let mcp_db = kb_core::KbDb::open(&db_path, true).unwrap();
+        // 启动时就读一次白名单，连接从此挂在 WAL 上（SQLite 不读库不碰文件）
+        let _ = mcp_db.read_tool_whitelist();
+        db.release().unwrap();
+        let tmp = dir.join(".sync-tmp-import-db");
+
+        // 只放主连接：这就是修之前的现场
+        make_snapshot(&tmp);
+        let result = SyncService::commit_db_replacement(&db_path, &tmp);
+        if cfg!(windows) {
+            let msg = result.expect_err("第二条连接开着，-wal 应删不掉").to_string();
+            assert!(msg.contains("-wal"), "{msg}");
+            assert!(db_path.exists(), "失败时原库不能动");
+        }
+
+        // 两条都放开就能替换
+        mcp_db.release().unwrap();
+        make_snapshot(&tmp);
+        SyncService::commit_db_replacement(&db_path, &tmp).unwrap();
+
+        // 接回去后读到的是新库：快照里只有 1 条 notes
+        mcp_db.reopen(&db_path, true).unwrap();
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM notes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
     }
 
     /// 备份附带的 -wal 不能占滚动名额，也要跟着主文件一起清掉
