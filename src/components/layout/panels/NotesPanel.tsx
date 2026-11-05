@@ -3314,10 +3314,26 @@ export function NotesPanel() {
       {/* 右键菜单（幻影锚点） */}
       {contextMenu && (
         <ContextMenuOverlay
+          // 菜单固定贴侧栏右缘、纵向又常被压到同一处：连续右键两个文件夹时新旧菜单一模一样，
+          // 看着像没反应。每次右键按 ts 重新挂载 → 弹出动画重播；顶部再写明菜单针对的对象
+          key={contextMenu.ts}
           open
           x={contextMenu.x}
           y={contextMenu.y}
-          items={buildMenuItems(contextMenu.key, contextMenu.name)}
+          items={[
+            {
+              type: "custom",
+              key: "ctx-target",
+              render: () => (
+                <div className="kb-ctx-target" title={contextMenu.name}>
+                  {isNoteKey(contextMenu.key) ? <FileText size={13} /> : <FolderIcon size={13} />}
+                  <span>{contextMenu.name}</span>
+                </div>
+              ),
+            },
+            { type: "divider" },
+            ...buildMenuItems(contextMenu.key, contextMenu.name),
+          ]}
           onClose={() => setContextMenu(null)}
         />
       )}

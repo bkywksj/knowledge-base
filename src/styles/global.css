@@ -9679,3 +9679,25 @@ main.ant-layout-content:has(.kb-home) {
   background: var(--kb-primary-light);
   color: var(--kb-primary);
 }
+
+/* 右键菜单顶部「菜单针对的对象」：只显示不可点，小号次要色，长名省略（侧栏文件夹树用） */
+.kb-ctx-target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 4px 10px 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--kb-text-secondary);
+}
+.kb-ctx-target > svg {
+  flex: none;
+  color: var(--kb-text-tertiary);
+}
+.kb-ctx-target > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
