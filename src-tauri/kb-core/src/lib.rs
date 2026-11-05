@@ -183,9 +183,12 @@ struct SearchNotesArgs {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct GetNoteArgs {
-    /// 笔记 id，从 search_notes 的结果中取
-    #[serde(deserialize_with = "lenient_int::de_i64")]
-    id: i64,
+    /// 笔记 id，从 search_notes 的结果中取。与 stable_id 二选一
+    #[serde(default, deserialize_with = "lenient_int::de_opt_i64")]
+    id: Option<i64>,
+    /// 跨设备不变的笔记 ID（结果里的 stable_id）。之前记下的笔记换了电脑，用这个找
+    #[serde(default)]
+    stable_id: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -444,11 +447,19 @@ struct SearchHit {
     /// 笔记最近更新时间（本地时区字符串）
     updated_at: String,
     folder_id: Option<i64>,
+    /// 跨设备不变的笔记 ID（同步用的 UUID）。数字 id 每台电脑各自递增，
+    /// 换电脑或经同步拉取后会变；要长期记住某篇笔记请记这个
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stable_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 struct NoteDetail {
     id: i64,
+    /// 跨设备不变的笔记 ID（同步用的 UUID）。数字 id 每台电脑各自递增，
+    /// 换电脑或经同步拉取后会变；要长期记住某篇笔记请记这个
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stable_id: Option<String>,
     title: String,
     /// 笔记正文（如果是加密笔记则返回占位，不泄露密文）
     content: String,
@@ -695,7 +706,7 @@ impl KbServer {
     }
 
     // ─── get_note：按 id 取全文 ───────────────────────────────
-    #[tool(description = "按 id 读取单条笔记的完整内容（返回 JSON）。\
+    #[tool(description = "按 id 或 stable_id 读取单条笔记的完整内容（返回 JSON）。数字 id 每台电脑不同，跨设备请用 stable_id。\
                           加密笔记的 content 会被替换为占位符（不泄露密文）。\
                           隐藏笔记拒绝访问，返回错误。")]
     fn get_note(
@@ -708,9 +719,29 @@ impl KbServer {
             .lock()
             .map_err(|e| McpError::internal_error(format!("db lock: {e}"), None))?;
 
-        let detail = fetch_note(&conn, args.id)
+        let id = match (args.id, args.stable_id.as_deref()) {
+            (_, Some(sid)) if !sid.trim().is_empty() => conn
+                .query_row(
+                    "SELECT id FROM notes WHERE stable_uuid = ?1 AND is_deleted = 0",
+                    params![sid.trim()],
+                    |r| r.get::<_, i64>(0),
+                )
+                .optional()
+                .map_err(|e| McpError::internal_error(format!("查 stable_id: {e}"), None))?
+                .ok_or_else(|| {
+                    McpError::invalid_params(format!("stable_id {sid} 对应的笔记不存在"), None)
+                })?,
+            (Some(id), _) => id,
+            _ => {
+                return Err(McpError::invalid_params(
+                    "需要 id 或 stable_id".to_string(),
+                    None,
+                ))
+            }
+        };
+        let detail = fetch_note(&conn, id)
             .map_err(|e| McpError::internal_error(format!("fetch_note: {e}"), None))?
-            .ok_or_else(|| McpError::invalid_params(format!("笔记 {} 不存在", args.id), None))?;
+            .ok_or_else(|| McpError::invalid_params(format!("笔记 {} 不存在", id), None))?;
 
         let json = serde_json::to_string(&detail)
             .map_err(|e| McpError::internal_error(format!("serialize: {e}"), None))?;
@@ -1470,7 +1501,10 @@ impl KbServer {
                 query: query.clone(),
                 limit: Some(*limit),
             }))?,
-            CliQuery::Get { id } => self.get_note(Parameters(GetNoteArgs { id: *id }))?,
+            CliQuery::Get { id } => self.get_note(Parameters(GetNoteArgs {
+                id: Some(*id),
+                stable_id: None,
+            }))?,
             CliQuery::Tags => self.list_tags()?,
             CliQuery::Recent { limit } => self.list_recent_notes(Parameters(ListRecentArgs {
                 limit: Some(*limit),
@@ -1529,7 +1563,7 @@ fn search_fts(
     let mut stmt = conn.prepare(
         "SELECT n.id, n.title,
                 snippet(notes_fts, 1, '', '', '...', 32) as snippet,
-                n.updated_at, n.folder_id
+                n.updated_at, n.folder_id, n.stable_uuid
          FROM notes_fts fts
          JOIN notes n ON fts.rowid = n.id
          WHERE notes_fts MATCH ?1
@@ -1548,6 +1582,7 @@ fn search_fts(
                 snippet: row.get(2)?,
                 updated_at: row.get(3)?,
                 folder_id: row.get(4)?,
+                stable_id: row.get(5)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -1563,7 +1598,7 @@ fn search_like(
 ) -> Result<Vec<SearchHit>, rusqlite::Error> {
     let pattern = format!("%{}%", query);
     let mut stmt = conn.prepare(
-        "SELECT n.id, n.title, substr(n.content, 1, 140), n.updated_at, n.folder_id
+        "SELECT n.id, n.title, substr(n.content, 1, 140), n.updated_at, n.folder_id, n.stable_uuid
          FROM notes n
          WHERE n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_encrypted = 0
            AND (n.title LIKE ?1 OR n.content LIKE ?1)
@@ -1580,6 +1615,7 @@ fn search_like(
                 snippet: strip_tags(&raw_snippet),
                 updated_at: row.get(3)?,
                 folder_id: row.get(4)?,
+                stable_id: row.get(5)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -1592,7 +1628,7 @@ fn fetch_note(conn: &Connection, id: i64) -> Result<Option<NoteDetail>, rusqlite
     let mut stmt = conn.prepare(
         "SELECT id, title, content, folder_id, is_daily, daily_date,
                 is_pinned, is_hidden, is_encrypted, word_count,
-                created_at, updated_at
+                created_at, updated_at, stable_uuid
          FROM notes WHERE id = ?1 AND is_deleted = 0",
     )?;
 
@@ -1611,6 +1647,7 @@ fn fetch_note(conn: &Connection, id: i64) -> Result<Option<NoteDetail>, rusqlite
                 row.get::<_, i64>(9)?,
                 row.get::<_, String>(10)?,
                 row.get::<_, String>(11)?,
+                row.get::<_, Option<String>>(12)?,
             ))
         })
         .ok();
@@ -1628,6 +1665,7 @@ fn fetch_note(conn: &Connection, id: i64) -> Result<Option<NoteDetail>, rusqlite
         word_count,
         created_at,
         updated_at,
+        stable_id,
     )) = r
     else {
         return Ok(None);
@@ -1654,6 +1692,7 @@ fn fetch_note(conn: &Connection, id: i64) -> Result<Option<NoteDetail>, rusqlite
         word_count,
         created_at,
         updated_at,
+        stable_id,
     }))
 }
 
@@ -1687,7 +1726,7 @@ fn search_by_tag(
     limit: usize,
 ) -> Result<Vec<SearchHit>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT n.id, n.title, substr(n.content, 1, 140), n.updated_at, n.folder_id
+        "SELECT n.id, n.title, substr(n.content, 1, 140), n.updated_at, n.folder_id, n.stable_uuid
          FROM notes n
          JOIN note_tags nt ON nt.note_id = n.id
          JOIN tags t ON t.id = nt.tag_id
@@ -1705,6 +1744,7 @@ fn search_by_tag(
                 snippet: strip_tags(&raw),
                 updated_at: row.get(3)?,
                 folder_id: row.get(4)?,
+                stable_id: row.get(5)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -1741,7 +1781,7 @@ fn list_daily_notes(
     limit: usize,
 ) -> Result<Vec<SearchHit>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT n.id, n.title, substr(n.content, 1, 140), n.updated_at, n.folder_id
+        "SELECT n.id, n.title, substr(n.content, 1, 140), n.updated_at, n.folder_id, n.stable_uuid
          FROM notes n
          WHERE n.is_daily = 1
            AND n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_encrypted = 0
@@ -1760,6 +1800,7 @@ fn list_daily_notes(
                 snippet: strip_tags(&raw),
                 updated_at: row.get(3)?,
                 folder_id: row.get(4)?,
+                stable_id: row.get(5)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -1979,7 +2020,7 @@ fn list_trash(conn: &Connection, limit: usize) -> Result<Vec<TrashItem>, rusqlit
 /// 按 updated_at 降序列最近笔记（不限文件夹/标签）
 fn list_recent_notes(conn: &Connection, limit: usize) -> Result<Vec<SearchHit>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT n.id, n.title, substr(n.content, 1, 140), n.updated_at, n.folder_id
+        "SELECT n.id, n.title, substr(n.content, 1, 140), n.updated_at, n.folder_id, n.stable_uuid
          FROM notes n
          WHERE n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_encrypted = 0
          ORDER BY n.updated_at DESC
@@ -2035,7 +2076,7 @@ fn list_notes_by_folder(
 
     let (sql, hits) = if folder_ids.is_empty() {
         // 未分类
-        let sql = "SELECT n.id, n.title, substr(n.content, 1, 140), n.updated_at, n.folder_id
+        let sql = "SELECT n.id, n.title, substr(n.content, 1, 140), n.updated_at, n.folder_id, n.stable_uuid
                    FROM notes n
                    WHERE n.folder_id IS NULL
                      AND n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_encrypted = 0
@@ -2050,7 +2091,7 @@ fn list_notes_by_folder(
         // 指定 folder_id 集合
         let placeholders = folder_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT n.id, n.title, substr(n.content, 1, 140), n.updated_at, n.folder_id
+            "SELECT n.id, n.title, substr(n.content, 1, 140), n.updated_at, n.folder_id, n.stable_uuid
              FROM notes n
              WHERE n.folder_id IN ({})
                AND n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_encrypted = 0
@@ -2083,6 +2124,7 @@ fn map_note_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
         snippet: strip_tags(&raw),
         updated_at: row.get(3)?,
         folder_id: row.get(4)?,
+        stable_id: row.get(5)?,
     })
 }
 
@@ -2627,13 +2669,13 @@ mod tests {
     fn lenient_id_accepts_int_and_string() {
         // 数字
         let a: GetNoteArgs = serde_json::from_str(r#"{"id":131}"#).unwrap();
-        assert_eq!(a.id, 131);
+        assert_eq!(a.id, Some(131));
         // LLM 包成字符串
         let b: GetNoteArgs = serde_json::from_str(r#"{"id":"131"}"#).unwrap();
-        assert_eq!(b.id, 131);
+        assert_eq!(b.id, Some(131));
         // 带空白
         let c: GetNoteArgs = serde_json::from_str(r#"{"id":"  42 "}"#).unwrap();
-        assert_eq!(c.id, 42);
+        assert_eq!(c.id, Some(42));
         // 非法字符串应失败
         assert!(serde_json::from_str::<GetNoteArgs>(r#"{"id":"abc"}"#).is_err());
     }
