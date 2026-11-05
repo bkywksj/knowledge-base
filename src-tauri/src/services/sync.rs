@@ -33,7 +33,9 @@ const DB_BACKUP_KEEP: usize = 3;
 const IMPORT_STAGING_DIR: &str = ".sync-tmp-import-assets";
 /// 被替换掉的旧资产目录保留份数。资产目录可能有几个 GB，只留最近一份：
 /// 后悔药只需要「上一次导入前」那份，再多就是成倍占盘
-const DIR_BACKUP_KEEP: usize = 1;
+// 与数据库备份（DB_BACKUP_KEEP）对齐：只留 1 份时连续导入两次，库还能回到第一次之前，
+// 图片附件却回不去了（2026-11-05 数据安全审查第 8 条）。只在「完全替换」导入时产生，代价是磁盘占用
+const DIR_BACKUP_KEEP: usize = 3;
 
 pub struct SyncService;
 
@@ -2024,16 +2026,26 @@ mod tests {
 
     /// 旧资产目录备份只留最近 1 份
     #[test]
-    fn prune_old_dir_backups_keeps_latest_one() {
+    fn prune_old_dir_backups_keeps_latest_ones() {
         let dir = mk_tmp_dir("prune-dir");
-        for stamp in ["20260101-000000", "20260102-000000", "20260103-000000"] {
+        for stamp in [
+            "20260101-000000",
+            "20260102-000000",
+            "20260103-000000",
+            "20260104-000000",
+            "20260105-000000",
+        ] {
             fs::create_dir_all(dir.join(format!("kb_assets.bak-{}", stamp))).unwrap();
         }
         fs::create_dir_all(dir.join("kb_assets")).unwrap();
         SyncService::prune_old_dir_backups(&dir, "kb_assets");
         let left = dir_backups(&dir, "kb_assets");
-        assert_eq!(left.len(), DIR_BACKUP_KEEP);
-        assert!(left[0].ends_with("kb_assets.bak-20260103-000000"), "留下的应是最新的");
+        assert_eq!(left.len(), 3, "和数据库备份一样留 3 份: {left:?}");
+        assert!(
+            left.iter().all(|p| !p.ends_with("kb_assets.bak-20260101-000000")
+                && !p.ends_with("kb_assets.bak-20260102-000000")),
+            "删掉的应是最旧的: {left:?}"
+        );
         assert!(dir.join("kb_assets").exists(), "现用目录不能被当成备份删掉");
 
         let _ = fs::remove_dir_all(&dir);
