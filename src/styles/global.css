@@ -1249,48 +1249,48 @@ body,
   background-color: rgba(46, 160, 67, 0.18);
 }
 
-/* 深色主题下的高对比覆盖（dark-ember） */
-[data-theme="dark-ember"] .tiptap pre code .hljs-keyword,
-[data-theme="dark-ember"] .tiptap pre code .hljs-selector-tag,
-[data-theme="dark-ember"] .tiptap pre code .hljs-section,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-keyword,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-selector-tag { color: #d2a8ff; }
-[data-theme="dark-ember"] .tiptap pre code .hljs-built_in,
-[data-theme="dark-ember"] .tiptap pre code .hljs-type,
-[data-theme="dark-ember"] .tiptap pre code .hljs-title,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-built_in,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-type,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-title { color: #79c0ff; }
-[data-theme="dark-ember"] .tiptap pre code .hljs-string,
-[data-theme="dark-ember"] .tiptap pre code .hljs-regexp,
-[data-theme="dark-ember"] .tiptap pre code .hljs-attr,
-[data-theme="dark-ember"] .tiptap pre code .hljs-attribute,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-string,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-regexp,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-attr,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-attribute { color: #a5d6ff; }
-[data-theme="dark-ember"] .tiptap pre code .hljs-number,
-[data-theme="dark-ember"] .tiptap pre code .hljs-literal,
-[data-theme="dark-ember"] .tiptap pre code .hljs-meta,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-number,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-literal,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-meta { color: #ffa657; }
-[data-theme="dark-ember"] .tiptap pre code .hljs-variable,
-[data-theme="dark-ember"] .tiptap pre code .hljs-template-variable,
-[data-theme="dark-ember"] .tiptap pre code .hljs-name,
-[data-theme="dark-ember"] .tiptap pre code .hljs-symbol,
-[data-theme="dark-ember"] .tiptap pre code .hljs-tag,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-variable,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-template-variable,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-name,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-symbol,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-tag { color: #7ee787; }
-[data-theme="dark-ember"] .tiptap pre code .hljs-comment,
-[data-theme="dark-ember"] .tiptap pre code .hljs-quote,
-[data-theme="dark-ember"] .tiptap pre code .hljs-doctag,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-comment,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-quote,
-[data-theme="dark-ember"] .ai-markdown pre code .hljs-doctag { color: #8b949e; }
+/* 深色主题下的高对比覆盖（所有暗色主题） */
+[data-theme-category="dark"] .tiptap pre code .hljs-keyword,
+[data-theme-category="dark"] .tiptap pre code .hljs-selector-tag,
+[data-theme-category="dark"] .tiptap pre code .hljs-section,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-keyword,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-selector-tag { color: #d2a8ff; }
+[data-theme-category="dark"] .tiptap pre code .hljs-built_in,
+[data-theme-category="dark"] .tiptap pre code .hljs-type,
+[data-theme-category="dark"] .tiptap pre code .hljs-title,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-built_in,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-type,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-title { color: #79c0ff; }
+[data-theme-category="dark"] .tiptap pre code .hljs-string,
+[data-theme-category="dark"] .tiptap pre code .hljs-regexp,
+[data-theme-category="dark"] .tiptap pre code .hljs-attr,
+[data-theme-category="dark"] .tiptap pre code .hljs-attribute,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-string,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-regexp,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-attr,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-attribute { color: #a5d6ff; }
+[data-theme-category="dark"] .tiptap pre code .hljs-number,
+[data-theme-category="dark"] .tiptap pre code .hljs-literal,
+[data-theme-category="dark"] .tiptap pre code .hljs-meta,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-number,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-literal,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-meta { color: #ffa657; }
+[data-theme-category="dark"] .tiptap pre code .hljs-variable,
+[data-theme-category="dark"] .tiptap pre code .hljs-template-variable,
+[data-theme-category="dark"] .tiptap pre code .hljs-name,
+[data-theme-category="dark"] .tiptap pre code .hljs-symbol,
+[data-theme-category="dark"] .tiptap pre code .hljs-tag,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-variable,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-template-variable,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-name,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-symbol,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-tag { color: #7ee787; }
+[data-theme-category="dark"] .tiptap pre code .hljs-comment,
+[data-theme-category="dark"] .tiptap pre code .hljs-quote,
+[data-theme-category="dark"] .tiptap pre code .hljs-doctag,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-comment,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-quote,
+[data-theme-category="dark"] .ai-markdown pre code .hljs-doctag { color: #8b949e; }
 
 /* 行内代码：低对比淡色，和正文融合 */
 .tiptap code {
@@ -2545,7 +2545,7 @@ body,
   padding: 0 1px;
   border-radius: 2px;
 }
-[data-theme="dark"] .kb-annotation,
+[data-theme-category="dark"] .kb-annotation,
 .dark .kb-annotation {
   background: rgba(255, 234, 0, 0.18);
   border-bottom-color: rgba(253, 230, 75, 0.7);
@@ -7040,15 +7040,15 @@ body.sidebar-resizing .kb-panel-resizer {
   color: var(--kb-primary);
 }
 
-/* 淡紫：开关关闭态轨道按原型 .sw（#DCD7EC）；带文字的开关（MCP 只读 / 可写）关闭态文字改深色，
+/* 亮色主题：开关关闭态轨道按原型 .sw（淡紫 #DCD7EC，其余主题见 themes.css --kb-switch-off）；带文字的开关（MCP 只读 / 可写）关闭态文字改深色，
    原来是白字压 #BFBAD4，对比度 1.88 看不清（T4-2 巡检） */
-[data-theme="light-lilac"] .ant-switch:not(.ant-switch-checked):not(.ant-switch-disabled) {
-  background: #dcd7ec;
+[data-theme-category="light"] .ant-switch:not(.ant-switch-checked):not(.ant-switch-disabled) {
+  background: var(--kb-switch-off);
 }
-[data-theme="light-lilac"] .ant-switch:not(.ant-switch-checked):not(.ant-switch-disabled):hover {
-  background: #cfc8e6;
+[data-theme-category="light"] .ant-switch:not(.ant-switch-checked):not(.ant-switch-disabled):hover {
+  background: var(--kb-switch-off-hover);
 }
-[data-theme="light-lilac"] .ant-switch:not(.ant-switch-checked) .ant-switch-inner-unchecked {
+[data-theme-category="light"] .ant-switch:not(.ant-switch-checked) .ant-switch-inner-unchecked {
   color: var(--kb-text-secondary);
 }
 
