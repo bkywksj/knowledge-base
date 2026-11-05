@@ -18,8 +18,8 @@ export function BrandLogo({ size = 24 }: { size?: number }) {
     >
       <defs>
         <linearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#B9A8F7" />
-          <stop offset="1" stopColor="#7C63DC" />
+          <stop offset="0" stopColor="#9B85F0" />
+          <stop offset="1" stopColor="#5B3FD0" />
         </linearGradient>
       </defs>
       <rect x="6" y="6" width="108" height="108" rx="28" fill={`url(#${gid})`} />
