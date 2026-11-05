@@ -6868,7 +6868,9 @@ body.sidebar-resizing .kb-panel-resizer {
   background: color-mix(in srgb, var(--kb-bg-panel) 55%, var(--kb-bg-raised, #fff));
 }
 .kb-set-inner {
-  max-width: 820px;
+  /* 原型 820；2026-11-04 用户嫌两侧留白大 → 960（与 AI 页一致）。
+     不铺满：标题在左、开关在右，太宽时视线要横跨半屏，说明文字一行也太长 */
+  max-width: 960px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;

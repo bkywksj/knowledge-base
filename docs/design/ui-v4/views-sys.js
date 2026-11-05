@@ -152,7 +152,7 @@ KB.add('settings', {
       .st-nav a.on{background:linear-gradient(180deg,#fff,#FBFAFF);color:var(--accent);font-weight:600;box-shadow:var(--sh-raised)}
       .st-nav a.on svg{color:var(--accent)}
       .st-c{overflow:auto;padding:20px 30px 60px;background:linear-gradient(180deg,#FAF8FF,#F7F5FE)}
-      .ss{max-width:820px;margin:0 auto 14px;border-radius:14px;background:linear-gradient(180deg,#fff,#FDFCFF);box-shadow:var(--sh-card);scroll-margin-top:16px}
+      .ss{max-width:960px;margin:0 auto 14px;border-radius:14px;background:linear-gradient(180deg,#fff,#FDFCFF);box-shadow:var(--sh-card);scroll-margin-top:16px}
       .sb{padding:0 18px 8px}
       .sr{display:flex;align-items:center;gap:20px;padding:12px 0;border-top:1px solid var(--hair)}
       .sr:first-child{border-top:0}
