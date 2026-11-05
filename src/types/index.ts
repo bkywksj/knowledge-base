@@ -1215,6 +1215,22 @@ export interface DailyWritingStat {
   word_count: number;
 }
 
+/** 某天编辑过的一篇笔记（首页热力图点开当天时列出） */
+export interface DayNoteItem {
+  id: number;
+  title: string;
+  word_count: number;
+  is_daily: boolean;
+  note_type: string;
+  updated_at: string;
+}
+
+/** 某天编辑过的笔记；隐藏笔记只报数量 */
+export interface NotesOnDay {
+  notes: DayNoteItem[];
+  hidden_count: number;
+}
+
 // ─── 笔记模板 ─────────────────────────────────
 
 /** 笔记模板 */

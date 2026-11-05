@@ -122,7 +122,7 @@ export default function QuickCapturePage() {
       });
       await clearDraft();
       useAppStore.getState().bumpNotesRefresh();
-      message.success("已保存到今日笔记");
+      message.success("已记到今天的日记");
       navigate("/", { replace: true });
     } catch (e) {
       message.error(`保存失败: ${e}`);
@@ -223,7 +223,7 @@ export default function QuickCapturePage() {
         <div className="mt-3 flex items-center gap-3 rounded-2xl bg-white/15 px-4 py-3 text-white backdrop-blur">
           <FolderOpen size={18} />
           <div className="flex-1 text-sm">
-            保存到 <strong>📅 今日笔记</strong>
+            保存到 <strong>📅 今天的日记</strong>
           </div>
         </div>
 

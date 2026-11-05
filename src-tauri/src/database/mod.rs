@@ -118,6 +118,43 @@ fn backup_before_upgrade(conn: &Connection, db_path: &str) -> Result<(), AppErro
     Ok(())
 }
 
+#[cfg(test)]
+mod notes_written_on_tests {
+    use super::*;
+    use crate::models::NoteInput;
+
+    #[test]
+    fn matches_writing_trend_and_hides_hidden_notes() {
+        let db = Database::init(":memory:").unwrap();
+        let mk = |t: &str| {
+            db.create_note(&NoteInput { title: t.into(), content: "一二三".into(), folder_id: None })
+                .unwrap()
+                .id
+        };
+        let (a, b, hidden, old) = (mk("甲"), mk("乙"), mk("隐藏的"), mk("昨天的"));
+        {
+            let c = db.conn_lock().unwrap();
+            c.execute("UPDATE notes SET is_hidden = 1 WHERE id = ?1", [hidden]).unwrap();
+            c.execute(
+                "UPDATE notes SET updated_at = datetime('now', 'localtime', '-1 day') WHERE id = ?1",
+                [old],
+            )
+            .unwrap();
+        }
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let day = db.list_notes_written_on(&today).unwrap();
+        let ids: Vec<i64> = day.notes.iter().map(|n| n.id).collect();
+        assert!(ids.contains(&a) && ids.contains(&b), "{ids:?}");
+        assert!(!ids.contains(&hidden) && !ids.contains(&old), "{ids:?}");
+        assert_eq!(day.hidden_count, 1);
+
+        // 字数加起来等于热力图当天的格子（隐藏笔记也算在格子里）
+        let trend = db.get_writing_trend(2).unwrap();
+        let cell = trend.iter().find(|d| d.date == today).unwrap();
+        assert_eq!(cell.note_count, day.notes.len() + day.hidden_count);
+    }
+}
+
 fn file_backed(db_path: &str) -> Option<String> {
     if db_path.is_empty() || db_path == ":memory:" || db_path.starts_with("file::memory:") {
         None
@@ -405,6 +442,53 @@ impl Database {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(stats)
+    }
+
+    /// 某天（本地日期 YYYY-MM-DD）编辑过的笔记。
+    ///
+    /// 口径和 [`get_writing_trend`](Self::get_writing_trend) 一致：按最后编辑日期算、含日记、
+    /// 排除导入笔记，这样点开热力图的格子，列出来的字数加起来就是格子上的数。
+    pub fn list_notes_written_on(
+        &self,
+        date: &str,
+    ) -> Result<crate::models::NotesOnDay, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "SELECT id, title, word_count, is_daily, note_type, updated_at, is_hidden
+             FROM notes
+             WHERE is_deleted = 0
+               AND source_file_path IS NULL
+               AND DATE(updated_at) = ?1
+             ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt
+            .query_map([date], |row| {
+                Ok((
+                    crate::models::DayNoteItem {
+                        id: row.get(0)?,
+                        title: row.get(1)?,
+                        word_count: row.get(2)?,
+                        is_daily: row.get::<_, i32>(3)? != 0,
+                        note_type: row.get(4)?,
+                        updated_at: row.get(5)?,
+                    },
+                    row.get::<_, i32>(6)? != 0,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let hidden_count = rows.iter().filter(|(_, hidden)| *hidden).count();
+        let notes = rows
+            .into_iter()
+            .filter(|(_, hidden)| !hidden)
+            .map(|(n, _)| n)
+            .collect();
+        Ok(crate::models::NotesOnDay {
+            notes,
+            hidden_count,
+        })
     }
 
     /// 删除配置

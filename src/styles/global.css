@@ -9327,8 +9327,9 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
 /* 首页第四行（待办速览 / 最近笔记 / 置顶笔记）：固定原型实测高 256，内容超出在卡片内滚动，
    不再被列表撑高 —— 首页一屏放下底部热力图（2026-11-04 用户要求） */
 .kb-home-r4 > .ant-card {
-  /* 原型 256；+10 用首页底部留白换来，给待办「还有 N 条」和底边留口气 */
-  height: 266px;
+  /* 原型 256；+10 用首页底部留白换来，给待办「还有 N 条」和底边留口气。
+     2026-11-05 去掉快捷按钮行（省下 56），待办卡顶部多了一行快速添加，这里加回 34 */
+  height: 300px;
   display: flex;
   flex-direction: column;
 }
@@ -9701,4 +9702,61 @@ main.ant-layout-content:has(.kb-home) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ═══ 首页精简（2026-11-05）：随手记 / 待办快速添加 / 热力图点日期 ═══ */
+.kb-quick-daily {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.kb-hm-add {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0 6px 6px;
+  padding: 0 2px 0 4px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--kb-bg-elevated, var(--ant-color-bg-container));
+  box-shadow: 0 0 0 1px var(--ant-color-border-secondary);
+}
+.kb-hm-add:focus-within {
+  box-shadow: 0 0 0 1px var(--kb-primary);
+}
+.kb-hm-add .ant-input-affix-wrapper {
+  flex: 1;
+  min-width: 0;
+}
+.kb-hm-add .ant-input-prefix {
+  color: var(--ant-color-text-quaternary);
+}
+.kb-todo-inline-acts {
+  display: inline-flex;
+  flex: none;
+}
+.kb-todo-inline-acts .ant-btn {
+  color: var(--ant-color-text-tertiary);
+}
+.kb-todo-inline-acts .ant-btn:hover {
+  color: var(--kb-primary);
+}
+.kb-heat-cell.is-clickable {
+  cursor: pointer;
+}
+.kb-heat-read b {
+  color: var(--ant-color-text);
+  font-weight: 600;
+}
+.kb-day-notes {
+  width: 300px;
+  max-height: 280px;
+  overflow-y: auto;
+  margin: 0 -6px;
+}
+.kb-day-notes-foot {
+  padding: 6px 10px 0;
+  font-size: 12px;
+  color: var(--ant-color-text-tertiary);
 }

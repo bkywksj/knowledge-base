@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button, Dropdown, Space, App as AntdApp, type MenuProps } from "antd";
 import type { SizeType } from "antd/es/config-provider/SizeContext";
-import { CheckSquare, ChevronDown, Sparkles, Target } from "lucide-react";
+import { CheckSquare, ChevronDown, SlidersHorizontal, Sparkles, Target } from "lucide-react";
 
 import { CreateTaskModal } from "@/components/tasks/CreateTaskModal";
 import { PlanTodayModal } from "@/components/ai/PlanTodayModal";
@@ -20,8 +20,9 @@ interface Props {
   size?: SizeType;
   /** 保存成功后回调（落库后宿主页可刷新列表/统计） */
   onSaved?: () => void;
-  /** 外观：button = 分段按钮（默认）；tile = 首页快捷入口卡片（v4 原型 .qb），主区新建、右侧 ▼ 同一套 AI 入口 */
-  variant?: "button" | "tile";
+  /** 外观：button = 分段按钮（默认）；tile = 首页快捷入口卡片（v4 原型 .qb），主区新建、右侧 ▼ 同一套 AI 入口；
+   *  inline = 两个小图标按钮（完整新建 / AI 规划），放在首页待办卡的快速输入框旁边 */
+  variant?: "button" | "tile" | "inline";
   /** tile 形态右侧的小字数据，如「今日 3 条」 */
   meta?: React.ReactNode;
 }
@@ -112,6 +113,19 @@ export function NewTodoButton({
           </button>
         </Dropdown>
       </div>
+    ) : variant === "inline" ? (
+      <span className="kb-todo-inline-acts">
+        <Button
+          type="text"
+          size="small"
+          icon={<SlidersHorizontal size={14} />}
+          title="详细新建（日期、提醒、重复、子任务…）"
+          onClick={() => setCreateOpen(true)}
+        />
+        <Dropdown menu={{ items: menuItems }} trigger={["click"]} placement="bottomRight">
+          <Button type="text" size="small" icon={<Sparkles size={14} />} title="AI 规划待办" />
+        </Dropdown>
+      </span>
     ) : null;
 
   return (

@@ -55,7 +55,7 @@ export const SHORTCUTS: ShortcutDef[] = [
     scope: "global",
     defaultAccel: "CommandOrControl+Alt+D",
     group: "全局快捷键（系统级，后台也可用）",
-    desc: "打开今日笔记",
+    desc: "打开今天的日记",
   },
   {
     id: "global.openSearch",

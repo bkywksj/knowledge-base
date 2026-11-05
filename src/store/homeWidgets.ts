@@ -19,13 +19,13 @@ const STORE_FILE = import.meta.env.DEV ? "dev-settings.json" : "settings.json";
 const PERSIST_KEY = "homeBlurredWidgets";
 
 /** 可被眼睛按钮遮盖的首页卡片 */
-export type HomeWidgetKey = "todo" | "recentNotes" | "pinned" | "askAi";
+/** 2026-11-05 起「置顶笔记」并进笔记卡（recentNotes），旧存档里的 pinned 键由 ALL_KEYS 过滤掉 */
+export type HomeWidgetKey = "todo" | "recentNotes" | "askAi";
 
 /** 合法键集合 —— 用来过滤旧存档里已被重命名 / 删除的残留键 */
 const ALL_KEYS: ReadonlySet<string> = new Set([
   "todo",
   "recentNotes",
-  "pinned",
   "askAi",
 ] satisfies HomeWidgetKey[]);
 

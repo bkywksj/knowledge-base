@@ -51,6 +51,7 @@ import type {
   OpenMarkdownResult,
   OrphanAssetScan,
   DbRecoveryNotice,
+  NotesOnDay,
   OrphanAssetClean,
   OrphanItem,
   AttachmentInfo,
@@ -148,6 +149,9 @@ export const systemApi = {
   getDashboardStats: () => invoke<DashboardStats>("get_dashboard_stats"),
   getWritingTrend: (days?: number) =>
     invoke<DailyWritingStat[]>("get_writing_trend", { days }),
+  /** 某天（YYYY-MM-DD）编辑过的笔记，口径与写作趋势一致（首页热力图点格子） */
+  listNotesWrittenOn: (date: string) =>
+    invoke<NotesOnDay>("list_notes_written_on", { date }),
   /**
    * 枚举本机已安装的所有字体族名（去重 + 排序），供设置页「正文字体」自选。
    * 仅桌面端注册；移动端该 Command 不存在，invoke 会 reject —— 调用方 catch 后

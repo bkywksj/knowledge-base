@@ -1054,6 +1054,25 @@ pub struct DailyWritingStat {
     pub word_count: usize,
 }
 
+/// 某天编辑过的一篇笔记（首页热力图点开当天时列出）
+#[derive(Debug, Clone, Serialize)]
+pub struct DayNoteItem {
+    pub id: i64,
+    pub title: String,
+    pub word_count: usize,
+    pub is_daily: bool,
+    pub note_type: String,
+    pub updated_at: String,
+}
+
+/// 某天编辑过的笔记
+#[derive(Debug, Clone, Serialize)]
+pub struct NotesOnDay {
+    pub notes: Vec<DayNoteItem>,
+    /// 隐藏笔记要解锁才能看，只报数量，免得热力图上的字数对不上又找不到原因
+    pub hidden_count: usize,
+}
+
 // ─── 笔记模板 ─────────────────────────────────
 
 /// 笔记模板

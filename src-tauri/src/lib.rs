@@ -1290,6 +1290,7 @@ pub fn run() {
             commands::system::get_system_info,
             commands::system::get_dashboard_stats,
             commands::system::get_writing_trend,
+            commands::system::list_notes_written_on,
             commands::system::write_text_file,
             commands::system::read_text_file,
             commands::system::write_binary_file,

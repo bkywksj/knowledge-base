@@ -109,9 +109,9 @@ describe("hydrate：读回旧存档", () => {
     mocks.get.mockRejectedValue(new Error("store unavailable"));
     await expect(m.loadHomeWidgetPrefs()).resolves.toBeUndefined();
 
-    m.useHomeWidgetsStore.getState().toggleBlur("pinned");
+    m.useHomeWidgetsStore.getState().toggleBlur("askAi");
     await vi.waitFor(() => {
-      expect(mocks.set).toHaveBeenCalledWith("homeBlurredWidgets", ["pinned"]);
+      expect(mocks.set).toHaveBeenCalledWith("homeBlurredWidgets", ["askAi"]);
     });
   });
 });

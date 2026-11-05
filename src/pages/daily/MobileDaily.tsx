@@ -269,7 +269,7 @@ export function MobileDaily() {
           className="mt-3 flex h-11 w-full items-center justify-center rounded-xl bg-[#1677FF] font-medium text-white active:scale-[0.98] transition-transform"
         >
           <Edit3 size={16} className="mr-1.5" />
-          {selectedNote ? "继续编辑" : "开始记录"}今日笔记
+          {selectedNote ? "继续编辑" : "开始记录"}今天的日记
         </button>
       </div>
     </div>

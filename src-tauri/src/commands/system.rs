@@ -103,6 +103,18 @@ pub fn get_writing_trend(
         .map_err(|e| e.to_string())
 }
 
+/// 某天编辑过的笔记（首页热力图点格子）
+#[tauri::command]
+pub fn list_notes_written_on(
+    state: State<'_, AppState>,
+    date: String,
+) -> Result<crate::models::NotesOnDay, String> {
+    state
+        .db
+        .list_notes_written_on(&date)
+        .map_err(|e| e.to_string())
+}
+
 /// 简单的 greet 命令（保留为示例）
 #[tauri::command]
 pub fn greet(name: &str) -> Result<String, String> {

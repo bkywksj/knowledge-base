@@ -183,8 +183,8 @@ export default function QuickCreatePage() {
           <Row
             icon={<CalendarDays size={20} className="text-green-600" />}
             iconBg="bg-green-100"
-            title="今日笔记"
-            sub="追加到当天日记"
+            title="今天的日记"
+            sub="没有就新建一篇"
             onClick={openTodayDaily}
           />
           <Row

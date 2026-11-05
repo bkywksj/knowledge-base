@@ -6,6 +6,8 @@ import {
   Typography,
   Button,
   Modal,
+  Popover,
+  Segmented,
   App as AntdApp,
   theme as antdTheme,
 } from "antd";
@@ -14,7 +16,6 @@ import {
   CalendarDays,
   Pin,
   Bot,
-  GitBranch,
   CheckSquare,
   PencilLine,
   Send,
@@ -34,6 +35,8 @@ import {
   Eye,
   PenTool,
   EyeOff,
+  FilePlus2,
+  Plus,
 } from "lucide-react";
 import { Tooltip as AntTooltip } from "antd";
 import {
@@ -63,6 +66,7 @@ import type {
   DailyWritingStat,
   Task,
   AiConversation,
+  NotesOnDay,
 } from "@/types";
 import { SubtaskList } from "@/components/tasks/SubtaskList";
 import { TaskDetailModal } from "@/components/tasks/TaskDetailModal";
@@ -70,19 +74,20 @@ import { CreateTaskModal } from "@/components/tasks/CreateTaskModal";
 import { HideableCard } from "@/components/home/HideableCard";
 import { WritingHeatmap } from "@/components/home/WritingHeatmap";
 import { useHomeWidgetsStore } from "@/store/homeWidgets";
+import { escapeHtml, quickTextToNote } from "@/lib/quickNote";
 
 const { Text } = Typography;
 
 /**
  * 首页 v2(工作台模式)
  *
- * 结构(从上到下):
- *   ① 搜索 + 新建笔记拆分按钮(全局入口)
- *   ② 4 个紧凑快速操作按钮(添加待办/今日笔记/AI/知识图谱)
- *   ③ 快速记一笔(textarea, ⌘↩ 追加到今日 daily)
- *   ④ 今日待办速览(左) + 最近笔记(右),都带 inline 创建按钮
- *   ⑤ 写作活力(笔记/连续天数/距上次/本周字数 + 14 天迷你图)
- *   ⑥ 置顶笔记(左) + 问 AI 输入(右,直接输入新建对话)
+ * 结构(从上到下，2026-11-05 按用户反馈精简：入口太多、「今日笔记 / 快速记一笔 / 新建笔记」分不清):
+ *   ① 问候 + 搜索 + 新建笔记 + 隐私模式
+ *   ② 随手记：一个输入框两个去处 ——「记到今天的日记」/「存为新笔记」
+ *   ③ 待办(顶部直接添加，旁边是完整新建 + AI 规划) ｜ 笔记(最近编辑 / 置顶 两个标签)
+ *   ④ 写作活力(指标 + 年度热力图，点格子看当天写过的笔记) ｜ 问 AI
+ * 原来的快捷按钮行去掉了：添加待办并进待办卡，今日日记在随手记右上角，
+ * AI 问答 / 知识图谱侧栏都有入口（AI 问答在问 AI 卡里也有）。
  */
 /**
  * 桌面端原版主页（保留所有原有 hook + 1300+ 行实现）。
@@ -101,7 +106,6 @@ function DesktopHomePage() {
   const tasksEnabled = useFeatureEnabled("tasks");
   const dailyEnabled = useFeatureEnabled("daily");
   const aiEnabled = useFeatureEnabled("ai");
-  const graphEnabled = useFeatureEnabled("graph");
 
   // ─── 数据状态 ─────────────────────────────────────
   const [recentNotes, setRecentNotes] = useState<Note[]>([]);
@@ -116,9 +120,7 @@ function DesktopHomePage() {
   const [noDueTasks, setNoDueTasks] = useState<Task[]>([]);
   /** 最近 AI 会话(用于"问 AI"卡 fallback 列表) */
   const [recentChats, setRecentChats] = useState<AiConversation[]>([]);
-  /** AI 会话总数（快捷入口「AI 问答」右侧的数字） */
-  const [aiConvCount, setAiConvCount] = useState(0);
-  /** 今日日记字数（快捷入口「今日笔记」右侧的数字）；null = 今天还没有日记。
+  /** 今日日记字数（随手记右上角「今天的日记」后面的数字）；null = 今天还没有日记。
    *  用只读的 dailyApi.get，不能用 getOrCreate——打开首页不该凭空建一篇日记 */
   const [todayDailyWords, setTodayDailyWords] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -128,6 +130,14 @@ function DesktopHomePage() {
   const [quickNote, setQuickNote] = useState("");
   const [quickNoteSaving, setQuickNoteSaving] = useState(false);
   const [aiQuestion, setAiQuestion] = useState("");
+  /** 待办卡顶部的快速添加 */
+  const [quickTodo, setQuickTodo] = useState("");
+  const [quickTodoSaving, setQuickTodoSaving] = useState(false);
+  /** 笔记卡当前看哪个标签 */
+  const [noteTab, setNoteTab] = useState<"recent" | "pinned">("recent");
+  /** 热力图点开的那天：格子位置用来摆弹层 */
+  const [dayPick, setDayPick] = useState<{ date: string; rect: DOMRect } | null>(null);
+  const [dayNotes, setDayNotes] = useState<NotesOnDay | null>(null);
   /** 待办详情弹窗 */
   const [taskDetail, setTaskDetail] = useState<Task | null>(null);
   /** 编辑弹窗（详情 Modal 点「编辑」时打开）*/
@@ -183,7 +193,6 @@ function DesktopHomePage() {
       setUpcomingTasks(upcoming);
       setNoDueTasks(noDueSorted);
       setRecentChats(chats.slice(0, 3));
-      setAiConvCount(chats.length);
       setTodayDailyWords(todayDaily ? todayDaily.word_count : null);
     } catch (e) {
       console.error("加载首页数据失败:", e);
@@ -210,7 +219,7 @@ function DesktopHomePage() {
       await dailyApi.getOrCreate(today);
       navigate(`/daily?date=${today}`);
     } catch (e) {
-      message.error(`打开今日笔记失败: ${e}`);
+      message.error(`打开今天的日记失败: ${e}`);
     }
   }, [navigate, message]);
 
@@ -225,14 +234,14 @@ function DesktopHomePage() {
       const now = new Date();
       const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
       // 用时间戳前缀分隔多条快速记录,内容追加到 content 末尾(content 是 HTML)
-      const appendBlock = `<p><strong>[${hhmm}]</strong> ${text.replace(/\n/g, "<br>")}</p>`;
+      const appendBlock = `<p><strong>[${hhmm}]</strong> ${escapeHtml(text).replace(/\n/g, "<br>")}</p>`;
       const newContent = (daily.content || "") + appendBlock;
       await noteApi.update(daily.id, {
         title: daily.title,
         content: newContent,
         folder_id: daily.folder_id,
       });
-      message.success("已写入今日笔记");
+      message.success("已记到今天的日记");
       setQuickNote("");
       // 也刷新最近笔记列表(daily 会出现在最近)
       loadDashboard();
@@ -244,6 +253,61 @@ function DesktopHomePage() {
       setQuickNoteSaving(false);
     }
   }, [quickNote, message, loadDashboard]);
+
+  // ─── 随手记：存为新笔记（第一行当标题） ─────────────
+  const handleQuickSaveAsNote = useCallback(async () => {
+    const text = quickNote.trim();
+    if (!text) return;
+    setQuickNoteSaving(true);
+    try {
+      const { title, content } = quickTextToNote(text);
+      await noteApi.create({ title, content, folder_id: null });
+      message.success(`已存为新笔记「${title}」`);
+      setQuickNote("");
+      loadDashboard();
+      useAppStore.getState().bumpNotesRefresh();
+    } catch (e) {
+      message.error(`保存失败: ${e}`);
+    } finally {
+      setQuickNoteSaving(false);
+    }
+  }, [quickNote, message, loadDashboard]);
+
+  // ─── 待办卡顶部快速添加：默认今天到期，完整选项走旁边的「详细新建」 ───
+  const handleQuickAddTodo = useCallback(async () => {
+    const title = quickTodo.trim();
+    if (!title) return;
+    setQuickTodoSaving(true);
+    try {
+      await taskApi.create({ title, due_date: `${todayYmd()} 00:00:00` });
+      setQuickTodo("");
+      setTodoTab("today");
+      refreshTaskStats();
+      loadDashboard();
+    } catch (e) {
+      message.error(`添加待办失败: ${e}`);
+    } finally {
+      setQuickTodoSaving(false);
+    }
+    // setTodoTab 在下方声明，是稳定的 setter
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quickTodo, message, refreshTaskStats, loadDashboard]);
+
+  // ─── 热力图：点某天列出当天写过的笔记 ─────────────────
+  const handleSelectDay = useCallback(
+    (date: string, el: HTMLElement) => {
+      setDayPick({ date, rect: el.getBoundingClientRect() });
+      setDayNotes(null);
+      systemApi
+        .listNotesWrittenOn(date)
+        .then(setDayNotes)
+        .catch((e) => {
+          setDayPick(null);
+          message.error(`读取 ${date} 的笔记失败: ${e}`);
+        });
+    },
+    [message],
+  );
 
   // ─── 完成 / 切换待办状态 ──────────────────────────
   const handleToggleTask = useCallback(
@@ -574,83 +638,7 @@ function DesktopHomePage() {
         </div>
       </div>
 
-      {/* ② 快捷入口 — 按启用模块动态分列，右侧带数字（原型 .qb + .qn）
-          添加待办保留分段交互（主区弹 Modal + ▼ 下拉 AI 规划），某模块关闭时对应入口消失、其余等宽 */}
-      {(() => {
-        const quickActions: { key: string; show: boolean; node: React.ReactNode }[] = [
-          {
-            key: "todo",
-            show: tasksEnabled,
-            node: (
-              <NewTodoButton
-                variant="tile"
-                meta={`今日 ${todoGroups.todayTotal} 条`}
-                onSaved={() => {
-                  loadDashboard();
-                  refreshTaskStats();
-                }}
-              />
-            ),
-          },
-          {
-            key: "today",
-            show: dailyEnabled,
-            node: (
-              <QuickTile
-                icon={<CalendarDays size={16} />}
-                tone="v"
-                label="今日笔记"
-                meta={todayDailyWords == null ? "未开始" : `${todayDailyWords.toLocaleString()} 字`}
-                onClick={handleTodayNote}
-              />
-            ),
-          },
-          {
-            key: "ai",
-            show: aiEnabled,
-            node: (
-              <QuickTile
-                icon={<Bot size={16} />}
-                tone="v"
-                label="AI 问答"
-                meta={`${aiConvCount} 个会话`}
-                onClick={() => navigate("/ai")}
-              />
-            ),
-          },
-          {
-            key: "graph",
-            show: graphEnabled,
-            node: (
-              <QuickTile
-                icon={<GitBranch size={16} />}
-                tone="b"
-                label="知识图谱"
-                meta={`${(stats?.total_notes ?? 0).toLocaleString()} 篇笔记`}
-                onClick={() => navigate("/graph")}
-              />
-            ),
-          },
-        ];
-        const visible = quickActions.filter((a) => a.show);
-        if (visible.length === 0) return null;
-        return (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: `repeat(${visible.length}, 1fr)`,
-              gap: 12,
-            }}
-          >
-            {visible.map((a) => (
-              <div key={a.key}>{a.node}</div>
-            ))}
-          </div>
-        );
-      })()}
-
-      {/* ③ 快速记一笔 — 追加到今日 daily（每日笔记关闭时整块隐藏） */}
-      {dailyEnabled && (
+      {/* ② 随手记 — 一个输入框两个去处；日记模块关掉时只剩「存为新笔记」 */}
       <Card
         size="small"
         className="kb-quick-card"
@@ -660,29 +648,38 @@ function DesktopHomePage() {
           <span className="kb-cico" style={{ color: token.colorPrimary }}>
             <PencilLine size={15} />
           </span>
-          <b>快速记一笔</b>
+          <b>随手记</b>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            追加到「今日笔记」
+            {dailyEnabled ? "先记下来，再决定放哪儿" : "第一行作标题，存成一篇新笔记"}
           </Text>
+          {dailyEnabled && (
+            <button type="button" className="kb-lnk kb-quick-daily" onClick={handleTodayNote}>
+              <CalendarDays size={12} />
+              今天的日记 · {todayDailyWords == null ? "未开始" : `${todayDailyWords.toLocaleString()} 字`}
+              <ChevronRight size={12} />
+            </button>
+          )}
         </div>
         <Input.TextArea
           variant="borderless"
           className="kb-quick-input"
-          rows={2}
+          rows={1}
           placeholder="想到什么先记下来…"
           value={quickNote}
           onChange={(e) => setQuickNote(e.target.value)}
           onKeyDown={(e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
               e.preventDefault();
-              handleQuickSaveNote();
+              if (dailyEnabled) handleQuickSaveNote();
+              else handleQuickSaveAsNote();
             }
           }}
-          autoSize={{ minRows: 2, maxRows: 5 }}
+          // 默认一行：空着的时候不占地方，打字时自动长高（首页要一屏放下底部热力图）
+          autoSize={{ minRows: 1, maxRows: 5 }}
         />
         <div className="kb-quick-foot">
           <Text type="secondary" style={{ fontSize: 12 }}>
-            Ctrl / ⌘ + Enter 保存
+            Ctrl / ⌘ + Enter {dailyEnabled ? "记到今天的日记" : "保存"}
           </Text>
           <span className="flex-1" />
           {quickNote.trim() && (
@@ -696,20 +693,31 @@ function DesktopHomePage() {
             }
           />
           <Button
-            type="primary"
-            icon={<Check size={14} />}
+            type={dailyEnabled ? "default" : "primary"}
+            icon={<FilePlus2 size={14} />}
             loading={quickNoteSaving}
             disabled={!quickNote.trim()}
-            onClick={handleQuickSaveNote}
+            onClick={handleQuickSaveAsNote}
+            title="单独建一篇笔记，第一行作标题"
           >
-            保存
+            存为新笔记
           </Button>
+          {dailyEnabled && (
+            <Button
+              type="primary"
+              icon={<CalendarDays size={14} />}
+              loading={quickNoteSaving}
+              disabled={!quickNote.trim()}
+              onClick={handleQuickSaveNote}
+              title="带上时间追加到今天的日记末尾"
+            >
+              记到今天的日记
+            </Button>
+          )}
         </div>
       </Card>
-      )}
 
-      {/* ④ 一行三卡：待办速览 5 ｜ 最近笔记 4 ｜ 置顶笔记 3（12 栏，原型 .cols.g12.r2）
-          待办关闭时：最近笔记 7 ｜ 置顶笔记 5 */}
+      {/* ③ 一行两卡：待办 5 ｜ 笔记 7（12 栏）；待办关闭时笔记占满 */}
       <div className="grid grid-cols-12 gap-3 kb-home-r4">
 
         {tasksEnabled && (
@@ -722,7 +730,7 @@ function DesktopHomePage() {
           title={
             <span className="flex items-center gap-2 text-sm">
               <CheckSquare size={14} style={{ color: token.colorSuccess }} />
-              待办速览
+              待办
               {totalTodoCount > 0 && (
                 <span className="kb-card-n">共 {totalTodoCount} 条</span>
               )}
@@ -776,8 +784,9 @@ function DesktopHomePage() {
               } else if (sectionKey === "today") {
                 const hh = String(due.getHours()).padStart(2, "0");
                 const mm = String(due.getMinutes()).padStart(2, "0");
-                dueText = hh === "00" && mm === "00" ? "今天" : `${hh}:${mm}`;
-                dueBad = dueMs < Date.now();
+                const allDay = hh === "00" && mm === "00";
+                dueText = allDay ? "今天" : `${hh}:${mm}`;
+                dueBad = !allDay && dueMs < Date.now();
               } else if (sectionKey === "upcoming") {
                 const todayStart = new Date();
                 todayStart.setHours(0, 0, 0, 0);
@@ -853,6 +862,27 @@ function DesktopHomePage() {
 
             return (
               <>
+                {/* 快速添加（原来首页顶上的「添加待办」按钮并进来）：回车 = 今天到期的一条；
+                    右侧是完整新建弹窗和 AI 规划，原按钮的入口一个不少 */}
+                <div className="kb-hm-add">
+                  <Input
+                    variant="borderless"
+                    size="small"
+                    prefix={<Plus size={14} />}
+                    placeholder="添加今天的待办，回车保存"
+                    value={quickTodo}
+                    disabled={quickTodoSaving}
+                    onChange={(e) => setQuickTodo(e.target.value)}
+                    onPressEnter={handleQuickAddTodo}
+                  />
+                  <NewTodoButton
+                    variant="inline"
+                    onSaved={() => {
+                      loadDashboard();
+                      refreshTaskStats();
+                    }}
+                  />
+                </div>
                 {/* 分组胶囊（原型 .pills）：原来四段竖排，现在一次看一段 */}
                 <div className="kb-hm-pills">
                   {sections.map((s) => (
@@ -891,126 +921,93 @@ function DesktopHomePage() {
         </HideableCard>
         )}
 
-        {/* 最近笔记：待办开 4 列 / 关 7 列 */}
+        {/* 笔记：最近编辑 / 置顶 两个标签（原来两张卡）；待办开 7 列 / 关 12 列 */}
         <HideableCard
           widgetKey="recentNotes"
           size="small"
-          className={tasksEnabled ? "col-span-4" : "col-span-7"}
+          className={tasksEnabled ? "col-span-7" : "col-span-12"}
           styles={{ body: { padding: "0 8px 10px" } }}
           title={
             <span className="flex items-center gap-2 text-sm">
               <NotebookText size={14} style={{ color: token.colorPrimary }} />
-              最近笔记
+              <Segmented
+                size="small"
+                value={noteTab}
+                onChange={(v) => setNoteTab(v as "recent" | "pinned")}
+                options={[
+                  { label: "最近编辑", value: "recent" },
+                  {
+                    label: (
+                      <span className="inline-flex items-center gap-1">
+                        <Pin size={12} />
+                        置顶{pinnedNotes.length > 0 ? ` ${pinnedNotes.length}` : ""}
+                      </span>
+                    ),
+                    value: "pinned",
+                  },
+                ]}
+              />
             </span>
           }
           extra={
             <button type="button" className="kb-lnk" onClick={() => navigate("/notes")}>
-              更多
+              全部笔记
               <ChevronRight size={12} />
             </button>
           }
         >
-          {displayedRecent.length === 0 ? (
-            <EmptyState
-              description={loading ? "加载中…" : "还没有笔记"}
-            />
-          ) : (
-            <ul className="kb-hm-list">
-              {displayedRecent.map((note) => {
-                const ctxActive = noteCtx.state.payload?.id === note.id;
-                return (
-                <li
-                  key={note.id}
-                  className={"kb-hm-nr" + (ctxActive ? " is-ctx" : "")}
-                  title={`${note.title} · ${note.word_count} 字`}
-                  onClick={() => navigate(`/notes/${note.id}`)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    noteCtx.open(e.nativeEvent, note);
-                  }}
-                >
-                  {/* 单行：标题吃满剩余宽度，时间/字数贴右。
-                      原本是「标题一行 + 时间字数另起一行」，每条 52px；笔记标题通常很短、
-                      右侧全是空白，把 meta 收到同一行后降到 30px，同屏能多看好几条，
-                      也和下面「置顶笔记」卡的单行排版统一了。 */}
-                  <div className="kb-nr">
-                    {/* 类型图标块：日记橙、白板蓝、普通笔记主色（代替原来的「日记」小标签，信息不减） */}
-                    <span
-                      className="kb-cico sm"
-                      title={note.is_daily ? "日记" : note.note_type === "whiteboard" ? "白板" : "笔记"}
-                      style={{
-                        color: note.is_daily
-                          ? token.colorWarning
-                          : note.note_type === "whiteboard"
-                            ? token.colorInfo
-                            : token.colorPrimary,
+          {(() => {
+            const list = noteTab === "recent" ? displayedRecent : pinnedNotes.slice(0, 5);
+            if (list.length === 0) {
+              return noteTab === "recent" ? (
+                <EmptyState description={loading ? "加载中…" : "还没有笔记"} />
+              ) : (
+                <div className="kb-hm-empty">在笔记编辑器右上角可置顶</div>
+              );
+            }
+            return (
+              <ul className="kb-hm-list">
+                {list.map((note) => {
+                  const ctxActive = noteCtx.state.payload?.id === note.id;
+                  return (
+                    <li
+                      key={note.id}
+                      className={"kb-hm-nr" + (ctxActive ? " is-ctx" : "")}
+                      title={`${note.title} · ${note.word_count} 字`}
+                      onClick={() => navigate(`/notes/${note.id}`)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        noteCtx.open(e.nativeEvent, note);
                       }}
                     >
-                      {note.is_daily ? (
-                        <CalendarDays size={14} />
-                      ) : note.note_type === "whiteboard" ? (
-                        <PenTool size={14} />
-                      ) : (
-                        <NotebookText size={14} />
-                      )}
-                    </span>
-                    <Text ellipsis style={{ fontSize: 13.5, flex: 1, minWidth: 0 }}>
-                      {note.title}
-                    </Text>
-                    <time className="kb-hm-time">{relativeTime(note.updated_at)}</time>
-                  </div>
-                </li>
-              );
-              })}
-            </ul>
-          )}
-        </HideableCard>
-
-        <HideableCard
-          widgetKey="pinned"
-          size="small"
-          className={tasksEnabled ? "col-span-3" : "col-span-5"}
-          styles={{ body: { padding: "0 8px 10px" } }}
-          title={
-            <span className="flex items-center gap-2 text-sm">
-              <Pin size={14} style={{ color: token.colorPrimary }} />
-              置顶笔记
-              {pinnedNotes.length > 0 && (
-                <span className="kb-card-n">{pinnedNotes.length}</span>
-              )}
-            </span>
-          }
-        >
-          {pinnedNotes.length === 0 ? (
-            <div className="kb-hm-empty">在笔记编辑器右上角可置顶</div>
-          ) : (
-            <ul className="kb-hm-list">
-              {pinnedNotes.slice(0, 4).map((note) => (
-                <li
-                  key={note.id}
-                  className="kb-hm-nr"
-                  onClick={() => navigate(`/notes/${note.id}`)}
-                >
-                  <Pin size={14} style={{ color: token.colorPrimary, flexShrink: 0 }} />
-                  <Text ellipsis style={{ fontSize: 13.5, flex: 1, minWidth: 0 }}>
-                    {note.title}
-                  </Text>
-                  <time className="kb-hm-time">{relativeTime(note.updated_at)}</time>
-                </li>
-              ))}
-            </ul>
-          )}
+                      <div className="kb-nr">
+                        {noteTab === "pinned" ? (
+                          <Pin size={14} style={{ color: token.colorPrimary, flexShrink: 0 }} />
+                        ) : (
+                          <NoteTypeIcon isDaily={note.is_daily} noteType={note.note_type} />
+                        )}
+                        <Text ellipsis style={{ fontSize: 13.5, flex: 1, minWidth: 0 }}>
+                          {note.title}
+                        </Text>
+                        <time className="kb-hm-time">{relativeTime(note.updated_at)}</time>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            );
+          })()}
         </HideableCard>
       </div>
 
-      {/* ⑤ 写作活力（5 指标 + 年度热力图）9 ｜ 问 AI 3；AI 关闭时写作活力占满 */}
+      {/* ④ 写作活力（5 指标 + 年度热力图）9 ｜ 问 AI 3；AI 关闭时写作活力占满 */}
       <div className="grid grid-cols-12 gap-3">
       <Card
         size="small"
         className={aiEnabled ? "col-span-9" : "col-span-12"}
         styles={{ body: { padding: "12px 14px" } }}
       >
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-2">
           {/* 原型 .card-h：橙色图标块 + 火焰，与其它卡片头同字号 */}
           <span className="kb-card-h" style={{ marginBottom: 0 }}>
             <span className="kb-cico sm is-warn">
@@ -1079,11 +1076,66 @@ function DesktopHomePage() {
         </div>
         {/* 年度热力图（每日方块，悬停看「日期 · 字数」）——替代原来的 14 天柱状图 */}
         <div
-          className="mt-3 pt-3"
+          className="mt-2 pt-2"
           style={{ borderTop: `1px solid ${token.colorBorderSecondary}` }}
         >
-          <WritingHeatmap trend={trend} />
+          <WritingHeatmap trend={trend} onSelectDay={handleSelectDay} />
         </div>
+        {/* 当天笔记弹层：挂在被点格子的位置上（fixed 占位元素当锚点） */}
+        <Popover
+          open={!!dayPick}
+          onOpenChange={(o) => {
+            if (!o) setDayPick(null);
+          }}
+          trigger="click"
+          placement="top"
+          title={dayPick ? `${dayPick.date} 写过的笔记` : ""}
+          content={
+            <div className="kb-day-notes">
+              {!dayNotes ? (
+                <div className="kb-hm-empty">加载中…</div>
+              ) : dayNotes.notes.length === 0 ? (
+                <div className="kb-hm-empty">
+                  {dayNotes.hidden_count > 0 ? "这天只编辑过隐藏笔记" : "这天的笔记后来又改过，已算到更晚的日期"}
+                </div>
+              ) : (
+                <ul className="kb-hm-list">
+                  {dayNotes.notes.map((n) => (
+                    <li
+                      key={n.id}
+                      className="kb-hm-nr"
+                      onClick={() => {
+                        setDayPick(null);
+                        navigate(`/notes/${n.id}`);
+                      }}
+                    >
+                      <NoteTypeIcon isDaily={n.is_daily} noteType={n.note_type} />
+                      <Text ellipsis style={{ fontSize: 13, flex: 1, minWidth: 0 }}>
+                        {n.title || "无标题"}
+                      </Text>
+                      <time className="kb-hm-time">{n.word_count.toLocaleString()} 字</time>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {dayNotes && dayNotes.hidden_count > 0 && dayNotes.notes.length > 0 && (
+                <div className="kb-day-notes-foot">另有 {dayNotes.hidden_count} 篇隐藏笔记</div>
+              )}
+            </div>
+          }
+        >
+          <span
+            aria-hidden
+            style={{
+              position: "fixed",
+              left: dayPick?.rect.left ?? 0,
+              top: dayPick?.rect.top ?? 0,
+              width: dayPick?.rect.width ?? 0,
+              height: dayPick?.rect.height ?? 0,
+              pointerEvents: "none",
+            }}
+          />
+        </Popover>
       </Card>
 
         {aiEnabled && (
@@ -1231,28 +1283,18 @@ function homeDateLabel(d: Date): string {
   return `${d.getMonth() + 1} 月 ${d.getDate()} 日 · 星期${wk}`;
 }
 
-/** 首页快捷入口卡（原型 .qb）：图标块 + 名称 + 右侧小字数据；样式见 global.css .kb-qe */
-function QuickTile({
-  icon,
-  tone,
-  label,
-  meta,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  tone: "v" | "b";
-  label: string;
-  meta?: React.ReactNode;
-  onClick: () => void;
-}) {
+/** 笔记类型图标块：日记橙、白板蓝、普通笔记主色 */
+function NoteTypeIcon({ isDaily, noteType }: { isDaily: boolean; noteType: string }) {
+  const { token } = antdTheme.useToken();
+  const whiteboard = noteType === "whiteboard";
   return (
-    <div className="kb-qe">
-      <button type="button" className="kb-qe-main" onClick={onClick}>
-        <span className={tone === "b" ? "kb-qe-ico is-info" : "kb-qe-ico"}>{icon}</span>
-        <span className="kb-qe-label">{label}</span>
-        {meta != null && <span className="kb-qe-meta">{meta}</span>}
-      </button>
-    </div>
+    <span
+      className="kb-cico sm"
+      title={isDaily ? "日记" : whiteboard ? "白板" : "笔记"}
+      style={{ color: isDaily ? token.colorWarning : whiteboard ? token.colorInfo : token.colorPrimary }}
+    >
+      {isDaily ? <CalendarDays size={14} /> : whiteboard ? <PenTool size={14} /> : <NotebookText size={14} />}
+    </span>
   );
 }
 

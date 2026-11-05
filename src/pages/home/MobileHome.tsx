@@ -199,7 +199,7 @@ export function MobileHome() {
           <QuickAction
             icon={<CalendarDays size={20} className="text-green-600" />}
             bg="bg-green-100"
-            label="今日笔记"
+            label="今日日记"
             onClick={() => navigate("/daily")}
           />
           <QuickAction
