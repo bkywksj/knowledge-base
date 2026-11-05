@@ -148,6 +148,7 @@ export function ActivityBar() {
   const sidePanelVisible = useAppStore((s) => s.sidePanelVisible);
   const setSidePanelVisible = useAppStore((s) => s.setSidePanelVisible);
   const toggleSidePanel = useAppStore((s) => s.toggleSidePanel);
+  const isNarrowWindow = useAppStore((s) => s.isNarrowWindow);
   const urgentTodoCount = useAppStore((s) => s.urgentTodoCount);
   const refreshTaskStats = useAppStore((s) => s.refreshTaskStats);
   const isHiddenUnlocked = useAppStore((s) => s.isHiddenUnlocked);
@@ -185,7 +186,8 @@ export function ActivityBar() {
   function navigateToView(item: ActivityItem) {
     startTransition(() => {
       setActiveView(item.view);
-      if (!sidePanelVisible) setSidePanelVisible(true);
+      // 窄窗口切视图不弹浮层，也不能改用户在宽窗口下的偏好
+      if (!sidePanelVisible && !isNarrowWindow) setSidePanelVisible(true);
       navigate(item.route);
     });
   }

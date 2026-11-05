@@ -26,6 +26,7 @@ import {
 import { SidePanel, viewHasPanel } from "./SidePanel";
 import { TabBar } from "./TabBar";
 import { isNoteWorkspacePath, isFullBleedPath, isTintedPath } from "@/lib/noteWorkspaceRoute";
+import { nextIsNarrowWindow, resolveSidePanelLayout } from "@/lib/sidePanelLayout";
 import { WindowControls } from "./WindowControls";
 import { CommandPalette } from "@/components/ui/CommandPalette";
 import { QuickCaptureAsrModal } from "@/components/QuickCaptureAsrModal";
@@ -91,15 +92,6 @@ function DragRegion() {
 
 
 /**
- * SidePanel 自动收起的窗口宽度阈值（带迟滞，避免在边界拖动时来回闪）：
- * - 当前展开 → 窗口宽度 < HIDE_BELOW 时收起
- * - 当前收起 → 窗口宽度 ≥ SHOW_ABOVE 时再放出来
- * 两者之间 ~60px 死区。下限由 tauri.conf.json 的 minWidth 兜底（窗口本身不允许更窄）。
- */
-const SIDE_PANEL_AUTO_HIDE_BELOW = 1180;
-const SIDE_PANEL_AUTO_SHOW_ABOVE = 1240;
-
-/**
  * 跟踪 React Router history 栈位置，给 Header 后退/前进按钮提供 disabled 信号。
  * React Router v7 在 window.history.state 上挂了 `idx` 字段，配合 length 即可判断
  * 是否能前进/后退，不需要自己维护栈。location 变更（含 POP）都会触发刷新。
@@ -154,6 +146,7 @@ export function AppLayout() {
     activeView,
     sidePanelWidth, setSidePanelWidth,
     sidePanelVisible, toggleSidePanel,
+    isNarrowWindow, narrowPanelOpen, setIsNarrowWindow, setNarrowPanelOpen,
     autoHideActivityBar,
     focusModeKeepTabs,
     activityBarShowLabels,
@@ -174,6 +167,10 @@ export function AppLayout() {
       setSidePanelWidth: s.setSidePanelWidth,
       sidePanelVisible: s.sidePanelVisible,
       toggleSidePanel: s.toggleSidePanel,
+      isNarrowWindow: s.isNarrowWindow,
+      narrowPanelOpen: s.narrowPanelOpen,
+      setIsNarrowWindow: s.setIsNarrowWindow,
+      setNarrowPanelOpen: s.setNarrowPanelOpen,
       autoHideActivityBar: s.autoHideActivityBar,
       focusModeKeepTabs: s.focusModeKeepTabs,
       activityBarShowLabels: s.activityBarShowLabels,
@@ -202,28 +199,34 @@ export function AppLayout() {
     location.pathname === "/about" ||
     location.pathname.startsWith("/about/");
 
-  // 窄屏自动收起 SidePanel：只影响渲染计算，不写 store —— 窗口拉宽后用户原本的
-  // sidePanelVisible 偏好自动恢复。带迟滞：收起后要拉宽过 SHOW_ABOVE 才放出来。
-  const [isNarrowWindow, setIsNarrowWindow] = useState(
-    () => typeof window !== "undefined" && window.innerWidth < SIDE_PANEL_AUTO_HIDE_BELOW,
-  );
+  // 窄屏自动收起 SidePanel，但不改 sidePanelVisible —— 窗口拉宽后用户原本的偏好自动恢复
   useEffect(() => {
     const onResize = () => {
-      const w = window.innerWidth;
-      setIsNarrowWindow((prev) =>
-        prev ? w < SIDE_PANEL_AUTO_SHOW_ABOVE : w < SIDE_PANEL_AUTO_HIDE_BELOW,
+      setIsNarrowWindow(
+        nextIsNarrowWindow(useAppStore.getState().isNarrowWindow, window.innerWidth),
       );
     };
+    onResize();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, []);
+  }, [setIsNarrowWindow]);
 
-  // SidePanel 是否最终可见：视图自身有 panel + 用户未手动折叠 + 不在 standalone 路由 + 非窄屏
-  const panelShown =
-    !isStandalonePage && sidePanelVisible && viewHasPanel(activeView) && !isNarrowWindow;
-  // 折叠按钮是否值得显示：当前视图本身要有 panel + 非窄屏（窄屏下面板被强制收起，按钮无意义）
-  const canTogglePanel =
-    !isStandalonePage && viewHasPanel(activeView) && !isNarrowWindow;
+  // 选了笔记、切了视图都算用完了，收起浮层把内容露出来
+  useEffect(() => {
+    setNarrowPanelOpen(false);
+  }, [location.pathname, location.search, setNarrowPanelOpen]);
+
+  const {
+    canToggle: canTogglePanel,
+    docked: panelDocked,
+    overlay: panelOverlay,
+  } = resolveSidePanelLayout({
+    isStandalonePage,
+    viewHasPanel: viewHasPanel(activeView),
+    isNarrowWindow,
+    sidePanelVisible,
+    narrowPanelOpen,
+  });
   const { canGoBack, canGoForward } = useHistoryNav();
   // Sider 永远只占 ActivityBar 宽度（48px），SidePanel 走绝对定位浮层覆盖在主区上方，
   // 这样 panel 出现/消失不会让主内容横向 reflow，彻底消掉"home → notes"卡顿
@@ -607,7 +610,7 @@ export function AppLayout() {
             className="kb-tb-left"
             style={{
               paddingLeft: HEADER_LEFT_PADDING,
-              width: panelShown ? effectiveSiderWidth + sidePanelWidth : undefined,
+              width: panelDocked ? effectiveSiderWidth + sidePanelWidth : undefined,
             }}
           >
             <Tooltip title="回到首页">
@@ -617,12 +620,12 @@ export function AppLayout() {
               </button>
             </Tooltip>
             {canTogglePanel && (
-              <Tooltip title={sidePanelVisible ? "折叠面板" : "展开面板"}>
+              <Tooltip title={panelDocked || panelOverlay ? "折叠面板" : "展开面板"}>
                 <Button
                   type="text"
                   className="kb-tb-btn"
                   icon={
-                    sidePanelVisible ? (
+                    panelDocked || panelOverlay ? (
                       <PanelLeftClose size={16} />
                     ) : (
                       <PanelLeftOpen size={16} />
@@ -765,7 +768,24 @@ export function AppLayout() {
         切到/离开有 panel 的 view 时，主区不会因 sider 宽度变化而回流，
         消除 home→notes 的卡顿。
       */}
-      {!focusMode && panelShown && (
+      {/* 窄窗口浮层的遮罩：点内容区就收起 */}
+      {!focusMode && panelOverlay && (
+        <div
+          aria-hidden
+          data-testid="side-panel-scrim"
+          onClick={() => setNarrowPanelOpen(false)}
+          style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            left: effectiveSiderWidth + sidePanelWidth,
+            right: 0,
+            zIndex: 39,
+            background: "rgba(0, 0, 0, 0.12)",
+          }}
+        />
+      )}
+      {!focusMode && (panelDocked || panelOverlay) && (
         <div
           ref={panelRef}
           // kb-surface：启用背景图时改由「内容区透明度」滑杆统一控制，
@@ -779,7 +799,9 @@ export function AppLayout() {
             bottom: 0,
             // v4：面板不再是白底毛玻璃卡片，直接透出窗口底色，与活动栏、标题栏连成一片；
             // 右侧白色「纸张」内容区自带圆角与投影，层次由它来区分（原型 .side）
-            background: "transparent",
+            // 浮层盖在内容上，透明会露出底下的笔记列表，要用窗口底色
+            background: panelOverlay ? "var(--ant-color-bg-layout)" : "transparent",
+            boxShadow: panelOverlay ? "2px 0 12px rgba(0,0,0,0.15)" : undefined,
             overflow: "hidden",
             zIndex: 40,
           }}
@@ -788,7 +810,7 @@ export function AppLayout() {
         </div>
       )}
       {/* 可拖拽调节 SidePanel 宽度的手柄：绝对定位叠在 SidePanel 右边缘 */}
-      {!focusMode && panelShown && (
+      {!focusMode && panelDocked && (
         <div
           ref={handleRef}
           role="separator"
@@ -818,7 +840,7 @@ export function AppLayout() {
           //
           // 专注模式下 SidePanel 浮层本身被隐藏，但若仍套用旧 margin 会在主区
           // 左侧留出 ~280px 空白，所以这里用 focusMode 一并清掉
-          marginLeft: !focusMode && panelShown ? sidePanelWidth : 0,
+          marginLeft: !focusMode && panelDocked ? sidePanelWidth : 0,
           transition: "margin-left 180ms cubic-bezier(0.2, 0.8, 0.2, 1)",
         }}
       >

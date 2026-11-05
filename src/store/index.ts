@@ -12,6 +12,7 @@ import {
   setExportFontsProvider,
 } from "@/lib/api";
 import type { HeadingNumberFormat } from "@/lib/headingNumber";
+import { SIDE_PANEL_AUTO_HIDE_BELOW } from "@/lib/sidePanelLayout";
 import {
   DEFAULT_NOTES_COLUMN_PREFS,
   clampColumnWidth,
@@ -386,6 +387,10 @@ interface AppStore {
    * VS Code 行为：点击当前高亮图标 = 折叠/展开 SidePanel。
    */
   sidePanelVisible: boolean;
+  /** 窗口是否窄到要自动收起 SidePanel（运行时状态，不持久化） */
+  isNarrowWindow: boolean;
+  /** 窄窗口下面板浮层是否打开（不持久化，也不影响 sidePanelVisible） */
+  narrowPanelOpen: boolean;
   /**
    * ActivityBar 自动隐藏开关（持久化）。
    * 开启时 ActivityBar 不再占据布局宽度，鼠标移到屏幕左边缘 6px 热区时
@@ -695,8 +700,11 @@ interface AppStore {
   setSidePanelWidth: (width: number) => void;
   /** 设置 SidePanel 可见性 */
   setSidePanelVisible: (visible: boolean) => void;
-  /** 切换 SidePanel 可见性（等价于 setSidePanelVisible(!visible)） */
+  /** 切换 SidePanel：宽窗口改持久化的偏好，窄窗口只开关浮层 */
   toggleSidePanel: () => void;
+  /** 窗口宽窄变化时调用；变化时顺带关掉浮层 */
+  setIsNarrowWindow: (narrow: boolean) => void;
+  setNarrowPanelOpen: (open: boolean) => void;
   /** 设置 ActivityBar 自动隐藏开关（持久化） */
   setAutoHideActivityBar: (on: boolean) => void;
   setActivityBarShowLabels: (on: boolean) => void;
@@ -936,6 +944,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   mobileTabKeys: [...DEFAULT_MOBILE_TAB_KEYS],
   sidePanelWidth: SIDE_PANEL_DEFAULT_WIDTH,
   sidePanelVisible: true,
+  isNarrowWindow: typeof window !== "undefined" && window.innerWidth < SIDE_PANEL_AUTO_HIDE_BELOW,
+  narrowPanelOpen: false,
   autoHideActivityBar: false,
   activityBarShowLabels: true,
   focusModeKeepTabs: true,
@@ -1229,7 +1239,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
       ),
     }),
   setSidePanelVisible: (visible) => set({ sidePanelVisible: visible }),
-  toggleSidePanel: () => set((s) => ({ sidePanelVisible: !s.sidePanelVisible })),
+  toggleSidePanel: () =>
+    set((s) =>
+      s.isNarrowWindow
+        ? { narrowPanelOpen: !s.narrowPanelOpen }
+        : { sidePanelVisible: !s.sidePanelVisible },
+    ),
+  setIsNarrowWindow: (narrow) =>
+    set((s) => (s.isNarrowWindow === narrow ? s : { isNarrowWindow: narrow, narrowPanelOpen: false })),
+  setNarrowPanelOpen: (open) =>
+    set((s) => (s.narrowPanelOpen === open ? s : { narrowPanelOpen: open })),
   setAutoHideActivityBar: (on) => set({ autoHideActivityBar: on }),
   setActivityBarShowLabels: (on) => set({ activityBarShowLabels: !!on }),
   setFocusModeKeepTabs: (on) => set({ focusModeKeepTabs: !!on }),
