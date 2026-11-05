@@ -3261,11 +3261,18 @@ export function NotesPanel() {
                     name = findFolderName(folders, Number(key));
                     if (name === null) return;
                   }
+                  const me = event as unknown as React.MouseEvent;
+                  // 菜单贴着侧栏右缘外侧弹出：侧栏窄、菜单比它宽，从鼠标处弹会盖住文件夹树，
+                  // 靠下的行菜单上移后连被点的那行也盖住（2026-11-05 用户指出）。纵向仍跟鼠标，
+                  // 超出窗口时由 ContextMenuOverlay 自动上移
+                  const treeRight = (me.target as HTMLElement)
+                    .closest(".sidebar-folder-tree")
+                    ?.getBoundingClientRect().right;
                   setContextMenu({
                     key,
                     name,
-                    x: (event as unknown as React.MouseEvent).clientX,
-                    y: (event as unknown as React.MouseEvent).clientY,
+                    x: treeRight != null ? Math.max(me.clientX, treeRight + 6) : me.clientX,
+                    y: me.clientY,
                     ts: Date.now(),
                   });
                 }}
