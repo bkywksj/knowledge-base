@@ -1131,9 +1131,10 @@ fn preserve_target_dbs(
             to.join("_REPLACED_README.txt"),
             format!(
                 "迁移前本目录已有知识库数据，未被删除，已改名保留为：\n{}\n\n\
-                 要找回：关闭应用，把它（连同同名的 -wal / -shm）改回 {}（及 -wal / -shm）即可。\n",
+                 要找回：关闭应用，先把现在的 {name}（及 -wal / -shm）移到别处，\
+                 再把它（连同同名的 -wal / -shm）改回 {name}（及 -wal / -shm），然后重启。\n",
                 base.display(),
-                name
+                name = name
             ),
         );
     }
