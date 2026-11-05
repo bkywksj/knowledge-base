@@ -69,7 +69,7 @@ KB.add('home', {
       .nr:hover{background:var(--hover)}
       .nr .tx{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px}
       .nr time{font-size:12px;color:var(--ink4)}
-      .vital{display:grid;grid-template-columns:repeat(5,1fr);row-gap:16px;align-items:end;padding:4px 18px 16px}.vital > .heat{grid-column:1/-1}
+      .vital{display:grid;grid-template-columns:repeat(5,1fr);row-gap:12px;align-items:end;padding:4px 18px 12px}.vital > .heat{grid-column:1/-1;padding-top:12px}
       .stt b{display:block;font:700 22px/1.2 var(--ff-ui)}
       .stt b small{font-size:12px;font-weight:400;color:var(--ink3);margin-left:2px}
       .stt span{font-size:12px;color:var(--ink3)}
@@ -149,7 +149,6 @@ KB.add('home', {
               <div class="nr" data-go="ai" style="height:32px"><span class="faint">${I('chat', 'xs')}</span><span class="tx" style="font-size:12.5px">所有权和借用到底差在哪</span><time>23:18</time></div>
               <div class="nr" style="height:32px"><span class="faint">${I('chat', 'xs')}</span><span class="tx" style="font-size:12.5px">把本周日记整理成周报</span><time>23:04</time></div>
               <div class="nr" style="height:32px"><span class="faint">${I('chat', 'xs')}</span><span class="tx" style="font-size:12.5px">Tauri 多窗口通信方案对比</span><time>周日</time></div>
-              <div class="nr" style="height:32px"><span class="faint">${I('chat', 'xs')}</span><span class="tx" style="font-size:12.5px">CSAPP 第 3 章要点</span><time>周六</time></div>
             </div>
           </div>
         </div>
