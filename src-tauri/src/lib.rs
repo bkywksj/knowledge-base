@@ -865,7 +865,7 @@ pub fn run() {
             let db = match database::Database::init(&db_path_str) {
                 Ok(db) => db,
                 Err(e) if !services::db_recovery::should_attempt_recovery(&e) => {
-                    log::error!("数据库版本高于当前应用，拒绝进入恢复流程（数据未被改动）: {}", e);
+                    log::error!("数据库打不开但不是文件损坏，拒绝进入恢复流程（数据未被改动）: {}", e);
                     // 文案不能带 Markdown：MessageBoxW 是纯文本，`**强调**` 会把星号原样显示出来
                     //
                     // `crash_handler` 整个模块是 `#[cfg(desktop)]`（见文件头 mod 声明），
@@ -874,18 +874,32 @@ pub fn run() {
                     // 绝不动用户数据）两端一致，缺的只是那个原生提示框——移动端要弹什么、
                     // 用什么弹（notification？启动页？）是待定的产品决策。
                     #[cfg(desktop)]
-                    crash_handler::show_startup_notice(
-                        "知识库 - 需要升级应用",
-                        &format!(
-                            "{e}
-
-                             你的数据没有被改动，仍完整保存在：
-                             {db_path_str}
-
-                             请安装最新版本的知识库后再打开。
-                             若确实要用旧版，请先整体备份上面这个目录。"
-                        ),
-                    );
+                    if matches!(e, crate::error::AppError::SchemaTooNew { .. }) {
+                        crash_handler::show_startup_notice(
+                            "知识库 - 需要升级应用",
+                            &format!(
+                                "{e}\n\n\
+                                 你的数据没有被改动，仍完整保存在：\n\
+                                 {db_path_str}\n\n\
+                                 请安装最新版本的知识库后再打开。\n\
+                                 若确实要用旧版，请先整体备份上面这个目录。"
+                            ),
+                        );
+                    } else {
+                        // 迁移脚本出错、库被其他程序占用、磁盘满、没权限……库文件本身没坏，
+                        // 不能换成空库，否则用户看到的就是笔记全没了
+                        crash_handler::show_startup_notice(
+                            "知识库 - 暂时无法打开数据库",
+                            &format!(
+                                "{e}\n\n\
+                                 你的笔记没有被删除，数据库仍保存在：\n\
+                                 {db_path_str}\n\n\
+                                 可以先关闭其他可能占用它的程序（如接入了知识库的 AI 工具）、检查磁盘空间后重试。\n\
+                                 如果升级后一直打不开，请把这段内容发给开发者，并先不要删除这个目录。\n\
+                                 该目录下名为 app.db.before-upgrade-… 的文件是升级前的备份。"
+                            ),
+                        );
+                    }
                     // 🔴 直接退出，不 `return Err`：setup 返回 Err 会被 Tauri
                     // `expect("Failed to setup app")` 变成 panic，于是用户在刚看完
                     // 那个友好提示之后，紧接着又吃一个"程序遇到问题，很抱歉"的崩溃框
@@ -1362,6 +1376,10 @@ pub fn run() {
             commands::data_dir::clear_pending_data_dir,
             commands::data_dir::set_pending_data_dir_with_migration,
             commands::data_dir::inspect_data_dir,
+            commands::data_dir::get_db_recovery_notice,
+            commands::data_dir::dismiss_db_recovery_notice,
+            commands::data_dir::get_first_run_data_hint,
+            commands::data_dir::dismiss_first_run_data_hint,
             commands::data_dir::cancel_pending_migration,
             commands::data_dir::retry_pending_migration,
             commands::data_dir::get_migration_marker,

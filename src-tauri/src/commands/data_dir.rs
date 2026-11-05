@@ -8,7 +8,11 @@
 //! 所有 Command 都通过 `crate::framework_app_data_dir` 获取 framework 根目录，
 //! 保证 dev 模式走 `-dev` 隔离目录、不污染 prod 的指针/迁移 marker。
 
-use crate::services::data_dir::{DataDirInspect, DataDirResolver, MigrationMarker, ResolvedDataDir};
+use crate::services::data_dir::{
+    needs_first_run_hint, DataDirInspect, DataDirResolver, MigrationMarker, ResolvedDataDir,
+    KEY_FIRST_RUN_HINT_DISMISSED,
+};
+use crate::services::db_recovery::{self, RecoveryNotice};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -79,4 +83,50 @@ pub fn retry_pending_migration(app: tauri::AppHandle) -> Result<(), String> {
 pub fn get_migration_marker(app: tauri::AppHandle) -> Result<Option<MigrationMarker>, String> {
     let app_data_dir = crate::framework_app_data_dir(&app).map_err(|e| e.to_string())?;
     DataDirResolver::read_migration_marker(&app_data_dir).map_err(|e| e.to_string())
+}
+
+/// 读上次启动的数据库恢复记录（走过恢复流程才有）
+#[tauri::command]
+pub fn get_db_recovery_notice(state: tauri::State<'_, AppState>) -> Option<RecoveryNotice> {
+    db_recovery::read_notice(&state.data_dir)
+}
+
+/// 用户看过恢复提示后清掉
+#[tauri::command]
+pub fn dismiss_db_recovery_notice(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    db_recovery::clear_notice(&state.data_dir).map_err(|e| e.to_string())
+}
+
+/// 要不要问用户「之前有数据吗」（默认目录上的空库，只问一次）
+#[tauri::command(async)]
+pub fn get_first_run_data_hint(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<bool, String> {
+    // 移动端没有数据目录的概念，问了也没处选
+    if cfg!(mobile) {
+        return Ok(false);
+    }
+    // 刚恢复成空库时已经有恢复提示说明情况了，看过再问
+    if db_recovery::read_notice(&state.data_dir).is_some() {
+        return Ok(false);
+    }
+    let app_data_dir = crate::framework_app_data_dir(&app).map_err(|e| e.to_string())?;
+    let resolved = DataDirResolver::resolve(&app_data_dir).map_err(|e| e.to_string())?;
+    let notes = state.db.count_all_notes().map_err(|e| e.to_string())?;
+    let tasks = state.db.count_all_tasks().map_err(|e| e.to_string())?;
+    let dismissed = state
+        .db
+        .get_config(KEY_FIRST_RUN_HINT_DISMISSED)
+        .map_err(|e| e.to_string())?
+        .is_some();
+    Ok(needs_first_run_hint(&resolved, notes, tasks, dismissed))
+}
+
+#[tauri::command]
+pub fn dismiss_first_run_data_hint(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state
+        .db
+        .set_config(KEY_FIRST_RUN_HINT_DISMISSED, "1")
+        .map_err(|e| e.to_string())
 }

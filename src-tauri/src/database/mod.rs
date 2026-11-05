@@ -50,6 +50,74 @@ pub struct Database {
 }
 
 /// `:memory:` / 空路径不是可再次打开的文件，另开连接只会得到一个全新的空库
+/// 升级前备份的文件名中缀：`app.db.before-upgrade-<时间戳>-v<旧版本>`
+const BEFORE_UPGRADE_INFIX: &str = ".before-upgrade-";
+/// 升级前备份保留份数（每份都是整库，多了占盘）
+const BEFORE_UPGRADE_KEEP: usize = 2;
+
+/// 用 `VACUUM INTO` 把库导出成一个完整的单文件。
+///
+/// 不能直接复制 `app.db`：内容可能还在 `-wal` 里没合并（线上真实见过 4KB 主文件 + 2.8MB WAL），
+/// 只复制主文件得到的是空壳。先写临时文件，成功才改名，中途失败不留半截备份。
+pub(crate) fn vacuum_into_file(conn: &Connection, target: &std::path::Path) -> Result<(), AppError> {
+    let mut tmp = target.as_os_str().to_os_string();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    let _ = std::fs::remove_file(&tmp);
+    let result = conn
+        .execute("VACUUM INTO ?1", [tmp.to_string_lossy().as_ref()])
+        .map_err(AppError::from)
+        .and_then(|_| std::fs::rename(&tmp, target).map_err(AppError::from));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+/// 库版本低于当前应用（马上要跑迁移）时，先导出一份。
+///
+/// 备份失败就不升级：宁可这次打不开并说清原因，也不在没有退路时改写用户的库。
+fn backup_before_upgrade(conn: &Connection, db_path: &str) -> Result<(), AppError> {
+    let Some(path) = file_backed(db_path) else {
+        return Ok(());
+    };
+    let version = schema::get_version(conn)?;
+    // 0 = 新库没东西可备份；不低于当前版本 = 不会跑迁移（过高的由 migrate 报错）
+    if version <= 0 || version >= schema::SCHEMA_VERSION {
+        return Ok(());
+    }
+    let db = std::path::Path::new(&path);
+    let (Some(dir), Some(name)) = (db.parent(), db.file_name().and_then(|s| s.to_str())) else {
+        return Ok(());
+    };
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let target = dir.join(format!("{name}{BEFORE_UPGRADE_INFIX}{stamp}-v{version}"));
+    vacuum_into_file(conn, &target)?;
+    log::info!("[db] 升级前已备份: {}", target.display());
+
+    // 时间戳在前，文件名字典序 == 时间序
+    let prefix = format!("{name}{BEFORE_UPGRADE_INFIX}");
+    let mut backups: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|s| s.to_str())
+                .is_some_and(|n| n.starts_with(&prefix) && !n.ends_with(".tmp"))
+        })
+        .collect();
+    backups.sort();
+    if backups.len() > BEFORE_UPGRADE_KEEP {
+        let drop_count = backups.len() - BEFORE_UPGRADE_KEEP;
+        for old in backups.into_iter().take(drop_count) {
+            if let Err(e) = std::fs::remove_file(&old) {
+                log::warn!("[db] 清理旧的升级前备份 {} 失败: {}", old.display(), e);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn file_backed(db_path: &str) -> Option<String> {
     if db_path.is_empty() || db_path == ":memory:" || db_path.starts_with("file::memory:") {
         None
@@ -79,6 +147,9 @@ impl Database {
         conn.pragma_update(None, "temp_store", "MEMORY")?;
         // 并发锁等待 5 秒再报 SQLITE_BUSY，避免瞬时冲突立即失败
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
+
+        // 升级前先留一份：迁移会改写用户的库，脚本有 bug 时这是唯一能原样回退的东西
+        backup_before_upgrade(&conn, db_path)?;
 
         // 执行 Schema 迁移
         schema::migrate(&conn)?;

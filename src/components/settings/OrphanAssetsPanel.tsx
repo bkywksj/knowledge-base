@@ -41,12 +41,15 @@ const TAB_DEFS: { key: OrphanKind; label: string; description: string }[] = [
   { key: "image", label: "图片", description: "笔记里删掉但磁盘还在的图片" },
   { key: "video", label: "视频", description: "已不被任何笔记引用的视频" },
   { key: "attachment", label: "附件", description: "已不被任何笔记引用的附件" },
-  { key: "pdf", label: "PDF", description: "已 purge 的笔记残留的 PDF" },
+  { key: "pdf", label: "PDF", description: "所属笔记不在当前库中的 PDF" },
   { key: "source", label: "源文件", description: "已不被引用的 Word / 源文件" },
   { key: "task_file", label: "待办附件", description: "待办已被删除或附件已移除后残留的文件" },
 ];
 
-const KIND_TO_GROUP: Record<OrphanKind, keyof OrphanAssetScan> = {
+const KIND_TO_GROUP: Record<
+  OrphanKind,
+  "images" | "videos" | "attachments" | "pdfs" | "sources" | "taskFiles"
+> = {
   image: "images",
   video: "videos",
   attachment: "attachments",
@@ -62,8 +65,9 @@ function fmtMB(bytes: number): string {
 }
 
 function reasonLabel(reason: string): string {
-  if (reason === "notePurged") return "笔记已被永久删除";
-  if (reason === "taskPurged") return "待办已被永久删除";
+  // 只能确定「当前库里没有」，说不准是真删了，还是打开的不是原来的库
+  if (reason === "notePurged") return "所属笔记不在当前库中";
+  if (reason === "taskPurged") return "所属待办不在当前库中";
   return "未被引用";
 }
 
@@ -173,6 +177,24 @@ export default function OrphanAssetsPanel() {
         <Alert type="success" showIcon message="磁盘干净，没有孤儿素材" />
       )}
 
+      {scan && totalCount > 0 && scan.risk === "blocked" && (
+        <Alert
+          type="error"
+          showIcon
+          message="当前知识库没有笔记，不能清理"
+          description="「孤儿」是对照当前的库判断的。库是空的时，所有图片和附件都会被算进来，它们很可能是你真实笔记的素材。如果你之前有笔记，请先到「设置 → 数据目录」确认打开的是原来的目录。"
+        />
+      )}
+
+      {scan && totalCount > 0 && scan.risk === "warn" && (
+        <Alert
+          type="error"
+          showIcon
+          message={`孤儿素材（${totalCount} 项）比笔记（${scan.libraryNoteCount} 篇）还多，请先确认`}
+          description="这通常说明当前打开的不是原来的库，这些素材可能属于你的真实笔记。清理前请到「设置 → 数据目录」核对。"
+        />
+      )}
+
       {scan && totalCount > 0 && (
         <>
           <Alert
@@ -185,9 +207,14 @@ export default function OrphanAssetsPanel() {
               </span>
             }
             action={
+              scan.risk === "blocked" ? undefined : (
               <Popconfirm
-                title="清理全部 5 类孤儿素材？"
-                description={`将删除 ${totalCount} 项文件 / 目录，不可撤销。`}
+                title="清理全部孤儿素材？"
+                description={
+                  scan.risk === "warn"
+                    ? `素材比笔记还多，可能打开了错误的库。将删除 ${totalCount} 项文件 / 目录，不可撤销。`
+                    : `将删除 ${totalCount} 项文件 / 目录，不可撤销。`
+                }
                 okText="全部删除"
                 okType="danger"
                 cancelText="取消"
@@ -203,6 +230,7 @@ export default function OrphanAssetsPanel() {
                   一键清理全部
                 </Button>
               </Popconfirm>
+              )
             }
           />
 
@@ -224,6 +252,7 @@ export default function OrphanAssetsPanel() {
                     description={def.description}
                     group={group}
                     cleaning={cleaning}
+                    cleanBlocked={scan.risk === "blocked"}
                     onClean={() => handleClean(group.items)}
                     onPreview={(it) => setPreviewItem(it)}
                   />
@@ -275,6 +304,7 @@ interface TabContentProps {
   description: string;
   group: OrphanGroup;
   cleaning: boolean;
+  cleanBlocked: boolean;
   onClean: () => void;
   onPreview: (item: OrphanItem) => void;
 }
@@ -284,6 +314,7 @@ function OrphanTabContent({
   description,
   group,
   cleaning,
+  cleanBlocked,
   onClean,
   onPreview,
 }: TabContentProps) {
@@ -307,17 +338,19 @@ function OrphanTabContent({
             </span>
           </div>
         </div>
-        <Popconfirm
-          title={`清理本组 ${group.items.length} 项？`}
-          okText="删除"
-          okType="danger"
-          cancelText="取消"
-          onConfirm={onClean}
-        >
-          <Button danger size="small" icon={<Trash2 size={14} />} loading={cleaning}>
-            清理本组
-          </Button>
-        </Popconfirm>
+        {!cleanBlocked && (
+          <Popconfirm
+            title={`清理本组 ${group.items.length} 项？`}
+            okText="删除"
+            okType="danger"
+            cancelText="取消"
+            onConfirm={onClean}
+          >
+            <Button danger size="small" icon={<Trash2 size={14} />} loading={cleaning}>
+              清理本组
+            </Button>
+          </Popconfirm>
+        )}
       </div>
 
       {kind === "image" || kind === "video" ? (

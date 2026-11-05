@@ -196,6 +196,28 @@ pub struct DataDirInspect {
 
 pub struct DataDirResolver;
 
+/// 记录用户已经看过「之前有数据吗」提示（存在 app_config）
+pub const KEY_FIRST_RUN_HINT_DISMISSED: &str = "data_dir.first_run_hint_dismissed";
+
+/// 该不该问用户「之前有数据吗」。
+///
+/// 指针文件丢了（卸载时勾了删除数据、清理工具、重装系统）之后，软件完全不知道数据在别的目录，
+/// 只能打开默认目录的空库，看起来就是笔记全没了。所以只要是在默认目录上打开了一个
+/// 完全空的库，就问一次：新用户点一下就过去了，老用户能找回来。
+pub fn needs_first_run_hint(
+    resolved: &ResolvedDataDir,
+    notes: usize,
+    tasks: usize,
+    dismissed: bool,
+) -> bool {
+    // 目录丢失有专门的提示；env / 便携 / 指针 都是用户明确指定的目录
+    resolved.source == DataDirSource::Default
+        && resolved.missing_dir.is_none()
+        && notes == 0
+        && tasks == 0
+        && !dismissed
+}
+
 impl DataDirResolver {
     /// 启动早期调用：把"逻辑数据根目录"算出来
     ///
@@ -2247,5 +2269,40 @@ mod overwrite_guard_tests {
         assert_eq!(r.source, DataDirSource::Pointer);
         assert_eq!(r.current_dir, target.to_string_lossy());
         assert!(r.missing_dir.is_none());
+    }
+}
+
+#[cfg(test)]
+mod first_run_hint_tests {
+    use super::*;
+
+    fn resolved(source: DataDirSource, missing: Option<&str>) -> ResolvedDataDir {
+        ResolvedDataDir {
+            default_dir: "d".into(),
+            current_dir: "d".into(),
+            source,
+            pending_dir: None,
+            missing_dir: missing.map(String::from),
+        }
+    }
+
+    #[test]
+    fn asks_only_on_empty_default_library() {
+        let d = resolved(DataDirSource::Default, None);
+        assert!(needs_first_run_hint(&d, 0, 0, false));
+        assert!(!needs_first_run_hint(&d, 0, 0, true), "看过就不再问");
+        assert!(!needs_first_run_hint(&d, 1, 0, false), "有笔记不问");
+        assert!(!needs_first_run_hint(&d, 0, 1, false), "有待办不问");
+    }
+
+    #[test]
+    fn does_not_ask_for_user_chosen_or_missing_dirs() {
+        assert!(!needs_first_run_hint(&resolved(DataDirSource::Pointer, None), 0, 0, false));
+        assert!(!needs_first_run_hint(&resolved(DataDirSource::Portable, None), 0, 0, false));
+        assert!(!needs_first_run_hint(&resolved(DataDirSource::Env, None), 0, 0, false));
+        assert!(
+            !needs_first_run_hint(&resolved(DataDirSource::Default, Some("x")), 0, 0, false),
+            "目录丢失有专门的提示"
+        );
     }
 }

@@ -555,7 +555,28 @@ impl SyncService {
 
         let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
         let backup = dir.join(format!("{}{}{}", file_name, DB_BACKUP_SUFFIX, stamp));
-        fs::copy(db_path, &backup)?;
+        // 不能只复制主文件：内容可能还在 -wal 里（kb-mcp 也连着库时，释放连接不会合并 WAL），
+        // 而下一步就要删 -wal，只复制主文件的备份里可能一篇笔记都没有。
+        // 优先导出完整副本；库已损坏导不出时退回连 WAL 一起复制。
+        // 必须用只读连接：读写连接关闭时会合并或删掉 -wal，后面的兜底复制就拿不到了
+        let exported = rusqlite::Connection::open_with_flags(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .map_err(AppError::from)
+            .and_then(|conn| crate::database::vacuum_into_file(&conn, &backup));
+        if let Err(e) = exported {
+            log::warn!("[sync] 导出完整备份失败，改为直接复制文件: {}", e);
+            fs::copy(db_path, &backup)?;
+            let mut wal = db_path.as_os_str().to_os_string();
+            wal.push("-wal");
+            let wal = std::path::PathBuf::from(wal);
+            if wal.exists() {
+                let mut backup_wal = backup.as_os_str().to_os_string();
+                backup_wal.push("-wal");
+                fs::copy(&wal, std::path::PathBuf::from(backup_wal))?;
+            }
+        }
 
         Self::prune_old_db_backups(dir, file_name);
         Ok(backup)
@@ -579,9 +600,10 @@ impl SyncService {
             .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
             .map(|e| e.path())
             .filter(|p| {
+                // 备份附带的 -wal 跟着主文件走，不单独算一份
                 p.file_name()
                     .and_then(|s| s.to_str())
-                    .map(|n| n.starts_with(&prefix))
+                    .map(|n| n.starts_with(&prefix) && !n.ends_with("-wal") && !n.ends_with("-shm"))
                     .unwrap_or(false)
             })
             .collect();
@@ -595,6 +617,9 @@ impl SyncService {
                 Ok(_) => log::info!("[sync] 清理旧数据库备份: {}", old.display()),
                 Err(e) => log::warn!("[sync] 清理旧数据库备份 {} 失败: {}", old.display(), e),
             }
+            let mut wal = old.into_os_string();
+            wal.push("-wal");
+            let _ = fs::remove_file(std::path::PathBuf::from(wal));
         }
     }
 
@@ -2187,4 +2212,110 @@ fn device_zip_name() -> String {
         })
         .collect();
     format!("kb-sync-{}.zip", safe.to_lowercase())
+}
+
+/// 2026-11-05 审查实测的问题：库的内容都在 WAL 里时，导入前的备份不能是个空壳
+#[cfg(test)]
+mod backup_wal_tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let d = std::env::temp_dir().join(format!(
+            "kb_bakwal_{}_{}_{}",
+            tag,
+            std::process::id(),
+            N.fetch_add(1, Ordering::SeqCst)
+        ));
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// 造一个「主文件 + 未合并 WAL」的现场（复制时连接还开着，内容只在 WAL 里）
+    fn make_wal_only_db(dir: &Path, notes: i64) -> std::path::PathBuf {
+        let src = dir.join("src");
+        fs::create_dir_all(&src).unwrap();
+        let conn = rusqlite::Connection::open(src.join("app.db")).unwrap();
+        conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+        conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+        conn.execute_batch("CREATE TABLE notes (id INTEGER PRIMARY KEY);").unwrap();
+        for _ in 0..notes {
+            conn.execute("INSERT INTO notes DEFAULT VALUES", []).unwrap();
+        }
+        for f in ["app.db", "app.db-wal"] {
+            fs::copy(src.join(f), dir.join(f)).unwrap();
+        }
+        std::mem::forget(conn);
+        dir.join("app.db")
+    }
+
+    fn make_snapshot(path: &Path) {
+        let c = rusqlite::Connection::open(path).unwrap();
+        c.execute_batch("CREATE TABLE notes (id INTEGER PRIMARY KEY); INSERT INTO notes DEFAULT VALUES;")
+            .unwrap();
+    }
+
+    fn find_backup(dir: &Path) -> std::path::PathBuf {
+        fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| {
+                let n = p.file_name().unwrap().to_string_lossy();
+                n.contains(".bak-") && !n.ends_with("-wal") && !n.ends_with("-shm")
+            })
+            .expect("要有备份")
+    }
+
+    #[test]
+    fn replace_backup_keeps_wal_only_notes() {
+        let dir = temp_dir("replace");
+        let db = make_wal_only_db(&dir, 50);
+        let tmp = dir.join(".sync-tmp-import-db");
+        make_snapshot(&tmp);
+
+        SyncService::commit_db_replacement(&db, &tmp).unwrap();
+
+        let n: i64 = rusqlite::Connection::open(find_backup(&dir))
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM notes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 50, "备份里要有全部笔记");
+    }
+
+    /// 现有库已损坏、导不出来时不能卡住导入（导入本来就是在救它），退回复制文件
+    #[test]
+    fn backup_falls_back_to_file_copy_for_corrupt_db() {
+        let dir = temp_dir("corrupt");
+        let db = dir.join("app.db");
+        fs::write(&db, b"not-a-database").unwrap();
+        fs::write(dir.join("app.db-wal"), b"old-wal").unwrap();
+
+        let bak = SyncService::backup_existing_db(&db).unwrap();
+
+        assert_eq!(fs::read(&bak).unwrap(), b"not-a-database");
+        let mut wal = bak.into_os_string();
+        wal.push("-wal");
+        assert_eq!(fs::read(std::path::PathBuf::from(wal)).unwrap(), b"old-wal");
+    }
+
+    /// 备份附带的 -wal 不能占滚动名额，也要跟着主文件一起清掉
+    #[test]
+    fn prune_counts_main_files_only_and_removes_companion_wal() {
+        let dir = temp_dir("prune");
+        for t in ["20260101-000000", "20260102-000000", "20260103-000000", "20260104-000000"] {
+            fs::write(dir.join(format!("app.db.bak-{t}")), b"x").unwrap();
+            fs::write(dir.join(format!("app.db.bak-{t}-wal")), b"x").unwrap();
+        }
+        SyncService::prune_old_db_backups(&dir, "app.db");
+        let mut left: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        left.sort();
+        assert_eq!(left.len(), 6, "{left:?}");
+        assert!(!left.iter().any(|n| n.contains("20260101")), "{left:?}");
+    }
 }

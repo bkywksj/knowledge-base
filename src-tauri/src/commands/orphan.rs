@@ -26,5 +26,6 @@ pub fn clean_orphan_assets(
     state: State<'_, AppState>,
     items: Vec<OrphanItem>,
 ) -> Result<OrphanAssetClean, String> {
+    OrphanScanService::ensure_clean_allowed(&state.db).map_err(|e| e.to_string())?;
     OrphanScanService::clean(&state.data_dir, &items).map_err(|e| e.to_string())
 }

@@ -10,6 +10,13 @@
 //! 该路径本身已经改成"临时文件 → 校验 → 备份 → 原子替换"（见 `services::sync`），
 //! 但对**存量已经坏掉的用户**、以及磁盘故障 / 断电等外因，仍需要启动期兜底。
 //!
+//! ## 只救真损坏（2026-11-05 收紧）
+//!
+//! 以前除「版本过高」外的失败都走恢复：迁移脚本有 bug、库被别的进程锁住、磁盘满，
+//! 完好的库都会被改名、换成旧备份或空库，界面上还没有任何提示。现在只有 SQLite 明确报告
+//! 文件损坏才走恢复（见 [`should_attempt_recovery`]），其余一律不动数据、提示后退出；
+//! 走了恢复也会留下 [`RecoveryNotice`]，下次进界面告诉用户发生了什么。
+//!
 //! ## 恢复策略（按顺序尝试，先保数据后保可用）
 //!
 //! 1. **从自动备份恢复** —— 扫 `app.db.bak-*`（导入前由 `SyncService::backup_existing_db` 保留，
@@ -23,6 +30,9 @@
 
 use std::path::{Path, PathBuf};
 
+use rusqlite::ErrorCode;
+use serde::{Deserialize, Serialize};
+
 use crate::database::Database;
 use crate::error::AppError;
 
@@ -30,6 +40,48 @@ use crate::error::AppError;
 const BACKUP_SUFFIX: &str = ".bak-";
 /// 损坏库留档时用的中缀
 const CORRUPT_SUFFIX: &str = ".corrupt-";
+/// 恢复提示文件（放数据目录，用户在界面点「知道了」才删，中途关软件也不会漏看）
+const NOTICE_FILE: &str = ".db_recovery_notice.json";
+
+/// 启动时走过恢复流程的记录，给前端弹窗用
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryNotice {
+    /// 被改名留档的原库
+    pub archived_path: Option<String>,
+    /// 用来顶替的备份；None 表示换成了空库
+    pub restored_from: Option<String>,
+    /// 打开原库时的错误
+    pub error: String,
+    /// 发生时间（本地时间）
+    pub at: String,
+}
+
+/// 读恢复提示；没有或读不出来都返回 None（提示本身不能影响使用）
+pub fn read_notice(data_dir: &Path) -> Option<RecoveryNotice> {
+    let bytes = std::fs::read(data_dir.join(NOTICE_FILE)).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+pub fn clear_notice(data_dir: &Path) -> Result<(), AppError> {
+    let path = data_dir.join(NOTICE_FILE);
+    if path.exists() {
+        std::fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+fn write_notice(db_path: &Path, notice: &RecoveryNotice) {
+    let Some(dir) = db_path.parent() else {
+        return;
+    };
+    let written = serde_json::to_vec_pretty(notice)
+        .map_err(|e| e.to_string())
+        .and_then(|b| std::fs::write(dir.join(NOTICE_FILE), b).map_err(|e| e.to_string()));
+    if let Err(e) = written {
+        log::warn!("[db-recovery] 写恢复提示失败: {}", e);
+    }
+}
 
 /// 这个打开失败**该不该**走恢复流程。
 ///
@@ -40,8 +92,16 @@ const CORRUPT_SUFFIX: &str = ".corrupt-";
 /// 触发「应用比库旧」不需要什么极端条件：本项目**每发一版 schema 都涨**
 /// （v1.50.0=54 / v1.51.0=55 / v1.52.0=56），用户从 release 仓下个旧版装回去、
 /// 或把数据目录同步到另一台还没升级的机器，就会撞上。
+///
+/// 同样不该救的还有：迁移脚本出错、库被其他进程锁住、磁盘满、没权限。这些情况下库是好的，
+/// 所以这里只认 SQLite 明确报告的「文件损坏 / 不是数据库」。判断不了就不救：
+/// 不救顶多这次打不开，救错了用户看到的就是笔记全没了。
 pub(crate) fn should_attempt_recovery(err: &AppError) -> bool {
-    !matches!(err, AppError::SchemaTooNew { .. })
+    matches!(
+        err,
+        AppError::Database(rusqlite::Error::SqliteFailure(e, _))
+            if matches!(e.code, ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase)
+    )
 }
 
 /// 数据库打不开时的恢复入口。成功返回一个可用的 [`Database`]。
@@ -54,6 +114,9 @@ pub fn recover_or_fresh(db_path: &Path, open_err: &AppError) -> Result<Database,
         db_path.display(),
         open_err
     );
+
+    let notice_at = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let mut archived: Option<PathBuf> = None;
 
     // ── 策略 1：从最近的可用自动备份恢复
     let backups = list_backups(db_path);
@@ -72,11 +135,20 @@ pub fn recover_or_fresh(db_path: &Path, open_err: &AppError) -> Result<Database,
             ),
             Ok(_) => {
                 log::info!("[db-recovery] 备份 {} 校验通过，尝试恢复", backup.display());
-                match restore_from_backup(db_path, backup) {
+                match restore_from_backup(db_path, backup, &mut archived) {
                     Ok(db) => {
                         log::info!(
                             "[db-recovery] 已从备份 {} 恢复数据库，应用继续启动",
                             backup.display()
+                        );
+                        write_notice(
+                            db_path,
+                            &RecoveryNotice {
+                                archived_path: archived.map(|p| p.to_string_lossy().into_owned()),
+                                restored_from: Some(backup.to_string_lossy().into_owned()),
+                                error: open_err.to_string(),
+                                at: notice_at,
+                            },
                         );
                         return Ok(db);
                     }
@@ -97,8 +169,19 @@ pub fn recover_or_fresh(db_path: &Path, open_err: &AppError) -> Result<Database,
 
     // ── 策略 2：损坏库留档 + 空库启动
     log::warn!("[db-recovery] 无可用备份，改为留档损坏库并以空库启动");
-    quarantine_corrupt_db(db_path)?;
+    if let Some(p) = quarantine_corrupt_db(db_path)? {
+        archived.get_or_insert(p);
+    }
     let db = Database::init(&db_path.to_string_lossy())?;
+    write_notice(
+        db_path,
+        &RecoveryNotice {
+            archived_path: archived.map(|p| p.to_string_lossy().into_owned()),
+            restored_from: None,
+            error: open_err.to_string(),
+            at: notice_at,
+        },
+    );
     log::warn!(
         "[db-recovery] 已用全新空库启动。原损坏文件已留档在同目录 {}*，可在设置页导入备份恢复数据",
         db_path
@@ -132,7 +215,7 @@ fn list_backups(db_path: &Path) -> Vec<PathBuf> {
         .filter(|p| {
             p.file_name()
                 .and_then(|s| s.to_str())
-                .map(|n| n.starts_with(&prefix))
+                .map(|n| n.starts_with(&prefix) && !n.ends_with("-wal") && !n.ends_with("-shm"))
                 .unwrap_or(false)
         })
         .collect();
@@ -188,9 +271,20 @@ pub(crate) fn probe_sqlite(path: &Path) -> Result<i32, AppError> {
 }
 
 /// 用备份顶替损坏库：先把损坏文件留档，再把备份**复制**过去（保留备份本身以便重试）。
-fn restore_from_backup(db_path: &Path, backup: &Path) -> Result<Database, AppError> {
-    quarantine_corrupt_db(db_path)?;
+fn restore_from_backup(
+    db_path: &Path,
+    backup: &Path,
+    archived: &mut Option<PathBuf>,
+) -> Result<Database, AppError> {
+    if let Some(p) = quarantine_corrupt_db(db_path)? {
+        archived.get_or_insert(p);
+    }
     std::fs::copy(backup, db_path)?;
+    // 备份带 -wal 时（导入前没能导出完整副本的兜底）要一起带上，内容可能都在里面
+    let backup_wal = side_file(backup, "-wal");
+    if backup_wal.exists() {
+        std::fs::copy(&backup_wal, side_file(db_path, "-wal"))?;
+    }
     // 走完整 init：会跑 PRAGMA + schema 迁移，把老备份升级到当前结构
     Database::init(&db_path.to_string_lossy())
 }
@@ -201,10 +295,13 @@ fn restore_from_backup(db_path: &Path, backup: &Path) -> Result<Database, AppErr
 /// 新库打开时 SQLite 会把旧 WAL 的页回放上去，等于刚恢复就再次损坏。
 ///
 /// 文件不存在时静默跳过（首次启动 / 已被挪走都属正常）。
-fn quarantine_corrupt_db(db_path: &Path) -> Result<(), AppError> {
+///
+/// 返回留档后的主文件路径（没东西可挪时为 None）。
+fn quarantine_corrupt_db(db_path: &Path) -> Result<Option<PathBuf>, AppError> {
     if !db_path.exists() && !side_file(db_path, "-wal").exists() {
-        return Ok(());
+        return Ok(None);
     }
+    let mut archived = None;
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     let file_name = db_path
         .file_name()
@@ -221,7 +318,10 @@ fn quarantine_corrupt_db(db_path: &Path) -> Result<(), AppError> {
         }
         let to = dir.join(format!("{}{}{}{}", file_name, CORRUPT_SUFFIX, stamp, suffix));
         match std::fs::rename(&from, &to) {
-            Ok(_) => log::info!("[db-recovery] 已留档 {} → {}", from.display(), to.display()),
+            Ok(_) => {
+                log::info!("[db-recovery] 已留档 {} → {}", from.display(), to.display());
+                archived.get_or_insert(to);
+            }
             Err(e) => {
                 // 主文件挪不动就没法继续（新库会撞上它）；side 文件挪不动则尽力删掉
                 if suffix.is_empty() {
@@ -236,7 +336,7 @@ fn quarantine_corrupt_db(db_path: &Path) -> Result<(), AppError> {
             }
         }
     }
-    Ok(())
+    Ok(archived)
 }
 
 /// 构造 `<db_path><suffix>`（如 `app.db-wal`）。
@@ -265,14 +365,215 @@ mod tests {
             db: 61,
             app: 60
         }));
-        // 其余失败照旧走恢复
-        assert!(should_attempt_recovery(&AppError::Custom(
-            "file is not a database".into()
-        )));
-        assert!(should_attempt_recovery(&AppError::Io(std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "truncated"
+    }
+
+    fn sqlite_err(code: i32) -> AppError {
+        AppError::Database(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(code),
+            None,
+        ))
+    }
+
+    /// 只有 SQLite 明确报告文件损坏才救
+    #[test]
+    fn only_real_corruption_triggers_recovery() {
+        assert!(should_attempt_recovery(&sqlite_err(rusqlite::ffi::SQLITE_CORRUPT)));
+        assert!(should_attempt_recovery(&sqlite_err(rusqlite::ffi::SQLITE_NOTADB)));
+
+        // 库是好的、只是这次打不开：锁住、磁盘满、没权限、迁移出错，都不能动它
+        assert!(!should_attempt_recovery(&sqlite_err(rusqlite::ffi::SQLITE_BUSY)));
+        assert!(!should_attempt_recovery(&sqlite_err(rusqlite::ffi::SQLITE_FULL)));
+        assert!(!should_attempt_recovery(&sqlite_err(rusqlite::ffi::SQLITE_READONLY)));
+        assert!(!should_attempt_recovery(&sqlite_err(rusqlite::ffi::SQLITE_ERROR)));
+        assert!(!should_attempt_recovery(&AppError::Custom("迁移失败".into())));
+        assert!(!should_attempt_recovery(&AppError::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "denied"
         ))));
+    }
+
+    fn note_count(path: &Path) -> i64 {
+        rusqlite::Connection::open(path)
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM notes", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    /// 2026-11-05 审查实测的问题：迁移脚本出错时，完好的库不能被换成空库，且要有升级前备份
+    #[test]
+    fn migration_failure_keeps_good_db_and_leaves_backup() {
+        let dir = temp_dir("mig-fail");
+        let path = dir.join("app.db");
+        make_db_with_note(&path, "真实笔记");
+        {
+            let c = rusqlite::Connection::open(&path).unwrap();
+            // 模拟下一步迁移会出错
+            c.execute_batch(
+                "ALTER TABLE ai_conversations RENAME TO ai_conversations_x; PRAGMA user_version = 69;",
+            )
+            .unwrap();
+        }
+
+        let err = match Database::init(&path.to_string_lossy()) {
+            Ok(_) => panic!("迁移本应失败"),
+            Err(e) => e,
+        };
+        assert!(!should_attempt_recovery(&err), "迁移出错不能走恢复: {err}");
+
+        // 启动流程到这里就提示后退出了，库和数据都不该变
+        assert!(path.exists());
+        assert_eq!(note_count(&path), 1);
+
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(!names.iter().any(|n| n.contains(CORRUPT_SUFFIX)), "不能留档改名: {names:?}");
+        let backup = names
+            .iter()
+            .find(|n| n.starts_with("app.db.before-upgrade-") && n.ends_with("-v69"))
+            .unwrap_or_else(|| panic!("要有升级前备份: {names:?}"));
+        assert_eq!(note_count(&dir.join(backup)), 1, "备份里要有笔记");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 内容全在 WAL 里的库，升级前备份也不能漏
+    #[test]
+    fn upgrade_backup_includes_wal_only_content() {
+        let dir = temp_dir("mig-wal");
+        let path = dir.join("app.db");
+        make_db_with_note(&path, "x");
+        {
+            // notes 上的触发器要用应用注册的 SQL 函数，所以走 Database 而不是裸连接
+            let db = Database::init(&path.to_string_lossy()).unwrap();
+            {
+                let c = db.conn_lock().unwrap();
+                c.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+                c.execute_batch("PRAGMA user_version = 69;").unwrap();
+                for t in ["a", "b"] {
+                    c.execute("INSERT INTO notes (title, content) VALUES (?1, 'c')", [t])
+                        .unwrap();
+                }
+            }
+            // 不正常关闭，内容留在 WAL
+            std::mem::forget(db);
+        }
+        assert!(side_file(&path, "-wal").metadata().unwrap().len() > 0);
+        Database::init(&path.to_string_lossy()).unwrap();
+
+        let backup = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.to_string_lossy().contains(".before-upgrade-"))
+            .expect("要有升级前备份");
+        assert_eq!(note_count(&backup), 3);
+    }
+
+    /// 版本没变就不备份，免得每次启动都导一遍
+    #[test]
+    fn no_upgrade_backup_when_version_current() {
+        let dir = temp_dir("mig-none");
+        let path = dir.join("app.db");
+        make_db_with_note(&path, "x");
+        Database::init(&path.to_string_lossy()).unwrap();
+        assert!(!std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().contains(".before-upgrade-")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 升级前备份只留最近几份
+    #[test]
+    fn upgrade_backups_are_pruned() {
+        let dir = temp_dir("mig-prune");
+        let path = dir.join("app.db");
+        make_db_with_note(&path, "x");
+        for stale in ["20200101-000000-v1", "20200102-000000-v2", "20200103-000000-v3"] {
+            std::fs::write(dir.join(format!("app.db.before-upgrade-{stale}")), b"old").unwrap();
+        }
+        {
+            let c = rusqlite::Connection::open(&path).unwrap();
+            c.execute_batch("PRAGMA user_version = 69;").unwrap();
+        }
+        Database::init(&path.to_string_lossy()).unwrap();
+        let left: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.contains(".before-upgrade-"))
+            .collect();
+        assert_eq!(left.len(), 2, "{left:?}");
+        assert!(left.iter().any(|n| n.ends_with("-v69")), "刚做的要留下: {left:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 真损坏（垃圾文件 / 截断）确实能被判定出来，否则恢复流程永远走不到
+    #[test]
+    fn corrupt_files_are_classified_as_corrupt() {
+        let dir = temp_dir("mig-corrupt");
+        let garbage = dir.join("garbage.db");
+        std::fs::write(&garbage, vec![0x42u8; 8192]).unwrap();
+        let err = Database::init(&garbage.to_string_lossy()).err().expect("垃圾文件应打开失败");
+        assert!(should_attempt_recovery(&err), "垃圾文件: {err:?}");
+
+        let cut = dir.join("cut.db");
+        make_db_with_note(&cut, "x");
+        let len = std::fs::metadata(&cut).unwrap().len();
+        let f = std::fs::OpenOptions::new().write(true).open(&cut).unwrap();
+        f.set_len(len / 2).unwrap();
+        drop(f);
+        let err = Database::init(&cut.to_string_lossy()).err().expect("截断的库应打开失败");
+        assert!(should_attempt_recovery(&err), "截断: {err:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 走了恢复要留下提示，看过才消失
+    #[test]
+    fn recovery_leaves_notice_until_dismissed() {
+        let dir = temp_dir("notice");
+        let path = dir.join("app.db");
+        std::fs::write(&path, b"corrupted").unwrap();
+        recover_or_fresh(&path, &AppError::Custom("坏了".into())).unwrap();
+
+        let n = read_notice(&dir).expect("要有提示");
+        assert!(n.restored_from.is_none());
+        assert!(n.archived_path.unwrap().contains(CORRUPT_SUFFIX));
+        assert_eq!(n.error, "坏了");
+
+        clear_notice(&dir).unwrap();
+        assert!(read_notice(&dir).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recovery_notice_records_backup_used() {
+        let dir = temp_dir("notice-bak");
+        let path = dir.join("app.db");
+        make_db_with_note(&dir.join("app.db.bak-20260101-000000"), "备份");
+        std::fs::write(&path, b"corrupted").unwrap();
+        recover_or_fresh(&path, &AppError::Custom("坏了".into())).unwrap();
+        let n = read_notice(&dir).expect("要有提示");
+        assert!(n.restored_from.unwrap().contains(".bak-20260101-000000"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 备份带 -wal 时，恢复要把 WAL 一起带上
+    #[test]
+    fn restore_brings_backup_wal_along() {
+        let dir = temp_dir("restore-wal");
+        let path = dir.join("app.db");
+        let bak = dir.join("app.db.bak-20260101-000000");
+        make_db_with_note(&bak, "备份");
+        std::fs::write(side_file(&bak, "-wal"), b"").unwrap();
+        std::fs::write(&path, b"corrupted").unwrap();
+        recover_or_fresh(&path, &AppError::Custom("坏了".into())).unwrap();
+        assert_eq!(note_count(&path), 1);
+        // -wal 不能被当成一份备份
+        assert_eq!(list_backups(&path).len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 版本高于当前应用的**备份**要跳过，不能拿去顶替。

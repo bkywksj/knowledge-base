@@ -50,6 +50,7 @@ import type {
   ImportResult,
   OpenMarkdownResult,
   OrphanAssetScan,
+  DbRecoveryNotice,
   OrphanAssetClean,
   OrphanItem,
   AttachmentInfo,
@@ -1505,6 +1506,11 @@ export const syncV1Api = {
  */
 export const dataDirApi = {
   getInfo: () => invoke<ResolvedDataDir>("get_data_dir_info"),
+  getRecoveryNotice: () =>
+    invoke<DbRecoveryNotice | null>("get_db_recovery_notice"),
+  dismissRecoveryNotice: () => invoke<void>("dismiss_db_recovery_notice"),
+  getFirstRunHint: () => invoke<boolean>("get_first_run_data_hint"),
+  dismissFirstRunHint: () => invoke<void>("dismiss_first_run_data_hint"),
   setPending: (newPath: string) =>
     invoke<void>("set_pending_data_dir", { newPath }),
   clearPending: () => invoke<void>("clear_pending_data_dir"),

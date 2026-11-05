@@ -105,6 +105,26 @@ impl Database {
         Ok(())
     }
 
+    /// 全部笔记数（含回收站）。用来判断「这个库是不是空的」，回收站里有也不算空
+    pub fn count_all_notes(&self) -> Result<usize, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM notes", [], |row| row.get(0))?;
+        Ok(n as usize)
+    }
+
+    /// 全部待办数（含已删除）。同上
+    pub fn count_all_tasks(&self) -> Result<usize, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM tasks", [], |row| row.get(0))?;
+        Ok(n as usize)
+    }
+
     /// 未回收笔记数量
     pub fn count_notes_active(&self) -> Result<usize, AppError> {
         let conn = self

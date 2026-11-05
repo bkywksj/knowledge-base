@@ -61,7 +61,37 @@ const SOURCE_EXTS: &[&str] = &["pdf", "doc", "docx"];
 
 pub struct OrphanScanService;
 
+/// 孤儿数至少这么多才判断「比笔记还多」：小库清几个文件很正常，不该吓人
+const ORPHAN_WARN_MIN: u64 = 10;
+
+/// 这次扫描结果可不可信。
+///
+/// 「孤儿」的判定完全依赖当前的库：库是空的或选错了目录时，所有真实图片和附件都没人引用，
+/// 全会被判成孤儿。空库一律不许清理（2026-11-05 审查实测）；
+/// 孤儿比笔记还多时提醒用户先确认打开的是不是自己的库。
+fn assess_risk(library_notes: usize, orphans: u64) -> &'static str {
+    if orphans == 0 {
+        "none"
+    } else if library_notes == 0 {
+        "blocked"
+    } else if orphans >= ORPHAN_WARN_MIN && orphans > library_notes as u64 {
+        "warn"
+    } else {
+        "none"
+    }
+}
+
 impl OrphanScanService {
+    /// 清理前的保护：库是空的就拒绝。前端也会隐藏按钮，这里是真正的闸门
+    pub fn ensure_clean_allowed(db: &Database) -> Result<(), AppError> {
+        if db.count_all_notes()? == 0 {
+            return Err(AppError::InvalidInput(
+                "当前知识库没有笔记，扫描结果不可信（可能打开了错误的数据目录），已拒绝清理".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// 扫描全部五类孤儿素材
     pub fn scan_all(db: &Database, app_data_dir: &Path) -> Result<OrphanAssetScan, AppError> {
         // ── 一次性预读 DB，避免 5 个扫描器各自查库 ──
@@ -102,38 +132,53 @@ impl OrphanScanService {
             referenced_source_abs.insert(normalize_path_for_compare(&abs));
         }
 
+        let images = scan_flat_images(app_data_dir, &referenced_tokens, &encrypted_ids)?;
+        let videos = scan_per_note_dir(
+            "video",
+            &VideoService::videos_dir(app_data_dir),
+            &note_ids,
+            &encrypted_ids,
+            &referenced_tokens,
+            VIDEO_EXTS,
+        )?;
+        let attachments = scan_per_note_dir(
+            "attachment",
+            &AttachmentService::attachments_dir(app_data_dir),
+            &note_ids,
+            &encrypted_ids,
+            &referenced_tokens,
+            ATTACHMENT_EXTS,
+        )?;
+        let pdfs = scan_per_note_dir_by_path_ref(
+            "pdf",
+            &PdfService::pdfs_dir(app_data_dir),
+            &note_ids,
+            &encrypted_ids,
+            &referenced_source_abs,
+        )?;
+        let sources = scan_flat_sources(
+            app_data_dir,
+            &SourceFileService::sources_dir(app_data_dir),
+            &note_ids,
+            &referenced_source_abs,
+        )?;
+        let task_files = scan_task_files(db, app_data_dir)?;
+
+        let orphans = [&images, &videos, &attachments, &pdfs, &sources, &task_files]
+            .iter()
+            .map(|g| g.count as u64)
+            .sum();
+        let library_note_count = note_ids.len();
+
         Ok(OrphanAssetScan {
-            images: scan_flat_images(app_data_dir, &referenced_tokens, &encrypted_ids)?,
-            videos: scan_per_note_dir(
-                "video",
-                &VideoService::videos_dir(app_data_dir),
-                &note_ids,
-                &encrypted_ids,
-                &referenced_tokens,
-                VIDEO_EXTS,
-            )?,
-            attachments: scan_per_note_dir(
-                "attachment",
-                &AttachmentService::attachments_dir(app_data_dir),
-                &note_ids,
-                &encrypted_ids,
-                &referenced_tokens,
-                ATTACHMENT_EXTS,
-            )?,
-            pdfs: scan_per_note_dir_by_path_ref(
-                "pdf",
-                &PdfService::pdfs_dir(app_data_dir),
-                &note_ids,
-                &encrypted_ids,
-                &referenced_source_abs,
-            )?,
-            sources: scan_flat_sources(
-                app_data_dir,
-                &SourceFileService::sources_dir(app_data_dir),
-                &note_ids,
-                &referenced_source_abs,
-            )?,
-            task_files: scan_task_files(db, app_data_dir)?,
+            images,
+            videos,
+            attachments,
+            pdfs,
+            sources,
+            task_files,
+            library_note_count,
+            risk: assess_risk(library_note_count, orphans).to_string(),
         })
     }
 
@@ -786,5 +831,60 @@ pub fn collect_filename_tokens(text: &str, out: &mut HashSet<String>) {
             }
         }
         i = end;
+    }
+}
+
+/// 2026-11-05 审查实测的问题：空库扫描会把真实素材全判成孤儿
+#[cfg(test)]
+mod risk_tests {
+    use super::*;
+
+    #[test]
+    fn risk_levels() {
+        assert_eq!(assess_risk(0, 0), "none", "没有孤儿就没风险");
+        assert_eq!(assess_risk(0, 1), "blocked", "空库一个都不许清");
+        assert_eq!(assess_risk(5, 3), "none", "小库清几个文件是正常的");
+        assert_eq!(assess_risk(2, 9), "none", "不到门槛不吓人");
+        assert_eq!(assess_risk(5, 10), "warn");
+        assert_eq!(assess_risk(100, 100), "none", "没有比笔记多");
+        assert_eq!(assess_risk(100, 101), "warn");
+    }
+
+    fn setup(tag: &str) -> (std::path::PathBuf, Database) {
+        let dir = std::env::temp_dir().join(format!("kb_orphan_{}_{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Database::init(dir.join("app.db").to_str().unwrap()).unwrap();
+        (dir, db)
+    }
+
+    #[test]
+    fn empty_library_scan_is_blocked_and_clean_refused() {
+        let (dir, db) = setup("empty");
+        let images = ImageService::ensure_dir(&dir).unwrap();
+        std::fs::write(images.join("20260101_real_001.png"), b"img").unwrap();
+
+        let scan = OrphanScanService::scan_all(&db, &dir).unwrap();
+        assert_eq!(scan.images.count, 1);
+        assert_eq!(scan.library_note_count, 0);
+        assert_eq!(scan.risk, "blocked");
+        assert!(OrphanScanService::ensure_clean_allowed(&db).is_err());
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn library_with_trashed_note_is_not_empty() {
+        let (dir, db) = setup("trash");
+        db.conn_lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO notes (title, content, is_deleted) VALUES ('t', 'c', 1)",
+                [],
+            )
+            .unwrap();
+        assert!(OrphanScanService::ensure_clean_allowed(&db).is_ok());
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

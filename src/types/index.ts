@@ -1062,6 +1062,22 @@ export interface OrphanAssetScan {
   sources: OrphanGroup;
   /** 待办附件（v65） */
   taskFiles: OrphanGroup;
+  /** 当前库的笔记数（含回收站） */
+  libraryNoteCount: number;
+  /** none / warn（孤儿比笔记还多，可能打开了错误的库）/ blocked（库是空的，不允许清理） */
+  risk: "none" | "warn" | "blocked";
+}
+
+/** 启动时走过数据库恢复流程的记录 */
+export interface DbRecoveryNotice {
+  /** 被改名留档的原库 */
+  archivedPath: string | null;
+  /** 用来顶替的备份；null 表示换成了空库 */
+  restoredFrom: string | null;
+  /** 打开原库时的错误 */
+  error: string;
+  /** 发生时间（本地时间） */
+  at: string;
 }
 
 /** 孤儿素材清理结果 */

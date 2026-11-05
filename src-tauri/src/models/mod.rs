@@ -977,6 +977,10 @@ pub struct OrphanAssetScan {
     pub sources: OrphanGroup,
     /// 待办附件（v65）
     pub task_files: OrphanGroup,
+    /// 当前库的笔记数（含回收站）
+    pub library_note_count: usize,
+    /// none / warn（孤儿比笔记还多，可能打开了错误的库）/ blocked（库是空的，不允许清理）
+    pub risk: String,
 }
 
 /// 孤儿素材清理结果
