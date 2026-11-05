@@ -18,26 +18,33 @@ pub const LAST_PUSH_NOTES_KEY: &str = "sync.v0_last_push_notes";
 /// 少于这么多篇时不做"减半"判断：小库删几篇就过半很正常，不该拦
 const SHRINK_GUARD_MIN: usize = 10;
 
-/// 无人值守推送前的保护：本机 0 篇，或比上次推送少了一半以上 → 拒绝。
-///
-/// 返回的错误文案直接展示给用户，要说明原因和出路（去设置页手动推）。
-pub fn check_push_safety(local_notes: usize, last_pushed: Option<usize>) -> Result<(), String> {
+/// 推送前的异常判断：本机 0 篇，或比上次推送少了一半以上。只说发生了什么、不带处置建议，
+/// 自动推送（直接拒绝）和手动推送（弹窗确认）各自接上自己的说法
+pub fn push_safety_issue(local_notes: usize, last_pushed: Option<usize>) -> Option<String> {
     if local_notes == 0 {
-        return Err(
-            "本机没有任何笔记，为防止覆盖云端备份已跳过推送；确需推送请到「设置 → 同步」手动操作"
-                .into(),
-        );
+        return Some("本机没有任何笔记".into());
     }
     if let Some(last) = last_pushed {
         if last >= SHRINK_GUARD_MIN && local_notes * 2 < last {
-            return Err(format!(
-                "本机笔记数（{}）比上次推送（{}）少了一半以上，为防止覆盖云端备份已跳过推送；\
-                 确认无误请到「设置 → 同步」手动推送",
+            return Some(format!(
+                "本机笔记数（{}）比上次推送（{}）少了一半以上",
                 local_notes, last
             ));
         }
     }
-    Ok(())
+    None
+}
+
+/// 无人值守推送前的保护：本机 0 篇，或比上次推送少了一半以上 → 拒绝。
+///
+/// 返回的错误文案直接展示给用户，要说明原因和出路（去设置页手动推，那里会再确认一次）。
+pub fn check_push_safety(local_notes: usize, last_pushed: Option<usize>) -> Result<(), String> {
+    match push_safety_issue(local_notes, last_pushed) {
+        None => Ok(()),
+        Some(issue) => Err(format!(
+            "{issue}，为防止覆盖云端备份已跳过推送；确需推送请到「设置 → 同步」手动操作"
+        )),
+    }
 }
 
 /// 调度器主循环

@@ -25,6 +25,7 @@ import {
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { syncApi, configApi } from "@/lib/api";
+import { confirmUnsafePush, pushSafetyMessage } from "@/lib/syncGuards";
 import type {
   SyncScope,
   SyncImportMode,
@@ -371,7 +372,16 @@ export function SyncSection() {
     setPushing(true);
     try {
       const config = { url, username, password: password || undefined };
-      const result = await syncApi.webdavPush(scope, config, backupPwArg());
+      let result;
+      try {
+        result = await syncApi.webdavPush(scope, config, backupPwArg());
+      } catch (e) {
+        // 本机为空 / 比上次推送少一半以上：后端没推，问一次再决定
+        const reason = pushSafetyMessage(e);
+        if (!reason) throw e;
+        if (!(await confirmUnsafePush(Modal.confirm, reason))) return;
+        result = await syncApi.webdavPush(scope, config, backupPwArg(), true);
+      }
       // 推送成功即证明配置可用，兜底落库（避免用户跳过测试直接推，下次重启丢配置）
       persistUrl(url);
       persistUsername(username);

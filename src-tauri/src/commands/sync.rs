@@ -101,6 +101,9 @@ pub async fn sync_webdav_test(
     client.test_connection().await.map_err(|e| e.to_string())
 }
 
+/// 推送安全检查没过时错误信息的前缀，前端据此弹确认框（见 SyncSection.handlePush）
+const PUSH_SAFETY_PREFIX: &str = "PUSH_SAFETY:";
+
 #[tauri::command]
 pub async fn sync_webdav_push(
     state: State<'_, AppState>,
@@ -109,9 +112,28 @@ pub async fn sync_webdav_push(
     config: WebDavConfig,
     // T-S050: 加密备份密码（None = 上传明文 .zip；Some = 上传 .zip.enc）
     backup_password: Option<String>,
+    // 用户看过安全检查的提示后仍要推送
+    force: Option<bool>,
 ) -> Result<SyncResult, String> {
     let version = app.package_info().version.to_string();
     let password = resolve_password(&state.db, &config)?;
+
+    // 推送会覆盖云端整包备份，那往往是唯一的备份。和自动推送同一套检查，
+    // 但这里是用户亲手点的：不直接拒绝，返回带前缀的错误让前端弹窗确认
+    if !force.unwrap_or(false) {
+        let local_notes = state.db.count_notes_active().unwrap_or(0);
+        let last_pushed = state
+            .db
+            .get_config(crate::services::sync_scheduler::LAST_PUSH_NOTES_KEY)
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse::<usize>().ok());
+        if let Some(issue) =
+            crate::services::sync_scheduler::push_safety_issue(local_notes, last_pushed)
+        {
+            return Err(format!("{PUSH_SAFETY_PREFIX}{issue}"));
+        }
+    }
 
     let history_id = state
         .db

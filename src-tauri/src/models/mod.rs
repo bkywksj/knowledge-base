@@ -2422,6 +2422,13 @@ pub struct SyncPullResult {
     /// 旧客户端无此字段反序列化 → 0；前端展示为 0 时不弹提示，>0 时显式告知用户。
     #[serde(default)]
     pub encrypted_skipped: usize,
+    /// 远端要求删除、但数量异常大而**暂停执行**的笔记数（见 `pull::is_mass_delete`）。
+    /// >0 时本次没有删任何笔记，前端问用户确认后带 allow_mass_delete 再拉一次
+    #[serde(default)]
+    pub deletions_held: usize,
+    /// 拉取前本机未删除的笔记数（给「要删 N 篇，占 X%」的提示用）
+    #[serde(default)]
+    pub local_notes: usize,
     /// 错误清单
     pub errors: Vec<String>,
 }

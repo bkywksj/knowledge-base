@@ -87,6 +87,21 @@ pub fn remote_data_hint(backend: &dyn SyncBackendImpl) -> Result<Option<String>,
     Ok(explain_missing_manifest(root_files.as_deref()))
 }
 
+/// 一次拉取要删的笔记至少这么多篇，才考虑「是不是删得太多」：小库删几篇很正常
+const MASS_DELETE_MIN: usize = 20;
+/// 超过本机笔记的这个比例（百分比）算批量删除
+const MASS_DELETE_PERCENT: usize = 30;
+
+/// 远端这次要求删除的数量是否异常，需要用户确认。
+///
+/// 另一台设备误删一大批、或者用空库 / 错误的库推了上去，本机拉取会跟着把笔记全移进回收站，
+/// 回收站 30 天后自动清空就永久没了（2026-11-05 数据安全审查第 5 条）。
+pub(crate) fn is_mass_delete(to_delete: usize, local_notes: usize) -> bool {
+    to_delete >= MASS_DELETE_MIN && to_delete * 100 > local_notes * MASS_DELETE_PERCENT
+}
+
+/// `allow_mass_delete`：用户已确认跟着远端批量删除。自动同步一律传 false
+#[allow(clippy::too_many_arguments)]
 pub fn pull<R: Runtime, E: Emitter<R>>(
     db: &Database,
     backend_id: i64,
@@ -96,6 +111,7 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
     conflicts_dir: &Path,
     data_dir: &Path,
     emitter: &E,
+    allow_mass_delete: bool,
 ) -> Result<SyncPullResult, AppError> {
     let mut result = SyncPullResult::default();
     let event_name = "sync_v1:progress";
@@ -686,6 +702,9 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
     }
 
     // ── 处理 to_delete_local（远端 tombstone）
+    // 先挑出真正要删的，数量异常时整批暂停（一条都不删），等用户确认
+    let mut deletions: Vec<(&crate::models::ManifestEntry, i64)> =
+        Vec::with_capacity(diff.to_delete_local.len());
     for entry in &diff.to_delete_local {
         // T-S011：按 stable_uuid 找本地 id，没找到说明本地本就没有此笔记，跳过
         let local_id = match db.get_note_id_by_stable_uuid(&entry.stable_id)? {
@@ -705,6 +724,20 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
             );
             continue;
         }
+        deletions.push((entry, local_id));
+    }
+    result.local_notes = db.count_notes_active().unwrap_or(0);
+    if !allow_mass_delete && is_mass_delete(deletions.len(), result.local_notes) {
+        // 不更新 remote_state：下次拉取还会算出这批删除，用户确认后再执行
+        log::warn!(
+            "[sync_v1] 远端要求删除 {} 篇（本机 {} 篇），数量异常，已暂停等待用户确认",
+            deletions.len(),
+            result.local_notes
+        );
+        result.deletions_held = deletions.len();
+        deletions.clear();
+    }
+    for (entry, local_id) in deletions {
         match db.soft_delete_note(local_id) {
             Ok(true) => {
                 result.deleted_local += 1;
@@ -1136,6 +1169,21 @@ fn ensure_folder_path(db: &Database, path: &str) -> Result<Option<i64>, AppError
         return Ok(None);
     }
     crate::services::folder::FolderService::ensure_path(db, path)
+}
+
+#[cfg(test)]
+mod mass_delete_tests {
+    use super::*;
+
+    #[test]
+    fn mass_delete_thresholds() {
+        assert!(!is_mass_delete(19, 20), "不到 20 篇不拦：小库删几篇很正常");
+        assert!(is_mass_delete(20, 20), "整库被删");
+        assert!(is_mass_delete(31, 100));
+        assert!(!is_mass_delete(30, 100), "刚好 30% 不算");
+        assert!(!is_mass_delete(25, 1000), "大库删 25 篇是正常清理");
+        assert!(is_mass_delete(400, 1000));
+    }
 }
 
 #[cfg(test)]

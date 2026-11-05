@@ -486,12 +486,21 @@ export function AppLayout() {
         const backends = await syncV1Api.listBackends();
         const enabled = backends.filter((b) => b.enabled);
         const errs: string[] = [];
+        const held: string[] = [];
         for (const b of enabled) {
           try {
-            await syncV1Api.pull(b.id);
+            const r = await syncV1Api.pull(b.id);
+            // 刚打开软件就弹删除确认太突兀：只提示，去设置页手动拉取时再确认
+            if ((r.deletionsHeld ?? 0) > 0) held.push(`${b.name}（${r.deletionsHeld} 篇）`);
           } catch (e) {
             errs.push(`${b.name}: ${e}`);
           }
+        }
+        if (held.length > 0) {
+          message.warning(
+            `启动同步：云端要求删除的笔记数量异常，已暂停删除 ${held.join("、")}，请到「设置 → 同步」手动拉取确认`,
+            8,
+          );
         }
         if (errs.length > 0) {
           message.warning(`启动同步：${errs.length} 个后端拉取失败（${errs.join("；")}）`);

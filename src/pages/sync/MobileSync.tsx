@@ -20,6 +20,7 @@ import { exportSyncBackend, type Envelope } from "@/lib/configShare";
 import { Modal, Form, Input, Segmented, message } from "antd";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { syncV1Api } from "@/lib/api";
+import { confirmHeldDeletions } from "@/lib/syncGuards";
 import { notifySystem } from "@/lib/notify";
 import { useAppStore } from "@/store";
 import type {
@@ -294,7 +295,8 @@ export function MobileSync() {
     setBusyId(id);
     setProgress(null);
     try {
-      const r = await syncV1Api.pull(id);
+      let r = await syncV1Api.pull(id);
+      if (await confirmHeldDeletions(Modal.confirm, r)) r = await syncV1Api.pull(id, true);
       const summary =
         `下载 ${r.downloaded} · 删除本地 ${r.deletedLocal}` +
         (r.conflicts > 0 ? ` · ${r.conflicts} 冲突` : "");
@@ -332,7 +334,8 @@ export function MobileSync() {
         await load();
         return;
       }
-      const q = await syncV1Api.pull(id);
+      let q = await syncV1Api.pull(id);
+      if (await confirmHeldDeletions(Modal.confirm, q)) q = await syncV1Api.pull(id, true);
       const summary =
         `上传 ${p.uploaded} · 下载 ${q.downloaded}` +
         (p.deletedRemote + q.deletedLocal > 0

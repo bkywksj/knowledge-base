@@ -1794,6 +1794,10 @@ export interface SyncPullResult {
    * 旧后端无此字段 → undefined，按 0 处理。
    */
   encryptedSkipped?: number;
+  /** 远端要求删除、但数量异常而暂停执行的笔记数；>0 时本次一条都没删，要问用户 */
+  deletionsHeld?: number;
+  /** 拉取前本机未删除的笔记数 */
+  localNotes?: number;
   errors: string[];
 }
 

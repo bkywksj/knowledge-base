@@ -46,6 +46,7 @@ import { configApi, syncApi, syncV1Api } from "@/lib/api";
 import { ShareConfigModal } from "@/components/config-share/ShareConfigModal";
 import { ImportConfigModal } from "@/components/config-share/ImportConfigModal";
 import { ConflictResolveModal } from "@/components/settings/ConflictResolveModal";
+import { confirmHeldDeletions, heldDeletionsText } from "@/lib/syncGuards";
 import { exportSyncBackend, type Envelope } from "@/lib/configShare";
 import type {
   SyncBackend,
@@ -480,7 +481,14 @@ export function SyncV1Section() {
     setBusyOp("pull");
     setProgress(null);
     try {
-      const r = await syncV1Api.pull(id);
+      let r = await syncV1Api.pull(id);
+      // 远端要求批量删除被暂停：问一次，确认后再拉一次执行删除
+      const held = heldDeletionsText(r);
+      if (await confirmHeldDeletions(modal.confirm, r)) {
+        r = await syncV1Api.pull(id, true);
+      } else if (held) {
+        message.info("已保留这些笔记。确认要删时再点一次「拉取」");
+      }
       const msg = `拉取完成：下载 ${r.downloaded} / 删本地 ${r.deletedLocal} / 冲突 ${r.conflicts} / 错误 ${r.errors.length}`;
       if (r.errors.length > 0) {
         modal.warning({ title: "拉取有错误", content: r.errors.join("\n") });

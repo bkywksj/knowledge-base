@@ -1407,8 +1407,9 @@ export const syncApi = {
   webdavTest: (url: string, username: string, password: string) =>
     invoke<void>("sync_webdav_test", { url, username, password }),
   /** 推送到 WebDAV。backupPassword 非空时上传加密包（kb-sync-<host>.zip.enc） */
-  webdavPush: (scope: SyncScope, config: WebDavConfig, backupPassword?: string) =>
-    invoke<SyncResult>("sync_webdav_push", { scope, config, backupPassword }),
+  /** force=true：用户看过安全检查的提示后仍要推送（见 lib/syncGuards） */
+  webdavPush: (scope: SyncScope, config: WebDavConfig, backupPassword?: string, force = false) =>
+    invoke<SyncResult>("sync_webdav_push", { scope, config, backupPassword, force }),
   /** 从 WebDAV 拉取。云端是加密包时需提供 backupPassword */
   webdavPull: (
     mode: SyncImportMode,
@@ -1473,7 +1474,9 @@ export const syncV1Api = {
   readRemoteManifest: (id: number) =>
     invoke<SyncManifestV1 | null>("sync_v1_read_remote_manifest", { id }),
   push: (id: number) => invoke<SyncPushResult>("sync_v1_push", { id }),
-  pull: (id: number) => invoke<SyncPullResult>("sync_v1_pull", { id }),
+  /** allowMassDelete=true：用户已确认跟着远端批量删除（见 SyncPullResult.deletionsHeld） */
+  pull: (id: number, allowMassDelete = false) =>
+    invoke<SyncPullResult>("sync_v1_pull", { id, allowMassDelete }),
   /** 后台同步：立即返回，先拉后推在后台跑，完成/失败通过 sync_v1:auto-triggered 事件回报 */
   triggerBackgroundSync: (id: number) =>
     invoke<void>("sync_v1_trigger_background_sync", { id }),

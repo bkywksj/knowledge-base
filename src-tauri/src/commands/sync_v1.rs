@@ -151,6 +151,8 @@ pub async fn sync_v1_pull(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
     id: i64,
+    // 用户已确认跟着远端批量删除（见 SyncPullResult::deletions_held）
+    allow_mass_delete: Option<bool>,
 ) -> Result<SyncPullResult, String> {
     // 同步互斥：同一 backend 同时只跑一个 pull/push，防并发互踩（见 services::sync_v1::lock）
     let _sync_guard = state
@@ -159,7 +161,11 @@ pub async fn sync_v1_pull(
         .ok_or_else(|| "该同步源正在同步中，请等当前同步结束再试".to_string())?;
 
     tauri::async_runtime::spawn_blocking(move || {
-        crate::services::sync_v1_scheduler::run_pull_blocking(&app, id)
+        crate::services::sync_v1_scheduler::run_pull_blocking(
+            &app,
+            id,
+            allow_mass_delete.unwrap_or(false),
+        )
     })
     .await
     .map_err(|e| format!("拉取任务异常终止: {}", e))?

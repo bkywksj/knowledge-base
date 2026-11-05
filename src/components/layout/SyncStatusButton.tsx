@@ -3,6 +3,7 @@ import { Tooltip, App as AntdApp } from "antd";
 import { ArrowDownUp } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { syncV1Api } from "@/lib/api";
+import { confirmHeldDeletions } from "@/lib/syncGuards";
 import type { SyncBackend } from "@/types";
 import { relativeTime } from "@/lib/utils";
 
@@ -14,7 +15,7 @@ import { relativeTime } from "@/lib/utils";
  * 没配置 backend 时按钮 disabled + Tooltip 引导去设置页配置。
  */
 export function SyncStatusButton() {
-  const { message } = AntdApp.useApp();
+  const { message, modal } = AntdApp.useApp();
   const [backends, setBackends] = useState<SyncBackend[]>([]);
   const [syncing, setSyncing] = useState(false);
 
@@ -57,7 +58,11 @@ export function SyncStatusButton() {
     const errs: string[] = [];
     for (const b of enabled) {
       try {
-        await syncV1Api.pull(b.id);
+        const r = await syncV1Api.pull(b.id);
+        // 远端要求批量删除被暂停：问一次；不删也照常推送（推送不会把这些笔记删掉）
+        if (await confirmHeldDeletions(modal.confirm, r)) {
+          await syncV1Api.pull(b.id, true);
+        }
         await syncV1Api.push(b.id);
         okCount++;
       } catch (e) {

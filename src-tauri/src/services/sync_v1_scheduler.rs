@@ -180,7 +180,7 @@ async fn run_backend_sync(app: &AppHandle, backend_id: i64) {
     // 先 pull
     let pull_app = app.clone();
     let pull_outcome: Result<SyncPullResult, String> =
-        tauri::async_runtime::spawn_blocking(move || run_pull_blocking(&pull_app, backend_id))
+        tauri::async_runtime::spawn_blocking(move || run_pull_blocking(&pull_app, backend_id, false))
             .await
             .unwrap_or_else(|e| Err(format!("pull task panic: {}", e)));
 
@@ -260,9 +260,23 @@ async fn run_backend_sync(app: &AppHandle, backend_id: i64) {
 pub(crate) fn run_pull_blocking(
     app: &AppHandle,
     backend_id: i64,
+    allow_mass_delete: bool,
 ) -> Result<SyncPullResult, String> {
-    let result = pull_inner(app, backend_id);
+    let result = pull_inner(app, backend_id, allow_mass_delete);
     record_outcome(app, backend_id, "pull", result.as_ref().err());
+    // 批量删除被暂停：挂在 backend 的状态上，设置页卡片能看到，自动同步时用户也不会错过
+    if let Ok(r) = &result {
+        if r.deletions_held > 0 {
+            let msg = format!(
+                "远端要求删除 {} 篇笔记（本机共 {} 篇），数量异常已暂停；请在「设置 → 同步」手动拉取并确认",
+                r.deletions_held, r.local_notes
+            );
+            let _ = app
+                .state::<AppState>()
+                .db
+                .set_sync_backend_error(backend_id, Some(&msg));
+        }
+    }
     result
 }
 
@@ -290,7 +304,11 @@ fn record_outcome(app: &AppHandle, backend_id: i64, op: &str, err: Option<&Strin
     }
 }
 
-fn pull_inner(app: &AppHandle, backend_id: i64) -> Result<SyncPullResult, String> {
+fn pull_inner(
+    app: &AppHandle,
+    backend_id: i64,
+    allow_mass_delete: bool,
+) -> Result<SyncPullResult, String> {
     let state = app.state::<AppState>();
     let cfg = state
         .db
@@ -319,6 +337,7 @@ fn pull_inner(app: &AppHandle, backend_id: i64) -> Result<SyncPullResult, String
         &conflicts_dir,
         &state.data_dir,
         app, // AppHandle 自身实现 Emitter
+        allow_mass_delete,
     )
     .map_err(|e| e.to_string())?;
     Ok(r)
