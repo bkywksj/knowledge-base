@@ -311,6 +311,8 @@ fn quarantine_corrupt_db(db_path: &Path) -> Result<Option<PathBuf>, AppError> {
         .parent()
         .ok_or_else(|| AppError::Custom("数据库路径异常，无法定位目录".into()))?;
 
+    // 顺序固定为 主文件 → -wal → -shm：-wal 是唯一可能失败到要撤回的一步，撤回时只需把主文件改回去
+    let mut moved_main: Option<(PathBuf, PathBuf)> = None;
     for suffix in ["", "-wal", "-shm"] {
         let from = side_file(db_path, suffix);
         if !from.exists() {
@@ -320,17 +322,48 @@ fn quarantine_corrupt_db(db_path: &Path) -> Result<Option<PathBuf>, AppError> {
         match std::fs::rename(&from, &to) {
             Ok(_) => {
                 log::info!("[db-recovery] 已留档 {} → {}", from.display(), to.display());
+                if suffix.is_empty() {
+                    moved_main = Some((from.clone(), to.clone()));
+                }
                 archived.get_or_insert(to);
             }
-            Err(e) => {
-                // 主文件挪不动就没法继续（新库会撞上它）；side 文件挪不动则尽力删掉
-                if suffix.is_empty() {
+            Err(e) if suffix.is_empty() => {
+                // 主文件挪不动就没法继续（新库会撞上它）
+                return Err(AppError::Custom(format!(
+                    "无法移走损坏的数据库文件 {}: {}",
+                    from.display(),
+                    e
+                )));
+            }
+            Err(e) if suffix == "-wal" => {
+                // -wal 里可能有还没合并进主文件的笔记，不能删（2026-11-05 数据安全审查第 9 条）。
+                // 改名失败多半是被占用：先复制一份留档再删原文件；删不掉也不能留着 ——
+                // SQLite 会把它重放到新建的空库上。两步有一步不成就整体撤回，这次不恢复
+                log::warn!("[db-recovery] 留档 {} 改名失败，改为复制: {}", from.display(), e);
+                let copied = std::fs::copy(&from, &to).map(|_| ());
+                let removed = copied.and_then(|_| std::fs::remove_file(&from));
+                if let Err(e2) = removed {
+                    let _ = std::fs::remove_file(&to);
+                    if let Some((orig, archived_main)) = &moved_main {
+                        if let Err(e3) = std::fs::rename(archived_main, orig) {
+                            log::error!(
+                                "[db-recovery] 撤回主文件留档失败，请手动把 {} 改回 {}: {}",
+                                archived_main.display(),
+                                orig.display(),
+                                e3
+                            );
+                        }
+                    }
                     return Err(AppError::Custom(format!(
-                        "无法移走损坏的数据库文件 {}: {}",
-                        from.display(),
-                        e
+                        "数据库的 WAL 文件被其他程序占用，无法安全留档（{}）。为避免丢失其中未保存的笔记，\
+                         这次没有做任何改动；请关闭可能占用它的程序（如接入了知识库的 AI 工具）后重新打开",
+                        e2
                     )));
                 }
+                log::info!("[db-recovery] 已复制留档 {} → {}", from.display(), to.display());
+            }
+            Err(e) => {
+                // -shm 只是 WAL 的索引，SQLite 会按 WAL 重建，删不掉也不影响数据
                 log::warn!("[db-recovery] 留档 {} 失败（尝试直接删除）: {}", from.display(), e);
                 let _ = std::fs::remove_file(&from);
             }
@@ -372,6 +405,47 @@ mod tests {
             rusqlite::ffi::Error::new(code),
             None,
         ))
+    }
+
+    /// -wal 被占用（不允许改名 / 删除）时，绝不能删掉它，主文件也要原样放回
+    #[cfg(windows)]
+    #[test]
+    fn locked_wal_is_never_deleted() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = temp_dir("locked-wal");
+        let path = dir.join("app.db");
+        std::fs::write(&path, b"corrupted").unwrap();
+        let wal = side_file(&path, "-wal");
+        std::fs::write(&wal, b"unsaved-notes").unwrap();
+
+        // 只共享读：能复制，但不能改名、不能删除
+        const FILE_SHARE_READ: u32 = 0x1;
+        let holder = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&wal)
+            .unwrap();
+        let err = quarantine_corrupt_db(&path).expect_err("WAL 被占用时应放弃恢复");
+        assert!(err.to_string().contains("占用"), "{err}");
+        drop(holder);
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"corrupted", "主文件要放回原处");
+        assert_eq!(std::fs::read(&wal).unwrap(), b"unsaved-notes", "WAL 不能被删");
+        let leftovers: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.contains(CORRUPT_SUFFIX))
+            .collect();
+        assert!(leftovers.is_empty(), "撤回后不该留半套留档: {leftovers:?}");
+
+        // 不再占用时正常留档
+        let archived = quarantine_corrupt_db(&path).unwrap().unwrap();
+        assert!(!path.exists() && !wal.exists());
+        let mut archived_wal = archived.into_os_string();
+        archived_wal.push("-wal");
+        assert_eq!(std::fs::read(PathBuf::from(archived_wal)).unwrap(), b"unsaved-notes");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 只有 SQLite 明确报告文件损坏才救

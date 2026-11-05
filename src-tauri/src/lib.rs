@@ -913,8 +913,24 @@ pub fn run() {
                 }
                 Err(e) => {
                     log::error!("数据库打开失败: {}（进入恢复流程）", e);
-                    services::db_recovery::recover_or_fresh(&db_path, &e)
-                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?
+                    match services::db_recovery::recover_or_fresh(&db_path, &e) {
+                        Ok(db) => db,
+                        Err(recover_err) => {
+                            // 恢复本身做不下去（如 WAL 被占用无法安全留档）：已撤回改动，说明后退出。
+                            // 不能 `?` 往上抛 —— setup 返回 Err 会变成崩溃框（见上一个分支的说明）
+                            log::error!("数据库恢复失败，已放弃（数据未改动）: {}", recover_err);
+                            #[cfg(desktop)]
+                            crash_handler::show_startup_notice(
+                                "知识库 - 暂时无法打开数据库",
+                                &format!(
+                                    "数据库文件损坏，自动恢复也没能进行：\n{recover_err}\n\n\
+                                     你的数据库文件没有被删除，仍在：\n{db_path_str}\n\n\
+                                     请先不要删除这个目录。"
+                                ),
+                            );
+                            std::process::exit(1);
+                        }
+                    }
                 }
             };
             log::info!("数据库初始化完成: {}", db_path_str);
