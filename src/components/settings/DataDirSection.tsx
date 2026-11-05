@@ -5,7 +5,7 @@
  *
  * 设计：
  * - 修改路径只写指针文件（`<framework_app_data_dir>/data_dir.txt`），**重启生效**
- * - 不自动迁移老数据；明确提示用户手动复制 `app.db + kb_assets/`
+ * - 选好目录先检查目标：已有数据时默认直接使用它，替换必须用户明确选择（目标的库会留档）
  * - 显示当前 / 默认 / 待生效路径 + 来源 tag（env / pointer / default）
  */
 import { useEffect, useState } from "react";
@@ -32,7 +32,13 @@ import {
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { dataDirApi } from "@/lib/api";
-import type { DataDirSource, ResolvedDataDir } from "@/types";
+import {
+  defaultMoveChoice,
+  describeInspect,
+  migrationOf,
+  type MoveChoice,
+} from "@/lib/dataDirChoice";
+import type { DataDirInspect, DataDirSource, ResolvedDataDir } from "@/types";
 
 const { Text } = Typography;
 
@@ -43,6 +49,13 @@ const SOURCE_LABEL: Record<DataDirSource, { label: string; color: string }> = {
   default: { label: "默认", color: "default" },
 };
 
+const MOVE_OK_TEXT: Record<MoveChoice, string> = {
+  auto: "保存（重启时自动迁移）",
+  manual: "保存（手动迁移）",
+  useTarget: "保存（重启后使用该目录）",
+  replace: "确认替换（重启时执行）",
+};
+
 export function DataDirSection() {
   const { token } = antdTheme.useToken();
   const { message } = AntdApp.useApp();
@@ -50,7 +63,10 @@ export function DataDirSection() {
   const [loading, setLoading] = useState(false);
   const [restartHint, setRestartHint] = useState<string | null>(null);
   const [pickedPath, setPickedPath] = useState<string | null>(null);
-  const [migrateChoice, setMigrateChoice] = useState<"auto" | "manual">("auto");
+  const [migrateChoice, setMigrateChoice] = useState<MoveChoice>("auto");
+  const [checking, setChecking] = useState(false);
+  const [targetInfo, setTargetInfo] = useState<DataDirInspect | null>(null);
+  const [currentInfo, setCurrentInfo] = useState<DataDirInspect | null>(null);
 
   useEffect(() => {
     void load();
@@ -82,18 +98,38 @@ export function DataDirSection() {
       return;
     }
 
+    // 先看目标里有什么，再决定给哪些选项：目标已有数据时绝不能默认迁移过去
+    setChecking(true);
+    let target: DataDirInspect;
+    try {
+      target = await dataDirApi.inspect(sel);
+    } catch {
+      // 查不出来就按「可能有数据」对待，宁可多问一句
+      target = { hasDb: true, noteCount: null, sizeBytes: 0, modifiedAt: null };
+    }
+    const current = info
+      ? await dataDirApi.inspect(info.currentDir).catch(() => null)
+      : null;
+    setChecking(false);
+
+    setTargetInfo(target);
+    setCurrentInfo(current);
+    setMigrateChoice(defaultMoveChoice(target));
     setPickedPath(sel);
-    setMigrateChoice("auto");
   }
 
   async function handleConfirmMove() {
     if (!pickedPath) return;
     try {
-      if (migrateChoice === "auto") {
-        await dataDirApi.setPendingWithMigration(pickedPath);
+      const { migrate, replaceExisting } = migrationOf(migrateChoice);
+      if (migrate) {
+        await dataDirApi.setPendingWithMigration(pickedPath, replaceExisting);
         message.success(
           "已写入指针 + 迁移 marker；关闭应用后重启，启动时会自动迁移",
         );
+      } else if (migrateChoice === "useTarget") {
+        await dataDirApi.setPending(pickedPath);
+        message.success("已保存；重启后使用该目录里的数据");
       } else {
         await dataDirApi.setPending(pickedPath);
         message.success(
@@ -151,8 +187,7 @@ export function DataDirSection() {
       <div className="mb-3" style={{ fontSize: 12, lineHeight: 1.6 }}>
         <Text type="secondary" style={{ fontSize: 12 }}>
           把数据搬到自己选的目录（如 D 盘），避免占 C 盘 + 防重装系统丢数据。
-          修改后<Text strong style={{ fontSize: 12 }}>重启生效</Text>；不自动迁移老数据，需手动复制{" "}
-          <Text code style={{ fontSize: 11 }}>app.db</Text> + 资产目录到新位置。
+          修改后<Text strong style={{ fontSize: 12 }}>重启生效</Text>；如果选的目录里已有数据，会先让你确认怎么处理。
         </Text>
       </div>
 
@@ -185,6 +220,7 @@ export function DataDirSection() {
                     type="primary"
                     size="small"
                     icon={<FolderOpen size={12} />}
+                    loading={checking}
                     onClick={handlePick}
                   >
                     {info.source === "default" ? "选择新数据目录…" : "更换…"}
@@ -201,6 +237,22 @@ export function DataDirSection() {
               path={info.defaultDir}
               dim
               onCopy={copyPath}
+            />
+          )}
+
+          {info.missingDir && (
+            <Alert
+              type="warning"
+              showIcon
+              className="mt-1"
+              message="原来设置的数据目录找不到了，当前使用的是默认目录"
+              description={
+                <span style={{ fontSize: 12 }}>
+                  <Text code>{info.missingDir}</Text>
+                  <br />
+                  恢复这个路径后重启即可；如果文件夹换了位置，点「选择新数据目录」选它的新位置。
+                </span>
+              }
             />
           )}
 
@@ -275,9 +327,8 @@ export function DataDirSection() {
         open={pickedPath != null}
         onOk={handleConfirmMove}
         onCancel={() => setPickedPath(null)}
-        okText={
-          migrateChoice === "auto" ? "保存（重启时自动迁移）" : "保存（手动迁移）"
-        }
+        okText={MOVE_OK_TEXT[migrateChoice]}
+        okButtonProps={{ danger: migrateChoice === "replace" }}
         cancelText="取消"
         width={600}
         destroyOnHidden
@@ -287,12 +338,58 @@ export function DataDirSection() {
             <div className="mb-2">
               <Text type="secondary">从：</Text>
               <Text code>{info.currentDir}</Text>
+              <div style={{ fontSize: 12, color: token.colorTextSecondary }}>
+                {describeInspect(currentInfo)}
+              </div>
             </div>
             <div className="mb-3">
               <Text type="secondary">到：</Text>
               <Text code>{pickedPath}</Text>
+              <div style={{ fontSize: 12, color: token.colorTextSecondary }}>
+                {describeInspect(targetInfo)}
+              </div>
             </div>
 
+            {targetInfo?.hasDb ? (
+              <>
+                <Alert
+                  type="warning"
+                  showIcon
+                  className="mb-3"
+                  message="这个目录里已经有知识库数据"
+                  description={
+                    <span style={{ fontSize: 12 }}>
+                      如果这是你之前的笔记，请选「直接使用该目录的数据」。
+                    </span>
+                  }
+                />
+                <Radio.Group
+                  value={migrateChoice}
+                  onChange={(e) => setMigrateChoice(e.target.value)}
+                  className="w-full"
+                >
+                  <Space direction="vertical" className="w-full">
+                    <Radio value="useTarget">
+                      <span className="ml-1">
+                        <Text strong>直接使用该目录的数据</Text>
+                        <span style={{ fontSize: 12, color: token.colorTextSecondary, marginLeft: 8 }}>
+                          不迁移，重启后打开目标目录的笔记；当前目录的数据原样留着
+                        </span>
+                      </span>
+                    </Radio>
+                    <Radio value="replace">
+                      <span className="ml-1">
+                        <Text strong>用当前数据替换</Text>
+                        <span style={{ fontSize: 12, color: token.colorTextSecondary, marginLeft: 8 }}>
+                          把当前数据迁移过去；目标原有的库不会删除，会改名保留在该目录
+                        </span>
+                      </span>
+                    </Radio>
+                  </Space>
+                </Radio.Group>
+              </>
+            ) : (
+              <>
             <Radio.Group
               value={migrateChoice}
               onChange={(e) => setMigrateChoice(e.target.value)}
@@ -305,7 +402,7 @@ export function DataDirSection() {
                     <span>
                       <Text strong>自动迁移（推荐）</Text>
                       <span style={{ fontSize: 12, color: token.colorTextSecondary, marginLeft: 8 }}>
-                        重启时弹独立窗口跑迁移，进度可见，旧目录保留作备份
+                        重启时弹独立窗口跑迁移，进度可见
                       </span>
                     </span>
                   </Space>
@@ -336,7 +433,7 @@ export function DataDirSection() {
                     <li>关闭应用</li>
                     <li>重启 → 启动早期弹一个 splash 窗口显示迁移进度</li>
                     <li>迁移完成（同盘几乎瞬间，跨盘按附件大小耗时）→ 主窗口自动打开</li>
-                    <li>旧目录会保留并写入 <Text code style={{ fontSize: 11 }}>_MIGRATED_README.txt</Text>，确认数据 OK 后可手动删除</li>
+                    <li>同盘迁移是直接搬过去，旧目录不再有这些文件；跨盘是复制，旧目录的文件还在，确认数据 OK 后可手动删除。旧目录都会写入 <Text code style={{ fontSize: 11 }}>_MIGRATED_README.txt</Text></li>
                   </ol>
                 }
               />
@@ -357,6 +454,8 @@ export function DataDirSection() {
                   </span>
                 }
               />
+            )}
+              </>
             )}
           </div>
         )}

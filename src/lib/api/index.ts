@@ -117,6 +117,7 @@ import type {
   SyncConflictItem,
   SyncConflictResolution,
   ResolvedDataDir,
+  DataDirInspect,
   MigrationMarker,
   WordExportResult,
   HtmlExportResult,
@@ -1500,16 +1501,21 @@ export const syncV1Api = {
  * T-013 自定义数据目录 API
  *
  * 修改路径只写指针文件，**重启生效**。当前进程的 db / 资产路径不会变。
- * 不会自动迁移老数据；UI 强提示用户手动复制旧 `app.db + kb_assets/` 到新目录。
+ * 迁移在下次启动时执行；目标目录已有数据时必须由用户明确选择，见 setPendingWithMigration。
  */
 export const dataDirApi = {
   getInfo: () => invoke<ResolvedDataDir>("get_data_dir_info"),
   setPending: (newPath: string) =>
     invoke<void>("set_pending_data_dir", { newPath }),
   clearPending: () => invoke<void>("clear_pending_data_dir"),
-  /** T-013 完整版：写指针 + 写迁移 marker */
-  setPendingWithMigration: (newPath: string) =>
-    invoke<void>("set_pending_data_dir_with_migration", { newPath }),
+  /** 查看某个目录里现有数据的概况（切换前检查，不改动该目录） */
+  inspect: (path: string) => invoke<DataDirInspect>("inspect_data_dir", { path }),
+  /**
+   * T-013 完整版：写指针 + 写迁移 marker
+   * @param replaceExisting 目标已有数据库时必须为 true，否则后端拒绝；目标原有的库会被改名留档
+   */
+  setPendingWithMigration: (newPath: string, replaceExisting = false) =>
+    invoke<void>("set_pending_data_dir_with_migration", { newPath, replaceExisting }),
   /** 取消未执行 / 失败的迁移（指针退回源目录 + 删 marker） */
   cancelPendingMigration: () => invoke<void>("cancel_pending_migration"),
   /** 重试上次失败的迁移（marker crashed → pending，仍需重启才真正执行） */

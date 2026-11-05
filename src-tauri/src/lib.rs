@@ -1361,6 +1361,7 @@ pub fn run() {
             commands::data_dir::set_pending_data_dir,
             commands::data_dir::clear_pending_data_dir,
             commands::data_dir::set_pending_data_dir_with_migration,
+            commands::data_dir::inspect_data_dir,
             commands::data_dir::cancel_pending_migration,
             commands::data_dir::retry_pending_migration,
             commands::data_dir::get_migration_marker,

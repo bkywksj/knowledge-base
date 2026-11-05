@@ -10,6 +10,7 @@ import { AppRouter } from "@/Router";
 import { getAntdComponents, getAntdTokens } from "@/theme/tokens";
 import { TaskReminderListener } from "@/components/tasks/TaskReminderListener";
 import { MigrationCrashNotice } from "@/components/datadir/MigrationCrashNotice";
+import { DataDirMissingNotice } from "@/components/datadir/DataDirMissingNotice";
 import { ExitConfirmListener } from "@/components/ui/ExitConfirmListener";
 import { CloseRequestedListener } from "@/components/ui/CloseRequestedListener";
 import { UpdaterProvider } from "@/components/updater/UpdaterProvider";
@@ -200,6 +201,7 @@ function App() {
           {IS_MAIN_WINDOW && <CloseRequestedListener />}
           {/* 上次数据目录迁移失败时给用户重试 / 放弃的出口（marker.status=crashed 才渲染） */}
           {IS_MAIN_WINDOW && <MigrationCrashNotice />}
+          {IS_MAIN_WINDOW && <DataDirMissingNotice />}
         </ErrorBoundary>
       </AntdApp>
       <GlobalNativeTooltip />

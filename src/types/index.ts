@@ -1838,6 +1838,19 @@ export interface ResolvedDataDir {
   source: DataDirSource;
   /** 指针文件里写的路径（可能与 current 不一致：env 临时覆盖时；portable 模式下为 null） */
   pendingDir: string | null;
+  /** 指针指向的目录不存在（改名 / 移动 / 硬盘没插），此时已回落默认目录 */
+  missingDir: string | null;
+}
+
+/** 某个目录里现有数据的概况（切换数据目录前检查） */
+export interface DataDirInspect {
+  /** 目录里有数据库文件 */
+  hasDb: boolean;
+  /** 未删除笔记数；读不出来时为 null，按「可能有数据」对待 */
+  noteCount: number | null;
+  sizeBytes: number;
+  /** 最近修改时间（本地时间） */
+  modifiedAt: string | null;
 }
 
 /** 迁移 marker 状态 */

@@ -8,7 +8,7 @@
 //! 所有 Command 都通过 `crate::framework_app_data_dir` 获取 framework 根目录，
 //! 保证 dev 模式走 `-dev` 隔离目录、不污染 prod 的指针/迁移 marker。
 
-use crate::services::data_dir::{DataDirResolver, MigrationMarker, ResolvedDataDir};
+use crate::services::data_dir::{DataDirInspect, DataDirResolver, MigrationMarker, ResolvedDataDir};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -32,17 +32,29 @@ pub fn clear_pending_data_dir(app: tauri::AppHandle) -> Result<(), String> {
 /// T-013 完整版：写指针 + 写迁移 marker，让重启时自动迁移
 ///
 /// `from_dir` 是当前使用的数据目录（即 AppState.data_dir），由前端从 get_data_dir_info 得到。
+/// 目标已有数据库时，`replace_existing` 必须为 true（用户明确选了替换），否则拒绝。
 #[tauri::command]
 pub fn set_pending_data_dir_with_migration(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     new_path: String,
+    replace_existing: bool,
 ) -> Result<(), String> {
     let app_data_dir = crate::framework_app_data_dir(&app).map_err(|e| e.to_string())?;
     // from = 当前实际数据根
     let from_dir = state.data_dir.clone();
-    DataDirResolver::set_pending_with_migration(&app_data_dir, &from_dir, &new_path)
+    DataDirResolver::set_pending_with_migration(&app_data_dir, &from_dir, &new_path, replace_existing)
         .map_err(|e| e.to_string())
+}
+
+/// 查看某个目录里现有数据的概况（切换数据目录前用；要复制库文件，放后台线程）
+#[tauri::command]
+pub async fn inspect_data_dir(path: String) -> Result<DataDirInspect, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        DataDirResolver::inspect(std::path::Path::new(path.trim()))
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// 取消未执行的迁移（用户在重启前后悔了；删指针 + 删 marker）
