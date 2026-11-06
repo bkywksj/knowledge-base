@@ -68,8 +68,9 @@ export function UpdateModal({
   const failed = phase === "error";
 
   function handleClose() {
-    // 下载中 / 安装中不允许关闭，避免误操作中断。
-    if (downloading || installing) return;
+    // 只有安装中不允许关（安装器马上要接管进程）。下载中关掉弹窗不会中断下载：
+    // closeModal 只是隐藏，下载状态在 useUpdateChecker 里，右上角徽章继续显示进度。
+    if (installing) return;
     onClose();
   }
 
@@ -78,8 +79,8 @@ export function UpdateModal({
       title="软件更新"
       open={open}
       onCancel={handleClose}
-      closable={!downloading && !installing}
-      maskClosable={!downloading && !installing}
+      closable={!installing}
+      maskClosable={!installing}
       footer={renderFooter()}
     >
       {update && (
@@ -115,6 +116,9 @@ export function UpdateModal({
                   {formatSize(Math.min(downloadedSize, totalSize))} / {formatSize(totalSize)}
                 </Text>
               )}
+              <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
+                可以先关掉这个窗口继续使用，下载会在后台进行，进度见右上角版本号；下载完成后点它重启即可。
+              </Paragraph>
             </div>
           )}
 
@@ -177,8 +181,7 @@ export function UpdateModal({
       );
     }
     if (downloading) {
-      // 下载中不给操作，只能等（不可关闭）。
-      return null;
+      return <Button onClick={handleClose}>后台下载</Button>;
     }
     if (failed) {
       return (
