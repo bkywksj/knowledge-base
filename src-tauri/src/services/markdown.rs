@@ -79,6 +79,60 @@ fn find_frontmatter_end(rest: &str) -> Option<(&str, &str)> {
     None
 }
 
+/// 去掉文档开头的 YAML front-matter，返回正文。用于导出 HTML / Word 这类排版输出：
+/// pulldown-cmark 不认 front-matter，不去掉会渲染成一条分割线加一个二级标题。
+///
+/// 不用 `parse_frontmatter`：那个靠 yaml 解析，`---\n\n## 标题\n\n---` 这种以分割线开头的
+/// 普通文档也可能通过。判定规则与前端 src/lib/frontMatter.ts 保持一致，改一边记得改另一边。
+pub fn strip_front_matter(text: &str) -> &str {
+    fn is_key_line(line: &str) -> bool {
+        let Some(first) = line.chars().next() else {
+            return false;
+        };
+        if first.is_whitespace() || matches!(first, '#' | ':' | '-') {
+            return false;
+        }
+        match line.find(':') {
+            Some(i) => line[i + 1..]
+                .chars()
+                .next()
+                .map_or(true, char::is_whitespace),
+            None => false,
+        }
+    }
+
+    let mut lines = text.split_inclusive('\n');
+    let mut offset = match lines.next() {
+        Some(first) if first.trim_end() == "---" => first.len(),
+        _ => return text,
+    };
+    let mut is_first_body_line = true;
+    for line in lines {
+        let bare = line.trim_end_matches(['\n', '\r']);
+        offset += line.len();
+        if is_first_body_line {
+            if !is_key_line(bare) {
+                return text;
+            }
+            is_first_body_line = false;
+            continue;
+        }
+        let trimmed = bare.trim_end();
+        if trimmed == "---" || trimmed == "..." {
+            return &text[offset..];
+        }
+        let is_yaml_line = bare.trim().is_empty()
+            || bare.starts_with(char::is_whitespace)
+            || bare.starts_with('#')
+            || bare.starts_with("- ")
+            || is_key_line(bare);
+        if !is_yaml_line {
+            return text;
+        }
+    }
+    text
+}
+
 /// OB 风格 frontmatter 关心的子集
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct FrontMatter {
@@ -207,6 +261,30 @@ mod tests {
         assert!(back.contains("标题"));
         assert!(back.contains("列表 A"));
         assert!(back.contains("**粗体**"));
+    }
+
+    #[test]
+    fn strip_front_matter_removes_yaml_block() {
+        assert_eq!(
+            strip_front_matter("---\r\nplatform: 安卓\r\ntags:\r\n  - a\r\n---\r\n\r\n# 标题\r\n"),
+            "\r\n# 标题\r\n"
+        );
+        assert_eq!(strip_front_matter("---\na: 1\n..."), "");
+    }
+
+    #[test]
+    fn strip_front_matter_keeps_ordinary_documents() {
+        for text in [
+            "# 标题\n\n---\n",
+            "---\n\n## 标题\n\n---\n正文",
+            "---\n# 标题\n---\n",
+            "---\n这是一段正文\n---\n",
+            "---\na: 1\n这是一段正文\n---\n",
+            "---\na: 1\n\n正文",
+            "---\nhttp://a.com\n---\n",
+        ] {
+            assert_eq!(strip_front_matter(text), text);
+        }
     }
 
     #[test]

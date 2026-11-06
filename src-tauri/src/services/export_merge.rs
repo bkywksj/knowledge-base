@@ -332,7 +332,11 @@ fn build_merged_markdown(root_title: &str, notes: &[MergeNote]) -> String {
             display_title(&note.title)
         ));
 
-        let body = shift_headings(note.content.trim(), note_level);
+        // 合并后 front-matter 不在文档开头，留着只会渲染成分割线加标题
+        let body = shift_headings(
+            crate::services::markdown::strip_front_matter(note.content.trim()).trim(),
+            note_level,
+        );
         if !body.is_empty() {
             out.push_str(&body);
             out.push_str("\n\n");

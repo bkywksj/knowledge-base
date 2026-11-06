@@ -50,6 +50,7 @@ import {
 // tiptap-markdown 未提供 TS 声明，用 import 后以 any 访问
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 import { Markdown } from "tiptap-markdown";
+import { DocumentWithFrontMatter, FrontMatter } from "./FrontMatter";
 
 /** 从编辑器读出 Markdown 字符串（tiptap-markdown 注入的 storage 无类型） */
 function getEditorMarkdown(editor: { storage: unknown }): string {
@@ -1532,7 +1533,10 @@ export function TiptapEditor({
         // HTML（<p data-indent="N">…</p>），让缩进能存进 .md 并往返还原。
         paragraph: false,
         heading: false,
+        document: false, // 用 DocumentWithFrontMatter 替代，给文档开头的属性块留位置
       }),
+      DocumentWithFrontMatter,
+      FrontMatter,
       ParagraphWithIndent,
       HeadingWithIndent,
       Code.configure({

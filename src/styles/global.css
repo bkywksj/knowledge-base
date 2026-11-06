@@ -2179,6 +2179,68 @@ body,
 .tiptap-callout-body > p:first-child { margin-top: 0; }
 .tiptap-callout-body > p:last-child { margin-bottom: 0; }
 
+/* ─── YAML front-matter 属性卡片 ─────────────────────────── */
+/* 卡片本身有底色，再叠编辑区的上内边距会显得离标签太远 */
+.editor-content-area .tiptap-content .tiptap:has(> .node-frontMatter) {
+  padding-top: 0;
+}
+.tiptap-front-matter {
+  margin: 0 0 12px;
+  padding: 14px 18px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ant-color-text, #000) 4%, transparent);
+  font-size: 13px;
+  line-height: 22px;
+}
+/* 用内描边表示状态：边框会占尺寸，切换时卡片会跳 */
+.tiptap-front-matter:focus-within {
+  box-shadow: inset 0 0 0 1px var(--ant-color-primary, #1677ff);
+}
+.tiptap-front-matter.is-invalid {
+  box-shadow: inset 0 0 0 1px var(--ant-color-error, #ff4d4f);
+}
+.tiptap-front-matter-rows {
+  margin: 0;
+}
+.tiptap-front-matter-rows.is-editable {
+  cursor: text;
+}
+.tiptap-front-matter-row {
+  display: flex;
+  gap: 16px;
+}
+.tiptap-front-matter-row dt {
+  flex: 0 0 auto;
+  width: 120px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: normal;
+  color: var(--ant-color-text-tertiary, inherit);
+}
+.tiptap-front-matter-row dd {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* 与键值行同字号同行高；要盖过 antd 的 .ant-input 默认值 */
+textarea.tiptap-front-matter-input.ant-input {
+  display: block;
+  padding: 0;
+  border-radius: 0;
+  font: inherit;
+  line-height: inherit;
+  resize: none;
+  /* 主题的 [data-theme] .ant-input 背景和焦点环都带 !important，只能同样写才盖得过 */
+  background: transparent !important;
+}
+textarea.tiptap-front-matter-input.ant-input,
+textarea.tiptap-front-matter-input.ant-input:focus {
+  box-shadow: none !important;
+}
+
 /* ─── Toggle 折叠块 ─────────────────────────────────────── */
 .tiptap-toggle {
   display: flex;

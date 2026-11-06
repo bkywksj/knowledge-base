@@ -99,7 +99,10 @@ impl HtmlExportService {
         options.insert(Options::ENABLE_TASKLISTS);
         options.insert(Options::ENABLE_FOOTNOTES);
 
-        let parser = Parser::new_ext(markdown, options);
+        let parser = Parser::new_ext(
+            crate::services::markdown::strip_front_matter(markdown),
+            options,
+        );
         let mut body = String::new();
         push_html(&mut body, parser);
 

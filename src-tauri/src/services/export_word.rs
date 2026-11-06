@@ -358,7 +358,10 @@ impl RenderState {
 /// 关键点：在处理任何**非 HTML 事件**之前，先 flush 已累积的 HTML 块——保证
 /// 「HTML 块里的内容」与「前后 Markdown 内容」在 docx 里的先后顺序正确。
 fn drive_parser(markdown: &str, state: &mut RenderState, docx: &mut Docx) -> Result<(), AppError> {
-    let parser = Parser::new_ext(markdown, gfm_options());
+    let parser = Parser::new_ext(
+        crate::services::markdown::strip_front_matter(markdown),
+        gfm_options(),
+    );
     for event in parser {
         if !matches!(event, Event::Html(_)) {
             flush_html_buffer(state, docx)?;
