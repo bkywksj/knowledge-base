@@ -10127,3 +10127,22 @@ main.ant-layout-content:has(.kb-home) {
   height: 22px;
   border-radius: 6px;
 }
+
+/* 搜索结果：胶囊并进筛选条后不再需要自己的外边距；一行摘要（宽松保留原来的两行） */
+.kb-filter-bar > .kb-task-chips {
+  margin: 0;
+}
+:root[data-list-density="standard"] .kb-search-board .kb-sr-row,
+:root[data-list-density="compact"] .kb-search-board .kb-sr-row {
+  min-height: 0;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+:root[data-list-density="compact"] .kb-search-board .kb-sr-row {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+:root[data-list-density="standard"] .kb-search-board .kb-sr-snippet,
+:root[data-list-density="compact"] .kb-search-board .kb-sr-snippet {
+  -webkit-line-clamp: 1;
+}

@@ -34,7 +34,7 @@ import {
 import { searchApi, taskApi, folderApi, tagApi } from "@/lib/api";
 import { MicButton } from "@/components/MicButton";
 import { useAppStore } from "@/store";
-import { highlightText, highlightSnippet } from "@/lib/highlight";
+import { highlightText, highlightFocusedSnippet } from "@/lib/highlight";
 import { buildFolderPath } from "@/lib/folderPath";
 import { relativeTime } from "@/lib/utils";
 import { resolveBrowseSelection, type BrowseSelection } from "@/lib/searchBrowse";
@@ -393,6 +393,8 @@ function DesktopSearchPage() {
   const showNotes = scope === "all" || scope === "notes";
   const showTasks = scope === "all" || scope === "tasks";
   const totalHits = results.length + taskResults.length;
+  // 笔记和待办都有结果时才需要分组标题；只有一类时它和胶囊里的数字重复，白占一行
+  const showGroupHeads = scope === "all" && results.length > 0 && taskResults.length > 0;
   // "全部" 模式下笔记只展示 preview，超出由"查看全部"链接引导切到笔记 Tab
   const notesToRender =
     scope === "all" ? results.slice(0, ALL_MODE_NOTES_PREVIEW) : results;
@@ -478,9 +480,32 @@ function DesktopSearchPage() {
         </Button>
       </div>
 
-      {/* 筛选条（原型 .fbar）：搜过之后常驻；只作用于笔记，待办 Tab 下隐藏 */}
-      {searched && scope !== "tasks" && (
+      {/* 结果胶囊 + 筛选条合成一行（原来各占一行，小窗口里结果区只剩五六条）。
+          胶囊放最左边；筛选只作用于笔记，待办 Tab 下只留胶囊 */}
+      {searched && (
         <div className="kb-filter-bar">
+          <div className="kb-task-chips">
+            {(
+              [
+                ["all", "全部", totalHits],
+                ["notes", "笔记", results.length],
+                ["tasks", "待办", taskResults.length],
+              ] as const
+            ).map(([k, label, n]) => (
+              <button
+                key={k}
+                type="button"
+                className={scope === k ? "kb-task-chip is-on" : "kb-task-chip"}
+                onClick={() => setScope(k)}
+              >
+                {label}
+                <b>{n}</b>
+              </button>
+            ))}
+          </div>
+          {scope !== "tasks" && (
+          <>
+          <span className="kb-search-sep" />
           <span className="kb-filter-title">
             <FilterIcon size={14} />
             筛选
@@ -590,31 +615,7 @@ function DesktopSearchPage() {
               清空全部筛选条件
             </a>
           )}
-        </div>
-      )}
-
-      {/* 范围胶囊：仅在已搜索时显示，免得空状态有个孤零零的切换器 */}
-      {searched && (
-        <div className="kb-task-chips">
-          {(
-            [
-              ["all", "全部", totalHits],
-              ["notes", "笔记", results.length],
-              ["tasks", "待办", taskResults.length],
-            ] as const
-          ).map(([k, label, n]) => (
-            <button
-              key={k}
-              type="button"
-              className={scope === k ? "kb-task-chip is-on" : "kb-task-chip"}
-              onClick={() => setScope(k)}
-            >
-              {label}
-              <b>{n}</b>
-            </button>
-          ))}
-          {!loading && totalHits > 0 && (
-            <span className="kb-task-chips-hint">共 {totalHits} 条结果</span>
+          </>
           )}
         </div>
       )}
@@ -644,7 +645,7 @@ function DesktopSearchPage() {
           {/* 笔记分组 */}
           {showNotes && results.length > 0 && (
             <section>
-              {scope === "all" && <SectionHeader label="笔记" count={results.length} />}
+              {showGroupHeads && <SectionHeader label="笔记" count={results.length} />}
               {scope === "notes" ? (
                 // 笔记 Tab：虚拟滚动（千级结果不卡）
                 <div
@@ -717,7 +718,7 @@ function DesktopSearchPage() {
           {/* 待办分组（"全部" 或 "待办" Tab 显示）；原型里排在笔记后面 */}
           {showTasks && taskResults.length > 0 && (
             <section>
-              {scope === "all" && <SectionHeader label="待办" count={taskResults.length} />}
+              {showGroupHeads && <SectionHeader label="待办" count={taskResults.length} />}
               {taskResults.map((task) => (
                 <TaskRow
                   key={task.id}
@@ -766,7 +767,7 @@ function NoteRow({
         <div className="kb-sr-title">{highlightText(item.title, keyword)}</div>
         {/* 2 行截断让高亮大概率落在可见区域，避免单行被截走 */}
         <div className="kb-sr-snippet">
-          {isBoard && !item.snippet ? "白板" : highlightSnippet(item.snippet, keyword)}
+          {isBoard && !item.snippet ? "白板" : highlightFocusedSnippet(item.snippet, keyword)}
         </div>
       </div>
       <span className="kb-sr-folder" title={folderPath}>

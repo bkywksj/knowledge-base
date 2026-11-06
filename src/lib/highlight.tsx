@@ -64,3 +64,30 @@ export function highlightSnippet(snippetHtml: string, keyword: string): ReactNod
   const plain = snippetHtml.replace(/<\/?mark>/gi, "");
   return highlightText(plain, keyword);
 }
+
+/**
+ * 把摘要裁到「命中词前面只留 lead 个字」，供只显示一行摘要的地方用。
+ *
+ * 后端给的摘要不保证命中词靠前（尤其 LIKE 回退路径固定截 140 字），一行显示时
+ * 命中词常被挤到看不见的第二行。命中词本来就靠前、或者没命中，原样返回。
+ */
+export function focusSnippet(plain: string, keyword: string, lead = 12): string {
+  const tokens = (keyword ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!plain || tokens.length === 0) return plain;
+  const lower = plain.toLowerCase();
+  const hits = tokens.map((t) => lower.indexOf(t)).filter((i) => i >= 0);
+  if (hits.length === 0) return plain;
+  let start = Math.min(...hits) - lead;
+  // 前面只剩后端补的省略号（或几乎什么都没有）就不必再裁
+  if (start <= 3) return plain;
+  // 别把代理对（emoji 等）从中间切开
+  const code = plain.charCodeAt(start);
+  if (code >= 0xdc00 && code <= 0xdfff) start -= 1;
+  return `...${plain.slice(start).trimStart()}`;
+}
+
+/** 一行摘要版本的 highlightSnippet：先按命中位置裁，再高亮 */
+export function highlightFocusedSnippet(snippetHtml: string, keyword: string): ReactNode {
+  const plain = snippetHtml.replace(/<\/?mark>/gi, "");
+  return highlightText(focusSnippet(plain, keyword), keyword);
+}
