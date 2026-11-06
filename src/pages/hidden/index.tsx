@@ -21,6 +21,8 @@ import {
 import { folderApi, hiddenApi, noteApi, trashApi } from "@/lib/api";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { relativeTime } from "@/lib/utils";
+import { useAppStore } from "@/store";
+import { LIST_PAGE_SIZE_OPTIONS } from "@/lib/listDensity";
 import type { Folder, Note, PageResult } from "@/types";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import {
@@ -62,10 +64,12 @@ export default function HiddenPage() {
     items: [],
     total: 0,
     page: 1,
-    page_size: 12,
+    page_size: useAppStore.getState().listPageSize,
   });
   const [loading, setLoading] = useState(false);
-  const [pageSize, setPageSize] = useState(12);
+  // 和笔记页、回收站共用每页条数（见 lib/listDensity）
+  const pageSize = useAppStore((s) => s.listPageSize);
+  const setPageSize = useAppStore((s) => s.setListPageSize);
 
   // 全文件夹 id→name 映射（用于"目录"列展示 + 当前筛选名）
   const [folderMap, setFolderMap] = useState<Map<number, string>>(new Map());
@@ -326,7 +330,7 @@ export default function HiddenPage() {
               total={data.total}
               showTotal={(total) => `共 ${total} 篇`}
               showSizeChanger
-              pageSizeOptions={["12", "20", "50", "100", "200"]}
+              pageSizeOptions={LIST_PAGE_SIZE_OPTIONS.map(String)}
               onChange={(page, size) => {
                 if (size !== pageSize) setPageSize(size);
                 setKeyword("");

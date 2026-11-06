@@ -21,6 +21,14 @@ import {
   type NotesColumnPrefs,
 } from "@/lib/notesListColumns";
 import {
+  LIST_DENSITY_DEFAULT,
+  LIST_PAGE_SIZE_DEFAULT,
+  applyListDensity,
+  sanitizeListDensity,
+  sanitizeListPageSize,
+  type ListDensity,
+} from "@/lib/listDensity";
+import {
   IMPORT_JOB_LINGER_MS,
   finishImportJobIn,
   newImportJob,
@@ -508,6 +516,10 @@ interface AppStore {
   notesShowOnlyFolders: boolean;
   /** 笔记列表（列表视图）的列偏好：哪些列被隐藏、用户拖出来的列宽 */
   notesListColumnPrefs: NotesColumnPrefs;
+  /** 笔记类列表的显示密度（笔记页 / 回收站 / 隐藏 / 标签页 / 搜索页右列共用，持久化） */
+  listDensity: ListDensity;
+  /** 笔记页 / 回收站 / 隐藏笔记的每页条数（共用，持久化） */
+  listPageSize: number;
   /**
    * "全局新建笔记"时套用的默认文件夹 id；null = 没设默认（新建到根目录）。
    * 由后端 app_config 持久化，应用启动时拉一次到 store。
@@ -796,6 +808,8 @@ interface AppStore {
   resetNotesListColumns: () => void;
   /** 笔记列表是否显示表头（v4 默认不显示） */
   setNotesListShowHeader: (show: boolean) => void;
+  setListDensity: (density: ListDensity) => void;
+  setListPageSize: (size: number) => void;
   /** 标记 NotesPanel 已完成首次"全部折叠"初始化（一次性） */
   markNotesFoldersInitialCollapseDone: () => void;
   /** 设置"每次启动默认收起所有文件夹"开关 */
@@ -980,6 +994,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   notesUncategorizedExpanded: false,
   notesShowOnlyFolders: false,
   notesListColumnPrefs: DEFAULT_NOTES_COLUMN_PREFS,
+  listDensity: LIST_DENSITY_DEFAULT,
+  listPageSize: LIST_PAGE_SIZE_DEFAULT,
   notesFoldersInitialCollapseDone: false,
   notesCollapseFoldersOnStartup: true,
   notesTreeGuideLines: false,
@@ -1428,6 +1444,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   resetNotesListColumns: () => set({ notesListColumnPrefs: DEFAULT_NOTES_COLUMN_PREFS }),
   setNotesListShowHeader: (show) =>
     set((s) => ({ notesListColumnPrefs: { ...s.notesListColumnPrefs, showHeader: show } })),
+  setListDensity: (density) => set({ listDensity: sanitizeListDensity(density) }),
+  setListPageSize: (size) => set({ listPageSize: sanitizeListPageSize(size) }),
   markNotesFoldersInitialCollapseDone: () =>
     set({ notesFoldersInitialCollapseDone: true }),
   setNotesCollapseFoldersOnStartup: (on) =>
@@ -1997,6 +2015,11 @@ export async function loadThemeFromStore() {
     if (nlcp != null) {
       useAppStore.setState({ notesListColumnPrefs: sanitizeNotesColumnPrefs(nlcp) });
     }
+    // 老用户没有这两个键：落到默认的「标准」和每页 30
+    useAppStore.setState({
+      listDensity: sanitizeListDensity(await store.get<unknown>("listDensity")),
+      listPageSize: sanitizeListPageSize(await store.get<unknown>("listPageSize")),
+    });
     const nficd = await store.get<boolean>("notesFoldersInitialCollapseDone");
     if (typeof nficd === "boolean") {
       useAppStore.setState({ notesFoldersInitialCollapseDone: nficd });
@@ -2050,6 +2073,7 @@ export async function loadThemeFromStore() {
     applyEditorTypography(useAppStore.getState());
     applyEditorLayout(useAppStore.getState());
     applyUiScale(useAppStore.getState().uiScale);
+    applyListDensity(useAppStore.getState().listDensity);
     void applyThemeOverrides(useAppStore.getState());
     // 放行写盘。必须在 finally 里：加载抛错也要放行，否则用户这次会话的所有
     // 设置改动都静默丢失（比"读到默认值"更糟）。
@@ -2123,6 +2147,8 @@ function collectPersistPayload(state: AppStore): Record<string, unknown> {
     notesUncategorizedExpanded: state.notesUncategorizedExpanded,
     notesShowOnlyFolders: state.notesShowOnlyFolders,
     notesListColumnPrefs: state.notesListColumnPrefs,
+    listDensity: state.listDensity,
+    listPageSize: state.listPageSize,
     notesFoldersInitialCollapseDone: state.notesFoldersInitialCollapseDone,
     notesCollapseFoldersOnStartup: state.notesCollapseFoldersOnStartup,
     notesTreeGuideLines: state.notesTreeGuideLines,
@@ -2284,6 +2310,15 @@ useAppStore.subscribe((state) => {
   if (state.uiScale !== _prevUiScale) {
     _prevUiScale = state.uiScale;
     applyUiScale(state.uiScale);
+  }
+});
+
+// 列表密度变化时实时同步 :root data-list-density
+let _prevListDensity = "";
+useAppStore.subscribe((state) => {
+  if (state.listDensity !== _prevListDensity) {
+    _prevListDensity = state.listDensity;
+    applyListDensity(state.listDensity);
   }
 });
 

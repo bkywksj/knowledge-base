@@ -80,6 +80,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useTabsStore } from "@/store/tabs";
 import { useAppStore } from "@/store";
+import { LIST_DENSITY_OPTIONS, LIST_PAGE_SIZE_OPTIONS, type ListDensity } from "@/lib/listDensity";
 import { contentToPreview, relativeTime, extractFirstImageSrc } from "@/lib/utils";
 import { resolveAssetSrc, parseKbAsset, isEncryptedAsset } from "@/lib/assetUrl";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -688,17 +689,19 @@ function DesktopNoteListPage() {
   const [searchParams] = useSearchParams();
   const { token } = antdTheme.useToken();
 
+  /** 列表视图每页条数：和回收站、隐藏笔记共用一个持久化设置（见 lib/listDensity） */
+  const listPageSize = useAppStore((s) => s.listPageSize);
+  const setListPageSize = useAppStore((s) => s.setListPageSize);
+  const listDensity = useAppStore((s) => s.listDensity);
   const [data, setData] = useState<PageResult<Note>>({
     items: [],
     total: 0,
     page: 1,
-    page_size: 12,
+    page_size: listPageSize,
   });
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState(searchParams.get("keyword") || "");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
-  /** 列表视图每页条数，受分页组件 sizeChanger 控制；初始 12 */
-  const [listPageSize, setListPageSize] = useState(12);
   /** 列表排序模式（仅 list 视图生效）。"custom" 才启用拖拽排序 */
   const [sortBy, setSortBy] = useState<"default" | "custom" | "created" | "title">(
     "default",
@@ -1669,7 +1672,7 @@ function DesktopNoteListPage() {
         total={data.total}
         // 时间线固定每页 50 条（按日期分组需要一屏多看几天），不提供条数切换
         showSizeChanger={viewMode !== "timeline"}
-        pageSizeOptions={["12", "20", "50", "100", "200"]}
+        pageSizeOptions={LIST_PAGE_SIZE_OPTIONS.map(String)}
         onChange={(page, size) => {
           setSelectedIds([]);
           if (size !== listPageSize) {
@@ -1757,6 +1760,20 @@ function DesktopNoteListPage() {
                   {NOTES_COLUMN_LABELS[k]}
                 </Checkbox>
               ))}
+              <Divider style={{ margin: "4px 0" }} />
+              <div className="kb-density-pick">
+                <span>行距</span>
+                <Segmented
+                  size="small"
+                  value={listDensity}
+                  onChange={(v) => useAppStore.getState().setListDensity(v as ListDensity)}
+                  options={LIST_DENSITY_OPTIONS.map((o) => ({
+                    value: o.value,
+                    label: o.label,
+                    title: o.hint,
+                  }))}
+                />
+              </div>
               <Divider style={{ margin: "4px 0" }} />
               <Checkbox
                 checked={colPrefs.showHeader}

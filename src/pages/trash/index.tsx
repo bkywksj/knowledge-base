@@ -15,6 +15,8 @@ import { useTabsStore } from "@/store/tabs";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { relativeTime } from "@/lib/utils";
 import { daysUntilPurge, purgeLabel } from "@/lib/trashPurge";
+import { useAppStore } from "@/store";
+import { LIST_PAGE_SIZE_OPTIONS } from "@/lib/listDensity";
 import type { Folder, PageResult, TrashAutoPurge, TrashNote } from "@/types";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import {
@@ -32,10 +34,12 @@ function DesktopTrashPage() {
     items: [],
     total: 0,
     page: 1,
-    page_size: 12,
+    page_size: useAppStore.getState().listPageSize,
   });
   const [loading, setLoading] = useState(false);
-  const [pageSize, setPageSize] = useState(12);
+  // 和笔记页、隐藏笔记共用每页条数（见 lib/listDensity）
+  const pageSize = useAppStore((s) => s.listPageSize);
+  const setPageSize = useAppStore((s) => s.setListPageSize);
   /** 选中的笔记 id（仅当前页生效；翻页/批量操作后清空） */
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
@@ -395,7 +399,7 @@ function DesktopTrashPage() {
               total={data.total}
               showTotal={(total) => `共 ${total} 篇`}
               showSizeChanger
-              pageSizeOptions={["12", "20", "50", "100", "200"]}
+              pageSizeOptions={LIST_PAGE_SIZE_OPTIONS.map(String)}
               onChange={(page, size) => {
                 if (size !== pageSize) setPageSize(size);
                 loadTrash(page, size);

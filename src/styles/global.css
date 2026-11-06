@@ -10054,3 +10054,76 @@ main.ant-layout-content:has(.kb-home) {
 .kb-quick-img:hover button {
   opacity: 1;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   列表行距（设置里的「列表行距」/ 笔记页「列」按钮）：:root[data-list-density]
+   宽松 = 原来的样子（固定两行高 56），这里只覆盖紧凑和标准。
+   标准：有摘要 44、没摘要只占一行 32；紧凑：不显示摘要，每行 30。
+   ═══════════════════════════════════════════════════════════ */
+.kb-density-pick {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12.5px;
+}
+
+/* 笔记页列表视图（卡片 / 时间线不受影响：它们不在表格里） */
+:root[data-list-density="standard"] .notes-list-flat .ant-table-tbody > tr > td,
+:root[data-list-density="compact"] .notes-list-flat .ant-table-tbody > tr > td {
+  height: 32px;
+  padding-top: 3px !important;
+  padding-bottom: 3px !important;
+}
+:root[data-list-density="compact"] .notes-list-flat .ant-table-tbody > tr > td {
+  height: 30px;
+  padding-top: 2px !important;
+  padding-bottom: 2px !important;
+}
+:root[data-list-density="compact"] .notes-list-flat .kb-note-preview {
+  display: none;
+}
+:root[data-list-density="compact"] .notes-list-flat .kb-cico.sm {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+}
+
+/* 回收站 / 隐藏笔记 / 标签页关联笔记：同一套 .li 行 */
+:root[data-list-density="standard"] .kb-hidden-row,
+:root[data-list-density="standard"] .kb-tag-notes .kb-sr-row {
+  min-height: 32px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+:root[data-list-density="compact"] .kb-hidden-row,
+:root[data-list-density="compact"] .kb-tag-notes .kb-sr-row {
+  min-height: 30px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+:root[data-list-density="compact"] .kb-hidden-row .kb-sr-snippet,
+:root[data-list-density="compact"] .kb-tag-notes .kb-sr-snippet {
+  display: none;
+}
+
+/* 搜索页右列：本来就只有一行 */
+:root[data-list-density="standard"] .kb-browse-files .kb-sr-row {
+  min-height: 32px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+:root[data-list-density="compact"] .kb-browse-files .kb-sr-row {
+  min-height: 30px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+/* 紧凑时图标块一起缩，否则 26 的图标会把行撑回 30 以上 */
+:root[data-list-density="compact"] .kb-hidden-row .kb-sr-ico,
+:root[data-list-density="compact"] .kb-tag-notes .kb-sr-ico,
+:root[data-list-density="compact"] .kb-browse-files .kb-sr-ico {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+}

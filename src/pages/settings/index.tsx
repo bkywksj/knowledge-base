@@ -57,6 +57,7 @@ import {
   type LayoutPresetId,
 } from "@/store";
 import { importWordFiles } from "@/lib/wordImport";
+import { LIST_DENSITY_OPTIONS, type ListDensity } from "@/lib/listDensity";
 import { beginImportJob, beginTrackedImportJob } from "@/lib/importJob";
 import { Checkbox } from "antd";
 import { useUpdater } from "@/components/updater/UpdaterProvider";
@@ -474,6 +475,8 @@ function DesktopSettingsPage() {
   const uiScale = useAppStore((s) => s.uiScale);
   const setUiScale = useAppStore((s) => s.setUiScale);
   const resetUiScale = useAppStore((s) => s.resetUiScale);
+  const listDensity = useAppStore((s) => s.listDensity);
+  const setListDensity = useAppStore((s) => s.setListDensity);
   const recommendedScale = useMemo(() => suggestUiScale(), []);
 
   // 主题自定义（强调色 / 背景图 / 遮罩）
@@ -1702,6 +1705,24 @@ function DesktopSettingsPage() {
             options={UI_SCALE_OPTIONS.map((s) => ({
               value: s,
               label: `${Math.round(s * 100)}%${s === 1.0 ? "（默认）" : ""}`,
+            }))}
+          />
+        </div>
+        <div className="flex items-center justify-between py-1">
+          <div>
+            <div>列表行距</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              笔记列表、回收站、隐藏笔记、标签页和搜索页的笔记列表；笔记页「列」按钮里也能切换
+            </Text>
+          </div>
+          <Select
+            value={listDensity}
+            onChange={(v: ListDensity) => setListDensity(v)}
+            style={{ width: 140 }}
+            options={LIST_DENSITY_OPTIONS.map((o) => ({
+              value: o.value,
+              label: o.value === "standard" ? `${o.label}（默认）` : o.label,
+              title: o.hint,
             }))}
           />
         </div>
