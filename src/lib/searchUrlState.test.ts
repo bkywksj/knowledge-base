@@ -16,6 +16,7 @@ describe("searchUrlState", () => {
       updated: ["2026-10-01", "2026-10-19"] as [string, string],
       created: null,
       titleOnly: true,
+      uncategorized: true,
     };
     const sp = writeSearchUrl(new URLSearchParams("type=notes"), state);
     expect(sp.get("type")).toBe("notes"); // Tab 参数保留
@@ -23,7 +24,7 @@ describe("searchUrlState", () => {
   });
 
   it("空条件不写键，已有的旧键会被删掉", () => {
-    const sp = writeSearchUrl(new URLSearchParams("q=old&f=1&to=1"), {
+    const sp = writeSearchUrl(new URLSearchParams("q=old&f=1&to=1&uc=1"), {
       q: "",
       folders: [],
       tags: [],
@@ -31,6 +32,7 @@ describe("searchUrlState", () => {
       updated: null,
       created: null,
       titleOnly: false,
+      uncategorized: false,
     });
     expect(sp.toString()).toBe("");
   });

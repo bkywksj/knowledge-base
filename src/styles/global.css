@@ -8532,6 +8532,150 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   color: var(--kb-text-secondary);
 }
 
+/* 搜索页空状态三列：标签 · 文件夹 · 文件，每列内部单独滚动。
+   用容器查询而不是媒体查询：侧栏展开时窗口没变，内容区却窄了 */
+.kb-browse-wrap {
+  flex: 1;
+  min-height: 0;
+  container-type: inline-size;
+}
+.kb-browse {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 10px;
+}
+.kb-browse.no-tags {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}
+.kb-browse-col {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: var(--kb-bg-raised, #fff);
+  box-shadow: var(--kb-shadow-card);
+}
+.kb-browse-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 14px 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--kb-text-secondary);
+}
+.kb-browse-head > b {
+  font-weight: 500;
+  color: var(--kb-text-tertiary);
+}
+.kb-browse-heading {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.kb-browse-back {
+  flex: none;
+  margin-left: auto;
+  font-weight: 400;
+  font-size: 12px;
+}
+.kb-browse-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 6px 8px;
+}
+.kb-browse .ant-tree {
+  background: transparent;
+  color: var(--kb-text-primary);
+}
+.kb-browse .ant-tree-node-content-wrapper {
+  min-width: 0;
+}
+/* antd 的悬停规则带 :not()，优先级高，选择器要写到同样长才盖得过 */
+.kb-browse .ant-tree .ant-tree-treenode:not(.ant-tree-treenode-disabled) .ant-tree-node-content-wrapper:hover {
+  background: var(--kb-bg-hover);
+  color: var(--kb-text-primary);
+}
+.kb-browse .ant-tree .ant-tree-treenode:not(.ant-tree-treenode-disabled) .ant-tree-node-content-wrapper.ant-tree-node-selected {
+  background: var(--kb-primary-light);
+  color: var(--kb-primary);
+}
+.kb-browse .ant-tree-switcher {
+  color: var(--kb-text-secondary);
+}
+.kb-browse-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.kb-browse-node-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.kb-browse-node > b {
+  flex: none;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--kb-text-tertiary);
+}
+.kb-browse-files .kb-sr-row {
+  min-height: 44px;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: none;
+}
+.kb-browse-files .kb-sr-row.is-active {
+  background: var(--kb-bg-hover);
+  box-shadow: inset 0 0 0 1px var(--kb-primary);
+}
+.kb-browse-files .kb-sr-folder {
+  max-width: 130px;
+}
+.kb-browse-files .kb-sr-folder > svg {
+  flex: none;
+}
+.kb-browse-files .kb-sr-folder > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@container (max-width: 760px) {
+  .kb-browse,
+  .kb-browse.no-tags {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: 200px minmax(0, 1fr);
+  }
+  .kb-browse.no-tags {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .kb-browse-files {
+    grid-column: 1 / -1;
+  }
+  .kb-browse-files .kb-sr-folder {
+    max-width: 100px;
+  }
+}
+@container (max-width: 480px) {
+  .kb-browse {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 150px 150px minmax(0, 1fr);
+  }
+  .kb-browse.no-tags {
+    grid-template-rows: 150px minmax(0, 1fr);
+  }
+  .kb-browse-files .kb-sr-folder {
+    display: none;
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════
    v4 对齐第三轮·标签：数值取自原型实测（.pg-h / .card / 编辑标签 .card-b / 侧栏 .ph .search .row .drop）
    ═══════════════════════════════════════════════════════════ */

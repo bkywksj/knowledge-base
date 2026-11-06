@@ -3,7 +3,6 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Input,
   Button,
-  Typography,
   Empty,
   Spin,
   Segmented,
@@ -13,6 +12,7 @@ import {
   Switch,
   Popover,
   theme as antdTheme,
+  type InputRef,
 } from "antd";
 import {
   Search as SearchIcon,
@@ -37,6 +37,8 @@ import { useAppStore } from "@/store";
 import { highlightText, highlightSnippet } from "@/lib/highlight";
 import { buildFolderPath } from "@/lib/folderPath";
 import { relativeTime } from "@/lib/utils";
+import { resolveBrowseSelection, type BrowseSelection } from "@/lib/searchBrowse";
+import { SearchBrowse, type SearchBrowseHandle } from "./SearchBrowse";
 import type {
   SearchResult,
   TaskSearchHit,
@@ -45,8 +47,6 @@ import type {
   Tag,
   NoteType,
 } from "@/types";
-
-const { Text } = Typography;
 
 /** 笔记结果单行高度估算（含 title + snippet + 日期三行 + 上下 padding） */
 const ESTIMATED_ROW_HEIGHT = 76;
@@ -155,6 +155,10 @@ function DesktopSearchPage() {
     initialUrl.created ? toDayRange(initialUrl.created) : null,
   );
   const [titleOnly, setTitleOnly] = useState(initialUrl.titleOnly);
+  const [uncategorized, setUncategorized] = useState(initialUrl.uncategorized);
+  const inputRef = useRef<InputRef>(null);
+  const browseRef = useRef<SearchBrowseHandle>(null);
+  const enabledViews = useAppStore((s) => s.enabledViews);
 
   // v4：筛选条搜索后常驻，结果行还要显示文件夹路径 → 进页面就拉文件夹树和标签（两张小表）
   useEffect(() => {
@@ -244,6 +248,7 @@ function DesktopSearchPage() {
     setDateRange(nextDate);
     setCreatedRange(nextCreated);
     setTitleOnly(next.titleOnly);
+    setUncategorized(next.uncategorized);
     doSearch(
       urlQ,
       buildSearchFilters(
@@ -285,6 +290,7 @@ function DesktopSearchPage() {
       updated: day(dateRange),
       created: day(createdRange),
       titleOnly,
+      uncategorized,
     });
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true });
@@ -297,6 +303,7 @@ function DesktopSearchPage() {
     dateRange,
     createdRange,
     titleOnly,
+    uncategorized,
     searchParams,
     setSearchParams,
   ]);
@@ -341,10 +348,39 @@ function DesktopSearchPage() {
       setSearched(false);
       return;
     }
+    // 搜索筛选表达不了「未分类」，继续留着选中会让人以为结果被限定在未分类里
+    setUncategorized(false);
     timerRef.current = setTimeout(() => {
       doSearch(value.trim());
     }, 300);
   }
+
+  /**
+   * 三列选中项就存在筛选条件里（规则见 resolveBrowseSelection）。
+   * 选完把焦点还给搜索框：可以接着打字缩小范围，也可以直接用方向键选文件。
+   */
+  function selectBrowse(next: BrowseSelection) {
+    setUncategorized(next.kind === "uncategorized");
+    setPickedFolders(next.kind === "folder" ? [next.id] : []);
+    setPickedTags(next.kind === "tag" ? [next.id] : []);
+    inputRef.current?.focus();
+  }
+
+  /** 文件夹或标签被删后 URL 里可能还留着旧 id，这时回到最近列表，别显示一个空列表 */
+  const browseSelection = useMemo<BrowseSelection>(() => {
+    const picked = resolveBrowseSelection({
+      uncategorized,
+      folders: pickedFolders,
+      tags: pickedTags,
+    });
+    if (picked.kind === "folder" && folders.length > 0 && buildFolderPath(folders, picked.id).length === 0) {
+      return { kind: "recent" };
+    }
+    if (picked.kind === "tag" && tags.length > 0 && !tags.some((t) => t.id === picked.id)) {
+      return { kind: "recent" };
+    }
+    return picked;
+  }, [uncategorized, pickedFolders, pickedTags, folders, tags]);
 
   /** 切换 Tab：写回 URL，保持 ?q= 不变以维持历史/分享链接 */
   function setScope(next: Scope) {
@@ -410,9 +446,18 @@ function DesktopSearchPage() {
               }
             />
           }
+          ref={inputRef}
           value={query}
           onChange={(e) => handleInputChange(e.target.value)}
-          onPressEnter={() => handleInputChange(query)}
+          onKeyDown={(e) => {
+            if (query.trim() || (e.key !== "ArrowDown" && e.key !== "ArrowUp")) return;
+            e.preventDefault();
+            browseRef.current?.move(e.key === "ArrowDown" ? 1 : -1);
+          }}
+          onPressEnter={() => {
+            if (!query.trim() && browseRef.current?.openActive()) return;
+            handleInputChange(query);
+          }}
           allowClear
           autoFocus={!query}
         />
@@ -580,12 +625,14 @@ function DesktopSearchPage() {
           <Spin size="large" tip="搜索中..." />
         </div>
       ) : !searched ? (
-        <div className="flex flex-col items-center py-12">
-          <SearchIcon size={48} style={{ opacity: 0.15 }} />
-          <Text type="secondary" className="mt-4" style={{ fontSize: 14 }}>
-            输入关键词同时搜索笔记与待办
-          </Text>
-        </div>
+        <SearchBrowse
+          ref={browseRef}
+          folders={folders}
+          tags={tags}
+          showTags={enabledViews.has("tags")}
+          selection={browseSelection}
+          onSelect={selectBrowse}
+        />
       ) : totalHits === 0 ? (
         <Empty
           description={`未找到与 "${query}" 相关的内容`}
