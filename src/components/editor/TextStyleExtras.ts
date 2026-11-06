@@ -324,7 +324,13 @@ function makeIndentMarkdownStorage(parentStorage: Record<string, unknown>) {
         if (name === "heading") {
           const level = Math.max(1, Number(node.attrs?.level || 1));
           state.write("#".repeat(level) + " ");
+          // `#` 标题只能占一行，换行不能写成默认的 `\` + 换行，否则重新打开后 `\` 变成
+          // 普通字符、下一行掉出标题。借 tiptap-markdown 给表格单元格用的 inTable 开关
+          // 让 hardBreak 输出 <br>，重读时还原成同一个标题。
+          const wasInTable = state.inTable;
+          state.inTable = true;
           state.renderInline(node);
+          state.inTable = wasInTable;
           state.closeBlock(node);
           return;
         }
