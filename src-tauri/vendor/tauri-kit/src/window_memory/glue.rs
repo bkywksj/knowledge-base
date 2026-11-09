@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use tauri::{window::Monitor, AppHandle, Manager, PhysicalPosition, PhysicalSize, WindowEvent};
 
-use super::logic::{big_enough, centered_rel, default_rect, find_target, layout_key, legacy_usable, place_in, plan, same_screen, should_record, signature, Memory, MonitorKey, Placement, Plan};
+use super::logic::{big_enough, centered_rel, default_rect, find_target, layout_key, legacy_usable, minimized_around_topology, place_in, plan, same_screen, should_record, signature, Memory, MonitorKey, Placement, Plan};
 
 // 主窗口挂了子 webview 后 get_webview_window 会静默返回 None，这类应用开 `child-webviews` 按窗口查找
 #[cfg(feature = "child-webviews")]
@@ -47,6 +47,8 @@ const DRAG_GRACE_MS: u64 = 1500;
 const CORRECT_DELAYS_MS: [u64; 2] = [TOPOLOGY_SETTLE_MS + 200, 6000];
 /// 记录写盘的防抖。
 const SAVE_DEBOUNCE_MS: u64 = 800;
+/// 屏幕变化后那两次纠偏的 reason，同时用来区分「这次纠偏是屏幕变化引起的」。
+const TOPOLOGY_REASON: &str = "显示器变化沉降后";
 /// 「最小化 → 恢复」后延迟多久纠偏（等 tao / 系统把这轮还原的几何下发完）。
 const EVENT_CORRECT_DELAY_MS: u64 = 120;
 
@@ -78,6 +80,8 @@ struct Inner {
     memory: Memory,
     /// 上一次事件时窗口是否最小化 —— 用来识别「最小化 / 恢复」的切换
     was_minimized: bool,
+    /// 最近一次变成最小化的时间，用来判断是不是屏幕变化引起的
+    minimized_at: Option<Instant>,
     /// 有一次纠偏排着还没做：期间的位置都是系统还原出来的，不能记成用户态
     pending_correct: u32,
     /// 显示器拓扑签名，变了 = 插拔 / 换主屏 / 改分辨率
@@ -97,6 +101,10 @@ impl Inner {
     /// 这时多半是 Win+Shift+方向键）。macOS / Linux 没有拖动信号，只靠后一条。
     fn user_moved(&self) -> bool {
         self.dragging_now() || self.topology_changed_at.is_none_or(|t| t.elapsed() >= Duration::from_millis(SYSTEM_MOVE_QUIET_MS))
+    }
+
+    fn minimized_by_topology(&self) -> bool {
+        minimized_around_topology(self.minimized_at.map(|t| t.elapsed()), self.topology_changed_at.map(|t| t.elapsed()))
     }
 
     /// 用户正在拖或刚拖完。
@@ -328,11 +336,18 @@ fn schedule_correct(app: &AppHandle, delay_ms: u64, reason: &'static str) {
         let _ = app.run_on_main_thread(move || {
             with(&handle, |s| s.pending_correct = s.pending_correct.saturating_sub(1));
             let Some(win) = main_window(&handle) else { return };
+            // 显示器断开时系统可能把窗口最小化，这不是用户的操作，恢复回来（不抢焦点）
+            if reason == TOPOLOGY_REASON && win.is_minimized().unwrap_or(false) && with(&handle, |s| s.minimized_by_topology()).unwrap_or(false) {
+                note(&handle, format!("[winpos] 屏幕变化时窗口被最小化，恢复：{}", describe_window(&win)));
+                restore_without_focus(&win);
+            }
             if win.is_visible().unwrap_or(false) && !win.is_minimized().unwrap_or(false) {
                 // 挪了的话随后的 Moved 会记下新位置；没挪就把当前位置补记一次
                 if !correct(&win, reason) {
                     capture(&win, reason, false);
                 }
+                #[cfg(windows)]
+                resync_webview_scale(&win);
             } else {
                 note(&handle, format!("[winpos] {reason}：窗口未显示，{}（等唤回时再纠偏）", describe_window(&win)));
             }
@@ -365,12 +380,102 @@ fn check_topology(win: &MainWindow) {
         note(app, format!("[winpos] 显示器拓扑变化：[{}]；窗口此刻 {}", describe_list(&keys, primary_key(win).as_ref()), describe_window(win)));
         // 窗口若可见且不在这个组合该在的屏上，搬回去（最小化 / 隐藏的等唤回时再纠）
         for delay in CORRECT_DELAYS_MS {
-            schedule_correct(app, delay, "显示器变化沉降后");
+            schedule_correct(app, delay, TOPOLOGY_REASON);
         }
     }
 }
 
 // ───────────────────────── Windows 消息 ─────────────────────────
+
+#[cfg(windows)]
+fn restore_without_focus(win: &MainWindow) {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
+    if let Ok(hwnd) = win.hwnd() {
+        unsafe { ShowWindow(hwnd.0 as HWND, SW_SHOWNOACTIVATE) };
+    }
+}
+
+#[cfg(not(windows))]
+fn restore_without_focus(win: &MainWindow) {
+    let _ = win.unminimize();
+}
+
+/// 把 WebView 的渲染比例同步成窗口当前的真实缩放。
+///
+/// 显示器切换时窗口可能在缩放不同的屏之间被系统搬来搬去，WebView2 的比例会停在旧值
+/// （实测窗口在 200% 的屏上，内容还按 150% 渲染，界面元素小了四分之一），重启才恢复。
+#[cfg(windows)]
+fn resync_webview_scale(win: &MainWindow) {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+    let Ok(hwnd) = win.hwnd() else { return };
+    // 用系统的实时值：tao 缓存的 scale_factor 在这种时候也可能是旧的
+    let dpi = unsafe { GetDpiForWindow(hwnd.0 as HWND) };
+    if dpi == 0 {
+        return;
+    }
+    let scale = dpi as f64 / 96.0;
+    let app = win.app_handle().clone();
+    for_each_webview(win, move |webview| apply_webview_scale(&app, webview, scale));
+}
+
+/// 🔴 这里按 COM 虚表直接调用，不依赖 webview2-com：它的版本跟着各应用的 wry 走，
+/// 库里依赖固定版本的话类型对不上，编译不过。COM 接口的 ID 和方法顺序是固定不变的 ABI。
+/// 槽位按 ICoreWebView2Controller3 数：IUnknown 0..=2，Controller 3..=25，Controller2 26..=27，
+/// Controller3 从 28 开始（get_RasterizationScale 28、put 29、put_ShouldDetectMonitorScaleChanges 31）。
+#[cfg(windows)]
+fn apply_webview_scale(app: &AppHandle, webview: tauri::webview::PlatformWebview, scale: f64) {
+    use std::ffi::c_void;
+    use std::mem::{size_of, size_of_val, transmute, transmute_copy};
+    use windows_sys::core::{GUID, HRESULT};
+
+    const IID_CONTROLLER3: GUID = GUID::from_u128(0xf9614724_5d2b_41dc_aef7_73d62b51543b);
+    type QueryInterface = unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> HRESULT;
+    type Release = unsafe extern "system" fn(*mut c_void) -> u32;
+    type GetScale = unsafe extern "system" fn(*mut c_void, *mut f64) -> HRESULT;
+    type PutScale = unsafe extern "system" fn(*mut c_void, f64) -> HRESULT;
+    type PutDetect = unsafe extern "system" fn(*mut c_void, i32) -> HRESULT;
+
+    let controller = webview.controller();
+    if size_of_val(&controller) != size_of::<*mut c_void>() {
+        return;
+    }
+    unsafe {
+        // 只借用指针，引用计数仍归 controller 管；QueryInterface 拿到的 c3 要自己 Release
+        let raw: *mut c_void = transmute_copy(&controller);
+        let vtbl = |p: *mut c_void| *(p as *const *const *const c_void);
+        let query: QueryInterface = transmute(*vtbl(raw).add(0));
+        let mut c3: *mut c_void = std::ptr::null_mut();
+        if query(raw, &IID_CONTROLLER3, &mut c3) < 0 || c3.is_null() {
+            return;
+        }
+        let get: GetScale = transmute(*vtbl(c3).add(28));
+        let mut current = 0f64;
+        if get(c3, &mut current) >= 0 && (current - scale).abs() >= 0.001 {
+            note(app, format!("[winpos] WebView 缩放停在 {current}，同步成窗口实际的 {scale}"));
+            let put: PutScale = transmute(*vtbl(c3).add(29));
+            put(c3, scale);
+            // 设比例会关掉自动检测，要重新打开，否则之后拖到别的屏就不跟了
+            let detect: PutDetect = transmute(*vtbl(c3).add(31));
+            detect(c3, 1);
+        }
+        let release: Release = transmute(*vtbl(c3).add(2));
+        release(c3);
+    }
+}
+
+#[cfg(all(windows, feature = "child-webviews"))]
+fn for_each_webview(win: &MainWindow, f: impl Fn(tauri::webview::PlatformWebview) + Clone + Send + 'static) {
+    for webview in win.webviews() {
+        let _ = webview.with_webview(f.clone());
+    }
+}
+
+#[cfg(all(windows, not(feature = "child-webviews")))]
+fn for_each_webview(win: &MainWindow, f: impl Fn(tauri::webview::PlatformWebview) + Clone + Send + 'static) {
+    let _ = win.with_webview(f);
+}
 
 /// 收到 WM_DISPLAYCHANGE：窗口没动时不会有窗口事件，靠这个才知道屏幕变了。
 #[cfg(windows)]
@@ -517,6 +622,8 @@ pub fn correct_before_show(app: &AppHandle, source: &str) {
         // 隐藏（收托盘）或本就可见：先摆好位置再 show，无跳动。
         // 最小化的窗口此刻坐标是 (-32000,-32000)，判不出在哪块屏 —— 交给 unminimize 触发的「最小化 → 恢复」事件分支去纠。
         correct(&win, source);
+        #[cfg(windows)]
+        resync_webview_scale(&win);
     }
 }
 
@@ -561,7 +668,13 @@ pub fn on_window_event(app: &AppHandle, event: &WindowEvent) {
 
     let minimized = win.is_minimized().unwrap_or(false);
     let visible = win.is_visible().unwrap_or(false);
-    let was_minimized = with(app, |s| std::mem::replace(&mut s.was_minimized, minimized)).unwrap_or(minimized);
+    let was_minimized = with(app, |s| {
+        if minimized && !s.was_minimized {
+            s.minimized_at = Some(Instant::now());
+        }
+        std::mem::replace(&mut s.was_minimized, minimized)
+    })
+    .unwrap_or(minimized);
     if was_minimized && !minimized {
         note(app, format!("[winpos] 从最小化恢复：{}", describe_window(&win)));
         schedule_correct(app, EVENT_CORRECT_DELAY_MS, "最小化恢复");

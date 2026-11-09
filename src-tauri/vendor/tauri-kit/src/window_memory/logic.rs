@@ -1,6 +1,7 @@
 //! 纯逻辑：显示器组合、认屏、「这次要不要记」「窗口该放哪」。不依赖 Tauri，可单测。
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +11,8 @@ const MAX_LAYOUTS: usize = 16;
 const EDGE_SLACK: i32 = 16;
 /// 判断窗口「没变」的容差（物理像素）：边框和 DPI 换算的舍入会差几个像素，不值得挪一次。
 const RECT_TOLERANCE: i64 = 4;
+/// 最小化最早可以比屏幕变化提前多久，仍算屏幕变化引起的（系统先最小化、后发显示变化通知）。
+const MINIMIZE_BEFORE_TOPOLOGY: Duration = Duration::from_secs(2);
 
 /// 一块显示器的身份（名字 + 物理像素矩形）。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -151,6 +154,16 @@ pub fn plan(rec: Option<&Placement>, keys: &[MonitorKey], primary: Option<&Monit
 /// 旧记录分不清位置是用户选的还是系统挪的（正是要修的问题），在副屏上的宁可不用，窗口回主屏。
 pub fn legacy_usable(old: &Placement, keys: &[MonitorKey], primary: Option<&MonitorKey>) -> bool {
     find_target(&old.monitor, keys).is_some_and(|t| primary == Some(t))
+}
+
+/// 窗口是不是在屏幕变化前后被最小化的（`*_ago` 是距现在多久）。
+/// 显示器断开时系统可能把上面的窗口最小化，这不是用户的操作，应该恢复；
+/// 用户早就最小化好的窗口不在此列，所以只认屏幕变化前 2 秒以内才最小化的。
+pub fn minimized_around_topology(minimized_ago: Option<Duration>, topology_ago: Option<Duration>) -> bool {
+    match (minimized_ago, topology_ago) {
+        (Some(m), Some(t)) => m <= t + MINIMIZE_BEFORE_TOPOLOGY,
+        _ => false,
+    }
 }
 
 /// 窗口逻辑尺寸是否达到配置的最小值。合盖 / 休眠时的中间态可能比它小，这种几何不记。差 1 以内算浮点误差。
@@ -301,6 +314,17 @@ mod tests {
         assert!(legacy_usable(&at(&laptop(), 1), &dual, Some(&laptop())));
         assert!(!legacy_usable(&at(&external_beside(), 1), &dual, Some(&laptop())));
         assert!(!legacy_usable(&at(&external_alone(), 1), &[laptop()], Some(&laptop())));
+    }
+
+    /// 合盖时被系统最小化要恢复；用户早就最小化好的窗口不动。
+    #[test]
+    fn only_minimizes_around_a_screen_change_count_as_system_ones() {
+        let s = Duration::from_secs;
+        assert!(minimized_around_topology(Some(s(3)), Some(s(4))), "屏幕变化之后才最小化");
+        assert!(minimized_around_topology(Some(s(5)), Some(s(4))), "屏幕变化前 1 秒最小化");
+        assert!(!minimized_around_topology(Some(s(60)), Some(s(4))), "用户一分钟前就最小化了");
+        assert!(!minimized_around_topology(None, Some(s(4))));
+        assert!(!minimized_around_topology(Some(s(3)), None), "没有发生过屏幕变化");
     }
 
     #[test]
