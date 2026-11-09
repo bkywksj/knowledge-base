@@ -26,7 +26,6 @@ pub mod db_recovery;
 pub mod emergency_window;
 // 主窗口「所在显示器」记忆与纠偏：唤回 / 插拔副屏后放回用户上次所在的屏（仅桌面端）
 #[cfg(desktop)]
-pub mod main_window_placement;
 // Excel 解析仅桌面端：calamine 在 Android target 编译失败
 // （T-M013 移动端导入改单文件模式后再决定是否引入）
 #[cfg(desktop)]

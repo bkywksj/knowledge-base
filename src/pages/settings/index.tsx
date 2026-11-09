@@ -242,7 +242,7 @@ function DesktopSettingsPage() {
   const [startMinimized, setStartMinimized] = useState(false);
   const [autostartLoading, setAutostartLoading] = useState(false);
   const [startMinimizedLoading, setStartMinimizedLoading] = useState(false);
-  // 恢复窗口默认大小（window-state 插件会记住尺寸，这是唯一的退路）
+  // 恢复窗口默认大小（窗口尺寸会被记住，这是唯一的退路）
   const [resettingWindowSize, setResettingWindowSize] = useState(false);
   // 文件夹自动导入：配置存 app_config，后台 folder_watch 循环每 5 秒读一次
   const [watchEnabled, setWatchEnabled] = useState(false);
@@ -770,8 +770,8 @@ function DesktopSettingsPage() {
 
   /**
    * 恢复窗口默认大小。Rust 侧会退出最大化 → 按当前主显示器重算尺寸 → 居中 →
-   * 立刻把新尺寸写进 window-state 存档（不落盘的话用户点完直接关窗口，
-   * 插件会把关闭那一刻的尺寸写回去，看着像没生效）。
+   * 立刻把新尺寸写进窗口记录（不落盘的话用户点完直接关窗口，
+   * 下次启动又会回到旧尺寸，看着像没生效）。
    */
   async function handleResetWindowSize() {
     setResettingWindowSize(true);

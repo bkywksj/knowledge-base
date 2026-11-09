@@ -209,7 +209,7 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                         let _ = window.hide();
                     } else {
                         // 唤回前台，并把窗口纠回用户上次所在的显示器
-                        crate::services::main_window_placement::show_main(app, "托盘左键");
+                        tauri_kit::window_memory::show_main(app, "托盘左键");
                     }
                 }
             }
@@ -263,7 +263,7 @@ fn add_dev_badge(icon: &tauri::image::Image<'_>) -> tauri::image::Image<'static>
     tauri::image::Image::new_owned(rgba, w, h)
 }
 
-/// 把主窗口从最小化/隐藏中恢复并聚焦（含显示器纠偏，见 services/main_window_placement.rs）
+/// 把主窗口从最小化/隐藏中恢复并聚焦（含显示器纠偏，见 tauri_kit::window_memory）
 fn bring_main_to_front(app: &tauri::AppHandle) {
-    crate::services::main_window_placement::show_main(app, "托盘菜单");
+    tauri_kit::window_memory::show_main(app, "托盘菜单");
 }

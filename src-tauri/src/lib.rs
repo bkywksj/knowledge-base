@@ -194,21 +194,6 @@ fn app_data_dir_name() -> String {
     }
 }
 
-/// window-state 插件的存档文件名（相对 app_config_dir）。
-///
-/// dev / prod 必须分开：插件用的是 Tauri 原生 `app_config_dir()`，它只认
-/// tauri.conf.json 的 identifier，dev 和 prod 落在同一个目录 —— 本项目的 `-dev`
-/// 隔离是 [`framework_app_data_dir`] 自己做的，插件不知道。共用一份的话，开着
-/// dev 拖窗口会把正式版记住的尺寸冲掉。
-#[cfg(desktop)]
-fn window_state_filename() -> String {
-    if cfg!(debug_assertions) {
-        ".window-state-dev.json".to_string()
-    } else {
-        tauri_plugin_window_state::DEFAULT_FILENAME.to_string()
-    }
-}
-
 /// 取当前进程实际使用的 framework_app_data_dir（dev 已隔离到 `-dev` 目录）。
 ///
 /// Tauri 内置 `app.path().app_data_dir()` 永远返回 prod 名（基于 tauri.conf.json
@@ -413,7 +398,7 @@ fn start_md_deliver_watcher(handle: tauri::AppHandle, app_data_dir: PathBuf) {
                 .and_then(|m| m.modified())
                 .unwrap_or(last_mtime);
             // mtime 变化即视为"有人想唤起这个窗口"——把主窗前置（含显示器纠偏）
-            services::main_window_placement::show_main(&handle, "投递 md");
+            tauri_kit::window_memory::show_main(&handle, "投递 md");
         }
     });
 }
@@ -593,8 +578,8 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             // 第二次启动：把已有主窗口唤到前台（被最小化 / 缩到托盘时也能拉回来），
             // 而不是无声无息地退出——否则用户双击图标"没反应"，会以为程序坏了。
-            // 顺带把窗口纠回用户上次所在的显示器（见 services/main_window_placement.rs）。
-            services::main_window_placement::show_main(app, "双开唤回");
+            // 顺带把窗口纠回用户上次所在的显示器（见 tauri_kit::window_memory）。
+            tauri_kit::window_memory::show_main(app, "双开唤回");
         }));
     }
 
@@ -621,38 +606,7 @@ pub fn run() {
                 Some(vec!["--start-minimized"]),
             ))
             .plugin(tauri_plugin_updater::Builder::new().build())
-            .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-            // 窗口状态记忆：用户调过的大小 / 位置 / 最大化状态下次启动照原样还原。
-            //
-            // 只跟踪 SIZE|POSITION|MAXIMIZED，**刻意不跟踪 VISIBLE**：本应用支持
-            // 「关闭时最小化到托盘」和 autostart `--start-minimized`，窗口隐藏着退出是
-            // 正常路径；跟踪 VISIBLE 会把 visible:false 存下来，下次双击图标启动直接
-            // 无窗口，看着像启动失败。DECORATIONS / FULLSCREEN 同理没有跟踪价值。
-            //
-            // 文件名按 dev/prod 分开：插件落在 app_config_dir，而 Tauri 的
-            // app_config_dir 只认 tauri.conf.json 的 identifier，dev 和 prod 是同一个
-            // 目录（本项目的 `-dev` 隔离是 framework_app_data_dir 自己做的，插件不知道）。
-            // 不分开的话开着 dev 调窗口会把正式版的记忆冲掉。
-            //
-            // 🔴 `with_filter` 只放行 main：插件默认托管**所有**窗口，而本应用的
-            // popout-note-* / popout-mindmap-* / push-popup-* / emergency-* / quick-add
-            // 的几何都是 builder 里按 `.center()` + 固定尺寸算出来的，被插件按上次位置还原
-            // 就会错位；更麻烦的是 push-popup-{log_id} / emergency-{task_id} 的 label 一次性
-            // 不复用，条目会在存档里永久累积（插件遍历整个 cache 全量写盘，窗口关了也不删）。
-            //
-            // 🔴 `skip_initial_state("main")` 把还原时机夺回自己手里：插件的自动还原挂在
-            // `on_window_ready`，而那个回调是 `run_on_main_thread` **排队**执行的
-            // （tauri `manager/window.rs:113`），排在我们 setup 闭包**之后** —— 也就是说
-            // 在 setup 里做任何几何兜底都会被插件随后的还原原样覆盖掉。改成 setup 里自己调
-            // `restore_state` 再紧接着 clamp，顺序确定、且都发生在 `show()` 之前，不会闪。
-            .plugin(
-                tauri_plugin_window_state::Builder::default()
-                    .with_state_flags(commands::window::TRACKED_STATE_FLAGS)
-                    .with_filename(window_state_filename())
-                    .with_filter(|label| label == "main")
-                    .skip_initial_state("main")
-                    .build(),
-            );
+            .plugin(tauri_plugin_global_shortcut::Builder::new().build());
     }
 
     // ─── macOS 应用菜单中文化 ─────────────────────
@@ -695,28 +649,9 @@ pub fn run() {
                 //
                 // 取不到 monitor 时静默回落到 conf.json 默认尺寸。
                 //
-                // 🔴 只在「没有窗口状态存档」时才套用 —— 存档存在说明用户自己调过窗口，
-                // 该按存档还原，这里再 set_size 就等于每次启动都把用户拖出来的尺寸抹掉。
-                let has_saved_window_state = app
-                    .handle()
-                    .path()
-                    .app_config_dir()
-                    .map(|dir| dir.join(window_state_filename()).exists())
-                    .unwrap_or(false);
-                if has_saved_window_state {
-                    // 插件那边设了 skip_initial_state("main")，还原由这里同步发起 ——
-                    // 插件自己的自动还原排在事件循环里、晚于本闭包，那样任何几何兜底
-                    // 都会被它随后覆盖掉（详见插件注册处的注释）。
-                    use tauri_plugin_window_state::WindowExt;
-                    if let Err(e) = window.restore_state(commands::window::TRACKED_STATE_FLAGS) {
-                        log::warn!("[window] 还原窗口几何失败，保持默认尺寸: {e}");
-                    }
-                    // 🔴 插件存/还原的都是**物理**尺寸：上次退出时若窗口正处在错误缩放下
-                    // （副屏开关留下的 DPI 事故），或用户换了显示器 / 改了系统缩放，还原
-                    // 出来的物理尺寸按当前真实缩放解释就是错的，而插件不做任何校正 ——
-                    // 事故会被这条路径固化，重启也回不来。用逻辑尺寸基准把它拉回。
-                    commands::window::rescue_after_restore(&window);
-                } else if let Some(monitor) = window
+                // 这里先摆好「第一次见到这个显示器组合」时的默认几何：有逻辑尺寸基准就用基准，
+                // 否则用公式，都在工作区内居中。见过的组合由下面的 window_memory::init 覆盖。
+                if let Some(monitor) = window
                     .current_monitor()
                     .ok()
                     .flatten()
@@ -730,21 +665,24 @@ pub fn run() {
                     );
                     let _ = window.set_size(tauri::LogicalSize::new(target_w, target_h));
                 }
+                commands::window::rescue_after_restore(&window);
+                commands::window::fit_into_work_area(&window, true);
 
-                // 显示器记忆：插件还原的是虚拟桌面**绝对坐标**，换了主屏 / 插拔过副屏就可能落到
-                // 别的屏。这里按「上次所在的屏 + 相对偏移」纠回去（只动位置），必须在 fit 之前：
-                // fit 按「窗口当前所在屏」的工作区 clamp，屏要先选对。
-                services::main_window_placement::init(&window);
+                // 位置记忆：按显示器组合分别记（tauri-kit）。旧版记录的文件名和库默认的不同，读出来给它打底。
+                let legacy_placement = app.handle().path().app_config_dir().ok().and_then(|dir| {
+                    let name = if cfg!(debug_assertions) { ".window-monitor-dev.json" } else { ".window-monitor.json" };
+                    std::fs::read_to_string(dir.join(name)).ok()
+                });
+                tauri_kit::window_memory::init(
+                    app.handle(),
+                    true,
+                    tauri_kit::window_memory::Options { legacy: legacy_placement, ..Default::default() },
+                );
 
-                // 🔴 兜底一律走这里，两条路径都要过：
-                // - 还原路径：插件存的是**物理**尺寸且不做任何 clamp，显示器拓扑一变
-                //   （拔掉外接屏 / 改分辨率 / 改缩放）还原出来的窗口就可能比屏幕还大、
-                //   或整个跑到屏幕外拖不回来 —— 实测混合 DPI 双屏（150% 笔记本 + 200% 4K）
-                //   在副屏调好的窗口拔屏后必现。
-                // - 首启路径：默认尺寸公式按整屏算，`center()` 也不管任务栏；改由这里
-                //   按工作区居中，竖排 / 加高任务栏下也不会被压住。
+                // 记录存的是物理尺寸：上次退出时若缩放不对，这里按逻辑尺寸基准拉回来，再夹进工作区。
                 // 必须在 show() 之前做完，否则用户会看到窗口先歪一下再跳正。
-                commands::window::fit_into_work_area(&window, !has_saved_window_state);
+                commands::window::rescue_after_restore(&window);
+                commands::window::fit_into_work_area(&window, false);
 
                 // 几何全部落定后再建立「逻辑尺寸基准」——它是运行期跨 DPI 自愈的唯一依据
                 // （副屏开关导致的缩放漂移靠它纠正，详见 commands/window.rs 顶部注释）。
@@ -762,7 +700,7 @@ pub fn run() {
 
                 let _ = window.show();
                 // 首次显示后补记一次所在屏（没有历史记录时，这就是第一条）
-                services::main_window_placement::capture_now(app.handle(), "启动显示后");
+                tauri_kit::window_memory::capture_now(app.handle(), "启动显示后");
             }
 
             // framework 默认 app_data_dir：单实例锁 + 指针文件 + 迁移 marker 永远在这里。
@@ -1745,10 +1683,10 @@ pub fn run() {
             #[cfg(desktop)]
             if window.label() == "main" {
                 // 显示器记忆：位置记录 / 拓扑变化 / 最小化恢复纠偏 + [winpos] 诊断日志
-                // （只处理 Moved / Resized / ScaleFactorChanged；只动位置，尺寸仍归下面的基准机制）
+                // （只处理 Moved / Resized / ScaleFactorChanged）
                 {
                     use tauri::Manager;
-                    services::main_window_placement::on_main_window_event(window.app_handle(), event);
+                    tauri_kit::window_memory::on_window_event(window.app_handle(), event);
                 }
                 // on_window_event 给的是 `&Window`，而几何工具函数统一收 `&WebviewWindow`
                 // （与 fit_into_work_area 同口径），这里按 label 取一次。
@@ -1819,7 +1757,7 @@ pub fn run() {
                         for p in &paths {
                             let _ = handle.emit("open-md-file", p.clone());
                         }
-                        services::main_window_placement::show_main(handle, "macOS 打开文件");
+                        tauri_kit::window_memory::show_main(handle, "macOS 打开文件");
                     }
                 }
                 // macOS：点 Dock 图标 → 唤回主窗口。
@@ -1828,7 +1766,7 @@ pub fn run() {
                 // 不看 has_visible_windows：别的子窗口开着时它也是 true，但用户点 Dock 要的是主窗口。
                 #[cfg(target_os = "macos")]
                 if let tauri::RunEvent::Reopen { .. } = &event {
-                    services::main_window_placement::show_main(handle, "Dock 图标");
+                    tauri_kit::window_memory::show_main(handle, "Dock 图标");
                 }
                 #[cfg(not(target_os = "macos"))]
                 let _ = (handle, event);

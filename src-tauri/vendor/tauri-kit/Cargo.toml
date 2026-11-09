@@ -1,0 +1,30 @@
+[package]
+name = "tauri-kit"
+version = "0.1.3"
+edition = "2021"
+rust-version = "1.82"
+publish = false
+description = "internal shared desktop library"
+# 私有库：不发 crates.io，源码由 tools/vendor-into.sh 内置到自有应用的 src-tauri/vendor/tauri-kit。
+
+[features]
+default = []
+# 每个模块一个 feature，应用只开自己用的，没开的不参与编译。
+window-memory = ["dep:tauri", "dep:log", "dep:tokio", "dep:windows-sys"]
+# 主窗口里挂了子 webview（内置浏览器标签页）的应用要开：这时 get_webview_window 找不到主窗口
+child-webviews = ["window-memory", "tauri/unstable"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = { version = "0.4", optional = true }
+tokio = { version = "1", default-features = false, features = ["time"], optional = true }
+# 下限 2.10：用到的 Monitor::work_area 在各应用锁定的最低版本里已有
+tauri = { version = "2.10", default-features = false, features = ["wry"], optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }

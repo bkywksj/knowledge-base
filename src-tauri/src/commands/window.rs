@@ -1,15 +1,5 @@
 //! 主窗口尺寸相关 Command（仅桌面端 —— 移动端窗口由系统管理）。
 
-/// 窗口状态跟踪的 flags，插件注册处（`lib.rs`）与所有手动调用必须用同一份。
-///
-/// 刻意不含 VISIBLE：本应用支持「关闭时最小化到托盘」和 autostart `--start-minimized`，
-/// 窗口隐藏着退出是正常路径，跟踪 VISIBLE 会导致下次启动直接无窗口。
-#[cfg(desktop)]
-pub(crate) const TRACKED_STATE_FLAGS: tauri_plugin_window_state::StateFlags =
-    tauri_plugin_window_state::StateFlags::SIZE
-        .union(tauri_plugin_window_state::StateFlags::POSITION)
-        .union(tauri_plugin_window_state::StateFlags::MAXIMIZED);
-
 // ─── 跨 DPI / 显示器热插拔的几何自愈 ─────────────────────
 //
 // 🔴 要解决的现象（用户实测）：主屏 100% + 副屏 150%，软件全程留在主屏，但开关一次副屏
@@ -213,7 +203,7 @@ fn set_desired_logical_size(app: &tauri::AppHandle, size: (f64, f64)) {
 /// 而不是「这块屏当前能给的」。
 #[cfg(desktop)]
 pub(crate) fn init_desired_logical_size(window: &tauri::WebviewWindow) {
-    // 🔴 先撑开抑制窗口：setup 里的 restore_state / set_size / fit_into_work_area 都会
+    // 🔴 先撑开抑制窗口：setup 里的 window_memory::init / set_size / fit_into_work_area 都会
     // **异步**投递 `Resized`，那些事件在本函数返回之后才到达 `note_user_resize`。
     // 不挡住的话，fit clamp 出来的尺寸会被当成用户意图、覆盖掉下面刚载入的存档基准 ——
     // 正是本函数注释要避免的那件事。
@@ -404,7 +394,7 @@ fn reconcile_geometry(window: &tauri::WebviewWindow) {
 
 /// 启动还原之后，按基准校正「跨 DPI 存取」造成的偏差。
 ///
-/// window-state 插件存/还原的都是**物理**尺寸：上次退出时若窗口正处在错误缩放下
+/// 窗口记录存的是**物理**尺寸：上次退出时若窗口正处在错误缩放下
 /// （或用户换了显示器 / 改了缩放），还原出来的物理尺寸按当前真实缩放解释就是错的，
 /// 且插件不做任何校正。这里用基准把它拉回来。
 ///
@@ -593,7 +583,6 @@ pub fn reset_window_size(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(desktop)]
     {
         use tauri::Manager;
-        use tauri_plugin_window_state::AppHandleExt;
 
         let window = app
             .get_webview_window("main")
@@ -638,10 +627,8 @@ pub fn reset_window_size(app: tauri::AppHandle) -> Result<(), String> {
         // 按工作区居中 + clamp：默认尺寸不一定装得进这块屏（小笔记本 / 投影仪 1280×720）
         fit_into_work_area(&window, true);
 
-        // 3. 立刻落盘。flags 与插件注册处同源，避免两处漂移 ——
-        //    传 all() 会顺带把 VISIBLE 写进去，而我们刻意不跟踪它（见 TRACKED_STATE_FLAGS）。
-        app.save_window_state(TRACKED_STATE_FLAGS)
-            .map_err(|e| e.to_string())?;
+        // 3. 立刻记下新几何：不记的话用户点完直接关窗，下次启动又回到旧尺寸
+        tauri_kit::window_memory::capture_now(&app, "恢复默认大小");
         Ok(())
     }
     #[cfg(not(desktop))]
@@ -653,10 +640,10 @@ pub fn reset_window_size(app: tauri::AppHandle) -> Result<(), String> {
 
 /// 唤回主窗口（推送弹窗「打开主窗」等子窗口用）。
 ///
-/// 与托盘 / 双开 / 快捷键走同一个入口 `services::main_window_placement::show_main`：
+/// 与托盘 / 双开 / 快捷键走同一个入口 `tauri_kit::window_memory::show_main`：
 /// 还原 + 显示 + 聚焦，并把主窗口纠回用户上次所在的显示器。仅桌面端注册。
 #[cfg(desktop)]
 #[tauri::command]
 pub fn show_main_window(app: tauri::AppHandle) {
-    crate::services::main_window_placement::show_main(&app, "子窗口唤回");
+    tauri_kit::window_memory::show_main(&app, "子窗口唤回");
 }

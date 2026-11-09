@@ -263,9 +263,9 @@ fn dispatch_action(app: AppHandle, id: &str) {
     }
 }
 
-/// 把主窗口前置 + 取消最小化 + 抢焦点（含显示器纠偏，见 services/main_window_placement.rs）
+/// 把主窗口前置 + 取消最小化 + 抢焦点（含显示器纠偏，见 tauri_kit::window_memory）
 fn focus_main(app: &AppHandle) {
-    crate::services::main_window_placement::show_main(app, "全局快捷键");
+    tauri_kit::window_memory::show_main(app, "全局快捷键");
 }
 
 /// 剪贴板 → 新笔记的具体动作（从 lib.rs 的 handle_quick_capture 迁移过来）
