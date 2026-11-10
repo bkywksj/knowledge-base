@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowUp,
   BookText,
@@ -42,6 +42,7 @@ import { MSheet, PickRow } from "@/components/mobile/MSheet";
 import { ActionSheet, type ActionSheetItem } from "@/components/mobile/ActionSheet";
 import { TextPromptModal } from "@/components/mobile/TextPromptModal";
 import { NotePickerSheet, type PickedNote } from "@/components/mobile/NotePickerSheet";
+import type { AiChatEntryState } from "./MobileAi";
 
 /**
  * 移动端 AI 对话页（v4 原型 11 屏，与 PC AI 页同构）
@@ -87,6 +88,26 @@ export function MobileAiChat() {
   const [presetSheet, setPresetSheet] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [askMenu, setAskMenu] = useState<AiMessage | null>(null);
+  const location = useLocation();
+
+  // 输入框随内容长高（最多约 5 行）；预填 / 编辑重发 / 发送清空时同样要重算
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+  }, [input]);
+
+  // AI 首页快捷入口带过来的：预填输入框开头 / 先弹出选笔记。只用一次，用完清掉，免得返回再进又弹
+  useEffect(() => {
+    const st = location.state as AiChatEntryState | null;
+    if (!st) return;
+    if (st.draft) setInput(st.draft);
+    if (st.pickNotes) setPickerOpen(true);
+    else if (st.draft) window.setTimeout(() => inputRef.current?.focus(), 150);
+    navigate(location.pathname, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -536,12 +557,7 @@ export function MobileAiChat() {
               ref={inputRef}
               value={input}
               rows={1}
-              onChange={(e) => {
-                setInput(e.target.value);
-                const el = e.currentTarget;
-                el.style.height = "auto";
-                el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
-              }}
+              onChange={(e) => setInput(e.target.value)}
               placeholder="问问你的知识库…"
               aria-label="输入问题"
               className="min-h-[44px] min-w-0 flex-1 resize-none bg-transparent py-2.5 text-[16px] leading-snug outline-none placeholder:text-[var(--m-ink3)]"
