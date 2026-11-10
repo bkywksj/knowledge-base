@@ -35,7 +35,7 @@
 | `MobileMe.tsx:431` | 「关于」行版本号写死 v1.7.1 | 读真实版本 |
 | `MobileMe.tsx:275` | 「设置」齿轮跳 `/about` | 语义不符，调整 |
 | `MobileMe.tsx:370-390` | 深色模式 / 主题 / Vault 标「不可用」 | M1 主题接上后，主题与深色可开放 |
-| `MobileTaskDetail.tsx:490-505` | 重复 / 分类只提示「需在桌面端」 | 评估是否在手机端实现 |
+| `MobileTaskDetail.tsx:490-505` | 重复 / 分类只提示「需在桌面端」 | ✅ M3-5 第二步已在手机端实现编辑（顺带修「清除截止」「不提醒」发 null 不生效） |
 | `MobileTrash.tsx:29` | 注释写的「全部还原」没实现 | 补上或删注释 |
 | `quick-create/index.tsx:176/198/205` | 模板 / 语音 / 拍照只提示「待开发」 | 原型保留入口，逐个接或隐藏 |
 | `quick-create/index.tsx:231` | 「新闪卡」不看功能模块开关 | 按开关显示 |
@@ -210,30 +210,37 @@
 - [x] 新建成功后刷新列表 `MobileTasks.tsx:347-351`
 
 #### src/pages/tasks/MobileTaskDetail.tsx
-- [ ] ID 无效「任务 ID 无效」 `MobileTaskDetail.tsx:310-314`
-- [ ] 进入时加载任务和子任务；失败提示 `MobileTaskDetail.tsx:103-121`
-- [ ] 独立全屏路由，不挂底部 Tab `MobileTaskDetail.tsx:333-336`
-- [ ] 返回：立即保存、刷新全局统计、返回 `MobileTaskDetail.tsx:339-345` `MobileTaskDetail.tsx:166-174`
-- [ ] 顶栏「任务详情」+ 保存状态 `MobileTaskDetail.tsx:346-349` `MobileTaskDetail.tsx:683-691`
-- [ ] 删除：二次确认后删除、刷新统计、返回 `MobileTaskDetail.tsx:350-356` `MobileTaskDetail.tsx:289-308`
-- [ ] 标题旁完成勾选（循环任务完成本次） `MobileTaskDetail.tsx:364-374` `MobileTaskDetail.tsx:190-205`
-- [ ] 标题输入（停 1.2 秒自动保存，完成时删除线） `MobileTaskDetail.tsx:376-388` `MobileTaskDetail.tsx:151-164`
-- [ ] 备注输入（停 1.2 秒自动保存，空存 null） `MobileTaskDetail.tsx:389-400` `MobileTaskDetail.tsx:127-149`
-- [ ] 卸载时兜底保存 `MobileTaskDetail.tsx:176-188`
-- [ ] 附件区：缩略图全屏预览，「＋」从相册或文件选择 `MobileTaskDetail.tsx:401-404`
-- [ ] 附件预览弹窗（非图片附件） `MobileTaskDetail.tsx:655`
-- [ ] 子任务进度「子任务 · 已完成/总数」 `MobileTaskDetail.tsx:412-414`
-- [ ] 子任务「添加」（系统输入框） `MobileTaskDetail.tsx:415-420` `MobileTaskDetail.tsx:221-234`
-- [ ] 子任务为空「还没有子任务」 `MobileTaskDetail.tsx:422-425`
-- [ ] 子任务勾选（循环子任务完成本次，删除线） `MobileTaskDetail.tsx:435-447` `MobileTaskDetail.tsx:207-219`
-- [ ] 「截止时间」行 → 编辑弹窗（逾期标记） `MobileTaskDetail.tsx:458-474` `MobileTaskDetail.tsx:316-327`
-- [ ] 截止弹窗：日期时间输入（只填日期默认 23:59）/ 清除 / 取消 / 保存 `MobileTaskDetail.tsx:560-592`
-- [ ] 「提醒」行 → 抽屉 7 选项（不提醒 / 5、15、30 分钟 / 1、2 小时 / 1 天） `MobileTaskDetail.tsx:475-489` `MobileTaskDetail.tsx:596-626`
-- [ ] 「重复」行：显示规则，点击提示需桌面端编辑 `MobileTaskDetail.tsx:490-499`
-- [ ] 「分类」行：固定「未分类」，点击提示需桌面端 `MobileTaskDetail.tsx:500-505`
-- [ ] 「优先级」行 → 抽屉（紧急 / 普通 / 低） `MobileTaskDetail.tsx:506-517` `MobileTaskDetail.tsx:629-653`
-- [ ] 底部「创建于」/「完成于」 `MobileTaskDetail.tsx:522-531`
-- [ ] 「推迟 30 分钟」（`snooze`） `MobileTaskDetail.tsx:540-546` `MobileTaskDetail.tsx:236-248`
+
+> ✅ M3-5 第二步验收（2026-11-10）：换 v4 样式（MNavBar + 分组列表，抽屉 / 弹窗全部换成底部面板，新增通用 `components/mobile/MSheet.tsx`）。变化处：
+> 「重复」「分类」从「需在桌面端」改为手机上可编辑——分类按多级缩进单选（含未分类），重复 = 不重复 / 每天 / 工作日 / 每周 / 每月 / 自定义（每 N 天·周·月 + 周几），
+> 结束条件（截至日期 / 次数）手机端不编辑、改规则时原样保留，改成不重复才一并清掉（`lib/taskRepeat.ts` repeatDraftFromTask / repeatDraftToUpdate，+4 单测）·
+> 「分类」行原来写死「未分类」，现在显示真实分类 · 新增「重要」开关（PC 有、手机原来没有）· 提醒选项并入 PC 独有的准时 / 3 小时 / 1 周，文案按周 / 天 / 小时换算 ·
+> 添加子任务的 `window.prompt` 换成 `TextPromptModal` · 截止时间改用列表同款文案（「逾期 N 天」标红）·
+> 修两个旧 bug：「清除截止时间」「不提醒」原来发的是 `null`，后端当「不改」，点了没反应；现改发 `clear_due_date` / `clear_remind_before_minutes`。
+- [x] ID 无效「任务 ID 无效」 `MobileTaskDetail.tsx:310-314`
+- [x] 进入时加载任务和子任务；失败提示 `MobileTaskDetail.tsx:103-121`
+- [x] 独立全屏路由，不挂底部 Tab `MobileTaskDetail.tsx:333-336`
+- [x] 返回：立即保存、刷新全局统计、返回 `MobileTaskDetail.tsx:339-345` `MobileTaskDetail.tsx:166-174`
+- [x] 顶栏「任务详情」+ 保存状态 `MobileTaskDetail.tsx:346-349` `MobileTaskDetail.tsx:683-691`
+- [x] 删除：二次确认后删除、刷新统计、返回 `MobileTaskDetail.tsx:350-356` `MobileTaskDetail.tsx:289-308`
+- [x] 标题旁完成勾选（循环任务完成本次） `MobileTaskDetail.tsx:364-374` `MobileTaskDetail.tsx:190-205`
+- [x] 标题输入（停 1.2 秒自动保存，完成时删除线） `MobileTaskDetail.tsx:376-388` `MobileTaskDetail.tsx:151-164`
+- [x] 备注输入（停 1.2 秒自动保存，空存 null） `MobileTaskDetail.tsx:389-400` `MobileTaskDetail.tsx:127-149`
+- [x] 卸载时兜底保存 `MobileTaskDetail.tsx:176-188`
+- [x] 附件区：缩略图全屏预览，「＋」从相册或文件选择 `MobileTaskDetail.tsx:401-404`
+- [x] 附件预览弹窗（非图片附件） `MobileTaskDetail.tsx:655`
+- [x] 子任务进度「子任务 · 已完成/总数」 `MobileTaskDetail.tsx:412-414`
+- [x] 子任务「添加」（系统输入框） `MobileTaskDetail.tsx:415-420` `MobileTaskDetail.tsx:221-234`
+- [x] 子任务为空「还没有子任务」 `MobileTaskDetail.tsx:422-425`
+- [x] 子任务勾选（循环子任务完成本次，删除线） `MobileTaskDetail.tsx:435-447` `MobileTaskDetail.tsx:207-219`
+- [x] 「截止时间」行 → 编辑弹窗（逾期标记） `MobileTaskDetail.tsx:458-474` `MobileTaskDetail.tsx:316-327`
+- [x] 截止弹窗：日期时间输入（只填日期默认 23:59）/ 清除 / 取消 / 保存 `MobileTaskDetail.tsx:560-592`
+- [x] 「提醒」行 → 抽屉 7 选项（不提醒 / 5、15、30 分钟 / 1、2 小时 / 1 天） `MobileTaskDetail.tsx:475-489` `MobileTaskDetail.tsx:596-626`
+- [x] 「重复」行：显示规则，点击提示需桌面端编辑 `MobileTaskDetail.tsx:490-499`
+- [x] 「分类」行：固定「未分类」，点击提示需桌面端 `MobileTaskDetail.tsx:500-505`
+- [x] 「优先级」行 → 抽屉（紧急 / 普通 / 低） `MobileTaskDetail.tsx:506-517` `MobileTaskDetail.tsx:629-653`
+- [x] 底部「创建于」/「完成于」 `MobileTaskDetail.tsx:522-531`
+- [x] 「推迟 30 分钟」（`snooze`） `MobileTaskDetail.tsx:540-546` `MobileTaskDetail.tsx:236-248`
 - [ ] 底部「完成 / 标记未完成」 `MobileTaskDetail.tsx:547-552`
 
 #### src/components/mobile/TaskCreateSheet.tsx
