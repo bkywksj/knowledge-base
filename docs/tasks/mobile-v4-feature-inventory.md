@@ -27,10 +27,10 @@
 | `MobileDaily.tsx:267` | 选任何一天按钮都写「今天的日记」 | ✅ M3-6 改为「打开 / 开始写 M 月 D 日的日记」 |
 | `MobileAi.tsx:326` | 顶栏「搜索」空占位 | 接会话搜索或去掉 |
 | `MobileAi.tsx:66-91` | 4 个快捷入口只建空对话，不预填 prompt | 接提示词库 |
-| `MobileAiChat.tsx:264` | 顶栏「更多」空占位 | 接会话菜单（重命名 / 删除 / 关联笔记） |
-| `MobileAiChat.tsx:307 / 343` | 「附件」「语音」按钮空占位 | 附件 = 附加笔记；语音接已有 ASR 或去掉 |
-| `MobileAiChat.tsx:314` | 占位文字说能「/ 调用 Prompt」，没实现 | 接提示词选择 |
-| `MobileAiChat.tsx:437` | 回复是气泡，不是一轮一卡 | M3-8 换 TurnCard 结构 |
+| `MobileAiChat.tsx:264` | 顶栏「更多」空占位 | ✅ M3-8 第一步接上会话菜单（重命名 / 置顶 / 复制为 Markdown / 归档为笔记 / 删除） |
+| `MobileAiChat.tsx:307 / 343` | 「附件」「语音」按钮空占位 | ✅ M3-8 第一步：附件 → 附加笔记（会话共享）；语音无现成能力，按钮去掉 |
+| `MobileAiChat.tsx:314` | 占位文字说能「/ 调用 Prompt」，没实现 | ✅ M3-8 第一步：占位改「问问你的知识库…」，提示词做成输入区胶囊（角色预设） |
+| `MobileAiChat.tsx:437` | 回复是气泡，不是一轮一卡 | ✅ M3-8 第一步换成 PC 的 TurnCard |
 | `MobileCards.tsx:170` | 顶栏「统计」空占位 | 去掉或接统计 |
 | `MobileMe.tsx:431` | 「关于」行版本号写死 v1.7.1 | 读真实版本 |
 | `MobileMe.tsx:275` | 「设置」齿轮跳 `/about` | 语义不符，调整 |
@@ -315,24 +315,31 @@
 - [ ] 右下角「新对话」按钮（多选时隐藏） `MobileAi.tsx:473-484` `MobileAi.tsx:277-284`
 
 #### src/pages/ai/MobileAiChat.tsx
-- [ ] ID 无效「对话 ID 无效」 `MobileAiChat.tsx:224-230`
-- [ ] 进入时加载对话、模型、消息，滚到底 `MobileAiChat.tsx:75-96`
-- [ ] 全屏页；键盘弹出顶起输入栏 `MobileAiChat.tsx:42` `MobileAiChat.tsx:233-239`
-- [ ] 监听 `ai:token` / `ai:done` / `ai:error`（只处理当前对话） `MobileAiChat.tsx:99-144`
-- [ ] 顶栏返回固定跳 /ai `MobileAiChat.tsx:242-248`
-- [ ] 顶栏标题 + 模型名 + 生成中状态，点击打开模型切换抽屉 `MobileAiChat.tsx:249-263`
-- [ ] 顶栏「更多」空占位 `MobileAiChat.tsx:264-269`
-- [ ] 空状态「开始对话吧」 `MobileAiChat.tsx:277-282`
-- [ ] 用户气泡 / AI 气泡（`compactTurnText`，失败或停止补说明） `MobileAiChat.tsx:428-446`
-- [ ] AI 消息「复制」+ 时间 `MobileAiChat.tsx:448-459` `MobileAiChat.tsx:217-222`
-- [ ] 流式气泡（去伪工具调用残留和引用标记，闪烁光标）/ 等待动画 `MobileAiChat.tsx:286-298` `MobileAiChat.tsx:466-481`
-- [ ] 「附件」空占位 `MobileAiChat.tsx:307-312`
-- [ ] 输入框（占位说能「/ 调用 Prompt」，未实现）；Enter 发送 `MobileAiChat.tsx:314-325`
-- [ ] 发送（同步锁防连点） `MobileAiChat.tsx:146-173` `MobileAiChat.tsx:60-65`
-- [ ] 停止（生成中） / 发送（有内容） / 语音空占位（无内容） `MobileAiChat.tsx:327-350`
-- [ ] 模型切换抽屉：名称、服务商 · model_id、当前标记；无模型提示手机库与桌面独立 `MobileAiChat.tsx:355-399`
-- [ ] 切换模型 `updateConversationModel` `MobileAiChat.tsx:201-215`
-- [ ] 抽屉「新建模型服务」→ 弹窗「保存并切换」 `MobileAiChat.tsx:400-415` `MobileAiChat.tsx:184-199`
+
+> ✅ M3-8 第一步验收（2026-11-10）：一轮一卡，直接复用 PC 的 `TurnCard` + `turnModel`（状态与耗时 → 执行过程 → 回答 → 参考来源 → 复制 / 复制含过程 / 存为笔记 / 重新生成），样式用 `.m-ai-thread` 局部覆盖（不沿用 PC 的 .kb-ai-thread；TurnCard 只加了 kb-turn-status / kb-turn-stats / kb-turn-error 三个钩子，PC 外观不变）。变化处：
+> 流式改为同 PC 监听 ai:round / ai:token / ai:tool_call / ai:reasoning / ai:done，**不再监听 ai:error**（后端超长会先发 error 再自动重试，按事件收尾会把能成功的回复判死；失败以 sendMessage 的 reject 为准，错误显示在卡片上）·
+> 「AI 消息复制 + 时间」→ 复制在卡片底栏，时间挪到提问气泡下方 · 等待动画 / 流式气泡 → 实时卡片（「AI 正在分析…」+ 卡片头「停止」）·顶栏标题 + 副标题合成一块热区点开切模型，副标题显示「模型 · 智能模式 / 纯聊天 · 生成中」·
+> 新增：失败 / 停止卡片「重试 / 重新生成」（先撤回再发，同 PC）、长按提问「复制 / 编辑重发」、会话菜单、附加笔记（新增 `components/mobile/NotePickerSheet.tsx`）、提示词、智能模式开关；打开会话停在最新一轮，往上翻看时不抢滚动条。
+> ⚠️ 浏览器预览里 Tauri 事件不可用，流式过程（逐字出现、工具调用逐步展开）只验证了起止两端，**需在 tauri dev / 真机上回归**。
+
+- [x] ID 无效「对话 ID 无效」 `MobileAiChat.tsx:224-230`
+- [x] 进入时加载对话、模型、消息，滚到底 `MobileAiChat.tsx:75-96`
+- [x] 全屏页；键盘弹出顶起输入栏 `MobileAiChat.tsx:42` `MobileAiChat.tsx:233-239`
+- [x] 监听 `ai:token` / `ai:done` / `ai:error`（只处理当前对话） `MobileAiChat.tsx:99-144`
+- [x] 顶栏返回固定跳 /ai `MobileAiChat.tsx:242-248`
+- [x] 顶栏标题 + 模型名 + 生成中状态，点击打开模型切换抽屉 `MobileAiChat.tsx:249-263`
+- [x] 顶栏「更多」空占位 `MobileAiChat.tsx:264-269`
+- [x] 空状态「开始对话吧」 `MobileAiChat.tsx:277-282`
+- [x] 用户气泡 / AI 气泡（`compactTurnText`，失败或停止补说明） `MobileAiChat.tsx:428-446`
+- [x] AI 消息「复制」+ 时间 `MobileAiChat.tsx:448-459` `MobileAiChat.tsx:217-222`
+- [x] 流式气泡（去伪工具调用残留和引用标记，闪烁光标）/ 等待动画 `MobileAiChat.tsx:286-298` `MobileAiChat.tsx:466-481`
+- [x] 「附件」空占位 `MobileAiChat.tsx:307-312`
+- [x] 输入框（占位说能「/ 调用 Prompt」，未实现）；Enter 发送 `MobileAiChat.tsx:314-325`
+- [x] 发送（同步锁防连点） `MobileAiChat.tsx:146-173` `MobileAiChat.tsx:60-65`
+- [x] 停止（生成中） / 发送（有内容） / 语音空占位（无内容） `MobileAiChat.tsx:327-350`
+- [x] 模型切换抽屉：名称、服务商 · model_id、当前标记；无模型提示手机库与桌面独立 `MobileAiChat.tsx:355-399`
+- [x] 切换模型 `updateConversationModel` `MobileAiChat.tsx:201-215`
+- [x] 抽屉「新建模型服务」→ 弹窗「保存并切换」 `MobileAiChat.tsx:400-415` `MobileAiChat.tsx:184-199`
 
 #### src/pages/settings/MobileMe.tsx
 - [ ] 进入时并行拉统计、待复习、回收站数、模型数、Prompt 数 `MobileMe.tsx:216-247`
