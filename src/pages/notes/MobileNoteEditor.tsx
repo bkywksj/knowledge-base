@@ -162,6 +162,12 @@ export function MobileNoteEditor() {
     if (!noteId || Number.isNaN(noteId)) return;
     try {
       const n = await noteApi.get(noteId);
+      // 白板也是一条笔记，但 content 是 Excalidraw JSON：交给富文本编辑器会显示成一坨 JSON，
+      // 用户一改就被自动保存覆盖掉整块画布。同 PC 编辑器，在入口统一改道到白板页（列表 / 搜索 / 双链等入口都走这里）
+      if (n.note_type === "whiteboard") {
+        navigate(`/whiteboard/${noteId}`, { replace: true });
+        return;
+      }
       setNote(n);
       noteRef.current = n;
       setTitle(n.title);

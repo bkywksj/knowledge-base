@@ -438,6 +438,40 @@
 .m-slideshow button[aria-label="上一页"] { left: 24px !important; }
 .m-slideshow button[aria-label="下一页"] { right: 24px !important; }
 
+/* 手机白板「历史版本」：复用 PC 的 SnapshotDrawer（mobile 模式加 rootClassName），次要字换手机令牌、按钮热区 44 */
+.m-wb-history .ant-typography-secondary { color: var(--m-ink3) !important; }
+.m-wb-history .ant-drawer-header .ant-btn,
+.m-wb-history .ant-drawer-body > div > div:first-child .ant-btn { min-height: 44px; }
+.m-wb-history .ant-drawer-close {
+  width: 44px;
+  height: 44px;
+  margin-inline-end: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.m-wb-history .ant-list-item { min-height: 56px; }
+
+/* 笔记里的内嵌白板编辑弹窗：手机上铺满整屏（WhiteboardEditModal 的 isMobile 分支加 wrapClassName） */
+.m-wb-modal .ant-modal {
+  top: 0;
+  max-width: 100vw;
+  margin: 0;
+  padding: 0;
+}
+.m-wb-modal .ant-modal-content,
+.m-wb-modal .ant-modal-container {
+  border-radius: 0;
+  min-height: 100dvh;
+  /* 左右不留边：Excalidraw 手机工具条要 ~380px，留边就被裁；标题和按钮行自己留边 */
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) 0 calc(env(safe-area-inset-bottom, 0px) + 8px);
+}
+.m-wb-modal .ant-modal-header,
+.m-wb-modal .ant-modal-footer { padding: 0 12px; }
+.m-wb-modal .ant-modal-close { width: 44px; height: 44px; top: calc(env(safe-area-inset-top, 0px) + 4px); }
+.m-wb-modal .ant-modal-footer .ant-btn,
+.m-wb-modal .ant-modal-title .ant-btn { min-height: 44px; }
+
 /* 金刚区：彩色实心图标 + 13px 标签，无底色块、无阴影；整格热区 */
 .m-kk {
   display: flex;

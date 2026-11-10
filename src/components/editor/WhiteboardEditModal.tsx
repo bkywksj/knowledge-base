@@ -15,6 +15,7 @@ import { History } from "lucide-react";
 import { whiteboardApi } from "@/lib/api";
 import { toKbAsset } from "@/lib/assetUrl";
 import { useAppStore } from "@/store";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import type { WhiteboardExportApi } from "@/components/whiteboard/WhiteboardCanvas";
 import type { NoteSnapshotMeta, SnapshotReason } from "@/types";
 
@@ -79,6 +80,8 @@ export function WhiteboardEditModal({
 }: Props) {
   const { message } = AntdApp.useApp();
   const themeCategory = useAppStore((s) => s.themeCategory);
+  // 手机端整屏：90vw 的弹窗两侧留白后，Excalidraw 的工具条放不下、右侧被裁掉
+  const isMobile = useIsMobile();
   const exportApiRef = useRef<WhiteboardExportApi | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -252,13 +255,14 @@ export function WhiteboardEditModal({
       okText="保存"
       cancelText="取消"
       confirmLoading={saving}
-      width="90vw"
-      centered
+      width={isMobile ? "100vw" : "90vw"}
+      centered={!isMobile}
+      wrapClassName={isMobile ? "m-wb-modal" : undefined}
       // 画布要尽可能大：白板在小窗口里没法用。
       // pointerEvents 直接写在 body 上而**不是**再套一层 div —— 试过套 div，
       // Excalidraw 挂载时量不到正确高度，画布直接空白（内容其实加载了）。
       // 它对 DOM 结构很敏感，别在它和有确定高度的容器之间加中间层。
-      styles={{ body: { height: "78vh", padding: 0, overflow: "hidden" } }}
+      styles={{ body: { height: isMobile ? "calc(100dvh - 140px)" : "78vh", padding: 0, overflow: "hidden" } }}
       // 动画彻底结束（尺寸稳定）才放行画布挂载，见 canvasReady 的说明
       afterOpenChange={(opened) => setCanvasReady(opened)}
       // 画到一半误点遮罩就全丢了，禁掉

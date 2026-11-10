@@ -63,6 +63,8 @@ interface Props {
   noteId: number;
   /** 回滚成功后通知外层重新加载画布 —— 页面上那份场景已经是旧的了 */
   onRestored: () => void;
+  /** 手机端：全屏宽，版本列表在上、画布预览在下（左右分栏在手机上画布只剩一条） */
+  mobile?: boolean;
 }
 
 export default function SnapshotDrawer({
@@ -70,6 +72,7 @@ export default function SnapshotDrawer({
   onClose,
   noteId,
   onRestored,
+  mobile = false,
 }: Props) {
   const { message } = AntdApp.useApp();
   const { token } = antdTheme.useToken();
@@ -167,8 +170,9 @@ export default function SnapshotDrawer({
       }
       open={open}
       onClose={onClose}
-      width="min(1040px, 92vw)"
-      styles={{ body: { padding: 0, display: "flex", overflow: "hidden" } }}
+      width={mobile ? "100vw" : "min(1040px, 92vw)"}
+      rootClassName={mobile ? "m-wb-history" : undefined}
+      styles={{ body: { padding: 0, display: "flex", flexDirection: mobile ? "column" : "row", overflow: "hidden" } }}
       extra={
         <Button icon={<Save size={14} />} onClick={handleManualSave}>
           存档当前版本
@@ -178,10 +182,11 @@ export default function SnapshotDrawer({
       {/* 左：版本列表 */}
       <div
         className="shrink-0 overflow-auto"
-        style={{
-          width: 260,
-          borderRight: `1px solid ${token.colorBorderSecondary}`,
-        }}
+        style={
+          mobile
+            ? { width: "100%", maxHeight: "34vh", borderBottom: `1px solid ${token.colorBorderSecondary}` }
+            : { width: 260, borderRight: `1px solid ${token.colorBorderSecondary}` }
+        }
       >
         {loading ? (
           <div className="flex justify-center py-8">
@@ -230,7 +235,7 @@ export default function SnapshotDrawer({
       </div>
 
       {/* 右：只读预览 + 恢复 */}
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col">
         <div
           className="flex items-center justify-between gap-2 px-3 py-2 shrink-0"
           style={{ borderBottom: `1px solid ${token.colorBorderSecondary}` }}
@@ -238,7 +243,7 @@ export default function SnapshotDrawer({
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {selected
               ? `预览 ${formatStamp(selected.created_at)} 的画布（只读）`
-              : "选择左侧的版本查看"}
+              : mobile ? "选择上方的版本查看" : "选择左侧的版本查看"}
           </Typography.Text>
           <Popconfirm
             title="恢复到这一版？"

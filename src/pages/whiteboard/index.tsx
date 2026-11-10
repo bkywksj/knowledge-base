@@ -25,8 +25,13 @@ import {
   Minimize2,
   StickyNote,
   ChevronRight,
+  ChevronLeft,
+  Ellipsis,
   MoreHorizontal,
 } from "lucide-react";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { ActionSheet } from "@/components/mobile/ActionSheet";
+import { NotePickerSheet } from "@/components/mobile/NotePickerSheet";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store";
 import { folderApi, noteApi, whiteboardApi, systemApi, searchApi } from "@/lib/api";
@@ -60,6 +65,9 @@ export default function WhiteboardPage() {
   const navigate = useNavigate();
   const { message, modal } = AntdApp.useApp();
   const themeCategory = useAppStore((s) => s.themeCategory);
+  // 手机端换一套外壳（顶栏 + 「…」面板），保存 / 导出 / 历史 / 卡片 / 演示等逻辑与 PC 共用
+  const isMobile = useIsMobile();
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
 
   const [note, setNote] = useState<Note | null>(null);
   // 画布场景单独取（getScene 会把图片从附件内联回 base64），不能直接用 note.content
@@ -433,6 +441,119 @@ export default function WhiteboardPage() {
     return (
       <div className="flex items-center justify-center h-full">
         <Empty description={error ?? "白板不存在"} />
+      </div>
+    );
+  }
+
+  if (isMobile) {
+    const confirmDelete = () =>
+      modal.confirm({
+        title: "移入回收站？",
+        content: "白板会进回收站，可以再恢复。",
+        okText: "删除",
+        cancelText: "取消",
+        okButtonProps: { danger: true },
+        centered: true,
+        onOk: handleDelete,
+      });
+    return (
+      // 全屏盖住底部 Tab（同手机编辑页）；画布用 Excalidraw 自带的手机布局与触屏手势
+      <div
+        className="fixed inset-0 z-50 flex flex-col"
+        style={{ background: "var(--m-surface)", paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+      >
+        {!presenting && (
+          <header className="flex h-12 shrink-0 items-center gap-1 pr-1.5 pl-1">
+            <button type="button" aria-label="返回" className="m-icon-btn" onClick={() => navigate(-1)}>
+              <ChevronLeft size={24} />
+            </button>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onBlur={() => void handleTitleBlur()}
+              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+              placeholder="未命名白板"
+              aria-label="白板标题"
+              className="h-11 min-w-0 flex-1 bg-transparent text-[17px] font-semibold outline-none placeholder:text-[var(--m-ink4)]"
+              style={{ color: "var(--m-ink)" }}
+            />
+            <span className="m-t-cap shrink-0" style={saveState === "error" ? { color: "var(--m-bad)" } : undefined}>
+              {saveState === "saving" ? "保存中…" : saveState === "error" ? "保存失败" : saveState === "saved" ? "已保存" : ""}
+            </span>
+            <button type="button" aria-label="更多" className="m-icon-btn" onClick={() => setMobileMoreOpen(true)}>
+              <Ellipsis size={20} />
+            </button>
+          </header>
+        )}
+
+        <div ref={canvasWrapRef} className="kb-wb-canvas relative min-h-0 flex-1">
+          <Suspense fallback={<div className="m-t-meta py-16 text-center">正在加载白板画布…</div>}>
+            <WhiteboardCanvas
+              key={canvasEpoch}
+              initialScene={scene ?? ""}
+              onSave={handleSaveScene}
+              theme={themeCategory === "dark" ? "dark" : "light"}
+              onOpenNote={(id) => navigate(`/notes/${id}`)}
+              exportRef={exportApiRef}
+              onError={() => message.warning("白板内容损坏，已打开空白画布；请勿保存以免覆盖原数据")}
+              readOnly={presenting}
+              insertCardRef={insertCardRef}
+            />
+          </Suspense>
+          {presenting && (
+            // 层级同 PC：要压过 Excalidraw 自己的 UI 层
+            <button
+              type="button"
+              aria-label="退出演示"
+              className="m-btn absolute top-3 right-3"
+              style={{ zIndex: 1002, background: "var(--m-surface)", color: "var(--m-ink)", border: "0.5px solid var(--m-hair)" }}
+              onClick={() => void exitPresent()}
+            >
+              <Minimize2 size={18} /> 退出演示
+            </button>
+          )}
+        </div>
+
+        <ActionSheet
+          open={mobileMoreOpen}
+          title={title || "未命名白板"}
+          subtitle="白板 · 自动保存"
+          grid={[
+            { key: "card", label: "插入笔记卡片", icon: <StickyNote size={22} />, onClick: () => setCardPickerOpen(true) },
+            { key: "present", label: "演示", icon: <Presentation size={22} />, onClick: () => void enterPresent() },
+            { key: "history", label: "历史版本", icon: <History size={22} />, onClick: () => setHistoryOpen(true) },
+            { key: "copy", label: "复制为图片", icon: <Copy size={22} />, onClick: () => void handleCopyImage() },
+          ]}
+          items={[
+            // 导出 / 导入走系统保存 / 打开对话框，安卓上是否可用待真机验证（M4 回归清单）
+            { key: "png", label: "导出 PNG", icon: <Download size={20} />, onClick: () => void handleExport("png") },
+            { key: "svg", label: "导出 SVG", icon: <Download size={20} />, onClick: () => void handleExport("svg") },
+            { key: "scene", label: "导出 .excalidraw", icon: <FileJson size={20} />, extra: "可再编辑", onClick: () => void handleExportScene() },
+            { key: "import", label: "导入 .excalidraw", icon: <Upload size={20} />, extra: "覆盖当前画布", onClick: () => void handleImportScene() },
+            { key: "delete", label: "删除白板", icon: <Trash2 size={20} />, danger: true, onClick: confirmDelete },
+          ]}
+          onClose={() => setMobileMoreOpen(false)}
+        />
+
+        {/* 选笔记 → 插入卡片：复用 AI 对话附加笔记的选择面板，只选一篇 */}
+        <NotePickerSheet
+          open={cardPickerOpen}
+          title="插入笔记卡片"
+          caption="卡片显示笔记标题与开头部分，笔记改了卡片跟着变"
+          initial={[]}
+          max={1}
+          onDone={(picked) => {
+            if (picked[0]) void insertCard(picked[0].id);
+            else setCardPickerOpen(false);
+          }}
+          onClose={() => setCardPickerOpen(false)}
+        />
+
+        {historyOpen && (
+          <Suspense fallback={null}>
+            <SnapshotDrawer open={historyOpen} onClose={() => setHistoryOpen(false)} noteId={noteId} onRestored={handleRestored} mobile />
+          </Suspense>
+        )}
       </div>
     );
   }
