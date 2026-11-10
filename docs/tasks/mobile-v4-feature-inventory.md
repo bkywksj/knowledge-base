@@ -367,21 +367,24 @@
 - [x] 「不可用」行统一：右侧「不可用」、无箭头、点击 info 提示 `MobileMe.tsx:571-595`
 
 #### src/pages/sync/MobileSync.tsx
-- [ ] `/sync` 是顶层独立路由，桌面访问也渲染本组件 `Router.tsx:120-124`
-- [ ] 监听 `sync_v1:progress` `MobileSync.tsx:123-137`
-- [ ] 进入时加载后端列表 `MobileSync.tsx:139-153`
-- [ ] 顶栏：返回 / 导入配置 / 新增 `MobileSync.tsx:393-415`
-- [ ] 信息横幅（手动同步、支持 WebDAV 与 S3） `MobileSync.tsx:420-426`
-- [ ] 加载中 / 空状态 `MobileSync.tsx:430-439`
-- [ ] 后端卡：名称、类型、启用状态、上次推送 / 拉取、上次失败原因、进度区 `MobileSync.tsx:614-687`
-- [ ] 「一键同步」（先推后拉；推送失败暂停拉取并通知；暂扣删除需确认；结果弹窗 + 系统通知） `MobileSync.tsx:690-696` `MobileSync.tsx:326-360`
-- [ ] 「仅推送」/「仅拉取」 `MobileSync.tsx:700-713` `MobileSync.tsx:275-318`
-- [ ] 拉取问题弹窗（最多 20 条，含加密笔记说明） `MobileSync.tsx:52-79`
-- [ ] 「测试」连接（并检查远端是否有数据） `MobileSync.tsx:716-722` `MobileSync.tsx:257-273`
-- [ ] 「分享」配置 / 「编辑」（密码留空不改）/ 「删除」（远端不动） `MobileSync.tsx:723-743` `MobileSync.tsx:174-209` `MobileSync.tsx:367-384`
-- [ ] 同步中卡片按钮全禁用 `MobileSync.tsx:692-739`
-- [ ] 新增 / 编辑弹窗：类型切换（WebDAV / S3，仅新增）、字段与必填校验、保存 `MobileSync.tsx:466-559` `MobileSync.tsx:211-255`
-- [ ] 导入配置弹窗 `MobileSync.tsx:572-576`
+
+> ✅ M3-10 验收（2026-11-10）：套公共组件与令牌，交互不变（添加 / 编辑表单仍是 antd 表单弹窗）。另：M3-9 起支持从「我的」页带 state.syncNow 进来自动跑一键同步。
+
+- [x] `/sync` 是顶层独立路由，桌面访问也渲染本组件 `Router.tsx:120-124`
+- [x] 监听 `sync_v1:progress` `MobileSync.tsx:123-137`
+- [x] 进入时加载后端列表 `MobileSync.tsx:139-153`
+- [x] 顶栏：返回 / 导入配置 / 新增 `MobileSync.tsx:393-415`
+- [x] 信息横幅（手动同步、支持 WebDAV 与 S3） `MobileSync.tsx:420-426`
+- [x] 加载中 / 空状态 `MobileSync.tsx:430-439`
+- [x] 后端卡：名称、类型、启用状态、上次推送 / 拉取、上次失败原因、进度区 `MobileSync.tsx:614-687`
+- [x] 「一键同步」（先推后拉；推送失败暂停拉取并通知；暂扣删除需确认；结果弹窗 + 系统通知） `MobileSync.tsx:690-696` `MobileSync.tsx:326-360`
+- [x] 「仅推送」/「仅拉取」 `MobileSync.tsx:700-713` `MobileSync.tsx:275-318`
+- [x] 拉取问题弹窗（最多 20 条，含加密笔记说明） `MobileSync.tsx:52-79`
+- [x] 「测试」连接（并检查远端是否有数据） `MobileSync.tsx:716-722` `MobileSync.tsx:257-273`
+- [x] 「分享」配置 / 「编辑」（密码留空不改）/ 「删除」（远端不动） `MobileSync.tsx:723-743` `MobileSync.tsx:174-209` `MobileSync.tsx:367-384`
+- [x] 同步中卡片按钮全禁用 `MobileSync.tsx:692-739`
+- [x] 新增 / 编辑弹窗：类型切换（WebDAV / S3，仅新增）、字段与必填校验、保存 `MobileSync.tsx:466-559` `MobileSync.tsx:211-255`
+- [x] 导入配置弹窗 `MobileSync.tsx:572-576`
 
 #### src/pages/tags/MobileTags.tsx
 
