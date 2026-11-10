@@ -5,6 +5,7 @@ import { Modal, message } from "antd";
 import { tagApi } from "@/lib/api";
 import type { Tag } from "@/types";
 import { TAG_COLORS } from "@/components/TagColorPicker";
+import { tagDot } from "@/lib/tagColor";
 import { MGroup, MNavBar, MRow, MSectionHeader } from "@/components/mobile/primitives";
 import { MSheet } from "@/components/mobile/MSheet";
 import { TextPromptModal } from "@/components/mobile/TextPromptModal";
@@ -24,24 +25,6 @@ import { TextPromptModal } from "@/components/mobile/TextPromptModal";
 
 /** 手机面板里给的色板：取 PC 色板第一排 10 色，够挑又不至于一屏放不下 */
 const PALETTE = TAG_COLORS.slice(0, 10);
-
-/** 旧版手机端存的颜色名 → 对应的 PC 色值 */
-const LEGACY_COLOR: Record<string, string> = {
-  blue: "#1677ff",
-  green: "#52c41a",
-  orange: "#fa8c16",
-  purple: "#722ed1",
-  pink: "#eb2f96",
-  yellow: "#faad14",
-  red: "#f5222d",
-  cyan: "#13c2c2",
-  slate: "#8c8c8c",
-};
-
-function tagDot(color: string | null): string {
-  if (!color) return "var(--m-ink4)";
-  return LEGACY_COLOR[color] ?? color;
-}
 
 /** 按 note_count 决定标签云字号（最小 13，保持 ≥12 的可读下限） */
 function fontByCount(n: number, maxCount: number): { fontSize: number; fontWeight: number } {

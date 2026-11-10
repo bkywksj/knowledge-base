@@ -402,6 +402,42 @@
   color: var(--m-accent-ink);
 }
 
+/* 编辑页「更多 → 思维导图」全屏：复用 PC 的 MindMapView（standalone），工具栏小按钮放大到 44 */
+.m-mindmap .ant-btn {
+  min-width: 44px !important;
+  height: 44px !important;
+}
+.m-mindmap .ant-btn svg { width: 18px; height: 18px; }
+.m-mindmap .ant-btn span { font-size: 12px !important; }
+
+/* 编辑页「更多 → 演示」：复用 PC 的 SlideshowView。退出按钮放大到 44；「← / → 翻页 · Esc 退出」是键盘提示，手机上没意义 */
+.m-slideshow [aria-label="幻灯片演示"] > div:first-child { padding: 6px 8px 6px 16px !important; font-size: 13px !important; }
+.m-slideshow [aria-label="幻灯片演示"] > div:first-child > span:nth-of-type(2) { display: none; }
+.m-slideshow button[aria-label="退出演示"] {
+  min-width: 44px;
+  min-height: 44px;
+  justify-content: center;
+  border: none !important;
+}
+.m-slideshow button[aria-label="退出演示"] svg { width: 22px; height: 22px; }
+/* PC 两侧各留 80px 给翻页按钮，手机上会把卡片挤成一条：卡片占满宽，翻页按钮挪到卡片下方左右两角 */
+.m-slideshow [aria-label="幻灯片演示"] > div:nth-child(2) { padding: 8px 16px 80px !important; }
+.m-slideshow .slideshow-page {
+  width: 100% !important;
+  padding: 24px 20px !important;
+  font-size: 17px !important;
+}
+.m-slideshow button[aria-label="上一页"],
+.m-slideshow button[aria-label="下一页"] {
+  top: auto !important;
+  bottom: 16px;
+  transform: none !important;
+  width: 52px !important;
+  height: 52px !important;
+}
+.m-slideshow button[aria-label="上一页"] { left: 24px !important; }
+.m-slideshow button[aria-label="下一页"] { right: 24px !important; }
+
 /* 金刚区：彩色实心图标 + 13px 标签，无底色块、无阴影；整格热区 */
 .m-kk {
   display: flex;

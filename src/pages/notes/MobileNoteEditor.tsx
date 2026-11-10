@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { lazy, Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Bold,
@@ -13,6 +13,12 @@ import {
   FolderInput,
   Heading,
   Highlighter,
+  History,
+  ListTree,
+  Network,
+  Presentation,
+  Tag as TagIcon,
+  X,
   Image as ImageIcon,
   Italic,
   KeyboardOff,
@@ -44,7 +50,15 @@ import { EditorInsertSheet } from "@/components/mobile/EditorInsertSheet";
 import { FolderPickerSheet } from "@/components/mobile/FolderPickerSheet";
 import { MSheet } from "@/components/mobile/MSheet";
 import { TextPromptModal } from "@/components/mobile/TextPromptModal";
+import { NoteOutlineSheet } from "@/components/mobile/NoteOutlineSheet";
+import { NoteHistorySheet } from "@/components/mobile/NoteHistorySheet";
+import { NoteTagsSheet } from "@/components/mobile/NoteTagsSheet";
 import { LinkBadge } from "@/components/mobile/primitives";
+import { tagDot } from "@/lib/tagColor";
+import { SlideshowView } from "@/components/notes/SlideshowView";
+
+// 思维导图依赖 markmap，体积不小：用到才加载（同 PC）
+const MindMapView = lazy(() => import("@/components/notes/MindMapView").then((m) => ({ default: m.MindMapView })));
 
 /**
  * 移动端笔记编辑页（v4 原型第 04 / 06 屏；功能底稿 docs/tasks/mobile-v4-feature-inventory.md）
@@ -114,6 +128,11 @@ export function MobileNoteEditor() {
   const [moveOpen, setMoveOpen] = useState(false);
   const [insertOpen, setInsertOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [outlineOpen, setOutlineOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [tagsOpen, setTagsOpen] = useState(false);
+  const [mindMapOpen, setMindMapOpen] = useState(false);
+  const [slideshowOpen, setSlideshowOpen] = useState(false);
   /** 插入链接的输入框（选中了文字 = 给文字加链接；没选 = 把网址本身插进去） */
   const [linkPromptOpen, setLinkPromptOpen] = useState(false);
   /** 「网络视频」链接输入框：斜杠清单的同名项通过 requestEmbedUrl 等这个框的结果 */
@@ -450,6 +469,47 @@ export function MobileNoteEditor() {
     setInsertOpen(true);
   }
 
+  /** 大纲读的是编辑器里的标题节点；源码模式没有编辑器实例 */
+  function openOutline() {
+    if (sourceMode && !readOnly) {
+      message.info("源码模式下没有大纲，先在「更多」里关掉源码模式");
+      return;
+    }
+    setOutlineOpen(true);
+  }
+
+  /** 历史版本：先落盘（同 PC），否则恢复会冲掉没存的内容、手动存档也存不到最新 */
+  async function openHistory() {
+    if (readOnly) {
+      message.info("加密笔记的历史版本请在桌面端查看");
+      return;
+    }
+    await flush();
+    setHistoryOpen(true);
+  }
+
+  /** 恢复历史版本后：后端已写库，这里重灌编辑器 / 源码框，并清掉 dirty 防止旧内容被自动保存写回去 */
+  function applyRestored(content: string) {
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    dirtyRef.current = false;
+    contentRef.current = content;
+    if (noteRef.current) noteRef.current = { ...noteRef.current, content };
+    setEditorSeed(content);
+    setSeedKey((k) => k + 1);
+    setSourceText(content);
+    setStatus("idle");
+  }
+
+  /** 思维导图 / 演示都基于当前正文；先收起键盘 */
+  function openViewer(kind: "mindmap" | "slideshow") {
+    editor?.commands.blur();
+    if (kind === "mindmap") setMindMapOpen(true);
+    else setSlideshowOpen(true);
+  }
+
   if (Number.isNaN(noteId)) {
     return <div className="m-t-meta p-4 text-center">笔记 ID 无效</div>;
   }
@@ -540,12 +600,26 @@ export function MobileNoteEditor() {
             <span className="truncate">{folderLabel}</span>
           </button>
           {/* 标签色是用户自定义的，直接当文字色在暗色主题下可能看不清 → 色点 + 中性字 */}
+          {/* 点任一标签或「＋标签」打开标签编辑面板（加密笔记只读，不给改） */}
           {tags.map((t) => (
-            <span key={t.id} className="m-tag" style={{ background: "var(--m-well)", color: "var(--m-ink2)" }}>
-              <span className="m-dot" style={{ width: 6, height: 6, background: t.color || "var(--m-ink4)" }} />
+            <button
+              key={t.id}
+              type="button"
+              className="m-tag m-tapx"
+              style={{ background: "var(--m-well)", color: "var(--m-ink2)" }}
+              disabled={readOnly}
+              aria-label={`标签「${t.name}」，点按编辑标签`}
+              onClick={() => setTagsOpen(true)}
+            >
+              <span className="m-dot" style={{ width: 6, height: 6, background: tagDot(t.color) }} />
               {t.name}
-            </span>
+            </button>
           ))}
+          {!readOnly && note && (
+            <button type="button" className="m-tag m-tapx" style={{ background: "transparent", color: "var(--m-ink3)", border: "0.5px dashed var(--m-hair)" }} aria-label="编辑标签" onClick={() => setTagsOpen(true)}>
+              <TagIcon size={12} /> {tags.length > 0 ? "＋" : "加标签"}
+            </button>
+          )}
           {note?.is_pinned && (
             <span className="m-tag" style={{ background: "var(--m-accent-soft2)", color: "var(--m-accent-ink)" }}>
               <Pin size={12} /> 置顶
@@ -696,6 +770,8 @@ export function MobileNoteEditor() {
         subtitle={`${words.toLocaleString()} 字${backlinks > 0 ? ` · 链入 ${backlinks}` : ""}`}
         grid={[
           { key: "pin", label: note?.is_pinned ? "已置顶" : "置顶", icon: <Pin size={22} />, active: !!note?.is_pinned, onClick: () => void togglePin() },
+          { key: "outline", label: "大纲", icon: <ListTree size={22} />, onClick: openOutline },
+          { key: "history", label: "历史版本", icon: <History size={22} />, onClick: () => void openHistory() },
           { key: "find", label: "查找替换", icon: <Search size={22} />, onClick: openFind },
           { key: "hide", label: note?.is_hidden ? "已隐藏" : "隐藏", icon: <EyeOff size={22} />, active: !!note?.is_hidden, onClick: () => void toggleHidden() },
           {
@@ -712,10 +788,37 @@ export function MobileNoteEditor() {
                 centered: true,
               }),
           },
+          { key: "mindmap", label: "思维导图", icon: <Network size={22} />, onClick: () => openViewer("mindmap") },
+          { key: "slideshow", label: "演示", icon: <Presentation size={22} />, onClick: () => openViewer("slideshow") },
         ]}
         items={moreItems}
         onClose={() => setMoreOpen(false)}
       />
+
+      <NoteOutlineSheet open={outlineOpen} onClose={() => setOutlineOpen(false)} editor={editor} />
+      {note && <NoteHistorySheet open={historyOpen} onClose={() => setHistoryOpen(false)} noteId={note.id} onRestored={applyRestored} />}
+      {note && <NoteTagsSheet open={tagsOpen} onClose={() => setTagsOpen(false)} noteId={note.id} tags={tags} onChange={setTags} />}
+
+      {/* 思维导图：PC 是右侧分栏，手机改全屏；导图本身（markmap）支持双指缩放、拖动 */}
+      {mindMapOpen && (
+        <div className="m-mindmap fixed inset-0 z-[70] flex flex-col" style={{ background: "var(--m-surface)", paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+          <header className="flex h-12 shrink-0 items-center pr-1.5 pl-1">
+            <button type="button" aria-label="关闭思维导图" className="m-icon-btn" onClick={() => setMindMapOpen(false)}>
+              <X size={22} />
+            </button>
+            <span className="m-t-title min-w-0 flex-1 truncate">思维导图</span>
+          </header>
+          <div className="min-h-0 flex-1">
+            <Suspense fallback={<div className="m-t-meta py-10 text-center">加载中…</div>}>
+              <MindMapView open onClose={() => setMindMapOpen(false)} markdown={contentRef.current} title={titleRef.current} variant="standalone" />
+            </Suspense>
+          </div>
+        </div>
+      )}
+      {/* 演示：与 PC 同一个全屏组件，按分割线分页；左右两侧点按翻页 */}
+      <div className="m-slideshow">
+        <SlideshowView open={slideshowOpen} onClose={() => setSlideshowOpen(false)} html={contentRef.current} title={titleRef.current} />
+      </div>
 
       {/* 导出 / 分享：手机上没有「选保存位置」，Word / PDF / HTML 文件导出留在桌面端 */}
       <MSheet open={shareOpen} title="导出 / 分享" caption="Word、PDF、HTML 文件导出请在桌面端操作" onClose={() => setShareOpen(false)}>
