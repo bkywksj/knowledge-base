@@ -104,9 +104,10 @@ const PAGES_WITH_OWN_FAB = ["/ai", "/tasks"];
  * 不放全局 FAB 的页面（精确匹配）：
  * - 首页：金刚区第一格就是「新建笔记」，FAB 重复且会压住待办行尾的时间
  * - 笔记列表：新建按钮在顶栏右侧；列表摘要会伸到右下角，FAB 会压住内容
+ * - 日记：当天卡片自带「记一笔」和编辑入口；本月列表行尾的字数会被 FAB 压住
  * Rail 形态的「新建」在侧边栏里、不压内容，照常显示。
  */
-const PAGES_WITHOUT_FAB = ["/", "/notes"];
+const PAGES_WITHOUT_FAB = ["/", "/notes", "/daily"];
 
 export function MobileLayout() {
   const navigate = useNavigate();
