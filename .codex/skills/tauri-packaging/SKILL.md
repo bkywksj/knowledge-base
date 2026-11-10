@@ -215,7 +215,8 @@ version = "1.0.0"
 - 不全量打包先验语法：复制 `src-tauri/target/release/nsis/x64/` 整个目录，清空副本 `installer.nsi` 里的 `UNINSTALLERSIGNCOMMAND`，
   再用 `$LOCALAPPDATA/tauri/NSIS/makensis.exe -V2` 编译（渲染脚本按绝对路径引用钩子文件，改了直接生效）。
 - 验收：AI 客户端连着本应用的 MCP 时升级 → 安装成功、会话不掉线，安装目录多出 `kb-mcp.exe.old`。
-- 手动运行安装包升级时，仍会出现上游模板的「卸载后安装」页。Reeve 已用自定义模板改成原地覆盖，本应用还没接入。
+- 手动运行安装包升级：`src-tauri/nsis/installer.nsi` 是 tauri-cli 2.10.1 内置模板加两处 `installer-std patch`，升级时跳过「卸载后安装」页和安装目录页、原地覆盖；同版本重装、降级仍是上游页面。语言选择框默认简体中文。
+- 🔴 `pnpm-lock.yaml` 里的 tauri-cli 版本变了就要重新生成模板（Reeve 仓库 `scripts/installer-std/` 的脚本取原件 + `template.patch`，用法见 Reeve 的 tauri-packaging 技能），否则补丁丢了又会提示卸载。
 
 ## 常见错误
 
