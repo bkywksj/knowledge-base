@@ -1,7 +1,7 @@
 ﻿; ============================================================================
 ; 自定义 NSIS 安装钩子
 ; ① 升级时给 kb-mcp.exe 改名让位：它常被外部 MCP host 通过 stdio 占着，直接覆盖会写不进去。
-;    用下面的标准宏 SIDECAR_ASIDE，各应用同一份，标准写法见 Reeve 的 tauri-packaging 技能。
+;    用下面的标准宏 SIDECAR_ASIDE，各应用同一份，标准写法以框架（E:/my/桌面软件tauri/tauri）的 tauri-packaging 技能为准。
 ; ② 保留 productName="Knowledge Base"（让 CI 产物名/updater URL 全英文，
 ;    避免 GitHub Release Asset 中文字符 URL 编码导致更新失败），
 ;    同时让用户桌面/开始菜单的快捷方式显示中文"知识库"。
