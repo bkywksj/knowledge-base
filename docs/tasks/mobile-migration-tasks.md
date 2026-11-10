@@ -434,13 +434,13 @@
 
 #### T-M023 · 补缺失页面的移动壳（防破版）
 
-- **状态**：`pending`
+- **状态**：`completed` · 2026-11-10 并入 T-M029 完成（v4 重构 M3-11：提示词 / 隐藏 / 关于手机版，图谱 / 推送「请在桌面端使用」说明页；M4 补白板手机外壳）
 - **价值**：⭐⭐⭐⭐  成本：中
 - **背景**：`graph` / `prompts` / `push` / `hidden` / `about` / `feature-toggle` 在手机上直接落桌面 UI 会破版（feature-toggle 实际已有 MobileFeatureToggle，需核对接线）
 - **子任务**：
-  - [ ] 新建 MobilePrompts（AI 提示词，高频）/ MobileHidden / MobileAbout
-  - [ ] `graph`（G6 图谱）/ `push`（定时推送弹窗）给"请在桌面端使用"降级占位卡
-  - [ ] 核对 feature-toggle / about 的 isMobile 分流是否已接
+  - [x] 新建 MobilePrompts（AI 提示词，高频）/ MobileHidden / MobileAbout
+  - [x] `graph`（G6 图谱）/ `push`（定时推送弹窗）给"请在桌面端使用"降级占位卡
+  - [x] 核对 feature-toggle / about 的 isMobile 分流是否已接
 
 #### T-M024 · 移动编辑器轻量增强
 
@@ -505,11 +505,11 @@
 - **待做**：
   - [ ] 真机验证：三键导航 / 手势导航 / 横屏（导航栏在侧边）三种情况下 Tab 栏、FAB、各页底部按钮
   - [ ] 确认手势导航下底部多出的窄条不难看；前端 `env(safe-area-inset-bottom)` 不会和原生留白叠加
-  - [ ] 移动端做深色主题时，原生补的底色要跟着主题变（现在写死白色）
+  - [x] 移动端做深色主题时，原生补的底色要跟着主题变（2026-11-10 已做：`KbSystemBars` 接口，见 v4 文档 M4；真机效果随回归验证）
 
 #### T-M029 · 按 PC 端 v4 风格重构移动端界面
 
-- **状态**：`in_progress` · 2026-11-06 用户提出 · 2026-11-10 原型定稿、开工
+- **状态**：`testing` · 2026-11-06 用户提出 · 2026-11-10 原型定稿、开工，当天 M0~M3 完成、M4 除真机回归外完成；真机清单 `docs/tasks/mobile-v4-device-regression.md`
 - **背景**：桌面端已完成 v4 原型改版（主题、卡片、列表行距、搜索页三列等），移动端还是旧风格
 - **展开文档**：👉 `docs/tasks/mobile-v4-redesign-tasks.md`（M0~M4，逐页计划与进度都记在那里）
 - **原型**：`docs/design/mobile-v4/index.html`（13 屏）
@@ -526,7 +526,7 @@
 | Phase 2 移植绿区 | 6 | 4 | `in_progress` (T-M006/008/009/010 ✅，T-M007/011 待) |
 | Phase 3 黄区适配 | 4 | 3 | `in_progress` (T-M013/014 一期 + T-M015 全部 ✅，T-M012 PDFium 待) |
 | Phase 4 平台特化 | 6 | 0 | `in_progress` (T-M019 本地签名链路 ✅ / T-M020 android.yml debug APK ✅ / T-M021 前后端 ✅；CI release 接入、iOS、Intent 待) |
-| Phase 5 可用性打磨 | 8 | 0 | `in_progress` (T-M022 增量1-3 + T-M026 一键同步/通知 + T-M027 S3 移动端 + T-M028 导航栏遮挡 均已落地待真机验证；T-M029 按 PC 风格重构待做) |
+| Phase 5 可用性打磨 | 8 | 0 | `in_progress` (T-M022 增量1-3 + T-M026 一键同步/通知 + T-M027 S3 移动端 + T-M028 导航栏遮挡 均已落地待真机验证；T-M023 ✅ 并入 T-M029；T-M029 v4 重构代码完成、待真机回归) |
 | **合计** | **30** | **12** | — |
 
 ---
