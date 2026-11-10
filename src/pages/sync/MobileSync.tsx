@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
-  ChevronLeft,
   CloudUpload,
   CloudDownload,
   Plus,
@@ -31,9 +30,10 @@ import type {
   WebDavConfig,
 } from "@/types";
 import { relativeTime } from "@/lib/utils";
+import { MNavBar } from "@/components/mobile/primitives";
 
 /**
- * 移动端云端同步管理（设计：基于 11-sync.html，简化为只支持 WebDAV）
+ * 移动端云端同步管理（v4 样式，交互同原版；支持 WebDAV 与 S3）
  *
  * 路由 /sync —— 移动端独立路由（不在 LayoutSwitch 子路由下）
  *
@@ -398,57 +398,45 @@ export function MobileSync() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col bg-slate-50"
-      style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
+      className="fixed inset-0 z-50 flex flex-col"
+      style={{ background: "var(--m-page)", color: "var(--m-ink)", paddingTop: "env(safe-area-inset-top, 0px)" }}
     >
-      {/* 顶栏 */}
-      <header className="flex h-12 items-center justify-between border-b border-slate-200 bg-white px-2 shrink-0">
-        <button
-          onClick={() => navigate(-1)}
-          aria-label="返回"
-          className="flex h-10 w-10 items-center justify-center"
-        >
-          <ChevronLeft size={24} className="text-slate-700" />
-        </button>
-        <h1 className="text-base font-semibold">云端同步</h1>
-        <div className="flex">
-          <button
-            onClick={() => setImportOpen(true)}
-            aria-label="导入配置"
-            className="flex h-10 w-10 items-center justify-center text-slate-600"
-          >
-            <Download size={20} />
-          </button>
-          <button
-            onClick={openAdd}
-            aria-label="新增"
-            className="flex h-10 w-10 items-center justify-center text-[#1677FF]"
-          >
-            <Plus size={22} />
-          </button>
-        </div>
-      </header>
+      <div className="shrink-0">
+        <MNavBar
+          onBack={() => navigate(-1)}
+          title="云端同步"
+          actions={
+            <>
+              <button type="button" onClick={() => setImportOpen(true)} aria-label="导入配置" className="m-icon-btn">
+                <Download size={20} />
+              </button>
+              <button type="button" onClick={openAdd} aria-label="新增" className="m-icon-btn" style={{ color: "var(--m-accent-ink)" }}>
+                <Plus size={22} />
+              </button>
+            </>
+          }
+        />
+      </div>
 
       {/* 信息横幅 */}
-      <div className="flex items-start gap-2 border-b border-blue-200 bg-blue-50 px-4 py-2.5 shrink-0">
-        <CloudUpload size={16} className="mt-0.5 shrink-0 text-blue-600" />
-        <p className="text-xs leading-relaxed text-blue-800">
-          移动端手动同步，建议每次记录后「一键同步」。支持 WebDAV 与 S3
-          （AWS / 阿里云 OSS / 腾讯云 COS / R2 / MinIO）。
-        </p>
+      <div className="m-px shrink-0">
+        <div className="flex items-start gap-2 rounded-[var(--m-r-l)] px-3 py-2.5" style={{ background: "var(--m-info-soft)", color: "var(--m-info)" }}>
+          <CloudUpload size={16} className="mt-0.5 shrink-0" />
+          <p className="text-[13px] leading-relaxed">
+            移动端手动同步，建议每次记录后「一键同步」。支持 WebDAV 与 S3（AWS / 阿里云 OSS / 腾讯云 COS / R2 / MinIO）。
+          </p>
+        </div>
       </div>
 
       {/* 列表 */}
-      <main className="flex-1 overflow-y-auto p-4">
+      <main className="m-px flex-1 overflow-y-auto pt-3 pb-6">
         {loading ? (
-          <div className="text-center text-sm text-slate-400 py-8">加载中…</div>
+          <div className="m-t-meta py-8 text-center">加载中…</div>
         ) : backends.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 px-4 py-16 text-slate-400">
-            <CloudUpload size={40} className="text-slate-300" />
-            <span className="text-sm">还没有配置同步</span>
-            <span className="text-xs text-slate-300">
-              点右上 + 添加 WebDAV / S3
-            </span>
+          <div className="flex flex-col items-center gap-2 py-16 text-center">
+            <CloudUpload size={36} style={{ color: "var(--m-ink4)" }} />
+            <span className="m-t-body" style={{ color: "var(--m-ink2)" }}>还没有配置同步</span>
+            <span className="m-t-cap">点右上 + 添加 WebDAV / S3</span>
           </div>
         ) : (
           <div className="space-y-3">
@@ -457,11 +445,7 @@ export function MobileSync() {
                 key={b.id}
                 backend={b}
                 busy={busyId === b.id}
-                progress={
-                  busyId === b.id && progress?.backendId === b.id
-                    ? progress
-                    : null
-                }
+                progress={busyId === b.id && progress?.backendId === b.id ? progress : null}
                 onSyncAll={() => syncAll(b.id)}
                 onPush={() => push(b.id)}
                 onPull={() => pull(b.id)}
@@ -624,39 +608,36 @@ function BackendCard({
   onDelete: () => void;
   onShare: () => void;
 }) {
-  const lastPush = backend.lastPushTs
-    ? relativeTime(backend.lastPushTs)
-    : "从未";
-  const lastPull = backend.lastPullTs
-    ? relativeTime(backend.lastPullTs)
-    : "从未";
+  const lastPush = backend.lastPushTs ? relativeTime(backend.lastPushTs) : "从未";
+  const lastPull = backend.lastPullTs ? relativeTime(backend.lastPullTs) : "从未";
+  const secondary = { background: "var(--m-well)", color: "var(--m-ink)" };
   return (
-    <div className="rounded-2xl bg-white p-4 shadow-sm">
+    <div className="rounded-[var(--m-r-xl)] p-4" style={{ background: "var(--m-surface)" }}>
       <div className="flex items-start gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50">
-          <CloudUpload size={20} className="text-[#1677FF]" />
-        </div>
+        <span className="flex w-6 shrink-0 justify-center pt-0.5" style={{ color: "var(--m-accent-ink)" }}>
+          <CloudUpload size={22} />
+        </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-semibold text-slate-900">
+            <span className="truncate text-[15px] font-semibold" style={{ color: "var(--m-ink)" }}>
               {backend.name}
             </span>
-            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 uppercase">
+            <span className="m-tag shrink-0 uppercase" style={{ background: "var(--m-well)", color: "var(--m-ink2)" }}>
               {backend.kind}
             </span>
             {backend.enabled ? (
-              <CheckCircle2 size={12} className="text-green-500" />
+              <CheckCircle2 size={14} className="shrink-0" style={{ color: "var(--m-ok)" }} aria-label="已启用" />
             ) : (
-              <AlertCircle size={12} className="text-slate-400" />
+              <AlertCircle size={14} className="shrink-0" style={{ color: "var(--m-ink3)" }} aria-label="未启用" />
             )}
           </div>
-          <div className="mt-1 grid grid-cols-2 text-[11px] text-slate-500">
+          <div className="m-t-cap mt-1 grid grid-cols-2">
             <span>↑ 推送 · {lastPush}</span>
             <span>↓ 拉取 · {lastPull}</span>
           </div>
           {/* 最近一次同步失败（后端成功后自动清空）。移动端没有 hover，直接展示两行摘要 */}
           {backend.lastError && (
-            <div className="mt-1.5 rounded-md bg-red-50 px-2 py-1 text-[11px] leading-snug text-red-600 line-clamp-2 break-all">
+            <div className="mt-1.5 line-clamp-2 break-all rounded-[var(--m-r-m)] px-2 py-1 text-[12px] leading-snug" style={{ background: "var(--m-bad-soft)", color: "var(--m-bad)" }}>
               上次同步失败
               {backend.lastErrorAt ? `（${relativeTime(backend.lastErrorAt)}）` : ""}：
               {backend.lastError}
@@ -667,32 +648,22 @@ function BackendCard({
 
       {/* 进度条（仅在 busy 时显示） */}
       {busy && (
-        <div className="mt-3 rounded-lg bg-blue-50 px-3 py-2">
-          <div className="flex items-center justify-between text-[11px] text-blue-700">
-            <span className="font-medium">
-              {progress
-                ? PHASE_LABELS[progress.phase] ?? progress.phase
-                : "准备中…"}
-            </span>
+        <div className="mt-3 rounded-[var(--m-r-m)] px-3 py-2" style={{ background: "var(--m-accent-soft)" }}>
+          <div className="flex items-center justify-between text-[12px]" style={{ color: "var(--m-accent-ink)" }}>
+            <span className="font-semibold">{progress ? PHASE_LABELS[progress.phase] ?? progress.phase : "准备中…"}</span>
             {progress && progress.total > 0 && (
-              <span>
+              <span className="m-num">
                 {progress.current} / {progress.total}
               </span>
             )}
           </div>
-          {progress?.message && (
-            <div className="mt-0.5 truncate text-[10px] text-blue-600/80">
-              {progress.message}
-            </div>
-          )}
-          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-blue-100">
+          {progress?.message && <div className="m-t-cap mt-0.5 truncate">{progress.message}</div>}
+          <div className="mt-1.5 h-1 overflow-hidden rounded-full" style={{ background: "var(--m-well)" }}>
             <div
-              className="h-full bg-[#1677FF] transition-all"
+              className="h-full transition-all"
               style={{
-                width:
-                  progress && progress.total > 0
-                    ? `${Math.min(100, Math.round((progress.current / progress.total) * 100))}%`
-                    : "8%",
+                background: "var(--m-btn)",
+                width: progress && progress.total > 0 ? `${Math.min(100, Math.round((progress.current / progress.total) * 100))}%` : "8%",
               }}
             />
           </div>
@@ -700,61 +671,39 @@ function BackendCard({
       )}
 
       {/* 一键同步（主操作）：先推后拉 */}
-      <button
-        onClick={onSyncAll}
-        disabled={busy}
-        className="mt-3 flex h-11 w-full items-center justify-center gap-1.5 rounded-lg bg-[#1677FF] text-sm font-semibold text-white active:scale-[0.98] transition-transform disabled:opacity-50"
-      >
+      <button type="button" onClick={onSyncAll} disabled={busy} className="m-btn mt-3 w-full gap-1.5">
         <RefreshCw size={16} className={busy ? "animate-spin" : ""} /> 一键同步
       </button>
 
       {/* 单向操作（次级）：分别推/拉 */}
       <div className="mt-2 grid grid-cols-2 gap-2">
-        <button
-          onClick={onPush}
-          disabled={busy}
-          className="flex h-9 items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-600 active:bg-slate-50 disabled:opacity-50"
-        >
-          <CloudUpload size={13} /> 仅推送
+        <button type="button" onClick={onPush} disabled={busy} className="m-btn gap-1 px-2 text-[14px] font-semibold" style={secondary}>
+          <CloudUpload size={15} /> 仅推送
         </button>
-        <button
-          onClick={onPull}
-          disabled={busy}
-          className="flex h-9 items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-600 active:bg-slate-50 disabled:opacity-50"
-        >
-          <CloudDownload size={13} /> 仅拉取
+        <button type="button" onClick={onPull} disabled={busy} className="m-btn gap-1 px-2 text-[14px] font-semibold" style={secondary}>
+          <CloudDownload size={15} /> 仅拉取
         </button>
       </div>
       <div className="mt-2 grid grid-cols-4 gap-2">
-        <button
-          onClick={onTest}
-          disabled={busy}
-          className="flex h-9 items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 active:bg-slate-50 disabled:opacity-50"
-        >
-          <Plug size={12} /> 测试
-        </button>
-        <button
-          onClick={onShare}
-          disabled={busy}
-          className="flex h-9 items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 active:bg-slate-50 disabled:opacity-50"
-        >
-          <Share2 size={12} /> 分享
-        </button>
-        <button
-          onClick={onEdit}
-          disabled={busy}
-          className="flex h-9 items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white text-xs text-slate-600 active:bg-slate-50 disabled:opacity-50"
-        >
-          <Pencil size={12} /> 编辑
-        </button>
-        <button
-          onClick={onDelete}
-          disabled={busy}
-          className="flex h-9 items-center justify-center gap-1 rounded-lg border border-red-200 bg-white text-xs text-red-600 active:bg-red-50 disabled:opacity-50"
-        >
-          <Trash2 size={12} /> 删除
-        </button>
+        <SmallAction icon={<Plug size={14} />} label="测试" disabled={busy} onClick={onTest} />
+        <SmallAction icon={<Share2 size={14} />} label="分享" disabled={busy} onClick={onShare} />
+        <SmallAction icon={<Pencil size={14} />} label="编辑" disabled={busy} onClick={onEdit} />
+        <SmallAction icon={<Trash2 size={14} />} label="删除" disabled={busy} onClick={onDelete} danger />
       </div>
     </div>
+  );
+}
+
+function SmallAction({ icon, label, disabled, onClick, danger }: { icon: React.ReactNode; label: string; disabled: boolean; onClick: () => void; danger?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="flex h-11 items-center justify-center gap-1 rounded-[var(--m-r-l)] text-[13px] font-medium disabled:opacity-45"
+      style={danger ? { background: "var(--m-bad-soft)", color: "var(--m-bad)" } : { background: "var(--m-well)", color: "var(--m-ink2)" }}
+    >
+      {icon} {label}
+    </button>
   );
 }
