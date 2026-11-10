@@ -22,8 +22,9 @@ export interface SwipeAction {
 
 const ACTION_W = 68;
 const OPEN_EVENT = "m-swipe-open";
+/** 白字按钮的底色一律用固定深色：暗色主题的 --m-info / --m-bad 为了当文字用调亮了，压白字不够对比度 */
 const TONE_BG: Record<NonNullable<SwipeAction["tone"]>, string> = {
-  info: "var(--m-info)",
+  info: "var(--m-swipe-info)",
   bad: "var(--m-badge-bg)",
   accent: "var(--m-btn)",
 };
