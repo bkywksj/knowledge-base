@@ -277,15 +277,21 @@
 - [x] 底部「继续编辑 / 开始记录今天的日记」→ `getOrCreate(选中日期)` → /notes/:id `MobileDaily.tsx:267-273` `MobileDaily.tsx:100-107`
 
 #### src/pages/search/MobileSearch.tsx
-- [ ] 从 `?q=` 读初始关键词；关键词变化回写 URL（replace） `MobileSearch.tsx:29-32` `MobileSearch.tsx:73-80`
-- [ ] 顶栏返回 `MobileSearch.tsx:86-92`
-- [ ] 搜索框自动聚焦（占位「搜索笔记 / 标题 / 正文」） `MobileSearch.tsx:95-101`
-- [ ] 300ms 防抖调 `searchApi.search(q, 50)` `MobileSearch.tsx:25` `MobileSearch.tsx:39-70`
-- [ ] 清空按钮 `MobileSearch.tsx:102-110`
-- [ ] 空关键词提示 / 搜索中 / 无结果（出错同） `MobileSearch.tsx:116-131`
-- [ ] 「搜索结果 · N 篇」 `MobileSearch.tsx:134-136`
-- [ ] 结果卡：标题（空「未命名笔记」）、摘要、更新日期；关键词高亮 `MobileSearch.tsx:154-224`
-- [ ] 点结果 → /notes/:id?q=关键词 `MobileSearch.tsx:142-144`
+
+> ✅ M3-7 验收（2026-11-10）：按原型 10 屏重做。变化处：顶栏返回键 → 搜索框右侧「取消」（同样返回上一页）·新增待办结果（`taskApi.search`，点进任务详情）与范围胶囊「全部 / 笔记 N / 待办 N」，全部范围下待办先露 5 条、笔记 20 条，多的「查看全部」·
+> 新增筛选胶囊：时间（今天 / 最近 7 天 / 最近 30 天 / 今年，按更新时间）、文件夹（含子文件夹）、标签（多选，需同时含有）、仅标题；规则与 PC 共用 `lib/searchFilters.ts`（从 PC 搜索页原样迁出，+4 单测），筛选只作用于笔记（同 PC）·
+> 新增最近搜索（与 PC 共用历史，有结果才记）· 结果行加所在文件夹路径、白板标记，日期改相对时间 · 高亮改主色浅底（暗色主题可读）·
+> 进笔记定位命中：手机编辑器原来不认 `?q=`，现传给 TiptapEditor 的 initialSearch，自动展开查找条并选中第一处（查找条在手机上改为吸顶整行，不再盖住正文）·本页不显示全局 FAB。
+
+- [x] 从 `?q=` 读初始关键词；关键词变化回写 URL（replace） `MobileSearch.tsx:29-32` `MobileSearch.tsx:73-80`
+- [x] 顶栏返回 `MobileSearch.tsx:86-92`
+- [x] 搜索框自动聚焦（占位「搜索笔记 / 标题 / 正文」） `MobileSearch.tsx:95-101`
+- [x] 300ms 防抖调 `searchApi.search(q, 50)` `MobileSearch.tsx:25` `MobileSearch.tsx:39-70`
+- [x] 清空按钮 `MobileSearch.tsx:102-110`
+- [x] 空关键词提示 / 搜索中 / 无结果（出错同） `MobileSearch.tsx:116-131`
+- [x] 「搜索结果 · N 篇」 `MobileSearch.tsx:134-136`
+- [x] 结果卡：标题（空「未命名笔记」）、摘要、更新日期；关键词高亮 `MobileSearch.tsx:154-224`
+- [x] 点结果 → /notes/:id?q=关键词 `MobileSearch.tsx:142-144`
 
 #### src/pages/ai/MobileAi.tsx
 - [ ] 进入时加载对话列表和模型列表 `MobileAi.tsx:113-131`
