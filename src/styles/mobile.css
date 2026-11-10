@@ -1,0 +1,344 @@
+/* ═══════════════════════════════════════════════════════════
+   手机端 v4 设计令牌（原型：docs/design/mobile-v4/index.html，任务：docs/tasks/mobile-v4-redesign-tasks.md）
+
+   - 一律从 PC 主题变量 --kb-* 推出来，9 套主题手机端自动可用；手机页面不再写死颜色
+   - 定义在 :root 而不是 MobileLayout 根节点：任务详情 / AI 对话 / 同步是顶层路由，不在布局里面
+   - 统一 --m- 前缀、.m- 类名，桌面端不引用，零影响
+   - color-mix 需要 Android WebView 111+：每个用到的变量先写一个淡紫主题的固定值兜底，
+     老 WebView 不认 color-mix 时整条声明被丢弃，退回兜底值，不会出现透明 / 黑色
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── 底色 ── */
+  --m-page: var(--kb-bg-panel, #F6F3FD);
+  --m-surface: var(--kb-bg-raised, #FFFFFF);
+  --m-well: #F1EEF8;
+  --m-well: color-mix(in srgb, var(--kb-primary) 8%, var(--kb-bg-raised));
+
+  /* ── 文字：PC 的三级文字色里，tertiary 对比度不够正文用（淡紫白底 2.9:1），
+        手机端辅助文字一律用 secondary，tertiary 只给图标、分隔这类非文字元素 ── */
+  --m-ink: var(--kb-text-primary, #27233B);
+  --m-ink2: var(--kb-ink2, #4A4462);
+  --m-ink3: #6A6484;
+  --m-ink3: color-mix(in oklab, var(--kb-text-secondary) 86%, var(--kb-text-primary));
+  --m-ink4: #857F9F;
+  --m-ink4: color-mix(in oklab, var(--kb-text-tertiary) 50%, var(--kb-text-secondary));
+  --m-hair: var(--kb-border, rgba(110, 85, 200, 0.14));
+
+  /* ── 主色：填充用主题原色；做文字时往正文色混一点 ——
+        亮色主题正文是深色 → 主色字变深；暗色主题正文是浅色 → 主色字变亮，两头都过 4.5:1 ── */
+  --m-accent: var(--kb-primary, #7C63DC);
+  --m-accent-ink: #6A50CE;
+  --m-accent-ink: color-mix(in oklab, var(--kb-primary) 70%, var(--kb-text-primary));
+  --m-accent-soft: rgba(124, 99, 220, 0.09);
+  --m-accent-soft: color-mix(in srgb, var(--kb-primary) 10%, transparent);
+  --m-accent-soft2: rgba(124, 99, 220, 0.15);
+  --m-accent-soft2: color-mix(in srgb, var(--kb-primary) 17%, transparent);
+
+  /* ── 主按钮：主色往按钮字的反方向压一点，保证按钮字 ≥ 4.5:1。
+        默认白字 → 往黑混；香槟 / 琥珀是深色按钮字 → 往白混（见下方主题覆盖） ── */
+  --m-on-accent: var(--kb-on-primary, #FFFFFF);
+  --m-btn-deepen: #000000;
+  --m-btn-mix: 14%;
+  --m-btn: #6448D6;
+  --m-btn: color-mix(in oklab, var(--kb-primary), var(--m-btn-deepen) var(--m-btn-mix));
+
+  /* ── 语义色（亮色主题值；暗色见下方覆盖） ── */
+  --m-ok: #24704F;
+  --m-ok-soft: #E6F3EC;
+  --m-bad: #B83D53;
+  --m-bad-soft: #FBEBEE;
+  --m-warn: #8F6214;
+  --m-warn-soft: #FBF1DF;
+  --m-info: #3C66BF;
+  --m-info-soft: #E8EFFB;
+  /* 计数角标：白字压红底，所有主题固定用深红（暗色主题的 --m-bad 偏亮，白字只有 2.4:1） */
+  --m-badge-bg: #B83D53;
+
+  /* ── 圆角：6 / 8 / 10 / 12 四档，底部面板顶部 16；内层比外层小一档 ── */
+  --m-r-xs: 4px;
+  --m-r-s: 6px;
+  --m-r-m: 8px;
+  --m-r-l: 10px;
+  --m-r-xl: 12px;
+  --m-r-sheet: 16px;
+
+  /* ── 浮起卡片（只有继续编辑 / 日记当天 / AI 回复这类用）；按钮、控件一律无阴影 ── */
+  --m-shadow-float: var(--kb-shadow-md, 0 1px 2px rgba(80, 60, 160, 0.05), 0 10px 28px -12px rgba(80, 60, 160, 0.22));
+
+  --m-page-px: 16px;
+}
+
+/* 深色按钮字的主题：按钮往白色方向提亮 */
+[data-theme="light-gold"],
+[data-theme="dark-amber"] {
+  --m-btn-deepen: #FFFFFF;
+}
+
+/* 暗色主题：主色本身偏亮（如暖炭 #A992FA），白字要压得更深才够对比度 */
+[data-theme-category="dark"] {
+  --m-btn-mix: 34%;
+  --m-ok: #6FCF9F;
+  --m-ok-soft: rgba(111, 207, 159, 0.14);
+  --m-bad: #F59DAB;
+  --m-bad-soft: rgba(240, 138, 155, 0.14);
+  --m-warn: #E7BE6A;
+  --m-warn-soft: rgba(231, 190, 106, 0.14);
+  --m-info: #98BBF8;
+  --m-info-soft: rgba(134, 174, 245, 0.14);
+}
+[data-theme="dark-amber"] {
+  --m-btn-mix: 10%;
+}
+
+/* ═══════════════════ 字号阶梯（相邻 ≥ 1.2 倍；标题一律 700，中文没有 500 这一档） ═══════════════════ */
+.m-t-large { font-size: 28px; line-height: 1.2; font-weight: 700; letter-spacing: -0.01em; color: var(--m-ink); }
+.m-t-sec   { font-size: 17px; line-height: 1.35; font-weight: 700; color: var(--m-ink); }
+.m-t-title { font-size: 16px; line-height: 1.45; font-weight: 600; color: var(--m-ink); }
+.m-t-body  { font-size: 15px; line-height: 1.6; color: var(--m-ink); }
+.m-t-meta  { font-size: 13px; line-height: 1.5; color: var(--m-ink3); }
+.m-t-cap   { font-size: 12px; line-height: 1.4; color: var(--m-ink3); }
+.m-num     { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ═══════════════════ 容器：一个容器只用一种手段 ═══════════════════ */
+.m-page { background: var(--m-page); color: var(--m-ink); }
+.m-px { padding-left: var(--m-page-px); padding-right: var(--m-page-px); }
+/* 分组面板只靠白底和页面底色区分 */
+.m-group { background: var(--m-surface); border-radius: var(--m-r-xl); overflow: hidden; }
+/* 浮起卡只靠阴影 */
+.m-float { background: var(--m-surface); border-radius: var(--m-r-xl); box-shadow: var(--m-shadow-float); }
+
+/* 列表行：分隔线从文字处起、不从图标起（--m-inset 由带图标的行设成 52px） */
+.m-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 0 16px;
+  color: var(--m-ink);
+  text-align: left;
+  width: 100%;
+}
+.m-row + .m-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: var(--m-inset, 16px);
+  height: 0.5px;
+  background: var(--m-hair);
+}
+.m-row.m-row-icon { --m-inset: 52px; }
+.m-row:active { background: var(--m-accent-soft); }
+.m-row.m-row-danger { color: var(--m-bad); font-weight: 600; }
+
+/* 操作格：放在一块面板里分格，不一格一卡 */
+.m-grid-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 0;
+  border-radius: var(--m-r-l);
+  font-size: 12px;
+  color: var(--m-ink2);
+}
+.m-grid-cell:active { background: var(--m-accent-soft); }
+.m-grid-cell.is-on { background: var(--m-accent-soft2); color: var(--m-accent-ink); font-weight: 700; }
+
+/* ═══════════════════ 小件 ═══════════════════ */
+/* 胶囊：视觉 32 高，透明热区撑到 44 */
+.m-chip {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 32px;
+  min-width: 44px;
+  padding: 0 13px;
+  border-radius: var(--m-r-m);
+  font-size: 13px;
+  white-space: nowrap;
+  color: var(--m-ink2);
+  background: var(--m-surface);
+}
+.m-chip::after { content: ""; position: absolute; inset: -6px 0; }
+.m-chip.is-on { color: var(--m-surface); background: var(--m-ink); font-weight: 600; }
+
+.m-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--m-r-s);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* 双链记号（功能记号）：链入 / 链出 / 引用笔记 */
+.m-link-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: var(--m-accent-soft);
+  color: var(--m-accent-ink);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* 图标按钮：44×44，无阴影 */
+.m-icon-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--m-r-l);
+  color: var(--m-ink2);
+}
+.m-icon-btn:active { background: var(--m-accent-soft); }
+.m-icon-btn.is-primary { background: var(--m-btn); color: var(--m-on-accent); }
+
+/* 主按钮：无阴影 */
+.m-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 20px;
+  border-radius: var(--m-r-l);
+  background: var(--m-btn);
+  color: var(--m-on-accent);
+  font-size: 15px;
+  font-weight: 700;
+}
+.m-btn:disabled { opacity: 0.45; }
+
+/* 文字链接 / 小控件：透明热区撑到 44 */
+.m-tapx { position: relative; }
+.m-tapx::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+  transform: translate(-50%, -50%);
+}
+
+.m-hscroll { overflow-x: auto; scrollbar-width: none; }
+.m-hscroll::-webkit-scrollbar { display: none; }
+
+/* ═══════════════════ 底部面板 ═══════════════════ */
+.m-sheet-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.m-sheet-mask > .m-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(40, 34, 64, 0.36);
+  animation: kbFadeIn 0.15s ease;
+}
+.m-sheet {
+  position: relative;
+  z-index: 1;
+  background: var(--m-page);
+  border-radius: var(--m-r-sheet) var(--m-r-sheet) 0 0;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  max-height: 88vh;
+  overflow-y: auto;
+  animation: kbSheetUp 0.2s ease;
+}
+.m-sheet-grabber {
+  width: 36px;
+  height: 5px;
+  margin: 8px auto 6px;
+  border-radius: 3px;
+  background: var(--m-ink4);
+  opacity: 0.55;
+}
+
+/* ═══════════════════ 底部 Tab：实色 + 细线，不用毛玻璃（安卓 WebView 滚动掉帧） ═══════════════════ */
+.m-tabbar { background: var(--m-surface); border-top: 0.5px solid var(--m-hair); }
+.m-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 56px;
+  font-size: 12px;
+  color: var(--m-ink3);
+}
+.m-tab svg { color: var(--m-ink4); }
+.m-tab.is-on { color: var(--m-accent-ink); font-weight: 700; }
+.m-tab.is-on svg { color: var(--m-accent-ink); }
+.m-tab:active { background: var(--m-accent-soft); }
+.m-badge {
+  position: absolute;
+  top: -5px;
+  right: -11px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--m-badge-bg);
+  color: #FFFFFF;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 700;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--m-surface);
+}
+.m-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  flex: none;
+}
+
+/* FAB：无阴影 */
+.m-fab {
+  position: fixed;
+  right: 18px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: var(--m-btn);
+  color: var(--m-on-accent);
+}
+.m-fab:active { transform: scale(0.95); }
+
+/* 金刚区：彩色实心图标 + 13px 标签，无底色块、无阴影；整格热区 */
+.m-kk {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  min-height: 64px;
+  font-size: 13px;
+  color: var(--m-ink2);
+}
+.m-kk:active { opacity: 0.7; }

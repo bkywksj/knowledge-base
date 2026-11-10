@@ -4,7 +4,8 @@
  * 用户可在「功能模块 → 底部 Tab」选 4 个填到前 4 格；
  * 第 5 格永远是「我的」（通向 /settings 移动版），不可关闭。
  *
- * 与 MobileLayout 约定的契约：activeColor 决定高亮色（"primary" 蓝 / "accent" 橙）。
+ * 与 MobileLayout 约定的契约：v4 起所有 Tab 统一用主题主色高亮（跟随 9 套主题），
+ * activeColor 字段保留但不再读取。
  * matchPrefixes 决定"哪些路由在该 tab 上时高亮"——比如 /notes/123 也算在 notes tab 上。
  */
 

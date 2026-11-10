@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "./themes.css";
+@import "./mobile.css";
 /* T-011: KaTeX 公式渲染 — Mathematics 扩展 + 行内 $...$ / 块级 $$...$$ */
 @import "katex/dist/katex.min.css";
 

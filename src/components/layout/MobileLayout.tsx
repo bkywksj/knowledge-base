@@ -51,7 +51,6 @@ interface TabItem {
   icon: typeof Home;
   label: string;
   matchPrefixes: string[];
-  activeColor?: "primary" | "accent";
 }
 
 /** 把 registry 里的 icon key 翻译成 Lucide 组件 */
@@ -77,7 +76,6 @@ function metaToTabItem(meta: MobileTabMeta): TabItem {
     icon: ICON_MAP[meta.key],
     label: meta.label,
     matchPrefixes: meta.matchPrefixes,
-    activeColor: meta.activeColor,
   };
 }
 
@@ -98,8 +96,16 @@ function isTabActive(item: TabItem, pathname: string): boolean {
   );
 }
 
-/** 自带 FAB 的页面（路由前缀） — 这些页面下不渲染全局蓝色 + FAB，避免重叠 */
+/** 自带 FAB 的页面（路由前缀） — 这些页面下不渲染全局 + FAB，避免重叠 */
 const PAGES_WITH_OWN_FAB = ["/ai", "/tasks"];
+
+/**
+ * 不放全局 FAB 的页面（精确匹配）：
+ * - 首页：金刚区第一格就是「新建笔记」，FAB 重复且会压住待办行尾的时间
+ * - 笔记列表：新建按钮在顶栏右侧；列表摘要会伸到右下角，FAB 会压住内容
+ * Rail 形态的「新建」在侧边栏里、不压内容，照常显示。
+ */
+const PAGES_WITHOUT_FAB = ["/", "/notes"];
 
 export function MobileLayout() {
   const navigate = useNavigate();
@@ -110,6 +116,9 @@ export function MobileLayout() {
   const hasOwnFab = PAGES_WITH_OWN_FAB.some(
     (p) => location.pathname === p || location.pathname.startsWith(`${p}/`),
   );
+  const hideCompactFab = hasOwnFab || PAGES_WITHOUT_FAB.includes(location.pathname);
+  /** 待办 Tab 角标：紧急待办数，与 PC 活动栏同一个数据源（App 启动时刷新） */
+  const urgentTodoCount = useAppStore((s) => s.urgentTodoCount);
 
   // 用户配置的前 4 格 Tab + 固定「我的」第 5 格
   const tabKeys = useAppStore((s) => s.mobileTabKeys);
@@ -142,7 +151,7 @@ export function MobileLayout() {
 
   return (
     <div
-      className={`flex h-screen w-screen overflow-hidden bg-slate-50 ${
+      className={`m-page flex h-screen w-screen overflow-hidden ${
         isRail ? "flex-row" : "flex-col"
       }`}
       // Android 状态栏让出 padding（系统会在这块绘制信号/电量）。
@@ -166,17 +175,17 @@ export function MobileLayout() {
           <Outlet />
         </div>
 
-        {/* 浮动 FAB（右下，悬浮在 Tab 上方）— Rail 模式下改由 Rail 顶部渲染 */}
-        {!hasOwnFab && !isRail && (
+        {/* 浮动 FAB（右下，悬浮在 Tab 上方，无阴影）— Rail 模式下改由 Rail 顶部渲染 */}
+        {!hideCompactFab && !isRail && (
           <button
             aria-label="新建"
             onClick={() => navigate("/quick-create")}
-            className="fixed right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-[#1677FF] text-white shadow-[0_8px_24px_rgba(22,119,255,0.4)] active:scale-95 transition-transform"
+            className="m-fab transition-transform"
             style={{
-              bottom: `calc(64px + env(safe-area-inset-bottom, 0px) + 16px)`,
+              bottom: `calc(56px + env(safe-area-inset-bottom, 0px) + 16px)`,
             }}
           >
-            <Plus size={28} strokeWidth={2.5} />
+            <Plus size={26} strokeWidth={2.4} />
           </button>
         )}
       </main>
@@ -188,23 +197,27 @@ export function MobileLayout() {
       <nav
         className={
           isRail
-            ? "order-first flex w-20 shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-white"
-            : "border-t border-slate-200 bg-white"
+            ? "m-tabbar order-first flex w-20 shrink-0 flex-col overflow-y-auto"
+            : "m-tabbar"
         }
         style={
           isRail
-            ? { paddingLeft: "env(safe-area-inset-left, 0px)" }
+            ? {
+                paddingLeft: "env(safe-area-inset-left, 0px)",
+                borderTop: "none",
+                borderRight: "0.5px solid var(--m-hair)",
+              }
             : { paddingBottom: "env(safe-area-inset-bottom, 0px)" }
         }
       >
-        {/* Rail 顶部 FAB：大屏上底部右角离视线和手指都太远 */}
+        {/* Rail 顶部「新建」：大屏上底部右角离视线和手指都太远（无阴影） */}
         {isRail && !hasOwnFab && (
           <button
             aria-label="新建"
             onClick={() => navigate("/quick-create")}
-            className="mx-auto mt-3 mb-2 flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#1677FF] text-white shadow-[0_6px_16px_rgba(22,119,255,0.35)] active:scale-95 transition-transform"
+            className="m-icon-btn is-primary mx-auto mt-3 mb-2 h-12 w-12 transition-transform active:scale-95"
           >
-            <Plus size={24} strokeWidth={2.5} />
+            <Plus size={24} strokeWidth={2.4} />
           </button>
         )}
 
@@ -212,50 +225,42 @@ export function MobileLayout() {
           className={
             isRail
               ? "flex flex-col items-stretch gap-1 px-1.5 pb-3"
-              : "flex h-16 items-stretch"
+              : "flex items-stretch"
           }
         >
           {TABS.map((tab) => {
             const active = isTabActive(tab, location.pathname);
             const Icon = tab.icon;
-            const activeColor =
-              tab.activeColor === "accent" ? "#FA8C16" : "#1677FF";
+            const badge = tab.key === "tasks" ? urgentTodoCount : 0;
             return (
               <button
                 key={tab.key}
                 onClick={() => navigate(tab.path)}
-                className={
-                  isRail
-                    ? `flex flex-col items-center justify-center gap-1 rounded-2xl py-2.5 active:bg-slate-100 ${
-                        active ? "bg-slate-100" : ""
-                      }`
-                    : "flex flex-1 flex-col items-center justify-center gap-0.5 py-1 active:bg-slate-100"
-                }
-                style={{
-                  color: active ? activeColor : "#94A3B8",
-                  minHeight: 44,
-                }}
+                className={`m-tab ${active ? "is-on" : ""} ${isRail ? "rounded-[var(--m-r-l)] py-2.5" : ""}`}
+                style={isRail && active ? { background: "var(--m-accent-soft)" } : undefined}
               >
-                {/* 图标外包一层 relative，好让更新红点绝对定位到右上角 */}
+                {/* 图标外包一层 relative，好让角标 / 更新红点绝对定位到右上角 */}
                 <span className="relative inline-flex">
-                  <Icon size={22} strokeWidth={active ? 2.5 : 2} />
+                  <Icon size={22} strokeWidth={active ? 2.2 : 1.8} />
+                  {badge > 0 && (
+                    <span className="m-badge m-num" aria-label={`${badge} 条紧急待办`}>
+                      {badge > 99 ? "99+" : badge}
+                    </span>
+                  )}
                   {tab.key === "me" && hasUpdate && (
                     <span
                       aria-label="有新版本"
-                      className="absolute -right-1 -top-0.5 h-2 w-2 rounded-full bg-[#ff4d4f]"
+                      className="m-dot absolute -right-1 top-0"
+                      style={{
+                        width: 7,
+                        height: 7,
+                        background: "var(--m-badge-bg)",
+                        boxShadow: "0 0 0 2px var(--m-surface)",
+                      }}
                     />
                   )}
                 </span>
-                <span
-                  className={
-                    isRail
-                      ? "text-[11px] leading-tight"
-                      : "text-[10px] leading-tight"
-                  }
-                  style={{ fontWeight: active ? 600 : 400 }}
-                >
-                  {tab.label}
-                </span>
+                <span className="leading-tight">{tab.label}</span>
               </button>
             );
           })}
