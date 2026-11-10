@@ -1,15 +1,16 @@
 ---
 name: tauri-kit-integration
 description: |
-  用于本应用中与 tauri-kit 公共库相关的开发：主窗口位置记忆、升级内置版本、排查 [winpos] 问题。
+  用于本应用中与 tauri-kit 公共库相关的开发：主窗口位置记忆、外网请求的代理处理、升级内置版本、排查 [winpos] / [net] 问题。
 
   触发场景：
   - 主窗口启动位置不对、合盖或插拔副屏后跑到别的屏
-  - 要升级内置的 tauri-kit 版本
+  - 浏览器能打开、应用连不上；授权一直未确认；检查更新失败；用户设了 ALL_PROXY / socks5 代理
+  - 要升级内置的 tauri-kit 版本，或升级 reqwest 大版本
   - 想改 vendor/tauri-kit 里的代码，或发现应用里有 main_window_placement 旧实现
   - 想把一段通用能力抽出来给多个应用共用
 
-  触发词：tauri-kit、vendor/tauri-kit、窗口记忆、window_memory、窗口位置、显示器、副屏、合盖、[winpos]、window-memory.json、.source-rev
+  触发词：tauri-kit、vendor/tauri-kit、窗口记忆、window_memory、窗口位置、显示器、副屏、合盖、[winpos]、window-memory.json、.source-rev、代理、socks5、ALL_PROXY、直连、send_direct_first、[net]
 ---
 
 # tauri-kit 应用侧指南
@@ -58,3 +59,25 @@ description: |
 | `记录位置（…）` | 换屏的位置被记下，要么是用户拖的，要么是该组合的第一条 |
 
 记录文件是 `<app_config_dir>/window-memory.json`，开发版是 `window-memory-dev.json`。要清记录，退出应用后删掉它，下次启动回到默认位置（还留着旧版记录的话，会用主屏上的旧记录打底）。
+
+## net 速查
+
+开了 `net` / `net-socks` 就给 reqwest 0.12 / 0.13 打开 socks（不开的话，用户设了 `ALL_PROXY=socks5://…` 时所有外网请求连同检查更新都会失败，代理开着也一样）。调用都在 `tauri_kit::net`：
+
+| 场景 | 调用 |
+|---|---|
+| 授权这类国内服务的请求 | `send_direct_first(\|c\| c.post(&url).json(&body).timeout(t))`：先直连，连接阶段失败才按系统代理重发 |
+| 要按系统代理发的请求 | `system_proxy_client()` |
+| 一定不走代理的请求 | `direct_client()`（连接超时 5 秒） |
+| 记 reqwest 错误 | `describe(e)`：展开 `error sending request` 后面的真正原因 |
+
+- 境外服务（AI 接口等）别用 `send_direct_first`，用户装代理就是为了这些
+- 应用升级 reqwest 大版本（0.14 等）时，tauri-kit 也要加上新版本的声明，否则 socks 又是关的
+
+排查：先让用户在 PowerShell 跑 `Get-ChildItem Env: | Where-Object Name -match 'proxy'`；日志里搜 `[net]` 和请求失败的原因：
+
+| 原因里有 | 含义 |
+|---|---|
+| `unsupported scheme socks5` / `scheme is not http` | socks 没开：没开 `net`，或 reqwest 升了大版本 |
+| `error connecting to socks proxy` | 代理没在运行（梯子关了，环境变量还在） |
+| `invalid peer certificate` / `UnknownIssuer` | HTTPS 被本机软件拦截（杀软 HTTPS 扫描、抓包工具） |

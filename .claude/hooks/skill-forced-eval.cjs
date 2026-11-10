@@ -100,7 +100,7 @@ const instructions = `## 强制技能激活流程（必须执行）
 - tauri-commands: Tauri Command/IPC通信/#[tauri::command]/invoke/generate_handler
 - tauri-plugins: 插件/plugin/tauri-plugin/fs/dialog/store/http/shell
 - tauri-window-management: 窗口/多窗口/WebviewWindow/无边框/系统托盘/窗口事件
-- tauri-kit-integration: tauri-kit/vendor/tauri-kit/窗口记忆/window_memory/显示器/副屏/合盖/[winpos]/window-memory.json
+- tauri-kit-integration: tauri-kit/vendor/tauri-kit/窗口记忆/window_memory/显示器/副屏/合盖/[winpos]/window-memory.json/代理/socks5/ALL_PROXY/直连/send_direct_first/[net]/检查更新失败
 - tauri-capabilities: Capabilities/权限配置/安全策略/permissions/identifier/scope
 - tauri-packaging: 打包/构建/发布/安装包/MSI/DMG/AppImage/bundle/签名
 - rust-fundamentals: Rust/所有权/借用/生命周期/trait/泛型/并发/Mutex/Arc

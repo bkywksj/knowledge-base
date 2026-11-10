@@ -144,7 +144,8 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
 # 自有应用共用的通用能力（私有库），源码内置在 vendor/tauri-kit，版本见其中的 .source-rev；
 # 升级用 tauri-kit 仓库的 tools/vendor-into.sh 重新内置，不要直接改副本。
-tauri-kit = { path = "vendor/tauri-kit", features = ["window-memory"] }
+# net：给 reqwest 0.12 / 0.13 打开 socks（用户设了 ALL_PROXY=socks5://… 时外网请求和检查更新不再全部失败），见 vendor/tauri-kit 的 net 模块
+tauri-kit = { path = "vendor/tauri-kit", features = ["window-memory", "net"] }
 # PDFium fallback（pdf-extract 对中文 CMap 不支持，运行时动态加载 pdfium.dll 兜底）
 # 移动端 NDK 加载动态库受沙盒限制，暂不支持，待 T-M012 决策
 pdfium-render = "0.8"
