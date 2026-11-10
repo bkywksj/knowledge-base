@@ -7,7 +7,7 @@
   "build": {
     "beforeDevCommand": "pnpm dev:clean",
     "devUrl": "http://localhost:1421",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "node scripts/installer-std/check-template.cjs && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
