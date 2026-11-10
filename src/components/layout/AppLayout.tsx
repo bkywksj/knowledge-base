@@ -216,6 +216,15 @@ export function AppLayout() {
     setNarrowPanelOpen(false);
   }, [location.pathname, location.search, setNarrowPanelOpen]);
 
+  // 专注模式只服务于文档页（笔记 / 白板）。关掉最后一个标签或从文档页跳走后，
+  // 侧栏顶栏仍隐藏、退出按钮又只在编辑器里，界面上就没有任何出口了（只剩 Esc）。
+  // 所以路由一离开文档页就自动退出；只在路由变化时判断，不影响在其它页按 F11 手动进入。
+  useEffect(() => {
+    if (!useAppStore.getState().focusMode) return;
+    if (/^\/(notes|whiteboard)\/[^/]+/.test(location.pathname)) return;
+    setFocusMode(false);
+  }, [location.pathname, setFocusMode]);
+
   const {
     canToggle: canTogglePanel,
     docked: panelDocked,
