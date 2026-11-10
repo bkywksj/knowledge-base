@@ -428,10 +428,17 @@
 - [ ] 可选标题；操作项可带图标、危险红色；点击先执行再关闭；「取消」 `ActionSheet.tsx:57-89`
 
 #### 无移动版的路由（手机上直接渲染桌面页）
-- [ ] `/prompts` → PromptsPage `Router.tsx:143` `prompts/index.tsx:103`
-- [ ] `/hidden` → HiddenPage `Router.tsx:139` `hidden/index.tsx:59`
-- [ ] `/about` → AboutPage `Router.tsx:148` `about/index.tsx:40`
-- [ ] `/graph` → GraphPage `Router.tsx:141` `graph/index.tsx:40`
-- [ ] `/push` → PushPage（MobileMe 没有入口） `Router.tsx:144` `push/index.tsx:37`
+> ✅ M3-11 验收（2026-11-10）：各页 index.tsx 加 useIsMobile 分发（同闪卡页写法），PC 页面不变（桌面画幅回归过）。
+> `/prompts` → MobilePrompts：内置 / 自定义两组，开关启用 / 停用，点开看全文；新建 / 编辑 / 删除留在桌面端 ·
+> `/hidden` → MobileHidden：🔒 **修 PIN 绕过**——PC 在活动栏点击时拦 PIN，手机没有活动栏，「我的」/ 全部功能直接进 /hidden，设了 PIN 也能直接看；现在页面里先查 isHiddenUnlocked + hiddenPinApi.isSet，未解锁弹 HiddenPinUnlockModal，取消即退回；列表分页 50、取消隐藏、长按移到回收站；底部复用 HiddenPinSection 管 PIN ·
+> `/about` → MobileAbout：版本 / 系统 / 数据目录（点击复制）、官网与教程、社群号码（点击复制）、导出诊断包（手机上直接告诉保存位置）、数据库文本体检；检查更新跳「我的」·
+> `/graph`、`/push` → DesktopOnlyPage：说明为什么手机上不提供 + 手机上的替代做法。
+> 未做：`/whiteboard/:id` 仍渲染桌面白板（不在 M3-11 范围，留给 M4 评估）。
+
+- [x] `/prompts` → PromptsPage `Router.tsx:143` `prompts/index.tsx:103`
+- [x] `/hidden` → HiddenPage `Router.tsx:139` `hidden/index.tsx:59`
+- [x] `/about` → AboutPage `Router.tsx:148` `about/index.tsx:40`
+- [x] `/graph` → GraphPage `Router.tsx:141` `graph/index.tsx:40`
+- [x] `/push` → PushPage（MobileMe 没有入口） `Router.tsx:144` `push/index.tsx:37`
 - [ ] `/whiteboard/:id` → WhiteboardPage `Router.tsx:135` `whiteboard/index.tsx:57`
 - [ ] `/feature-toggle`：桌面移动共用一个组件，本身就是移动端设计稿 16 `feature-toggle/index.tsx:42-43`
