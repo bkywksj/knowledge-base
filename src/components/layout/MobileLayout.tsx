@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import {
   Home,
@@ -23,6 +23,7 @@ import {
 } from "@/lib/mobileTabRegistry";
 import { useWindowSizeClass } from "@/hooks/useWindowSizeClass";
 import { useAppStore } from "@/store";
+import { QuickCreateSheet } from "@/components/mobile/QuickCreate";
 
 /**
  * 移动端主布局。设计稿位于 output/UI原型/2026-05-04_知识库移动端App/。
@@ -119,6 +120,8 @@ export function MobileLayout() {
   const hideCompactFab = hasOwnFab || PAGES_WITHOUT_FAB.includes(location.pathname);
   /** 待办 Tab 角标：紧急待办数，与 PC 活动栏同一个数据源（App 启动时刷新） */
   const urgentTodoCount = useAppStore((s) => s.urgentTodoCount);
+  /** FAB 点开的「新建」面板：在当前页上弹出，不再跳 /quick-create 整页 */
+  const [createOpen, setCreateOpen] = useState(false);
 
   // 用户配置的前 4 格 Tab + 固定「我的」第 5 格
   const tabKeys = useAppStore((s) => s.mobileTabKeys);
@@ -179,7 +182,7 @@ export function MobileLayout() {
         {!hideCompactFab && !isRail && (
           <button
             aria-label="新建"
-            onClick={() => navigate("/quick-create")}
+            onClick={() => setCreateOpen(true)}
             className="m-fab transition-transform"
             style={{
               bottom: `calc(56px + env(safe-area-inset-bottom, 0px) + 16px)`,
@@ -214,7 +217,7 @@ export function MobileLayout() {
         {isRail && !hasOwnFab && (
           <button
             aria-label="新建"
-            onClick={() => navigate("/quick-create")}
+            onClick={() => setCreateOpen(true)}
             className="m-icon-btn is-primary mx-auto mt-3 mb-2 h-12 w-12 transition-transform active:scale-95"
           >
             <Plus size={24} strokeWidth={2.4} />
@@ -266,6 +269,8 @@ export function MobileLayout() {
           })}
         </div>
       </nav>
+
+      <QuickCreateSheet open={createOpen} onClose={() => setCreateOpen(false)} />
     </div>
   );
 }
