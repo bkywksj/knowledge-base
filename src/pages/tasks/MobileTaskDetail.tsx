@@ -1,42 +1,32 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import {
-  ChevronLeft,
-  Trash2,
-  Plus,
-  Check,
-  Clock,
-  Bell,
-  Repeat,
-  Folder,
-  Flag,
-} from "lucide-react";
-import { Drawer, Modal, message } from "antd";
-import { taskApi } from "@/lib/api";
+import { Trash2, Plus, Check, Clock, Bell, Repeat, Folder, Flag, Star } from "lucide-react";
+import { Modal, message } from "antd";
+import { taskApi, taskCategoryApi } from "@/lib/api";
 import { describeRepeat } from "@/lib/taskRepeat";
+import { describeDueDate } from "@/lib/taskFilters";
 import { useAppStore } from "@/store";
-import type { Task } from "@/types";
+import { useKeyboardInset } from "@/hooks/useKeyboardInset";
+import type { Task, TaskCategory, TaskPriority, UpdateTaskInput } from "@/types";
 import TaskAttachments from "@/components/tasks/TaskAttachments";
 import { AttachmentPreviewModal } from "@/components/preview/AttachmentPreviewModal";
+import { MGroup, MNavBar, MRow, MSectionHeader, MTag } from "@/components/mobile/primitives";
+import { MSheet, PickRow } from "@/components/mobile/MSheet";
+import { RepeatSheet } from "@/components/mobile/RepeatSheet";
+import { TextPromptModal } from "@/components/mobile/TextPromptModal";
 
 /**
- * 移动端任务详情页（设计稿：12-task-edit.html）
+ * 移动端任务详情页（v4 样式，与列表页 / 新建面板同一套 .m-* 令牌）
  *
- * 路由 /task-detail/:id —— 移动端专用，独立顶层路由（沉浸式）
+ * 路由 /task-detail/:id —— 移动端专用，独立顶层路由（沉浸式，不挂底部 Tab）
  *
- * 核心功能：
- * - 顶栏：返回 + 标题/保存状态 + 删除按钮（带确认）
- * - 主体：勾选 + 标题（input）+ 备注（textarea）
- * - 子任务：列表 + 勾选 + 添加新子任务（弹 prompt）
- * - 元数据行（暂只读）：截止时间 / 提醒 / 重复 / 分类 / 优先级
- * - 底部：推迟（snooze 30 分钟）/ 完成（toggleStatus）
+ * - 顶栏：返回（先保存）+「任务详情」/ 保存状态 + 删除（带确认）
+ * - 主卡：勾选 + 标题 + 备注 + 附件；标题 / 备注停 1.2s 自动保存
+ * - 子任务：列表 + 勾选（循环子任务完成本次）+ 添加
+ * - 属性：截止 / 提醒 / 重复 / 分类 / 优先级 / 重要，全部可在手机上改（2026-11 起分类、重复、重要不再要求去桌面端）
+ * - 底部：推迟 30 分钟（snooze）/ 完成（循环任务 = 完成本次）
  *
- * 自动保存：标题/备注 1.2s debounce 调 update。
- *
- * MVP 不做：
- * - 截止时间 / 提醒 / 重复 / 分类 完整编辑（点击只 toast「待开发」）
- * - 关联笔记 / 时间线
- * - 子任务拖拽排序
+ * 不做：关联笔记 / 时间线、子任务拖拽排序、重复的结束条件（沿用桌面端设置）
  */
 
 const AUTOSAVE_DELAY_MS = 1200;
@@ -46,21 +36,44 @@ type SaveStatus = "idle" | "dirty" | "saving" | "saved";
 
 // 后端 TaskPriority = 0 | 1 | 2（紧急 / 普通 / 低）
 const PRIORITY_LABELS = ["紧急", "普通", "低"];
-const PRIORITY_COLORS = [
-  "bg-red-50 text-red-700 border-red-200",
-  "bg-blue-50 text-blue-700 border-blue-200",
-  "bg-slate-50 text-slate-600 border-slate-200",
-];
+const PRIORITY_TONE = ["bad", "accent", "neutral"] as const;
+const PRIORITY_DOT = ["var(--m-bad)", "var(--m-accent)", "var(--m-ink4)"];
 
-const REMIND_OPTIONS: { value: number | null; label: string }[] = [
-  { value: null, label: "不提醒" },
-  { value: 5, label: "提前 5 分钟" },
-  { value: 15, label: "提前 15 分钟" },
-  { value: 30, label: "提前 30 分钟" },
-  { value: 60, label: "提前 1 小时" },
-  { value: 120, label: "提前 2 小时" },
-  { value: 1440, label: "提前 1 天" },
-];
+/** 原手机端 7 档 + PC 端独有的准时 / 3 小时 / 1 周，两端设的值在这里都能选中 */
+const REMIND_OPTIONS: (number | null)[] = [null, 0, 5, 15, 30, 60, 120, 180, 1440, 10080];
+
+/** 提醒值 → 文案；0 = 到点准时提醒，不是「不提醒」，只有 null 才是不提醒 */
+function remindLabel(min: number | null | undefined): string {
+  if (min == null) return "不提醒";
+  if (min === 0) return "准时提醒";
+  if (min % 10080 === 0) return `提前 ${min / 10080} 周`;
+  if (min % 1440 === 0) return `提前 ${min / 1440} 天`;
+  if (min % 60 === 0) return `提前 ${min / 60} 小时`;
+  return `提前 ${min} 分钟`;
+}
+
+/** 多级分类拍平成「父在前、子紧随」的顺序，带层级（选择面板缩进用） */
+function flattenCategories(list: TaskCategory[]): { c: TaskCategory; depth: number }[] {
+  const byParent = new Map<number | null, TaskCategory[]>();
+  for (const c of list) {
+    const p = c.parent_id ?? null;
+    byParent.set(p, [...(byParent.get(p) ?? []), c]);
+  }
+  const out: { c: TaskCategory; depth: number }[] = [];
+  const seen = new Set<number>();
+  const walk = (parent: number | null, depth: number) => {
+    for (const c of (byParent.get(parent) ?? []).sort((a, b) => a.sort_order - b.sort_order)) {
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
+      out.push({ c, depth });
+      walk(c.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  // 父分类已不存在的孤儿也列出来，别让任务的分类在面板里「消失」
+  for (const c of list) if (!seen.has(c.id)) out.push({ c, depth: 0 });
+  return out;
+}
 
 /** "YYYY-MM-DDTHH:MM" → "YYYY-MM-DD HH:MM:SS"（SQLite 友好），空字符串保留为 null */
 function toSqliteDate(local: string): string | null {
@@ -81,17 +94,22 @@ export function MobileTaskDetail() {
   const navigate = useNavigate();
   const { id: idParam } = useParams<{ id: string }>();
   const taskId = Number(idParam);
+  const keyboardInset = useKeyboardInset();
 
   const [task, setTask] = useState<Task | null>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [subtasks, setSubtasks] = useState<Task[]>([]);
+  const [categories, setCategories] = useState<TaskCategory[]>([]);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [snoozing, setSnoozing] = useState(false);
   const [dueOpen, setDueOpen] = useState(false);
   const [dueInput, setDueInput] = useState("");
   const [remindOpen, setRemindOpen] = useState(false);
   const [priorityOpen, setPriorityOpen] = useState(false);
+  const [categoryOpen, setCategoryOpen] = useState(false);
+  const [repeatOpen, setRepeatOpen] = useState(false);
+  const [subPromptOpen, setSubPromptOpen] = useState(false);
 
   const dirtyRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
@@ -123,6 +141,10 @@ export function MobileTaskDetail() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    taskCategoryApi.list().then(setCategories).catch(() => {});
+  }, []);
 
   const doSave = useCallback(async () => {
     if (!task || !dirtyRef.current) return;
@@ -218,12 +240,11 @@ export function MobileTaskDetail() {
     }
   }
 
-  async function addSubtask() {
-    const t = window.prompt("子任务标题");
-    if (!t?.trim() || !task) return;
+  async function addSubtask(t: string) {
+    if (!task) return;
     try {
       await taskApi.create({
-        title: t.trim(),
+        title: t,
         parent_task_id: task.id,
       });
       const subs = await taskApi.listSubtasks(taskId);
@@ -247,43 +268,40 @@ export function MobileTaskDetail() {
     }
   }
 
+  /** 属性类字段（截止 / 提醒 / 优先级 / 分类 / 重复 / 重要）即改即存，存完重拉 */
+  async function patch(input: Partial<UpdateTaskInput>): Promise<boolean> {
+    if (!task) return false;
+    try {
+      await taskApi.update(task.id, input);
+      await load();
+      useAppStore.getState().refreshTaskStats();
+      return true;
+    } catch (e) {
+      message.error(`保存失败: ${e}`);
+      return false;
+    }
+  }
+
   function openDueEditor() {
     setDueInput(toLocalInput(task?.due_date ?? null));
     setDueOpen(true);
   }
+  // 清空一律走 clear_*：后端把字段缺省 / null 都当「不改」，旧版这里发 null 导致「清除」「不提醒」点了没反应
   async function saveDue(clearOnly = false) {
-    if (!task) return;
-    try {
-      await taskApi.update(task.id, {
-        due_date: clearOnly ? null : toSqliteDate(dueInput),
-      });
-      setDueOpen(false);
-      await load();
-    } catch (e) {
-      message.error(`保存失败: ${e}`);
-    }
+    const v = clearOnly ? null : toSqliteDate(dueInput);
+    if (await patch(v == null ? { clear_due_date: true } : { due_date: v })) setDueOpen(false);
   }
 
   async function setRemind(min: number | null) {
-    if (!task) return;
-    try {
-      await taskApi.update(task.id, { remind_before_minutes: min });
-      setRemindOpen(false);
-      await load();
-    } catch (e) {
-      message.error(`保存失败: ${e}`);
-    }
+    if (await patch(min == null ? { clear_remind_before_minutes: true } : { remind_before_minutes: min })) setRemindOpen(false);
   }
 
-  async function setPriority(p: 0 | 1 | 2) {
-    if (!task) return;
-    try {
-      await taskApi.update(task.id, { priority: p });
-      setPriorityOpen(false);
-      await load();
-    } catch (e) {
-      message.error(`保存失败: ${e}`);
-    }
+  async function setPriority(p: TaskPriority) {
+    if (await patch({ priority: p })) setPriorityOpen(false);
+  }
+
+  async function setCategory(id: number | null) {
+    if (await patch(id == null ? { clear_category_id: true } : { category_id: id })) setCategoryOpen(false);
   }
 
   function deleteTask() {
@@ -307,71 +325,44 @@ export function MobileTaskDetail() {
     });
   }
 
+  const flatCategories = useMemo(() => flattenCategories(categories), [categories]);
+
   if (Number.isNaN(taskId)) {
     return (
-      <div className="p-4 text-center text-sm text-slate-400">任务 ID 无效</div>
+      <div className="m-t-meta p-4 text-center">任务 ID 无效</div>
     );
   }
 
-  const dueLabel = task?.due_date
-    ? new Date(task.due_date).toLocaleString("zh-CN", {
-        month: "numeric",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : "未设置";
-  const overdue =
-    task?.due_date &&
-    new Date(task.due_date).getTime() < Date.now() &&
-    task.status === 0;
-
-  const completedSubs = subtasks.filter((s) => s.status === 1).length;
   const isDone = task?.status === 1;
+  const due = describeDueDate(task?.due_date ?? null, isDone);
+  const completedSubs = subtasks.filter((s) => s.status === 1).length;
+  const category = task?.category_id != null ? categories.find((c) => c.id === task.category_id) : undefined;
+  const priority = task?.priority ?? 1;
+  const iconStyle = { color: "var(--m-ink2)" };
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col bg-slate-50"
-      style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
+      className="fixed inset-0 z-50 flex flex-col"
+      style={{ background: "var(--m-page)", color: "var(--m-ink)", paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: keyboardInset }}
     >
-      {/* 顶栏 */}
-      <header className="flex h-12 items-center justify-between border-b border-slate-200 bg-white px-2 shrink-0">
-        <button
-          onClick={() => void flushAndExit()}
-          aria-label="返回"
-          className="flex h-10 w-10 items-center justify-center"
-        >
-          <ChevronLeft size={24} className="text-slate-700" />
-        </button>
-        <div className="flex flex-col items-center min-w-0 flex-1 leading-tight">
-          <span className="text-sm font-semibold text-slate-900">任务详情</span>
-          <SaveBadge status={status} />
-        </div>
-        <button
-          onClick={deleteTask}
-          aria-label="删除"
-          className="flex h-10 w-10 items-center justify-center"
-        >
-          <Trash2 size={20} className="text-red-500" />
-        </button>
-      </header>
-
-      {/* 主体 */}
-      <main className="flex-1 overflow-y-auto pb-4">
-        {/* 标题 + 备注 */}
-        <div className="border-b border-slate-200 bg-white px-4 py-4">
-          <div className="flex items-start gap-3">
-            <button
-              onClick={toggleSelf}
-              aria-label={isDone ? "标记未完成" : "标记完成"}
-              className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border-2 ${
-                isDone
-                  ? "border-[#1677FF] bg-[#1677FF] text-white"
-                  : "border-slate-300"
-              }`}
-            >
-              {isDone && <Check size={14} />}
+      <div className="shrink-0" style={{ background: "var(--m-page)" }}>
+        <MNavBar
+          title="任务详情"
+          subtitle={status === "saving" ? "保存中…" : status === "saved" ? "已保存 · 刚刚" : undefined}
+          onBack={() => void flushAndExit()}
+          actions={
+            <button type="button" aria-label="删除" className="m-icon-btn" style={{ color: "var(--m-bad)" }} onClick={deleteTask}>
+              <Trash2 size={20} />
             </button>
+          }
+        />
+      </div>
+
+      <main className="m-px flex-1 overflow-y-auto pt-2 pb-6">
+        {/* 标题 + 备注 + 附件 */}
+        <MGroup className="px-4 py-4">
+          <div className="flex items-start gap-3">
+            <CheckBox done={isDone} size={24} onClick={() => void toggleSelf()} label={isDone ? "标记未完成" : "标记完成"} />
             <div className="min-w-0 flex-1">
               <input
                 value={title}
@@ -382,9 +373,9 @@ export function MobileTaskDetail() {
                   scheduleSave();
                 }}
                 placeholder="任务标题"
-                className={`w-full bg-transparent text-lg font-semibold outline-none placeholder:text-slate-300 ${
-                  isDone ? "text-slate-400 line-through" : "text-slate-900"
-                }`}
+                aria-label="任务标题"
+                className="-my-2 w-full bg-transparent py-2 text-[20px] font-bold leading-snug outline-none placeholder:font-normal placeholder:text-[var(--m-ink4)]"
+                style={isDone ? { color: "var(--m-ink3)", textDecoration: "line-through" } : { color: "var(--m-ink)" }}
               />
               <textarea
                 value={description}
@@ -395,132 +386,108 @@ export function MobileTaskDetail() {
                   scheduleSave();
                 }}
                 placeholder="备注…"
+                aria-label="备注"
                 rows={2}
-                className="mt-1 w-full resize-none bg-transparent text-sm text-slate-500 outline-none placeholder:text-slate-300"
+                className="mt-1.5 w-full resize-none bg-transparent text-[15px] leading-relaxed outline-none placeholder:text-[var(--m-ink4)]"
+                style={{ color: "var(--m-ink2)" }}
               />
               {/* 附件：点缩略图全屏预览，「＋」从相册 / 文件选 */}
-              <div className="mt-2">
+              <div className="m-task-attach mt-2">
                 <TaskAttachments taskId={taskId} />
               </div>
             </div>
           </div>
-        </div>
+        </MGroup>
 
         {/* 子任务 */}
-        <div className="px-4 py-3">
-          <div className="mb-2 flex items-center justify-between text-xs font-medium text-slate-400">
-            <span>
-              子任务 · {completedSubs}/{subtasks.length}
-            </span>
-            <button
-              onClick={addSubtask}
-              className="flex items-center gap-0.5 text-[#1677FF]"
-            >
-              <Plus size={12} /> 添加
+        <MSectionHeader
+          className="mt-6 mb-2 px-1"
+          title="子任务"
+          count={subtasks.length > 0 ? `${completedSubs}/${subtasks.length}` : undefined}
+          action={
+            <button type="button" className="m-tapx flex items-center gap-1 text-[15px] font-semibold" style={{ color: "var(--m-accent-ink)" }} onClick={() => setSubPromptOpen(true)}>
+              <Plus size={16} /> 添加
             </button>
-          </div>
+          }
+        />
+        <MGroup>
           {subtasks.length === 0 ? (
-            <div className="rounded-2xl bg-white py-6 text-center text-xs text-slate-400 shadow-sm">
-              还没有子任务
-            </div>
+            <div className="m-t-meta py-6 text-center">还没有子任务</div>
           ) : (
-            <div className="divide-y divide-slate-100 rounded-2xl bg-white">
-              {subtasks.map((sub) => {
-                const subDone = sub.status === 1;
-                return (
-                  <div
-                    key={sub.id}
-                    className="flex items-center gap-3 px-4 py-2.5"
+            subtasks.map((sub, i) => {
+              const subDone = sub.status === 1;
+              return (
+                <div key={sub.id} className="relative flex items-center gap-3 px-4 py-3">
+                  {i > 0 && <span className="pointer-events-none absolute top-0 right-0 left-[50px] h-[0.5px]" style={{ background: "var(--m-hair)" }} />}
+                  <CheckBox done={subDone} onClick={() => void toggleSubtask(sub)} label={subDone ? "标记未完成" : "完成"} />
+                  <span
+                    className="min-w-0 flex-1 text-[15px]"
+                    style={subDone ? { color: "var(--m-ink3)", textDecoration: "line-through" } : { color: "var(--m-ink)" }}
                   >
-                    <input
-                      type="checkbox"
-                      checked={subDone}
-                      onChange={() => toggleSubtask(sub)}
-                      className="h-4 w-4 rounded"
-                    />
-                    <span
-                      className={`flex-1 text-sm ${
-                        subDone ? "text-slate-400 line-through" : "text-slate-700"
-                      }`}
-                    >
-                      {sub.title}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
+                    {sub.title}
+                  </span>
+                </div>
+              );
+            })
           )}
-        </div>
+        </MGroup>
 
-        {/* 元属性（暂只读） */}
-        <div className="px-4 py-2">
-          <div className="divide-y divide-slate-100 rounded-2xl bg-white">
-            <MetaRow
-              icon={<Clock size={18} className="text-red-500" />}
-              label="截止时间"
-              value={
-                <span
-                  className={
-                    overdue
-                      ? "text-xs font-medium text-red-500"
-                      : "text-xs text-slate-500"
-                  }
-                >
-                  {overdue ? "⏰ 已逾期 " : ""}
-                  {dueLabel}
+        {/* 属性：全部可改 */}
+        <MGroup className="mt-6">
+          <MRow
+            icon={<Clock size={20} style={iconStyle} />}
+            chevron
+            onClick={openDueEditor}
+            right={
+              task?.due_date ? (
+                <span style={due.overdue ? { color: "var(--m-bad)", fontWeight: 600 } : undefined}>{due.text}</span>
+              ) : (
+                "未设置"
+              )
+            }
+          >
+            截止时间
+          </MRow>
+          <MRow icon={<Bell size={20} style={iconStyle} />} chevron onClick={() => setRemindOpen(true)} right={remindLabel(task?.remind_before_minutes)}>
+            提醒
+          </MRow>
+          <MRow icon={<Repeat size={20} style={iconStyle} />} chevron onClick={() => setRepeatOpen(true)} right={(task && describeRepeat(task)) || "不重复"}>
+            重复
+          </MRow>
+          <MRow
+            icon={<Folder size={20} style={iconStyle} />}
+            chevron
+            onClick={() => setCategoryOpen(true)}
+            right={
+              category ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="m-dot" style={{ background: category.color }} />
+                  {category.name}
                 </span>
-              }
-              onClick={openDueEditor}
-            />
-            <MetaRow
-              icon={<Bell size={18} className="text-amber-500" />}
-              label="提醒"
-              value={
-                <span className="text-xs text-slate-500">
-                  {/* 0 = 到点准时提醒，不是「不提醒」；只有 null 才是不提醒 */}
-                  {task?.remind_before_minutes == null
-                    ? "不提醒"
-                    : task.remind_before_minutes === 0
-                      ? "准时提醒"
-                      : `提前 ${task.remind_before_minutes} 分钟`}
-                </span>
-              }
-              onClick={() => setRemindOpen(true)}
-            />
-            <MetaRow
-              icon={<Repeat size={18} className="text-blue-500" />}
-              label="重复"
-              value={
-                <span className="text-xs text-slate-400">
-                  {(task && describeRepeat(task)) || "不重复"}
-                </span>
-              }
-              onClick={() => message.info("重复规则需要在桌面端编辑")}
-            />
-            <MetaRow
-              icon={<Folder size={18} className="text-orange-500" />}
-              label="分类"
-              value={<span className="text-xs text-slate-400">未分类</span>}
-              onClick={() => message.info("分类需要在桌面端管理")}
-            />
-            <MetaRow
-              icon={<Flag size={18} className="text-red-500" />}
-              label="优先级"
-              value={
-                <span
-                  className={`rounded px-1.5 py-0.5 text-xs border ${PRIORITY_COLORS[task?.priority ?? 1]}`}
-                >
-                  {PRIORITY_LABELS[task?.priority ?? 1] ?? "普通"}
-                </span>
-              }
-              onClick={() => setPriorityOpen(true)}
-            />
-          </div>
-        </div>
+              ) : (
+                "未分类"
+              )
+            }
+          >
+            分类
+          </MRow>
+          <MRow icon={<Flag size={20} style={iconStyle} />} chevron onClick={() => setPriorityOpen(true)} right={<MTag tone={PRIORITY_TONE[priority] ?? "accent"}>{PRIORITY_LABELS[priority] ?? "普通"}</MTag>}>
+            优先级
+          </MRow>
+          <MRow
+            icon={<Star size={20} style={task?.important ? { color: "var(--m-warn)" } : iconStyle} fill={task?.important ? "currentColor" : "none"} />}
+            role="switch"
+            aria-checked={!!task?.important}
+            onClick={() => void patch({ important: !task?.important })}
+            right={<Switch on={!!task?.important} />}
+          >
+            重要
+          </MRow>
+        </MGroup>
 
         {/* 元信息 */}
         {task && (
-          <div className="px-4 py-2 text-center text-[11px] text-slate-400">
+          <div className="m-t-cap mt-4 text-center leading-relaxed">
             创建于 {new Date(task.created_at).toLocaleString("zh-CN")}
             {task.completed_at && (
               <>
@@ -533,49 +500,37 @@ export function MobileTaskDetail() {
 
       {/* 底部操作栏 */}
       <footer
-        className="border-t border-slate-200 bg-white px-4 py-3 shrink-0"
-        style={{ paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))" }}
+        className="m-px flex shrink-0 gap-3 pt-3"
+        style={{
+          background: "var(--m-surface)",
+          borderTop: "0.5px solid var(--m-hair)",
+          paddingBottom: keyboardInset ? 12 : "calc(12px + env(safe-area-inset-bottom, 0px))",
+        }}
       >
-        <div className="flex gap-2">
-          <button
-            onClick={snooze}
-            disabled={snoozing}
-            className="flex h-11 flex-1 items-center justify-center rounded-xl bg-slate-100 text-sm font-medium text-slate-700 active:bg-slate-200 disabled:opacity-50"
-          >
-            推迟 30 分钟
-          </button>
-          <button
-            onClick={toggleSelf}
-            className="flex h-11 flex-1 items-center justify-center rounded-xl bg-[#1677FF] text-sm font-medium text-white active:scale-95 transition-transform"
-          >
-            {isDone ? "标记未完成" : "完成"}
-          </button>
-        </div>
+        <button type="button" className="m-btn flex-1" style={{ background: "var(--m-well)", color: "var(--m-ink)" }} onClick={() => void snooze()} disabled={snoozing}>
+          推迟 30 分钟
+        </button>
+        <button type="button" className="m-btn flex-1" onClick={() => void toggleSelf()}>
+          {isDone ? "标记未完成" : "完成"}
+        </button>
       </footer>
 
-      {/* 截止时间编辑 Modal */}
-      <Modal
-        title="设置截止时间"
+      {/* 截止时间 */}
+      <MSheet
         open={dueOpen}
-        onCancel={() => setDueOpen(false)}
+        title="截止时间"
+        caption="只填日期不填时间会默认为当天 23:59"
+        onClose={() => setDueOpen(false)}
         footer={
-          <div className="flex gap-2">
-            <button
-              onClick={() => void saveDue(true)}
-              className="flex-1 rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-700"
-            >
+          <div className="mt-4 flex items-center gap-3">
+            <button type="button" className="m-tapx text-[15px] font-semibold" style={{ color: "var(--m-bad)" }} onClick={() => void saveDue(true)}>
               清除
             </button>
-            <button
-              onClick={() => setDueOpen(false)}
-              className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
-            >
+            <div className="flex-1" />
+            <button type="button" className="m-tapx text-[15px] font-semibold" style={{ color: "var(--m-ink2)" }} onClick={() => setDueOpen(false)}>
               取消
             </button>
-            <button
-              onClick={() => void saveDue(false)}
-              className="flex-1 rounded-lg bg-[#1677FF] px-3 py-2 text-sm font-medium text-white"
-            >
+            <button type="button" className="m-btn" onClick={() => void saveDue(false)}>
               保存
             </button>
           </div>
@@ -585,107 +540,99 @@ export function MobileTaskDetail() {
           type="datetime-local"
           value={dueInput}
           onChange={(e) => setDueInput(e.target.value)}
-          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+          aria-label="截止时间"
+          className="h-12 w-full rounded-[var(--m-r-l)] px-3 text-[16px] outline-none"
+          style={{ background: "var(--m-well)", color: "var(--m-ink)" }}
         />
-        <div className="mt-2 text-xs text-slate-400">
-          只填日期不填时间会默认为当天 23:59
-        </div>
-      </Modal>
+      </MSheet>
 
-      {/* 提醒选择 Drawer */}
-      <Drawer
-        title="提前多久提醒"
-        placement="bottom"
-        height={Math.min(REMIND_OPTIONS.length * 56 + 100, 540)}
+      {/* 提醒 */}
+      <MSheet
         open={remindOpen}
+        title="提前多久提醒"
+        caption={task && !task.due_date ? "还没设截止时间，提醒要等设了截止时间才会触发" : undefined}
         onClose={() => setRemindOpen(false)}
       >
-        <div className="flex flex-col gap-2">
-          {REMIND_OPTIONS.map((opt) => {
-            const active = (task?.remind_before_minutes ?? null) === opt.value;
-            return (
-              <button
-                key={String(opt.value)}
-                onClick={() => void setRemind(opt.value)}
-                className={`flex items-center justify-between rounded-xl px-4 py-3 text-left ${
-                  active
-                    ? "border border-[#1677FF] bg-blue-50"
-                    : "border border-slate-100 bg-white"
-                }`}
-              >
-                <span className="text-sm text-slate-800">{opt.label}</span>
-                {active && (
-                  <span className="text-xs font-semibold text-[#1677FF]">
-                    ✓ 当前
-                  </span>
-                )}
-              </button>
-            );
-          })}
+        <div className="m-group">
+          {REMIND_OPTIONS.map((v) => (
+            <PickRow key={String(v)} label={remindLabel(v)} active={(task?.remind_before_minutes ?? null) === v} onClick={() => void setRemind(v)} />
+          ))}
         </div>
-      </Drawer>
+      </MSheet>
 
-      {/* 优先级选择 Drawer */}
-      <Drawer
-        title="优先级"
-        placement="bottom"
-        height={320}
-        open={priorityOpen}
-        onClose={() => setPriorityOpen(false)}
-      >
-        <div className="grid grid-cols-2 gap-2">
-          {PRIORITY_LABELS.map((label, idx) => {
-            const active = task?.priority === idx;
-            return (
-              <button
-                key={label}
-                onClick={() => void setPriority(idx as 0 | 1 | 2)}
-                className={`flex flex-col items-center justify-center gap-1 rounded-xl py-4 ${PRIORITY_COLORS[idx]} ${
-                  active ? "ring-2 ring-offset-1" : ""
-                }`}
-              >
-                <Flag size={18} />
-                <span className="text-sm font-semibold">{label}</span>
-              </button>
-            );
-          })}
+      {/* 优先级 */}
+      <MSheet open={priorityOpen} title="优先级" onClose={() => setPriorityOpen(false)}>
+        <div className="m-group">
+          {PRIORITY_LABELS.map((label, idx) => (
+            <PickRow key={label} label={label} dot={PRIORITY_DOT[idx]} active={priority === idx} onClick={() => void setPriority(idx as TaskPriority)} />
+          ))}
         </div>
-      </Drawer>
+      </MSheet>
+
+      {/* 分类（多级缩进） */}
+      <MSheet open={categoryOpen} title="分类" caption={categories.length === 0 ? "还没有分类，可在桌面端待办侧栏新建" : undefined} onClose={() => setCategoryOpen(false)}>
+        <div className="m-group max-h-[50vh] overflow-y-auto">
+          <PickRow label="未分类" dot="var(--m-ink4)" active={task?.category_id == null} onClick={() => void setCategory(null)} />
+          {flatCategories.map(({ c, depth }) => (
+            <PickRow key={c.id} label={c.name} dot={c.color} indent={depth} active={task?.category_id === c.id} onClick={() => void setCategory(c.id)} />
+          ))}
+        </div>
+      </MSheet>
+
+      <RepeatSheet
+        open={repeatOpen}
+        task={task}
+        onClose={() => setRepeatOpen(false)}
+        onSave={patch}
+      />
+
+      <TextPromptModal
+        open={subPromptOpen}
+        title="添加子任务"
+        placeholder="子任务标题"
+        okText="添加"
+        maxLength={200}
+        onOk={addSubtask}
+        onClose={() => setSubPromptOpen(false)}
+      />
+
       {/* 本页是独立路由、不挂 AppLayout，附件条点开非图片文件要自己挂预览弹窗 */}
       <AttachmentPreviewModal />
     </div>
   );
 }
 
-function MetaRow({
-  icon,
-  label,
-  value,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: React.ReactNode;
-  onClick: () => void;
-}) {
+/** 方形勾选框（同列表页）：视觉 22 / 24，透明热区撑到 44 */
+function CheckBox({ done, onClick, label, size = 22 }: { done: boolean; onClick: () => void; label: string; size?: number }) {
   return (
     <button
+      type="button"
+      aria-label={label}
       onClick={onClick}
-      className="flex w-full items-center gap-3 px-4 py-3 active:bg-slate-50"
+      className="relative mt-0.5 flex shrink-0 items-center justify-center rounded-[var(--m-r-s)] after:absolute after:-inset-[11px] after:content-['']"
+      style={{
+        width: size,
+        height: size,
+        ...(done ? { background: "var(--m-ok)", color: "#fff" } : { boxShadow: "inset 0 0 0 1.6px var(--m-ink4)" }),
+      }}
     >
-      {icon}
-      <span className="flex-1 text-left text-sm text-slate-800">{label}</span>
-      {value}
+      {done && <Check size={size - 8} strokeWidth={3} />}
     </button>
   );
 }
 
-function SaveBadge({ status }: { status: SaveStatus }) {
-  if (status === "saving")
-    return <span className="mt-0.5 text-[10px] text-orange-600">保存中…</span>;
-  if (status === "saved")
-    return (
-      <span className="mt-0.5 text-[10px] text-green-600">已保存 · 刚刚</span>
-    );
-  return <span className="mt-0.5 h-3.5 text-[10px]" aria-hidden />;
+/** 开关外观（交互挂在整行 MRow 上，role="switch"） */
+function Switch({ on }: { on: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className="relative inline-block h-[26px] w-[44px] rounded-full transition-colors"
+      style={{ background: on ? "var(--m-btn)" : "var(--m-ink4)" }}
+    >
+      <span
+        className="absolute top-[3px] h-5 w-5 rounded-full bg-white transition-[left]"
+        style={{ left: on ? 21 : 3 }}
+      />
+    </span>
+  );
 }

@@ -360,3 +360,11 @@
   color: var(--m-ink2);
 }
 .m-kk:active { opacity: 0.7; }
+
+/* 任务详情的附件条（共用 PC 组件 TaskAttachments）：「添加」入口热区撑到 44（缩略图本身更高，不受影响） */
+.m-task-attach button.border-dashed {
+  min-height: 44px !important;
+  /* PC 组件用 opacity-60 做弱化，12px 字在手机上对比度掉到 4.1；改用次要字色 */
+  opacity: 1 !important;
+  color: var(--m-ink3) !important;
+}
