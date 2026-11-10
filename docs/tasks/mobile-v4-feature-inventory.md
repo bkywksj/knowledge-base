@@ -31,7 +31,7 @@
 | `MobileAiChat.tsx:307 / 343` | 「附件」「语音」按钮空占位 | ✅ M3-8 第一步：附件 → 附加笔记（会话共享）；语音无现成能力，按钮去掉 |
 | `MobileAiChat.tsx:314` | 占位文字说能「/ 调用 Prompt」，没实现 | ✅ M3-8 第一步：占位改「问问你的知识库…」，提示词做成输入区胶囊（角色预设） |
 | `MobileAiChat.tsx:437` | 回复是气泡，不是一轮一卡 | ✅ M3-8 第一步换成 PC 的 TurnCard |
-| `MobileCards.tsx:170` | 顶栏「统计」空占位 | 去掉或接统计 |
+| `MobileCards.tsx:170` | 顶栏「统计」空占位 | ✅ M3-10 接上 cardApi.stats（底部面板） |
 | `MobileMe.tsx:431` | 「关于」行版本号写死 v1.7.1 | ✅ M3-9 改读 getVersion() |
 | `MobileMe.tsx:275` | 「设置」齿轮跳 `/about` | ✅ M3-9 去掉（本页即设置入口，「关于」在设置分组里） |
 | `MobileMe.tsx:370-390` | 深色模式 / 主题 / Vault 标「不可用」 | ✅ M3-9：「外观与主题」开放（9 套主题，浅 / 深各记一套）；Vault 仍是桌面端 |
@@ -396,13 +396,16 @@
 - [x] 重命名弹窗 `MobileTags.tsx:287-303`
 
 #### src/pages/cards/MobileCards.tsx
-- [ ] 加载最多 50 张待复习 `MobileCards.tsx:84-100`
-- [ ] 顶栏返回 /「闪卡复习」/「FSRS · 待复习 N 张」/「统计」空占位 `MobileCards.tsx:157-175`
-- [ ] 进度：已完成 / 总数、预计分钟、进度条 `MobileCards.tsx:179-195`
-- [ ] 卡片点击翻面；第 N 次复习、稳定性、难度 `MobileCards.tsx:209-234`
-- [ ] 4 档评分（忘了 / 困难 / 良好 / 轻松，显示下次间隔；未翻面禁用） `MobileCards.tsx:238-272`
-- [ ] 评分后 FSRS 排期提交、出队 `MobileCards.tsx:105-133`
-- [ ] 底部提示 / 完成或空状态 / 重新加载 `MobileCards.tsx:274-279` `MobileCards.tsx:361-372`
+
+> ✅ M3-10 验收（2026-11-10）：套公共组件与令牌，交互不变。变化处：顶栏「统计」空占位 → 复习统计面板（本次已复习 / 今日到期 / 新卡 / 学习中 / 复习中 / 总数）·评分按钮 9~10px 的小字提到 12~17px，四档颜色走 bad / warn / accent / ok 令牌 · 紫蓝渐变背景换页面底色。
+
+- [x] 加载最多 50 张待复习 `MobileCards.tsx:84-100`
+- [x] 顶栏返回 /「闪卡复习」/「FSRS · 待复习 N 张」/「统计」空占位 `MobileCards.tsx:157-175`
+- [x] 进度：已完成 / 总数、预计分钟、进度条 `MobileCards.tsx:179-195`
+- [x] 卡片点击翻面；第 N 次复习、稳定性、难度 `MobileCards.tsx:209-234`
+- [x] 4 档评分（忘了 / 困难 / 良好 / 轻松，显示下次间隔；未翻面禁用） `MobileCards.tsx:238-272`
+- [x] 评分后 FSRS 排期提交、出队 `MobileCards.tsx:105-133`
+- [x] 底部提示 / 完成或空状态 / 重新加载 `MobileCards.tsx:274-279` `MobileCards.tsx:361-372`
 
 #### src/pages/trash/MobileTrash.tsx
 - [ ] 加载第一页（最多 50） `MobileTrash.tsx:57-72`
