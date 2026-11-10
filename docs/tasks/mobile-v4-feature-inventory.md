@@ -384,12 +384,16 @@
 - [ ] 导入配置弹窗 `MobileSync.tsx:572-576`
 
 #### src/pages/tags/MobileTags.tsx
-- [ ] 加载标签（按使用次数降序） `MobileTags.tsx:58-75`
-- [ ] 顶栏返回 / 新增标签（window.prompt） `MobileTags.tsx:139-153` `MobileTags.tsx:77-87`
-- [ ] 标签云：加载中 / 空状态 / chip（字号随频率，点击搜 `#名称`） `MobileTags.tsx:163-184` `MobileTags.tsx:130-133`
-- [ ] 标签列表：「全部 N 个标签」、颜色点、名称、笔记数 `MobileTags.tsx:191-216`
-- [ ] 行内编辑区：9 色 / 清除颜色 / 删除标签（确认）/ 重命名 / 查看相关笔记 `MobileTags.tsx:217-274` `MobileTags.tsx:89-128`
-- [ ] 重命名弹窗 `MobileTags.tsx:287-303`
+
+> ✅ M3-10 验收（2026-11-10）：套公共组件与令牌，交互不变。变化处：新增标签的 window.prompt / 删除的 window.confirm 换成 TextPromptModal / Modal.confirm ·行内展开的编辑区挪进底部面板（颜色 / 查看相关笔记 / 重命名 / 删除）· 标签云字号最小 13（原 12px 的 text-xs 在胶囊里偏小）·
+> 🐞 修跨端颜色：旧版手机端存 blue / green 这类名字，PC 只认十六进制（TAG_COLORS），两边互相显示不出对方设的颜色；现在写入一律用 PC 色板的十六进制（取第一排 10 色），读的时候旧名字映射成对应色值。
+
+- [x] 加载标签（按使用次数降序） `MobileTags.tsx:58-75`
+- [x] 顶栏返回 / 新增标签（window.prompt） `MobileTags.tsx:139-153` `MobileTags.tsx:77-87`
+- [x] 标签云：加载中 / 空状态 / chip（字号随频率，点击搜 `#名称`） `MobileTags.tsx:163-184` `MobileTags.tsx:130-133`
+- [x] 标签列表：「全部 N 个标签」、颜色点、名称、笔记数 `MobileTags.tsx:191-216`
+- [x] 行内编辑区：9 色 / 清除颜色 / 删除标签（确认）/ 重命名 / 查看相关笔记 `MobileTags.tsx:217-274` `MobileTags.tsx:89-128`
+- [x] 重命名弹窗 `MobileTags.tsx:287-303`
 
 #### src/pages/cards/MobileCards.tsx
 - [ ] 加载最多 50 张待复习 `MobileCards.tsx:84-100`
