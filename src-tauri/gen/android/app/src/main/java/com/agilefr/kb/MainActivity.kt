@@ -3,9 +3,11 @@ package com.agilefr.kb
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : TauriActivity() {
@@ -25,7 +27,7 @@ class MainActivity : TauriActivity() {
    */
   override fun onWebViewCreate(webView: WebView) {
     val container = webView.parent as? View ?: return
-    // 导航栏区域透出来的是这块底色，和底部 Tab 栏同色
+    // 导航栏区域透出来的是这块底色，和底部 Tab 栏同色；切主题后由前端经 KbSystemBars 改成当前主题色
     container.setBackgroundColor(Color.WHITE)
     ViewCompat.setOnApplyWindowInsetsListener(container) { view, insets ->
       val nav = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
@@ -33,5 +35,27 @@ class MainActivity : TauriActivity() {
       insets
     }
     ViewCompat.requestApplyInsets(container)
+    webView.addJavascriptInterface(SystemBarsBridge(container), "KbSystemBars")
+  }
+
+  /**
+   * 给前端用的系统栏接口（src/lib/systemBars.ts）。只做两件事，不碰任何数据：
+   * - 导航栏留白的底色跟着主题走（原来写死白色，深色主题下屏幕底部一条白边）
+   * - 状态栏 / 导航栏图标深浅跟着主题走（深色主题下系统默认的深色图标看不见）
+   */
+  private inner class SystemBarsBridge(private val container: View) {
+    @JavascriptInterface
+    fun set(colorHex: String, dark: Boolean) {
+      runOnUiThread {
+        try {
+          container.setBackgroundColor(Color.parseColor(colorHex))
+        } catch (_: IllegalArgumentException) {
+          // 颜色串不认识就保持原样，不影响图标深浅
+        }
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.isAppearanceLightStatusBars = !dark
+        controller.isAppearanceLightNavigationBars = !dark
+      }
+    }
   }
 }

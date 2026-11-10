@@ -17,6 +17,7 @@ import { ExitConfirmListener } from "@/components/ui/ExitConfirmListener";
 import { CloseRequestedListener } from "@/components/ui/CloseRequestedListener";
 import { UpdaterProvider } from "@/components/updater/UpdaterProvider";
 import { AppLockGate } from "@/components/applock/AppLockGate";
+import { syncSystemBars } from "@/lib/systemBars";
 
 // 紧急提醒窗口 / 迁移 splash 等子窗口共用同一个 React bundle，
 // 但只有 main 窗口才需要挂全局提醒监听器，否则子窗口也会响应 task:reminder
@@ -74,6 +75,8 @@ function App() {
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", activeTheme);
     document.documentElement.setAttribute("data-theme-category", themeCategory);
+    // 安卓：导航栏留白底色、系统栏图标深浅跟着主题走（桌面端无操作）
+    syncSystemBars(themeCategory === "dark");
   }, [activeTheme, themeCategory]);
 
   // 监听 db:reloaded：从 zip 导入快照后 Rust 侧会热重载 Connection 并 emit 此事件，
