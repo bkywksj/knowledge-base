@@ -361,6 +361,45 @@
   min-width: 0 !important;
   width: 100%;
   box-shadow: none !important;
+  background: var(--m-well) !important;
+  border: none !important;
+  border-radius: var(--m-r-l) !important;
+}
+/* 查找行：输入框独占一行，按钮另起一行靠右；PC 那排 24px 小按钮放大到 44 热区 */
+.m-editor-body .tiptap-wrapper > .sticky.z-30 > .absolute > div {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.m-editor-body .tiptap-wrapper > .sticky.z-30 .ant-input-affix-wrapper,
+.m-editor-body .tiptap-wrapper > .sticky.z-30 .ant-input {
+  flex: 1 1 100% !important;
+  min-height: 40px;
+  font-size: 16px; /* 小于 16 安卓 / iOS 聚焦时会放大页面 */
+  background: var(--m-surface);
+  color: var(--m-ink);
+  border-color: var(--m-hair);
+}
+.m-editor-body .tiptap-wrapper > .sticky.z-30 .ant-input-affix-wrapper .ant-input {
+  min-height: 0;
+  background: transparent;
+}
+.m-editor-body .tiptap-wrapper > .sticky.z-30 .ant-input-suffix span {
+  font-size: 12px !important;
+  color: var(--m-ink3) !important;
+}
+.m-editor-body .tiptap-wrapper > .sticky.z-30 .ant-btn {
+  min-width: 44px;
+  height: 44px;
+  font-size: 14px;
+  color: var(--m-ink2);
+}
+.m-editor-body .tiptap-wrapper > .sticky.z-30 .ant-btn svg {
+  width: 20px;
+  height: 20px;
+}
+.m-editor-body .tiptap-wrapper > .sticky.z-30 .ant-btn-primary {
+  background: var(--m-accent-soft2);
+  color: var(--m-accent-ink);
 }
 
 /* 金刚区：彩色实心图标 + 13px 标签，无底色块、无阴影；整格热区 */

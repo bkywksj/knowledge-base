@@ -922,6 +922,11 @@ interface TiptapEditorProps {
    * 通过 onEditorReady 拿到 editor 实例直接下命令；PC 的整排工具栏在手机上放不下。
    */
   hideToolbar?: boolean;
+  /**
+   * 从外部打开查找替换浮条（手机端没有 Ctrl+F，入口在「更多」面板）。
+   * 每次传入新对象（seq 变化）就打开一次；replace=true 时同时展开替换行。PC 不传。
+   */
+  openSearchRequest?: { seq: number; replace: boolean };
 }
 
 export function TiptapEditor({
@@ -939,6 +944,7 @@ export function TiptapEditor({
   toolbarSlot,
   initialSearch,
   hideToolbar = false,
+  openSearchRequest,
 }: TiptapEditorProps) {
   const isExternalUpdate = useRef(false);
 
@@ -2478,6 +2484,14 @@ export function TiptapEditor({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialSearch, editor]);
+
+  // 外部打开信号（手机端「更多 → 查找替换」）：只认 seq 变化，同一请求不重复弹
+  useEffect(() => {
+    if (!openSearchRequest || !editor) return;
+    setSearchShowReplace(openSearchRequest.replace);
+    setSearchOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSearchRequest?.seq, editor]);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   // 在 window 上挂 keydown：编辑器一旦 mount 就能响应 Ctrl+F / Ctrl+H，

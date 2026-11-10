@@ -3,10 +3,12 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Bold,
   ChevronLeft,
+  CirclePlus,
   CodeXml,
   Copy,
   Ellipsis,
   EyeOff,
+  FileText,
   Folder as FolderIcon,
   FolderInput,
   Heading,
@@ -20,21 +22,28 @@ import {
   Lock,
   Pin,
   Redo2,
+  Search,
+  Share2,
   Sparkles,
   Trash2,
   Undo2,
 } from "lucide-react";
-import { message } from "antd";
-import { aiChatApi, folderApi, imageApi, linkApi, noteApi, tagApi, trashApi } from "@/lib/api";
+import { Modal, message } from "antd";
+import { writeText as writeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
+import { aiChatApi, attachmentApi, folderApi, imageApi, linkApi, noteApi, tagApi, trashApi, videoApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import type { Folder, Note, Tag } from "@/types";
 import { useKeyboardInset } from "@/hooks/useKeyboardInset";
 import { resolveNoteTitle } from "@/lib/noteTitle";
 import { fileToBase64 } from "@/lib/quickNote";
-import { toKbAsset } from "@/lib/assetUrl";
+import { toKbAsset, toKbAssetHref } from "@/lib/assetUrl";
+import { SUPPORTED_PROVIDERS } from "@/components/editor/embedVideoProviders";
 import { TiptapEditor } from "@/components/editor/TiptapEditor";
 import { ActionSheet, type ActionSheetItem } from "@/components/mobile/ActionSheet";
+import { EditorInsertSheet } from "@/components/mobile/EditorInsertSheet";
 import { FolderPickerSheet } from "@/components/mobile/FolderPickerSheet";
+import { MSheet } from "@/components/mobile/MSheet";
+import { TextPromptModal } from "@/components/mobile/TextPromptModal";
 import { LinkBadge } from "@/components/mobile/primitives";
 
 /**
@@ -103,6 +112,15 @@ export function MobileNoteEditor() {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [moreOpen, setMoreOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
+  const [insertOpen, setInsertOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  /** 插入链接的输入框（选中了文字 = 给文字加链接；没选 = 把网址本身插进去） */
+  const [linkPromptOpen, setLinkPromptOpen] = useState(false);
+  /** 「网络视频」链接输入框：斜杠清单的同名项通过 requestEmbedUrl 等这个框的结果 */
+  const [embedPromptOpen, setEmbedPromptOpen] = useState(false);
+  const embedResolverRef = useRef<((url: string | null) => void) | null>(null);
+  /** 交给编辑器的「打开查找条」信号，seq 自增一次就打开一次 */
+  const [searchReq, setSearchReq] = useState<{ seq: number; replace: boolean } | undefined>(undefined);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [editor, setEditor] = useState<any | null>(null);
   const [, forceRender] = useState(0);
@@ -111,6 +129,9 @@ export function MobileNoteEditor() {
   const saveTimerRef = useRef<number | null>(null);
   const savedHideTimerRef = useRef<number | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
+  const attachInputRef = useRef<HTMLInputElement | null>(null);
   /** title / content 的 ref 镜像：doSave 直接读最新值，避开 setState 还没生效的闭包陷阱 */
   const titleRef = useRef("");
   const contentRef = useRef("");
@@ -282,11 +303,11 @@ export function MobileNoteEditor() {
     }
   }
 
+  /** 走 clipboard-manager 插件：整篇正文这类长文本在 WebView 的 navigator.clipboard 上不稳（同关于页） */
   function copyText(text: string, ok: string) {
-    navigator.clipboard
-      .writeText(text)
+    writeClipboardText(text)
       .then(() => message.success(ok))
-      .catch(() => message.error("复制失败"));
+      .catch((e) => message.error(`复制失败: ${e}`));
   }
 
   /** 切源码模式：两边的内容互相交接，确保切换前后正文一致 */
@@ -347,6 +368,86 @@ export function MobileNoteEditor() {
       }
     }
     if (imageInputRef.current) imageInputRef.current.value = "";
+    if (cameraInputRef.current) cameraInputRef.current.value = "";
+  }
+
+  /** 插本地视频：同插图的理由不走文件对话框；视频大，按字节直传（PC 粘贴视频也是 videoApi.save） */
+  async function insertVideos(files: FileList | null) {
+    const n = noteRef.current;
+    if (!files || !n || !editor) return;
+    for (const file of Array.from(files)) {
+      try {
+        const rel = await videoApi.save(n.id, file.name, new Uint8Array(await file.arrayBuffer()));
+        editor
+          .chain()
+          .focus()
+          .insertContent({ type: "video", attrs: { src: toKbAsset(rel), id: Math.random().toString(36).slice(2, 10) } })
+          .run();
+      } catch (e) {
+        message.error(`视频插入失败: ${e}`);
+      }
+    }
+    if (videoInputRef.current) videoInputRef.current.value = "";
+  }
+
+  /** 插附件：渲染成「📎 文件名 (大小)」链接，与 PC 工具栏「插入附件」同款，markdown 两端一致 */
+  async function insertAttachments(files: FileList | null) {
+    const n = noteRef.current;
+    if (!files || !n || !editor) return;
+    const nodes: Array<{ type: "text"; text: string; marks?: Array<{ type: "link"; attrs: { href: string } }> }> = [];
+    for (const file of Array.from(files)) {
+      try {
+        const info = await attachmentApi.save(n.id, file.name, await fileToBase64(file));
+        nodes.push({ type: "text", text: `📎 ${info.fileName} (${formatSize(info.size)})`, marks: [{ type: "link", attrs: { href: toKbAssetHref(info.path) } }] });
+        nodes.push({ type: "text", text: "\n" });
+      } catch (e) {
+        message.error(`附件插入失败: ${e}`);
+      }
+    }
+    if (nodes.length > 0) editor.chain().focus().insertContent(nodes).run();
+    if (attachInputRef.current) attachInputRef.current.value = "";
+  }
+
+  /** 插链接：选中了文字就给它加链接，没选就把网址本身作为链接文字插进去 */
+  function insertLink(raw: string) {
+    if (!editor) return;
+    const href = /^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`;
+    const { from, to } = editor.state.selection;
+    if (from === to) {
+      editor.chain().focus().insertContent({ type: "text", text: raw, marks: [{ type: "link", attrs: { href } }] }).insertContent(" ").run();
+    } else {
+      editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
+    }
+  }
+
+  /** 斜杠清单「网络视频」项要的链接输入：弹框，用户确认 / 取消后把结果交回给它 */
+  const requestEmbedUrl = useCallback(
+    () =>
+      new Promise<string | null>((resolve) => {
+        embedResolverRef.current = resolve;
+        setEmbedPromptOpen(true);
+      }),
+    [],
+  );
+  function settleEmbed(url: string | null) {
+    const fn = embedResolverRef.current;
+    embedResolverRef.current = null;
+    fn?.(url);
+  }
+
+  /** 「更多 → 查找替换」：阅读模式只能查找（编辑器内部会隐藏替换行） */
+  function openFind() {
+    if (sourceMode) {
+      message.info("源码模式下不支持查找替换，先在「更多」里关掉源码模式");
+      return;
+    }
+    setSearchReq((r) => ({ seq: (r?.seq ?? 0) + 1, replace: true }));
+  }
+
+  /** 「插入」按钮：先让编辑器失焦收起键盘，面板才不会被键盘顶着；选区仍保留，插入时 focus() 会还原光标 */
+  function openInsert() {
+    editor?.commands.blur();
+    setInsertOpen(true);
   }
 
   if (Number.isNaN(noteId)) {
@@ -366,6 +467,7 @@ export function MobileNoteEditor() {
       onClick: () => (readOnly ? message.info("加密笔记手机端只读") : setSource(!sourceMode)),
     },
     { key: "move", label: "移动到…", icon: <FolderInput size={20} />, onClick: () => setMoveOpen(true) },
+    { key: "share", label: "导出 / 分享", icon: <Share2 size={20} />, extra: "Markdown · 纯文本", onClick: () => void flush().then(() => setShareOpen(true)) },
     { key: "wiki", label: "复制 wiki 链接", icon: <Link size={20} />, onClick: () => copyText(`[[${titleRef.current}]]`, "已复制 wiki 链接") },
     { key: "copy-id", label: "复制笔记 ID", icon: <Copy size={20} />, onClick: () => copyText(String(noteId), `已复制 ID：${noteId}`) },
     { key: "delete", label: "删除笔记", icon: <Trash2 size={20} />, danger: true, onClick: () => void deleteNote() },
@@ -499,6 +601,7 @@ export function MobileNoteEditor() {
               onStats={(s) => setWords(s.words)}
               onEditorReady={setEditor}
               initialSearch={initialSearch}
+              openSearchRequest={searchReq}
               onWikiLinkClick={(t, id) => void openWikiLink(t, id)}
             />
           ) : null}
@@ -511,6 +614,11 @@ export function MobileNoteEditor() {
           className="m-hscroll flex h-12 shrink-0 items-center px-1"
           style={{ background: "var(--m-page)", borderTop: "0.5px solid var(--m-hair)", paddingBottom: keyboardInset ? 0 : "env(safe-area-inset-bottom, 0px)" }}
         >
+          {/* ＋ 打开插入面板（与斜杠命令同一份清单），钉在最左 */}
+          <button type="button" aria-label="插入" onPointerDown={(e) => e.preventDefault()} onClick={openInsert} className="m-icon-btn shrink-0" style={{ color: "var(--m-accent-ink)" }}>
+            <CirclePlus size={22} />
+          </button>
+          <span className="mx-0.5 h-5 w-px shrink-0" style={{ background: "var(--m-hair)" }} />
           {/* 标题按钮依次轮换：一级 → 二级 → 三级 → 正文（旧版这个按钮插的是一级标题，保留） */}
           <FmtBtn
             label={editor.isActive("heading", { level: 1 }) ? "二级标题" : editor.isActive("heading", { level: 2 }) ? "三级标题" : editor.isActive("heading", { level: 3 }) ? "正文" : "一级标题"}
@@ -559,6 +667,28 @@ export function MobileNoteEditor() {
         </div>
       )}
       <input ref={imageInputRef} type="file" accept="image/*" multiple hidden onChange={(e) => void insertImages(e.target.files)} />
+      {/* 拍照：capture 让安卓直接打开相机，拍完走同一条插图流程 */}
+      <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => void insertImages(e.target.files)} />
+      <input ref={videoInputRef} type="file" accept="video/*" multiple hidden onChange={(e) => void insertVideos(e.target.files)} />
+      <input ref={attachInputRef} type="file" multiple hidden onChange={(e) => void insertAttachments(e.target.files)} />
+
+      {note && (
+        <EditorInsertSheet
+          open={insertOpen}
+          onClose={() => setInsertOpen(false)}
+          editor={editor}
+          noteId={note.id}
+          requestEmbedUrl={requestEmbedUrl}
+          overrides={{
+            image: () => imageInputRef.current?.click(),
+            camera: () => cameraInputRef.current?.click(),
+            video: () => videoInputRef.current?.click(),
+            attachment: () => attachInputRef.current?.click(),
+            table: () => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
+            link: () => setLinkPromptOpen(true),
+          }}
+        />
+      )}
 
       <ActionSheet
         open={moreOpen}
@@ -566,10 +696,81 @@ export function MobileNoteEditor() {
         subtitle={`${words.toLocaleString()} 字${backlinks > 0 ? ` · 链入 ${backlinks}` : ""}`}
         grid={[
           { key: "pin", label: note?.is_pinned ? "已置顶" : "置顶", icon: <Pin size={22} />, active: !!note?.is_pinned, onClick: () => void togglePin() },
+          { key: "find", label: "查找替换", icon: <Search size={22} />, onClick: openFind },
           { key: "hide", label: note?.is_hidden ? "已隐藏" : "隐藏", icon: <EyeOff size={22} />, active: !!note?.is_hidden, onClick: () => void toggleHidden() },
+          {
+            key: "encrypt",
+            label: readOnly ? "已加密" : "加密",
+            icon: <Lock size={22} />,
+            active: readOnly,
+            // 加密要先解锁 Vault（主密码），手机端没有这套流程；说法与「我的」页一致
+            onClick: () =>
+              Modal.info({
+                title: readOnly ? "这篇笔记已加密" : "笔记加密在桌面端设置",
+                content: readOnly ? "手机端只能看到占位内容，解密、取消加密请在桌面端操作。" : "在桌面端解锁加密 Vault 后可加密这篇笔记；加密后手机端只读。",
+                okText: "知道了",
+                centered: true,
+              }),
+          },
         ]}
         items={moreItems}
         onClose={() => setMoreOpen(false)}
+      />
+
+      {/* 导出 / 分享：手机上没有「选保存位置」，Word / PDF / HTML 文件导出留在桌面端 */}
+      <MSheet open={shareOpen} title="导出 / 分享" caption="Word、PDF、HTML 文件导出请在桌面端操作" onClose={() => setShareOpen(false)}>
+        <div className="m-group">
+          <button
+            type="button"
+            className="m-row m-row-icon"
+            onClick={() => {
+              setShareOpen(false);
+              const t = titleRef.current.trim();
+              copyText(t ? `# ${t}\n\n${contentRef.current}` : contentRef.current, "已复制 Markdown 全文");
+            }}
+          >
+            <span className="flex w-6 shrink-0 justify-center" style={{ color: "var(--m-ink2)" }}><CodeXml size={20} /></span>
+            <span className="min-w-0 flex-1 truncate text-[15px]">复制为 Markdown</span>
+            <span className="m-t-meta shrink-0">含格式，可贴回笔记</span>
+          </button>
+          <button
+            type="button"
+            className="m-row m-row-icon"
+            onClick={() => {
+              setShareOpen(false);
+              // 富文本模式直接取编辑器纯文本；源码模式没有编辑器实例，退回原文
+              const body = editor && !sourceMode ? editor.getText({ blockSeparator: "\n" }) : contentRef.current;
+              const t = titleRef.current.trim();
+              copyText(t ? `${t}\n\n${body}` : body, "已复制纯文本");
+            }}
+          >
+            <span className="flex w-6 shrink-0 justify-center" style={{ color: "var(--m-ink2)" }}><FileText size={20} /></span>
+            <span className="min-w-0 flex-1 truncate text-[15px]">复制为纯文本</span>
+            <span className="m-t-meta shrink-0">发微信、贴聊天</span>
+          </button>
+        </div>
+      </MSheet>
+
+      <TextPromptModal
+        open={linkPromptOpen}
+        title="插入链接"
+        placeholder="https://"
+        okText="插入"
+        maxLength={2000}
+        onOk={(v) => insertLink(v)}
+        onClose={() => setLinkPromptOpen(false)}
+      />
+      <TextPromptModal
+        open={embedPromptOpen}
+        title="嵌入网络视频"
+        placeholder={`粘贴 ${SUPPORTED_PROVIDERS} 链接`}
+        okText="嵌入"
+        maxLength={2000}
+        onOk={(v) => settleEmbed(v)}
+        onClose={() => {
+          setEmbedPromptOpen(false);
+          settleEmbed(null);
+        }}
       />
 
       <FolderPickerSheet
@@ -613,6 +814,16 @@ function FmtBtn({
       {children}
     </button>
   );
+}
+
+/** 字节数 → 人类可读（附件标签用，与 PC 工具栏 formatSize 同口径） */
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  return `${(mb / 1024).toFixed(1)} GB`;
 }
 
 function SaveBadge({ status }: { status: SaveStatus }) {
