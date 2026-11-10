@@ -36,7 +36,7 @@
 | `MobileMe.tsx:275` | 「设置」齿轮跳 `/about` | ✅ M3-9 去掉（本页即设置入口，「关于」在设置分组里） |
 | `MobileMe.tsx:370-390` | 深色模式 / 主题 / Vault 标「不可用」 | ✅ M3-9：「外观与主题」开放（9 套主题，浅 / 深各记一套）；Vault 仍是桌面端 |
 | `MobileTaskDetail.tsx:490-505` | 重复 / 分类只提示「需在桌面端」 | ✅ M3-5 第二步已在手机端实现编辑（顺带修「清除截止」「不提醒」发 null 不生效） |
-| `MobileTrash.tsx:29` | 注释写的「全部还原」没实现 | 补上或删注释 |
+| `MobileTrash.tsx:29` | 注释写的「全部还原」没实现 | ✅ M3-10 补上（分页取全量后逐条还原，失败计数） |
 | `quick-create/index.tsx:176/198/205` | 模板 / 语音 / 拍照只提示「待开发」 | 原型保留入口，逐个接或隐藏 |
 | `quick-create/index.tsx:231` | 「新闪卡」不看功能模块开关 | 按开关显示 |
 | `MobileLayout.tsx:126` | Android 返回键处理只是占位 | 根路由再按返回提示退出 |
@@ -408,14 +408,17 @@
 - [x] 底部提示 / 完成或空状态 / 重新加载 `MobileCards.tsx:274-279` `MobileCards.tsx:361-372`
 
 #### src/pages/trash/MobileTrash.tsx
-- [ ] 加载第一页（最多 50） `MobileTrash.tsx:57-72`
-- [ ] 顶栏返回 / 信息横幅（保留 30 天，共 N 项） `MobileTrash.tsx:151-169`
-- [ ] 加载中 / 空状态 `MobileTrash.tsx:173-184`
-- [ ] 「即将清理」分组（< 7 天）：标题、摘要、删除日期、剩余天数、还原、永久删除 `MobileTrash.tsx:187-203` `MobileTrash.tsx:288-314`
-- [ ] 「最近删除」分组：标题、日期、剩余天数、还原 `MobileTrash.tsx:204-218` `MobileTrash.tsx:345-359`
-- [ ] 普通行长按：还原 / 永久删除 `MobileTrash.tsx:333` `MobileTrash.tsx:131-143`
-- [ ] 还原 / 永久删除（确认） `MobileTrash.tsx:74-102`
-- [ ] 「已显示全部 N 项」/「清空回收站」（确认） `MobileTrash.tsx:219-239` `MobileTrash.tsx:104-122`
+
+> ✅ M3-10 验收（2026-11-10）：套公共组件与令牌，交互不变。变化处：新增底栏「全部还原」（与「清空回收站」并排，都要确认）·「即将清理」卡片摘要去掉 HTML / Markdown 标记 · 超过 50 项时尾注改为「已显示前 N 项，共 M 项」（原来写「全部」不实）。
+
+- [x] 加载第一页（最多 50） `MobileTrash.tsx:57-72`
+- [x] 顶栏返回 / 信息横幅（保留 30 天，共 N 项） `MobileTrash.tsx:151-169`
+- [x] 加载中 / 空状态 `MobileTrash.tsx:173-184`
+- [x] 「即将清理」分组（< 7 天）：标题、摘要、删除日期、剩余天数、还原、永久删除 `MobileTrash.tsx:187-203` `MobileTrash.tsx:288-314`
+- [x] 「最近删除」分组：标题、日期、剩余天数、还原 `MobileTrash.tsx:204-218` `MobileTrash.tsx:345-359`
+- [x] 普通行长按：还原 / 永久删除 `MobileTrash.tsx:333` `MobileTrash.tsx:131-143`
+- [x] 还原 / 永久删除（确认） `MobileTrash.tsx:74-102`
+- [x] 「已显示全部 N 项」/「清空回收站」（确认） `MobileTrash.tsx:219-239` `MobileTrash.tsx:104-122`
 
 #### src/components/mobile/ActionSheet.tsx
 - [ ] 打开锁背景滚动；未打开不渲染；点遮罩关闭 `ActionSheet.tsx:32-53`
