@@ -27,10 +27,11 @@ const DUE_PRESETS: { key: DuePreset; label: string }[] = [
   { key: "weekend", label: "本周末" },
 ];
 
-const PRIORITIES: { value: TaskPriority; label: string; active: string }[] = [
-  { value: 0, label: "紧急", active: "bg-red-100 text-red-700" },
-  { value: 1, label: "普通", active: "bg-blue-100 text-blue-700" },
-  { value: 2, label: "低", active: "bg-slate-200 text-slate-700" },
+/** 选中色走主题令牌（v4）：紧急 = 红、普通 = 主色、低 = 中性 */
+const PRIORITIES: { value: TaskPriority; label: string; bg: string; fg: string }[] = [
+  { value: 0, label: "紧急", bg: "var(--m-bad-soft)", fg: "var(--m-bad)" },
+  { value: 1, label: "普通", bg: "var(--m-accent-soft2)", fg: "var(--m-accent-ink)" },
+  { value: 2, label: "低", bg: "var(--m-well)", fg: "var(--m-ink)" },
 ];
 
 /**
@@ -117,31 +118,21 @@ export function TaskCreateSheet({
 
   if (!open) return null;
 
+  // v4 原型 08 屏：贴着键盘弹出，白底；标题大字直接输，截止 / 优先级做成胶囊
   return (
-    <div
-      className="fixed inset-0 z-[60] flex flex-col justify-end"
-      role="dialog"
-      aria-modal="true"
-    >
-      <div
-        className="absolute inset-0 bg-black/40 animate-[kbFadeIn_0.15s_ease]"
-        onClick={onClose}
-      />
+    <div className="m-sheet-mask" role="dialog" aria-modal="true" aria-label="新建待办">
+      <div className="m-sheet-backdrop" onClick={onClose} />
 
       <div
-        className="relative z-10 rounded-t-2xl bg-white animate-[kbSheetUp_0.2s_ease]"
+        className="m-sheet"
         style={{
-          paddingBottom: keyboardInset
-            ? keyboardInset
-            : "env(safe-area-inset-bottom, 0px)",
+          background: "var(--m-surface)",
+          paddingBottom: keyboardInset ? keyboardInset : "calc(12px + env(safe-area-inset-bottom, 0px))",
         }}
       >
-        <div className="px-5 pt-4 pb-2 text-center text-xs text-slate-400">
-          新建待办
-        </div>
+        <div className="m-sheet-grabber" />
 
-        {/* 标题 */}
-        <div className="px-4">
+        <div className="m-px">
           <input
             ref={inputRef}
             value={title}
@@ -150,71 +141,59 @@ export function TaskCreateSheet({
               if (e.key === "Enter") void submit();
             }}
             placeholder="要做什么？"
-            className="w-full rounded-xl bg-slate-100 px-4 py-3 text-base text-slate-800 outline-none placeholder:text-slate-400"
+            aria-label="待办标题"
+            className="w-full bg-transparent py-2.5 text-[18px] font-bold leading-snug outline-none placeholder:font-normal placeholder:text-[var(--m-ink3)]"
+            style={{ color: "var(--m-ink)" }}
           />
         </div>
 
-        {/* 截止 */}
-        <div className="px-4 pt-3">
-          <div className="pb-1.5 text-xs text-slate-400">截止</div>
-          <div className="flex gap-2">
-            {DUE_PRESETS.map((p) => (
-              <button
-                key={p.key}
-                onClick={() => setDue(p.key)}
-                className={`rounded-full px-3 py-1.5 text-sm font-medium ${
-                  due === p.key
-                    ? "bg-[#1677FF] text-white"
-                    : "bg-slate-100 text-slate-600"
-                }`}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
+        {/* 截止：单选胶囊 */}
+        <div className="m-px m-hscroll mt-4 flex items-center gap-2">
+          <span className="m-t-cap w-[3.2em] shrink-0">截止</span>
+          {DUE_PRESETS.map((p) => (
+            <button
+              key={p.key}
+              type="button"
+              onClick={() => setDue(p.key)}
+              aria-pressed={due === p.key}
+              className="m-chip"
+              style={
+                due === p.key
+                  ? { background: "var(--m-accent-soft2)", color: "var(--m-accent-ink)", fontWeight: 700 }
+                  : { background: "var(--m-well)" }
+              }
+            >
+              {p.label}
+            </button>
+          ))}
         </div>
 
-        {/* 优先级 */}
-        <div className="px-4 pt-3">
-          <div className="pb-1.5 text-xs text-slate-400">优先级</div>
-          <div className="flex gap-2">
-            {PRIORITIES.map((p) => (
-              <button
-                key={p.value}
-                onClick={() => setPriority(p.value)}
-                className={`rounded-full px-3 py-1.5 text-sm font-medium ${
-                  priority === p.value
-                    ? p.active
-                    : "bg-slate-100 text-slate-600"
-                }`}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
+        {/* 优先级：单选胶囊 */}
+        <div className="m-px mt-3 flex items-center gap-2">
+          <span className="m-t-cap w-[3.2em] shrink-0">优先级</span>
+          {PRIORITIES.map((p) => (
+            <button
+              key={p.value}
+              type="button"
+              onClick={() => setPriority(p.value)}
+              aria-pressed={priority === p.value}
+              className="m-chip"
+              style={priority === p.value ? { background: p.bg, color: p.fg, fontWeight: 700 } : { background: "var(--m-well)" }}
+            >
+              {p.label}
+            </button>
+          ))}
         </div>
 
-        {/* 操作 */}
-        <div className="flex gap-3 px-4 pt-4 pb-3">
-          <button
-            onClick={onClose}
-            className="flex-1 rounded-xl bg-slate-100 text-base font-medium text-slate-600 active:bg-slate-200"
-            style={{ minHeight: 48 }}
-          >
+        <div className="m-px m-t-cap mt-4">分类 / 提醒 / 重复 / 子任务可在建完后进详情页设置</div>
+
+        <div className="m-px mt-2 flex items-center justify-end gap-3">
+          <button type="button" className="m-tapx shrink-0 text-[15px] font-semibold" style={{ color: "var(--m-ink2)" }} onClick={onClose}>
             取消
           </button>
-          <button
-            onClick={() => void submit()}
-            disabled={!title.trim() || saving}
-            className="flex-[2] rounded-xl bg-[#1677FF] text-base font-medium text-white active:opacity-80 disabled:opacity-40"
-            style={{ minHeight: 48 }}
-          >
+          <button type="button" className="m-btn shrink-0" onClick={() => void submit()} disabled={!title.trim() || saving}>
             {saving ? "保存中…" : "添加"}
           </button>
-        </div>
-
-        <div className="pb-2 text-center text-[11px] text-slate-400">
-          分类 / 提醒 / 重复 / 子任务可在建完后进详情页设置
         </div>
       </div>
     </div>

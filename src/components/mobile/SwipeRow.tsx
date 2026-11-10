@@ -86,7 +86,12 @@ export function SwipeRow({ actions, children }: { actions: SwipeAction[]; childr
 
   return (
     <div className="relative overflow-hidden" style={{ touchAction: "pan-y" }}>
-      <div className="absolute inset-y-0 right-0 flex" aria-hidden={offset === 0}>
+      {/* 静止时整层隐藏：外层圆角裁切的抗锯齿边会把按钮底色透出一道细边 */}
+      <div
+        className="absolute inset-y-0 right-0 flex"
+        aria-hidden={offset === 0}
+        style={{ visibility: offset === 0 ? "hidden" : "visible" }}
+      >
         {actions.map((a) => (
           <button
             key={a.key}
