@@ -25,8 +25,8 @@
 | `MobileHome.tsx:112` | 头像 🦊 不可点 | 去掉或接「我的」 |
 | `MobileDaily.tsx:157` | 顶栏「设置」空占位 | ✅ M3-6 已去掉 |
 | `MobileDaily.tsx:267` | 选任何一天按钮都写「今天的日记」 | ✅ M3-6 改为「打开 / 开始写 M 月 D 日的日记」 |
-| `MobileAi.tsx:326` | 顶栏「搜索」空占位 | 接会话搜索或去掉 |
-| `MobileAi.tsx:66-91` | 4 个快捷入口只建空对话，不预填 prompt | 接提示词库 |
+| `MobileAi.tsx:326` | 顶栏「搜索」空占位 | ✅ M3-8 第二步接上按标题搜对话 |
+| `MobileAi.tsx:66-91` | 4 个快捷入口只建空对话，不预填 prompt | ✅ M3-8 第二步：建对话后预填开头，「解读笔记」先弹选笔记（内置提示词是编辑器文本动作，不适合当对话角色，故不套） |
 | `MobileAiChat.tsx:264` | 顶栏「更多」空占位 | ✅ M3-8 第一步接上会话菜单（重命名 / 置顶 / 复制为 Markdown / 归档为笔记 / 删除） |
 | `MobileAiChat.tsx:307 / 343` | 「附件」「语音」按钮空占位 | ✅ M3-8 第一步：附件 → 附加笔记（会话共享）；语音无现成能力，按钮去掉 |
 | `MobileAiChat.tsx:314` | 占位文字说能「/ 调用 Prompt」，没实现 | ✅ M3-8 第一步：占位改「问问你的知识库…」，提示词做成输入区胶囊（角色预设） |
@@ -294,25 +294,29 @@
 - [x] 点结果 → /notes/:id?q=关键词 `MobileSearch.tsx:142-144`
 
 #### src/pages/ai/MobileAi.tsx
-- [ ] 进入时加载对话列表和模型列表 `MobileAi.tsx:113-131`
-- [ ] 顶栏「AI 助手」+ 默认模型名 / 「未配置模型服务」+「N 个对话」 `MobileAi.tsx:292-296`
-- [ ] 「分享当前模型」（无模型提示；读 API Key 生成分享内容） `MobileAi.tsx:299-318` `MobileAi.tsx:532-536`
-- [ ] 「导入模型」弹窗 `MobileAi.tsx:319-325` `MobileAi.tsx:538-542`
-- [ ] 顶栏「搜索」空占位 `MobileAi.tsx:326-331`
-- [ ] 模型 chip 横滑：点击设默认（✓ 标记） `MobileAi.tsx:342-355` `MobileAi.tsx:135-142`
-- [ ] 无模型提示「请到 设置 → 模型服务 添加」 `MobileAi.tsx:337-340`
-- [ ] 「+」新建模型服务 `MobileAi.tsx:357-363` `MobileAi.tsx:523-530`
-- [ ] 4 个快捷入口：写作助手 / 解读笔记 / 任务规划 / 翻译润色（只建空对话） `MobileAi.tsx:66-91` `MobileAi.tsx:372-385`
-- [ ] 「对话历史」+ 多选时「· 已选 N」 `MobileAi.tsx:391-394`
-- [ ] 「管理 / 完成」按钮 `MobileAi.tsx:395-402`
-- [ ] 管理菜单：批量选择删除 / 清理 7、30、90 天前的对话 `MobileAi.tsx:495-500` `MobileAi.tsx:259-274` `MobileAi.tsx:203-220`
-- [ ] 加载中 / 空状态 `MobileAi.tsx:406-417`
-- [ ] 对话卡：标题、模型名、关联笔记数、相对时间 `MobileAi.tsx:419-425` `MobileAi.tsx:592-607`
-- [ ] 轻点：进对话 / 多选时切换选中 `MobileAi.tsx:428-430` `MobileAi.tsx:144-157`
-- [ ] 长按：重命名 / 删除（多选时无效） `MobileAi.tsx:431-433` `MobileAi.tsx:238-253`
-- [ ] 重命名弹窗（最多 100 字，Enter 提交） `MobileAi.tsx:503-521` `MobileAi.tsx:222-233`
-- [ ] 多选底栏：全选 / 取消全选 / 删除 (N) `MobileAi.tsx:440-467` `MobileAi.tsx:160-200`
-- [ ] 右下角「新对话」按钮（多选时隐藏） `MobileAi.tsx:473-484` `MobileAi.tsx:277-284`
+
+> ✅ M3-8 第二步验收（2026-11-10）：换 v4 样式（MPageHeader + 分组列表 + 自带 m-fab）。变化处：顶栏「搜索」空占位 → 按标题搜对话 ·快捷入口从「只建空对话」改为建对话后带 location.state 进对话页：预填输入框开头，「解读笔记」先弹出附加笔记 ·
+> 对话历史新增「置顶」分组，长按菜单加「置顶 / 取消置顶」（同 PC）· 对话卡改列表行，「关联笔记数」改为「附加 N 篇」· 重命名弹窗换成 TextPromptModal ·多选底栏删除键固定深红（暗色主题下 --m-bad 是浅粉，白字不够对比）。其余（模型胶囊设默认、分享 / 导入模型、新建模型服务、批量删除、清理 7/30/90 天前）原样保留并逐项实测。
+
+- [x] 进入时加载对话列表和模型列表 `MobileAi.tsx:113-131`
+- [x] 顶栏「AI 助手」+ 默认模型名 / 「未配置模型服务」+「N 个对话」 `MobileAi.tsx:292-296`
+- [x] 「分享当前模型」（无模型提示；读 API Key 生成分享内容） `MobileAi.tsx:299-318` `MobileAi.tsx:532-536`
+- [x] 「导入模型」弹窗 `MobileAi.tsx:319-325` `MobileAi.tsx:538-542`
+- [x] 顶栏「搜索」空占位 `MobileAi.tsx:326-331`
+- [x] 模型 chip 横滑：点击设默认（✓ 标记） `MobileAi.tsx:342-355` `MobileAi.tsx:135-142`
+- [x] 无模型提示「请到 设置 → 模型服务 添加」 `MobileAi.tsx:337-340`
+- [x] 「+」新建模型服务 `MobileAi.tsx:357-363` `MobileAi.tsx:523-530`
+- [x] 4 个快捷入口：写作助手 / 解读笔记 / 任务规划 / 翻译润色（只建空对话） `MobileAi.tsx:66-91` `MobileAi.tsx:372-385`
+- [x] 「对话历史」+ 多选时「· 已选 N」 `MobileAi.tsx:391-394`
+- [x] 「管理 / 完成」按钮 `MobileAi.tsx:395-402`
+- [x] 管理菜单：批量选择删除 / 清理 7、30、90 天前的对话 `MobileAi.tsx:495-500` `MobileAi.tsx:259-274` `MobileAi.tsx:203-220`
+- [x] 加载中 / 空状态 `MobileAi.tsx:406-417`
+- [x] 对话卡：标题、模型名、关联笔记数、相对时间 `MobileAi.tsx:419-425` `MobileAi.tsx:592-607`
+- [x] 轻点：进对话 / 多选时切换选中 `MobileAi.tsx:428-430` `MobileAi.tsx:144-157`
+- [x] 长按：重命名 / 删除（多选时无效） `MobileAi.tsx:431-433` `MobileAi.tsx:238-253`
+- [x] 重命名弹窗（最多 100 字，Enter 提交） `MobileAi.tsx:503-521` `MobileAi.tsx:222-233`
+- [x] 多选底栏：全选 / 取消全选 / 删除 (N) `MobileAi.tsx:440-467` `MobileAi.tsx:160-200`
+- [x] 右下角「新对话」按钮（多选时隐藏） `MobileAi.tsx:473-484` `MobileAi.tsx:277-284`
 
 #### src/pages/ai/MobileAiChat.tsx
 
