@@ -179,29 +179,35 @@
 - [x] 底部提示「主页底部 + 按钮可呼出此页」 `index.tsx:240-242`
 
 #### src/pages/tasks/MobileTasks.tsx
-- [ ] 进入时同时拉未完成和已完成（已完成最近 20 条），失败按空 `MobileTasks.tsx:52-66`
-- [ ] 带 `?new=1` 进来自动弹新建面板，随后删掉参数 `MobileTasks.tsx:74-80`
-- [ ] 顶栏「待办」+「今日 N 项 · 本周 N 项 · 已完成 N」 `MobileTasks.tsx:190-193`
-- [ ] 搜索按钮展开 / 收起搜索框（收起清空关键词） `MobileTasks.tsx:196-209`
-- [ ] 搜索框：本地按标题和备注过滤，不区分大小写 `MobileTasks.tsx:89-96` `MobileTasks.tsx:214-222`
-- [ ] 分类 chip：所有 N / ⏰ 今日 N / 📅 本周 N / ✅ 已完成 N `MobileTasks.tsx:226-248`
-- [ ] 分组规则：今日 = 截止 ≤ 今天 23:59:59（含逾期）；本周 = 之后 7 天内；其它 = 无截止 `MobileTasks.tsx:83-109`
-- [ ] 加载中「加载中...」 `MobileTasks.tsx:254-257`
-- [ ] 搜索无结果「没有匹配「关键词」的待办」 `MobileTasks.tsx:260-264`
-- [ ] 空列表「暂无待办，享受当下 ✨」+「添加第一条」 `MobileTasks.tsx:265-275`
-- [ ] 分组：今日 / 本周 / 其它（仅全部 chip）/ 已完成（淡化） `MobileTasks.tsx:281-321`
-- [ ] 任务行复选框切换完成（不触发长按） `MobileTasks.tsx:453-458`
-- [ ] 完成逻辑：未完成循环任务 `completeOccurrence`（提示「已完成本次，已推进到下一次」），其它 `toggleStatus` `MobileTasks.tsx:120-132`
-- [ ] 轻点任务 → /task-detail/:id `MobileTasks.tsx:446-448` `MobileTasks.tsx:289`
-- [ ] 长按任务弹面板（标题 = 任务名） `MobileTasks.tsx:446` `MobileTasks.tsx:459-464` `MobileTasks.tsx:339-344`
-- [ ] 长按「标记为完成 / 未完成」 `MobileTasks.tsx:157-167`
-- [ ] 长按「编辑详情」→ /task-detail/:id `MobileTasks.tsx:168-173`
-- [ ] 长按「删除」：二次确认后 `taskApi.delete` `MobileTasks.tsx:174-180` `MobileTasks.tsx:135-152`
-- [ ] 已完成标题删除线 `MobileTasks.tsx:465-473`
-- [ ] 「紧急」标签 — priority 0 `MobileTasks.tsx:476-480`
-- [ ] 截止时间（月/日 时:分），逾期显示「⏰ 已逾期」 `MobileTasks.tsx:442-443` `MobileTasks.tsx:481-497`
-- [ ] 右下角自带新建按钮 → 新建面板 `MobileTasks.tsx:327-336`
-- [ ] 新建成功后刷新列表 `MobileTasks.tsx:347-351`
+
+> ✅ M3-5 第一步验收（2026-11-10）：筛选 / 分组 / 日期文案和 PC 共用 `src/lib/taskFilters.ts`（从 PC 待办页原样迁出，+7 单测）。变化处：
+> 顶栏「待办」→ 标题下拉 = PC 侧栏 12 个智能筛选 + 分类（`?filter=` / `?category=`，同 PC），副标题改为「N 条未完成 · N 条紧急」·
+> chip「所有 / 今日 / 本周 / 已完成」→ PC 同款分组胶囊「全部 / 逾期 / 今天 / 即将到期 / 无截止」，已完成走筛选面板「已完成」+ 全部视图底部折叠区（仍是最近 20 条）·
+> 分组规则改用 PC 口径（逾期从「今日」里拆出单独成组）· 截止时间改为 PC 短文案（今天给时分 / 明天 / 周几 / MM-DD），逾期整段标红（「逾期 N 天」）·
+> 新增：左滑「完成 / 删除」、行内重要 / 子任务进度 / 关联数 / 备注首行、优先级色点。其余条目（搜索、空态、长按菜单、循环任务完成本次、?new=1、二次确认删除）原样保留并逐项实测。
+- [x] 进入时同时拉未完成和已完成（已完成最近 20 条），失败按空 `MobileTasks.tsx:52-66`
+- [x] 带 `?new=1` 进来自动弹新建面板，随后删掉参数 `MobileTasks.tsx:74-80`
+- [x] 顶栏「待办」+「今日 N 项 · 本周 N 项 · 已完成 N」 `MobileTasks.tsx:190-193`
+- [x] 搜索按钮展开 / 收起搜索框（收起清空关键词） `MobileTasks.tsx:196-209`
+- [x] 搜索框：本地按标题和备注过滤，不区分大小写 `MobileTasks.tsx:89-96` `MobileTasks.tsx:214-222`
+- [x] 分类 chip：所有 N / ⏰ 今日 N / 📅 本周 N / ✅ 已完成 N `MobileTasks.tsx:226-248`
+- [x] 分组规则：今日 = 截止 ≤ 今天 23:59:59（含逾期）；本周 = 之后 7 天内；其它 = 无截止 `MobileTasks.tsx:83-109`
+- [x] 加载中「加载中...」 `MobileTasks.tsx:254-257`
+- [x] 搜索无结果「没有匹配「关键词」的待办」 `MobileTasks.tsx:260-264`
+- [x] 空列表「暂无待办，享受当下 ✨」+「添加第一条」 `MobileTasks.tsx:265-275`
+- [x] 分组：今日 / 本周 / 其它（仅全部 chip）/ 已完成（淡化） `MobileTasks.tsx:281-321`
+- [x] 任务行复选框切换完成（不触发长按） `MobileTasks.tsx:453-458`
+- [x] 完成逻辑：未完成循环任务 `completeOccurrence`（提示「已完成本次，已推进到下一次」），其它 `toggleStatus` `MobileTasks.tsx:120-132`
+- [x] 轻点任务 → /task-detail/:id `MobileTasks.tsx:446-448` `MobileTasks.tsx:289`
+- [x] 长按任务弹面板（标题 = 任务名） `MobileTasks.tsx:446` `MobileTasks.tsx:459-464` `MobileTasks.tsx:339-344`
+- [x] 长按「标记为完成 / 未完成」 `MobileTasks.tsx:157-167`
+- [x] 长按「编辑详情」→ /task-detail/:id `MobileTasks.tsx:168-173`
+- [x] 长按「删除」：二次确认后 `taskApi.delete` `MobileTasks.tsx:174-180` `MobileTasks.tsx:135-152`
+- [x] 已完成标题删除线 `MobileTasks.tsx:465-473`
+- [x] 「紧急」标签 — priority 0 `MobileTasks.tsx:476-480`
+- [x] 截止时间（月/日 时:分），逾期显示「⏰ 已逾期」 `MobileTasks.tsx:442-443` `MobileTasks.tsx:481-497`
+- [x] 右下角自带新建按钮 → 新建面板 `MobileTasks.tsx:327-336`
+- [x] 新建成功后刷新列表 `MobileTasks.tsx:347-351`
 
 #### src/pages/tasks/MobileTaskDetail.tsx
 - [ ] ID 无效「任务 ID 无效」 `MobileTaskDetail.tsx:310-314`
@@ -231,15 +237,18 @@
 - [ ] 底部「完成 / 标记未完成」 `MobileTaskDetail.tsx:547-552`
 
 #### src/components/mobile/TaskCreateSheet.tsx
-- [ ] 每次打开重置表单、锁背景滚动、120ms 后聚焦标题 `TaskCreateSheet.tsx:83-96`
-- [ ] 点遮罩关闭 `TaskCreateSheet.tsx:126-129`
-- [ ] 键盘弹出时面板顶到键盘上方 `TaskCreateSheet.tsx:75` `TaskCreateSheet.tsx:133-137`
-- [ ] 标题「新建待办」 `TaskCreateSheet.tsx:139-141`
-- [ ] 标题输入（占位「要做什么？」），Enter 提交 `TaskCreateSheet.tsx:145-154`
-- [ ] 截止快捷：不设 / 今天 / 明天 / 本周末（统一 23:59:59） `TaskCreateSheet.tsx:23-28` `TaskCreateSheet.tsx:50-61` `TaskCreateSheet.tsx:158-175`
-- [ ] 优先级：紧急 / 普通（默认）/ 低 `TaskCreateSheet.tsx:30-34` `TaskCreateSheet.tsx:178-195`
-- [ ] 「取消」/「添加」（空标题或保存中禁用，保存中文字「保存中…」） `TaskCreateSheet.tsx:199-213` `TaskCreateSheet.tsx:98-116`
-- [ ] 底部提示「分类 / 提醒 / 重复 / 子任务可在建完后进详情页设置」 `TaskCreateSheet.tsx:216-218`
+
+> ✅ M3-5 第一步验收（2026-11-10）：按原型 08 屏重做成贴键盘的底部面板（白底、顶圆角 16、18px 粗体标题直接输），截止 / 优先级改为单选胶囊，选中色走主题令牌；
+> 「新建待办」可见标题去掉，改为对话框 aria-label（原型无标题，抓手条 + 占位「要做什么？」已表意）；提交参数不变（`title / priority / due_date`，截止统一 23:59:59），浏览器实测「明天 + 紧急」→ `{"title":"写周报","priority":0,"due_date":"2026-11-11 23:59:59"}`。
+- [x] 每次打开重置表单、锁背景滚动、120ms 后聚焦标题 `TaskCreateSheet.tsx:83-96`
+- [x] 点遮罩关闭 `TaskCreateSheet.tsx:126-129`
+- [x] 键盘弹出时面板顶到键盘上方 `TaskCreateSheet.tsx:75` `TaskCreateSheet.tsx:133-137`
+- [x] 标题「新建待办」 `TaskCreateSheet.tsx:139-141`
+- [x] 标题输入（占位「要做什么？」），Enter 提交 `TaskCreateSheet.tsx:145-154`
+- [x] 截止快捷：不设 / 今天 / 明天 / 本周末（统一 23:59:59） `TaskCreateSheet.tsx:23-28` `TaskCreateSheet.tsx:50-61` `TaskCreateSheet.tsx:158-175`
+- [x] 优先级：紧急 / 普通（默认）/ 低 `TaskCreateSheet.tsx:30-34` `TaskCreateSheet.tsx:178-195`
+- [x] 「取消」/「添加」（空标题或保存中禁用，保存中文字「保存中…」） `TaskCreateSheet.tsx:199-213` `TaskCreateSheet.tsx:98-116`
+- [x] 底部提示「分类 / 提醒 / 重复 / 子任务可在建完后进详情页设置」 `TaskCreateSheet.tsx:216-218`
 
 #### src/pages/daily/MobileDaily.tsx
 - [ ] 加载当月有日记的日期，切换年月重新加载 `MobileDaily.tsx:53-60` `MobileDaily.tsx:75-77`

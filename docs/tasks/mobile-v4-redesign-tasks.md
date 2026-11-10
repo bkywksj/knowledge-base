@@ -95,7 +95,7 @@
 | M3-2 ✅ | 笔记 · 文件夹层级 | 02 / 03 | `pages/notes/MobileNotes.tsx` | **2026-11-10 完成**（群反馈：手机端没有文件夹层级）：`?folder=` 逐层进入、返回键回上一层、面包屑；根目录保留全部笔记；左滑 / 长按完整菜单（重命名先取最新正文再存）；文件夹菜单（删除同 PC 两段式）；排序 / 加载更多 / 标签页签；新增 `FolderPickerSheet`、`TextPromptModal`。三套主题量化检查全过。**未做**：笔记行「链入 N」—— 列表接口不带链入数，待评估后端顺带返回 |
 | M3-3 🟡 | 编辑器 | 04 / 05 / 06 | `pages/notes/MobileNoteEditor.tsx` | **第一步 2026-11-10 完成**：正文换 TiptapEditor（新增 `hideToolbar` 属性，默认 false，PC 不受影响）；顶栏 / 文件夹路径 / 标签 / 链入数；键盘格式条 10 项；「…」面板（置顶 / 隐藏 / 源码模式 / 移动 / 复制 / 删除）；加密笔记只读；图片走 input+imageApi.save（安卓 content:// 路径存不了）。浏览器实测输入、加粗、自动保存出 Markdown、源码模式往返、撤销、只读拦截全对。**待做**：第二步（插入面板 / 查找替换 / 历史版本 / 大纲 / 标签编辑）；**安卓输入法真机验证** |
 | M3-4 ✅ | 新建面板 | 13 | `components/mobile/QuickCreate.tsx` · `pages/quick-create/index.tsx` | **2026-11-10 完成**：FAB 弹底部面板（不再跳页），/quick-create 整页复用同组件；可选建在哪个文件夹；从模板接通；新增记一笔、剪贴板建笔记；新闪卡按模块开关；语音 / 拍照入口暂隐藏（能力未做）。两套主题量化检查全过，底稿 15 条勾回 |
-| M3-5 | 待办 | 07 / 08 | `MobileTasks.tsx` · `TaskCreateSheet.tsx` · `MobileTaskDetail.tsx` | 标题下拉 = PC 侧栏筛选；分组胶囊；贴键盘的新建面板 |
+| M3-5 🟡 | 待办 | 07 / 08 | `MobileTasks.tsx` · `TaskCreateSheet.tsx` · `MobileTaskDetail.tsx` | **第一步 2026-11-10 完成**：PC 待办页的筛选 / 分组 / 日期文案迁到 `lib/taskFilters.ts` 两端共用（+7 单测，PC 页回归正常）；标题下拉 = PC 侧栏 12 个智能筛选 + 分类（URL 参数同 PC）；分组胶囊；左滑完成 / 删除；全部视图底部折叠最近完成 20 条；新建面板按 08 屏重做（贴键盘、胶囊单选）。顺手修 `SwipeRow` 静止时圆角处透出按钮底色的细边（笔记页同受益）。两套主题量化检查全过，底稿 32 条勾回。**待做**：第二步任务详情页 `MobileTaskDetail.tsx` |
 | M3-6 | 日记 | 09 | `pages/daily/MobileDaily.tsx` | 周条 + 下拉展开整月；当天时间线 + 追加 |
 | M3-7 | 搜索 | 10 | `pages/search/MobileSearch.tsx` | 笔记 + 待办同出；筛选胶囊；进笔记定位命中 |
 | M3-8 | AI 问答 | 11 | `MobileAi.tsx` · `MobileAiChat.tsx` | 一轮一卡，复用 PC 的 `turnModel`（turnFromMessage / turnFromLive） |
@@ -118,7 +118,7 @@
 | M0 准备 | 2 | 2 | ✅ `completed` |
 | M1 令牌与组件 | 2 | 2 | ✅ `completed` |
 | M2 外框 | 1 | 1 | ✅ `completed` |
-| M3 逐页 | 11 | 3（+ 编辑器第一步） | `in_progress` |
+| M3 逐页 | 11 | 3（+ 编辑器、待办第一步） | `in_progress` |
 | M4 收尾 | 1 | 0 | `pending` |
 
 ## 历史记录
@@ -127,3 +127,6 @@
 - **2026-11-10** M0 功能底稿 + M1 令牌层与公共组件 + M2 外框完成。验证技巧：浏览器里改 store / api 时，
   要 import 页面实际加载的那个 URL（带 HMR `?t=` 时间戳），从 `performance.getEntriesByType('resource')` 里找；
   直接 import 不带参数的路径会拿到另一个模块实例，改了不生效
+- **2026-11-10** M3-5 第一步（待办列表 + 新建面板）完成。PC 与手机的筛选口径收敛到同一份纯函数，后续改规则只改
+  `lib/taskFilters.ts`。手势测法：对 SwipeRow 前景层派发合成 `PointerEvent`（pointerType=touch，逐 10px move），
+  长按派发 pointerdown → 等 700ms → pointerup
