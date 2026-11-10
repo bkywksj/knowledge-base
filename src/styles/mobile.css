@@ -448,3 +448,10 @@
 .m-ai-thread .kb-ref-no { min-width: 20px; height: 20px; font-size: 12px; color: var(--m-accent-ink); background: var(--m-surface); }
 .m-ai-thread .kb-ref-main > b { font-size: 14px; color: var(--m-ink); }
 .m-ai-thread .kb-ref-main > span { color: var(--m-ink3); }
+
+/* 隐藏笔记页底部的 PIN 设置（复用设置页的 HiddenPinSection）：antd 小按钮 24 高，手机上放大到 36 */
+.m-pin-section .ant-btn-sm { height: 36px; padding: 0 14px; }
+/* 同一块的 antd 配色（绿标签 / 次要文字 / 危险按钮）在浅色手机主题下对比度不到 4.5，换成手机令牌 */
+.m-pin-section .ant-tag-green { color: var(--m-ok) !important; background: var(--m-ok-soft) !important; border-color: transparent !important; }
+.m-pin-section .ant-typography-secondary { color: var(--m-ink3) !important; }
+.m-pin-section .ant-btn-dangerous { color: var(--m-bad) !important; border-color: var(--m-bad) !important; }

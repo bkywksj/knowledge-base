@@ -34,7 +34,7 @@ function nextRunLabel(v: string | null): string {
  * 定时推送（v4 原型）：顶栏 + 左推送卡片列表 + 右侧常驻编辑表单（原弹窗）。
  * 编辑交互与提示词库一致：有改动才能保存；切卡片前有未保存改动先确认；新建态取消回到第一条。
  */
-export default function PushPage() {
+function DesktopPushPage() {
   const [jobs, setJobs] = useState<PushJob[]>([]);
   const [models, setModels] = useState<AiModel[]>([]);
   const [loading, setLoading] = useState(false);
@@ -249,5 +249,22 @@ export default function PushPage() {
         />
       </div>
     </div>
+  );
+}
+
+// 手机端单独一版（v4 重构 M3-11）：原来手机上直接渲染这个桌面页，布局挤成一团
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { DesktopOnlyPage } from "@/components/mobile/DesktopOnlyPage";
+
+export default function PushPage() {
+  const isMobile = useIsMobile();
+  return isMobile ? (
+      <DesktopOnlyPage
+        title="定时推送"
+        reason="定时推送靠桌面端常驻后台按时弹窗；手机上 App 切到后台就会被系统暂停，推送不可靠。"
+        tips={["待办的截止提醒在手机上照常可用（系统通知）"]}
+      />
+  ) : (
+    <DesktopPushPage />
   );
 }

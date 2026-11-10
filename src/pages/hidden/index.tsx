@@ -56,7 +56,7 @@ function parseFolderParam(raw: string | null): {
  *
  * 侧边栏 HiddenPanel 写 URL，本页读 URL，两者通过 searchParams 同步。
  */
-export default function HiddenPage() {
+function DesktopHiddenPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -358,5 +358,18 @@ export default function HiddenPage() {
         onClose={ctx.close}
       />
     </div>
+  );
+}
+
+// 手机端单独一版（v4 重构 M3-11）：原来手机上直接渲染这个桌面页，布局挤成一团
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { MobileHidden } from "./MobileHidden";
+
+export default function HiddenPage() {
+  const isMobile = useIsMobile();
+  return isMobile ? (
+      <MobileHidden />
+  ) : (
+    <DesktopHiddenPage />
   );
 }

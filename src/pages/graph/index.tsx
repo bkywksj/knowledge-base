@@ -37,7 +37,7 @@ function kindOf(d: any): NodeKind {
   return "normal";
 }
 
-export default function GraphPage() {
+function DesktopGraphPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<Graph | null>(null);
   const navigate = useNavigate();
@@ -575,5 +575,22 @@ export default function GraphPage() {
         onClose={ctx.close}
       />
     </div>
+  );
+}
+
+// 手机端单独一版（v4 重构 M3-11）：原来手机上直接渲染这个桌面页，布局挤成一团
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { DesktopOnlyPage } from "@/components/mobile/DesktopOnlyPage";
+
+export default function GraphPage() {
+  const isMobile = useIsMobile();
+  return isMobile ? (
+      <DesktopOnlyPage
+        title="知识图谱"
+        reason="图谱要在大屏上拖拽、缩放、悬停看连线，手机屏幕上节点挤在一起点不准。"
+        tips={["笔记编辑器顶部能看到「链入 N」", "在笔记里用 [[ ]] 写双链，桌面端图谱会自动连上"]}
+      />
+  ) : (
+    <DesktopGraphPage />
   );
 }

@@ -37,7 +37,7 @@ const AUTHOR_CONTACT = "7704929366";
 
 const { Text, Paragraph } = Typography;
 
-export default function AboutPage() {
+function DesktopAboutPage() {
   const navigate = useNavigate();
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -431,5 +431,18 @@ export default function AboutPage() {
         </section>
       </div>
     </div>
+  );
+}
+
+// 手机端单独一版（v4 重构 M3-11）：原来手机上直接渲染这个桌面页，布局挤成一团
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { MobileAbout } from "./MobileAbout";
+
+export default function AboutPage() {
+  const isMobile = useIsMobile();
+  return isMobile ? (
+      <MobileAbout />
+  ) : (
+    <DesktopAboutPage />
   );
 }

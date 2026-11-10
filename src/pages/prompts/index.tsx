@@ -100,7 +100,7 @@ function toValues(p: PromptTemplate): FormValues {
  * - 新建：editing = null（点「新建提示词」/ 右键「复制为新模板」，后者预填副本）
  * 原来是弹窗编辑；表单逻辑（initialValues + formKey 重挂载）原样保留。
  */
-export default function PromptsPage() {
+function DesktopPromptsPage() {
   const { token } = antdTheme.useToken();
   const [list, setList] = useState<PromptTemplate[]>([]);
   const [loading, setLoading] = useState(false);
@@ -583,5 +583,18 @@ export default function PromptsPage() {
         onClose={ctx.close}
       />
     </div>
+  );
+}
+
+// 手机端单独一版（v4 重构 M3-11）：原来手机上直接渲染这个桌面页，布局挤成一团
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { MobilePrompts } from "./MobilePrompts";
+
+export default function PromptsPage() {
+  const isMobile = useIsMobile();
+  return isMobile ? (
+      <MobilePrompts />
+  ) : (
+    <DesktopPromptsPage />
   );
 }
