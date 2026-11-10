@@ -607,7 +607,7 @@ export function NotesPanel() {
   const [importPreview, setImportPreview] = useState<{
     files: ScannedFile[];
     rootPath: string;
-    folderId: number;
+    folderId: number | null;
   } | null>(null);
 
   // 右键"从模板…"弹窗状态：folderId=null 表示尚未打开
@@ -2078,7 +2078,7 @@ export function NotesPanel() {
         icon: <FolderOpen size={14} />,
         label: "导入 Markdown 文件夹…",
         onClick: () => {
-          void handleImportMdFolder(key);
+          void handleImportMdFolder(folderId);
           close();
         },
       },
@@ -2186,13 +2186,18 @@ export function NotesPanel() {
   // 单文件导入（MD/TXT/PDF/Word）已统一走 noteCreator 里的 importTextFlow / importPdfsFlow / importWordFlow，
   // 这里只保留侧边栏独有的"扫描文件夹递归导入"流程（带 ImportPreviewModal 选副本策略 + 保留层级）。
 
-  async function handleImportMdFolder(folderKey: string) {
-    const folderId = Number(folderKey);
+  /**
+   * - `folderId`：导入到哪个文件夹，null = 根
+   * - `presetPath`：已知源目录（拖入文件夹时拿到了系统路径）就跳过选择框
+   */
+  async function handleImportMdFolder(folderId: number | null, presetPath?: string) {
     try {
-      const picked = await openDialog({
-        directory: true,
-        title: "选择要导入的 Markdown 文件夹",
-      });
+      const picked =
+        presetPath ??
+        (await openDialog({
+          directory: true,
+          title: "选择要导入的 Markdown 文件夹",
+        }));
       if (!picked || Array.isArray(picked)) return;
       const rootPath = picked;
       const hide = message.loading("扫描中…", 0);
@@ -2939,6 +2944,20 @@ export function NotesPanel() {
                   icon: <FileText size={14} />,
                   onClick: () => setScratchModalOpen(true),
                 },
+                // 全库级的导入导出：文件夹右键里只能针对单个文件夹，全库导出原来只藏在设置页
+                { type: "divider" },
+                {
+                  key: "import-md-folder-root",
+                  label: "导入 Markdown 文件夹…",
+                  icon: <FolderOpen size={14} />,
+                  onClick: () => void handleImportMdFolder(null),
+                },
+                {
+                  key: "export-all",
+                  label: "导出全部笔记…",
+                  icon: <FolderOutput size={14} />,
+                  onClick: () => setExportTarget({ id: null, name: "全部笔记" }),
+                },
               ],
             }}
           >
@@ -3008,15 +3027,22 @@ export function NotesPanel() {
           e.stopPropagation();
 
           // 同步检查 —— DataTransfer 在 await 之后就失效，必须在这里拿到 items
-          // 目的：文件夹拖入在 WebView 里拿不到 OS 路径（items 的 FileSystemDirectoryEntry
-          // 只给 fullPath 相对值），引导用户改走右键菜单那条已工作的路径
-          const hasDirectory = Array.from(e.dataTransfer.items ?? []).some((it) => {
-            if (it.kind !== "file") return false;
-            const entry = it.webkitGetAsEntry?.();
-            return entry?.isDirectory === true;
-          });
-          if (hasDirectory) {
-            message.info("拖文件夹请改用右键菜单『导入 Markdown 文件夹…』（能保留目录层级 + 扫描去重）");
+          // 文件夹拖入直接进「导入 Markdown 文件夹」流程（扫描 → 预览 → 按目录层级重建）。
+          // items 的 FileSystemDirectoryEntry 只给相对 fullPath；对应 File 上若挂了系统路径
+          // 就直接用，拿不到就弹出选择框让用户再点一次，不再只丢一句提示让人自己去找菜单
+          const dirName = Array.from(e.dataTransfer.items ?? [])
+            .map((it) => (it.kind === "file" ? it.webkitGetAsEntry?.() : null))
+            .find((entry) => entry?.isDirectory)?.name;
+          if (dirName !== undefined) {
+            const dirPath = (
+              Array.from(e.dataTransfer.files).find((f) => f.name === dirName) as
+                | (File & { path?: string })
+                | undefined
+            )?.path;
+            if (!dirPath) {
+              message.info("请在弹出的窗口里选中刚才拖入的文件夹");
+            }
+            void handleImportMdFolder(newNoteTarget.folderId, dirPath || undefined);
             return;
           }
 

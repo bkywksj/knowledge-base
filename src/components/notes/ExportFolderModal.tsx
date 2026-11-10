@@ -73,7 +73,7 @@ export function ExportFolderModal({ target, onClose }: Props) {
 
   return (
     <Modal
-      title={target ? `导出文件夹「${target.name}」` : "导出"}
+      title={!target ? "导出" : target.id == null ? "导出全部笔记" : `导出文件夹「${target.name}」`}
       open={!!target}
       onCancel={onClose}
       onOk={handleExport}
@@ -84,9 +84,16 @@ export function ExportFolderModal({ target, onClose }: Props) {
     >
       <div className="flex flex-col gap-4 py-2">
         <Field label="范围">
-          <Checkbox checked={recursive} onChange={(e) => setRecursive(e.target.checked)}>
-            包含子文件夹
-          </Checkbox>
+          {/* 全库导出本来就是所有文件夹，「包含子文件夹」没有意义 */}
+          {target?.id == null ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              所有文件夹及其中的笔记、日记，按文件夹层级组织
+            </Typography.Text>
+          ) : (
+            <Checkbox checked={recursive} onChange={(e) => setRecursive(e.target.checked)}>
+              包含子文件夹
+            </Checkbox>
+          )}
           {scopeHint && (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {scopeHint}
