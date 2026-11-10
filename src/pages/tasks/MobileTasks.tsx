@@ -220,7 +220,7 @@ export function MobileTasks() {
     <div className="mx-auto w-full max-w-[860px] pb-28">
       <MPageHeader
         title={
-          <button type="button" className="flex items-center gap-1" onClick={() => setFilterOpen(true)} aria-label="切换筛选">
+          <button type="button" className="m-tapx flex items-center gap-1" onClick={() => setFilterOpen(true)} aria-label="切换筛选">
             {title}
             <ChevronDown size={18} style={{ color: "var(--m-ink3)" }} />
           </button>

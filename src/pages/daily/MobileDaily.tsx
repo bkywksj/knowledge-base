@@ -204,7 +204,7 @@ export function MobileDaily() {
       {!isTab && <MNavBar onBack={() => navigate(-1)} />}
       <MPageHeader
         title={
-          <button type="button" className="flex items-center gap-1" onClick={() => toggleExpanded()} aria-expanded={expanded} aria-label={expanded ? "收起整月" : "展开整月"}>
+          <button type="button" className="m-tapx flex items-center gap-1" onClick={() => toggleExpanded()} aria-expanded={expanded} aria-label={expanded ? "收起整月" : "展开整月"}>
             {headYear} 年 {headMonth} 月
             <ChevronDown size={22} style={{ color: "var(--m-ink3)", transform: expanded ? "rotate(180deg)" : undefined, transition: "transform .2s" }} />
           </button>

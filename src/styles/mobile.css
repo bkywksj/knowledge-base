@@ -438,6 +438,9 @@
 .m-slideshow button[aria-label="上一页"] { left: 24px !important; }
 .m-slideshow button[aria-label="下一页"] { right: 24px !important; }
 
+/* 正文里的双链：PC 用主题原色当字色，暗色主题下对比度只有 3.8；手机换「主色字」令牌（深浅两头都过 4.5） */
+.m-editor-body .tiptap .wiki-link { color: var(--m-accent-ink); }
+
 /* 手机白板「历史版本」：复用 PC 的 SnapshotDrawer（mobile 模式加 rootClassName），次要字换手机令牌、按钮热区 44 */
 .m-wb-history .ant-typography-secondary { color: var(--m-ink3) !important; }
 .m-wb-history .ant-drawer-header .ant-btn,
@@ -558,9 +561,13 @@
 .m-ai-thread .kb-ref-main > b { font-size: 14px; color: var(--m-ink); }
 .m-ai-thread .kb-ref-main > span { color: var(--m-ink3); }
 
-/* 隐藏笔记页底部的 PIN 设置（复用设置页的 HiddenPinSection）：antd 小按钮 24 高，手机上放大到 36 */
-.m-pin-section .ant-btn-sm { height: 36px; padding: 0 14px; }
+/* 隐藏笔记页底部的 PIN 设置（复用设置页的 HiddenPinSection）：antd 小按钮 24 高，手机上放大到 44 热区 */
+.m-pin-section .ant-btn-sm { height: 44px; padding: 0 16px; }
 /* 同一块的 antd 配色（绿标签 / 次要文字 / 危险按钮）在浅色手机主题下对比度不到 4.5，换成手机令牌 */
 .m-pin-section .ant-tag-green { color: var(--m-ok) !important; background: var(--m-ok-soft) !important; border-color: transparent !important; }
 .m-pin-section .ant-typography-secondary { color: var(--m-ink3) !important; }
 .m-pin-section .ant-btn-dangerous { color: var(--m-bad) !important; border-color: var(--m-bad) !important; }
+/* 复用 PC 组件里的主按钮：PC 是渐变底（themes.css 那条规则，浅端配白字对比度偏低），手机统一实色主色按钮；选择器要比它更具体 */
+[data-theme] .m-pin-section .ant-btn-primary:not(:disabled):not(.ant-btn-dangerous):not(.ant-btn-background-ghost),
+[data-theme] .m-wb-modal .ant-btn-primary:not(:disabled):not(.ant-btn-dangerous):not(.ant-btn-background-ghost),
+[data-theme] .m-wb-history .ant-btn-primary:not(:disabled):not(.ant-btn-dangerous):not(.ant-btn-background-ghost) { background: var(--m-btn) !important; color: var(--m-on-accent) !important; box-shadow: none !important; }

@@ -374,7 +374,7 @@ export function MobileTaskDetail() {
                 }}
                 placeholder="任务标题"
                 aria-label="任务标题"
-                className="-my-2 w-full bg-transparent py-2 text-[20px] font-bold leading-snug outline-none placeholder:font-normal placeholder:text-[var(--m-ink4)]"
+                className="-my-2 min-h-[44px] w-full bg-transparent py-2 text-[20px] font-bold leading-snug outline-none placeholder:font-normal placeholder:text-[var(--m-ink4)]"
                 style={isDone ? { color: "var(--m-ink3)", textDecoration: "line-through" } : { color: "var(--m-ink)" }}
               />
               <textarea

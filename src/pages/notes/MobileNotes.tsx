@@ -24,7 +24,8 @@ import {
 import { folderApi, noteApi, tagApi, trashApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import type { Folder, Note, NoteQuery, Tag } from "@/types";
-import { relativeTime, stripHtml } from "@/lib/utils";
+import { relativeTime } from "@/lib/utils";
+import { notePreviewText } from "@/lib/notePreview";
 import { useLongPress } from "@/hooks/useLongPress";
 import { ActionSheet, type ActionSheetItem } from "@/components/mobile/ActionSheet";
 import { FolderPickerSheet } from "@/components/mobile/FolderPickerSheet";
@@ -593,7 +594,7 @@ function NoteGroup({
 
 function NoteRow({ note, onOpen, onMenu }: { note: Note; onOpen: () => void; onMenu: () => void }) {
   const lp = useLongPress(onMenu, { onClick: onOpen });
-  const preview = note.is_encrypted ? "已加密，解锁后查看" : stripHtml(note.content || "").slice(0, 80);
+  const preview = note.is_encrypted ? "已加密，解锁后查看" : notePreviewText(note.content, { title: note.title, max: 80, noteType: note.note_type });
   return (
     <div {...lp} role="button" tabIndex={0} className="cursor-pointer select-none px-4 py-3.5" style={{ WebkitTouchCallout: "none" }}>
       <div className="flex items-center gap-1.5">

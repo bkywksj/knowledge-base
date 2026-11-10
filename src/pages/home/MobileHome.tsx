@@ -4,7 +4,8 @@ import { message } from "antd";
 import { Check, ChevronDown, ChevronUp, Cloud, PencilLine, Pin, Search, SendHorizontal } from "lucide-react";
 import { cardApi, folderApi, noteApi, systemApi, taskApi } from "@/lib/api";
 import { appendQuickNoteToDaily } from "@/lib/mobileQuickNote";
-import { relativeTime, stripHtml } from "@/lib/utils";
+import { relativeTime } from "@/lib/utils";
+import { notePreviewText } from "@/lib/notePreview";
 import { useAppStore } from "@/store";
 import type { DailyWritingStat, DashboardStats, Folder, Note, Task } from "@/types";
 import { KingKongIcon } from "@/components/mobile/KingKongIcons";
@@ -424,7 +425,7 @@ function TaskRow({ task, onChanged, onOpen }: { task: Task; onChanged: () => voi
 
 // ─── 继续编辑卡片 ───
 function NoteCard({ note, folderName, onOpen }: { note: Note; folderName?: string; onOpen: () => void }) {
-  const preview = note.is_encrypted ? "已加密，解锁后查看" : stripHtml(note.content || "").slice(0, 90);
+  const preview = note.is_encrypted ? "已加密，解锁后查看" : notePreviewText(note.content, { title: note.title, max: 90, noteType: note.note_type });
   const where = note.is_daily ? "日记" : folderName ?? "未分类";
   return (
     <button type="button" onClick={onOpen} className="m-float flex w-[200px] flex-col p-4 text-left active:opacity-80">
