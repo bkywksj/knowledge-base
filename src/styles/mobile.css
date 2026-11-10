@@ -383,3 +383,68 @@
   opacity: 1 !important;
   color: var(--m-ink3) !important;
 }
+
+/* ═══════════════════ AI 对话：复用 PC 的 TurnCard，换手机尺寸（不沿用 PC 的 .kb-ai-thread 规则） ═══════════════════ */
+.m-ai-thread .kb-turn {
+  border: none !important;
+  border-radius: var(--m-r-xl);
+  background: var(--m-surface);
+  box-shadow: none;
+}
+.m-ai-thread .kb-turn-head {
+  padding: 10px 14px !important;
+  border-bottom-color: var(--m-hair);
+}
+.m-ai-thread .kb-turn-head .ant-btn {
+  height: 36px;
+  padding: 0 12px;
+}
+.m-ai-thread .kb-turn .ai-markdown {
+  padding: 12px 16px 4px !important;
+  font-size: 15px;
+  line-height: 1.75;
+  color: var(--m-ink);
+}
+.m-ai-thread .kb-turn .ai-markdown p,
+.m-ai-thread .kb-turn .ai-markdown ul,
+.m-ai-thread .kb-turn .ai-markdown ol {
+  margin: 0 0 10px;
+}
+.m-ai-thread .kb-turn-refs {
+  margin: 0 14px 12px;
+  border-top-color: var(--m-hair);
+}
+.m-ai-thread .kb-turn-sub { color: var(--m-ink3); }
+/* 底栏：按钮撑到 44 高、13px 字；横向放不下就横滑，不换行挤成两排 */
+.m-ai-thread .kb-turn-foot {
+  padding: 0 4px !important;
+  gap: 0 !important;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-top-color: var(--m-hair) !important;
+}
+.m-ai-thread .kb-turn-foot::-webkit-scrollbar { display: none; }
+[data-theme] .m-ai-thread .kb-turn-foot .ant-btn {
+  flex: none;
+  height: 44px;
+  padding: 0 10px;
+  color: var(--m-ink2);
+}
+[data-theme] .m-ai-thread .kb-turn-foot .ant-btn .text-xs { font-size: 13px; }
+/* 失败 / 停止提示条里的「重试 / 去改模型服务 / 重新生成」 */
+.m-ai-thread .kb-turn .ant-btn-sm { height: 36px; padding: 0 12px; }
+/* PC 卡片里用 antd 令牌写死的浅色（状态、统计、错误、出处卡）在手机尺寸下对比度不够，换成手机令牌 */
+.m-ai-thread .kb-turn-stats { color: var(--m-ink3) !important; }
+.m-ai-thread .kb-turn-status { background: var(--m-well) !important; font-weight: 600; }
+.m-ai-thread .kb-turn-status[data-status="done"] { color: var(--m-ok) !important; }
+.m-ai-thread .kb-turn-status[data-status="error"] { color: var(--m-bad) !important; }
+.m-ai-thread .kb-turn-status[data-status="stopped"] { color: var(--m-ink2) !important; }
+.m-ai-thread .kb-turn-status[data-status="thinking"],
+.m-ai-thread .kb-turn-status[data-status="tools"],
+.m-ai-thread .kb-turn-status[data-status="answering"] { color: var(--m-accent-ink) !important; }
+.m-ai-thread .kb-turn-error { color: var(--m-bad) !important; }
+.m-ai-thread .kb-refs { grid-template-columns: 1fr; }
+.m-ai-thread .kb-ref { background: var(--m-well); padding: 10px 12px; }
+.m-ai-thread .kb-ref-no { min-width: 20px; height: 20px; font-size: 12px; color: var(--m-accent-ink); background: var(--m-surface); }
+.m-ai-thread .kb-ref-main > b { font-size: 14px; color: var(--m-ink); }
+.m-ai-thread .kb-ref-main > span { color: var(--m-ink3); }

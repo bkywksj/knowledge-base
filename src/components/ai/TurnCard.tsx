@@ -261,8 +261,10 @@ function CardHeader({ view, toolCount, onStop }: { view: TurnView; toolCount: nu
       <span className="kb-turn-ico">
         <Sparkles size={13} />
       </span>
+      {/* kb-turn-status / data-status：手机端（.m-ai-thread）按状态换成对比度够的颜色，PC 不受影响 */}
       <span
-        className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded"
+        className="kb-turn-status inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded"
+        data-status={view.status}
         style={{ color: color[view.status], background: token.colorFillQuaternary }}
       >
         {view.live && <Loader2 size={11} className="animate-spin" />}
@@ -270,7 +272,7 @@ function CardHeader({ view, toolCount, onStop }: { view: TurnView; toolCount: nu
       </span>
       <span className="flex-1" />
       {stats && (
-        <span className="text-xs tabular-nums" style={{ color: token.colorTextQuaternary }}>
+        <span className="kb-turn-stats text-xs tabular-nums" style={{ color: token.colorTextQuaternary }}>
           {stats}
         </span>
       )}
@@ -302,7 +304,7 @@ function OutcomeNotice({
         className="mx-4 mb-3 px-3 py-2 rounded text-xs flex flex-col gap-2"
         style={{ background: token.colorErrorBg, border: `1px solid ${token.colorErrorBorder}` }}
       >
-        <div className="flex items-start gap-1.5" style={{ color: token.colorError }}>
+        <div className="kb-turn-error flex items-start gap-1.5" style={{ color: token.colorError }}>
           <AlertTriangle size={13} className="shrink-0 mt-px" />
           <pre
             className="m-0 whitespace-pre-wrap break-words"
