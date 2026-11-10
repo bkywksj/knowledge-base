@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Knowledge Base · 手机端 v4 原型</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          ink: 'var(--ink)', ink2: 'var(--ink2)', ink3: 'var(--ink3)', ink4: 'var(--ink4)',
+          accent: 'var(--accent)', ok: 'var(--ok)', bad: 'var(--bad)', warn: 'var(--warn)', info: 'var(--info)',
+        },
+      },
+    },
+  };
+</script>
+<style>
+  /* ════════════════════════════════════════════════════════════
+     设计令牌 = PC 端 v4（docs/design/ui-v4/kit.css「淡紫」）
+     例外：文字色按 WCAG AA 加深（手机小屏、户外看）——PC 原值 ink3 白底 3.0:1、主色字 4.49:1 不达标。
+     ════════════════════════════════════════════════════════════ */
+  :root{
+    --ff-ui:"PingFang SC","HarmonyOS Sans SC","MiSans","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+    --page:#F6F4FB;            /* 页面底：灰里混 3% 主色，整页一个色温 */
+    --surface:#FFFFFF;         /* 分组面板 */
+    --well:#F1EEF8;            /* 凹陷：输入框、中性图标底 */
+    --ink:#2F2B44; --ink2:#5A5472; --ink3:#6E6888; --ink4:#8C86A6;
+    --hair:rgba(110,85,200,.12);
+    --accent:#6A50CE; --accent-soft:rgba(124,99,220,.09); --accent-soft2:rgba(124,99,220,.15);
+    --grad:linear-gradient(135deg,#7A5FE2 0%,#6448D6 55%,#5B3FD0 100%);
+    --ok:#2F8560;   --ok-soft:#E6F3EC;
+    --bad:#B83D53;  --bad-soft:#FBEBEE;
+    --warn:#8F6214; --warn-soft:#FBF1DF;
+    --info:#3C66BF; --info-soft:#E8EFFB;
+    --sh-float:0 1px 2px rgba(80,60,160,.05),0 10px 28px -12px rgba(80,60,160,.22);
+    --sh-btn:none;            /* 按钮无阴影（PC v4 定的规则） */
+    --page-px:16px;
+  }
+  *{box-sizing:border-box}
+  body{font-family:var(--ff-ui);color:var(--ink);background:#E7E3F2;margin:0;-webkit-font-smoothing:antialiased}
+  .num{font-variant-numeric:tabular-nums;white-space:nowrap}
+
+  /* ── 展示页外框（不属于 App） ── */
+  .legend{max-width:1200px;margin:0 auto;padding:28px 24px 0;color:#5A5472;font-size:14px;line-height:1.8}
+  .legend h1{font-size:22px;font-weight:700;color:#2F2B44;margin:0 0 6px}
+  .legend table{border-collapse:collapse;margin-top:10px;font-size:13px;background:#fff;border-radius:12px;overflow:hidden}
+  .legend td,.legend th{padding:7px 12px;border-bottom:1px solid #EEEAF8;text-align:left;vertical-align:top}
+  .legend th{background:#F7F4FE;color:#2F2B44;font-weight:700}
+  .gallery{display:flex;flex-wrap:wrap;gap:44px 32px;justify-content:center;padding:32px 24px 80px}
+  .shot{display:flex;flex-direction:column;align-items:center;gap:12px}
+  .shot-cap{font-size:13px;color:#5A5472;max-width:375px;text-align:center;line-height:1.7}
+  .shot-cap b{color:#2F2B44;font-size:14px;font-weight:700;display:block}
+
+  .phone{width:375px;height:812px;border:8px solid #26223A;border-radius:46px;overflow:hidden;position:relative;
+    box-shadow:0 28px 64px -16px rgba(50,30,110,.38);display:flex;flex-direction:column;background:var(--page)}
+  .status{height:44px;flex:none;padding:0 22px 0 26px;display:flex;align-items:center;justify-content:space-between;font-size:14px;font-weight:600}
+  .home-ind{width:134px;height:5px;border-radius:3px;background:#2F2B44;margin:8px auto;opacity:.85}
+  .px{padding-left:var(--page-px);padding-right:var(--page-px)}
+  .scroll{flex:1;overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
+  .scroll::-webkit-scrollbar{display:none}
+  .hscroll{overflow-x:auto;scrollbar-width:none}
+  .hscroll::-webkit-scrollbar{display:none}
+
+  i[data-lucide]{display:inline-flex}
+  svg.lucide{width:20px;height:20px;stroke-width:1.75}
+  .s14 svg.lucide{width:14px;height:14px} .s16 svg.lucide{width:16px;height:16px}
+  .s18 svg.lucide{width:18px;height:18px} .s22 svg.lucide{width:22px;height:22px} .s24 svg.lucide{width:24px;height:24px}
+
+  /* ── 字号阶梯（相邻 ≥ 1.2 倍；标题一律 700，中文没有 500 这一档） ── */
+  .t-large{font-size:28px;line-height:1.2;font-weight:700;letter-spacing:-.01em}
+  .t-sec{font-size:17px;line-height:1.35;font-weight:700}
+  .t-title{font-size:16px;line-height:1.45;font-weight:600}
+  .t-body{font-size:15px;line-height:1.6}
+  .t-meta{font-size:13px;line-height:1.5;color:var(--ink3)}
+  .t-cap{font-size:12px;line-height:1.4;color:var(--ink3)}
+
+  /* ── 容器：一个容器只用一种手段 —— 分组面板只靠白底，浮起卡只靠阴影 ── */
+  .group{background:var(--surface);border-radius:12px;overflow:hidden}
+  .float{background:var(--surface);border-radius:12px;box-shadow:var(--sh-float)}
+  /* 分隔线从文字起、不从图标起（iOS 分组列表的做法），左侧留白读起来更轻 */
+  .row{position:relative;display:flex;align-items:center;gap:12px;min-height:52px;padding:0 16px}
+  .row + .row::before{content:"";position:absolute;top:0;right:0;left:var(--inset,16px);height:.5px;background:var(--hair)}
+  .row.ic{--inset:52px}
+
+  /* ── 图标底：中性为主，主色只给主操作和选中态（主色面积 ≤ 10%） ── */
+  .tile{display:flex;align-items:center;justify-content:center;flex:none}
+  .tile-n{background:var(--well);color:var(--ink2)}
+  .tile-a{background:var(--accent-soft2);color:var(--accent)}
+
+  /* ── 功能记号：双链（知识库的核心能力）。只在有意义的位置出现：笔记行、编辑器、搜索结果、AI 引用 ── */
+  .lk{display:inline-flex;align-items:center;gap:3px;height:20px;padding:0 6px;border-radius:5px;background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:600;white-space:nowrap}
+  .wk{color:var(--accent);background:var(--accent-soft);border-radius:4px;padding:1px 4px;font-weight:600;white-space:nowrap}
+
+  .chip{position:relative;flex:none;height:32px;min-width:44px;justify-content:center;padding:0 13px;border-radius:8px;display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--ink2);background:var(--surface);white-space:nowrap}
+  .chip::after{content:"";position:absolute;inset:-6px 0}
+  .chip.on{color:#fff;background:var(--ink);font-weight:600}
+  .tag{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap}
+  .ib{width:44px;height:44px;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;color:var(--ink2);flex:none}
+  .tapx{position:relative}
+  .tapx::after{content:"";position:absolute;left:50%;top:50%;width:max(100%,44px);height:max(100%,44px);transform:translate(-50%,-50%)}
+  .btn{height:44px;padding:0 20px;border-radius:10px;background:var(--grad);color:#fff;font-size:15px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:6px;box-shadow:var(--sh-btn)}
+  .check{position:relative;width:22px;height:22px;border-radius:6px;flex:none;box-shadow:inset 0 0 0 1.6px #B4AECB}
+  .check::after{content:"";position:absolute;inset:-11px}
+  .check.done{background:var(--ok);box-shadow:none;display:flex;align-items:center;justify-content:center;color:#fff}
+  .dot{width:8px;height:8px;border-radius:4px;flex:none}
+  .seg{display:flex;padding:3px;border-radius:10px;background:var(--well)}
+  .seg span{flex:1;text-align:center;height:32px;line-height:32px;border-radius:8px;font-size:14px;color:var(--ink3)}
+  .seg span.on{background:#fff;color:var(--ink);font-weight:700}
+
+  /* ── 底部 Tab：实色底 + 细线（不用毛玻璃：安卓 WebView 滚动掉帧） ── */
+  .tabbar{flex:none;background:#FFFFFF;border-top:.5px solid var(--hair)}
+  .tabbar .r{display:flex;height:56px}
+  .tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:12px;color:var(--ink4)}
+  .tab span.l{color:var(--ink3)}
+  .tab.on{color:var(--accent)} .tab.on span.l{color:var(--accent);font-weight:700}
+  .badge{position:absolute;top:-5px;right:-11px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--bad);color:#fff;font-size:12px;line-height:18px;text-align:center;font-weight:700;box-shadow:0 0 0 2px #fff}
+  .fab{position:absolute;right:18px;bottom:108px;width:56px;height:56px;border-radius:14px;background:var(--grad);color:#fff;display:flex;align-items:center;justify-content:center;}
+
+  /* ── 底部面板：遮罩从状态栏下开始（安卓状态栏不受应用遮罩影响） ── */
+  .mask{position:absolute;inset:44px 0 0 0;background:rgba(40,34,64,.36);display:flex;flex-direction:column;justify-content:flex-end}
+  .sheet{background:var(--page);border-radius:16px 16px 0 0;padding-bottom:28px}
+  .grabber{width:36px;height:5px;border-radius:3px;background:#C9C4DA;margin:8px auto 6px}
+  /* 金刚区一格：40px 彩色图标 + 13px 标签；热区整格（≥ 64 高） */
+  .kk{display:flex;flex-direction:column;align-items:center;gap:8px;padding:6px 0;min-height:64px}
+  .kk span{font-size:13px;color:var(--ink2)}
+  .kk-ic{width:44px;height:44px}
+  .kbd{background:#D6D2E2;flex:none;padding:8px 4px 30px;display:grid;grid-template-columns:repeat(10,1fr);gap:9px 5px}
+  .kbd span{height:40px;border-radius:6px;background:#fff;box-shadow:0 1px 0 rgba(0,0,0,.16);font-size:16px;display:flex;align-items:center;justify-content:center;color:#2F2B44}
+</style>
+</head>
+<body>
+
+<!-- 金刚区彩色图标：主流 App 的做法 —— 不垫底色块，图标本身是带渐变的实心图形，自带轻投影。
+     每个入口一个专属色，和功能语义对应（笔记=品牌紫、待办=完成绿、日记=日历橙、AI=蓝紫）。 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="g-violet" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#A990F7"/><stop offset="1" stop-color="#6447D6"/></linearGradient>
+    <linearGradient id="g-green" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#56D8A0"/><stop offset="1" stop-color="#1F9C68"/></linearGradient>
+    <linearGradient id="g-amber" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFC861"/><stop offset="1" stop-color="#F08A26"/></linearGradient>
+    <linearGradient id="g-blue" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6CC0FF"/><stop offset="1" stop-color="#6A55EE"/></linearGradient>
+    <linearGradient id="g-sky" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7CC9FF"/><stop offset="1" stop-color="#3C7BE6"/></linearGradient>
+    <symbol id="ic-note" viewBox="0 0 40 40">
+      <path d="M9 4h15.5L35 14.5V33a3.5 3.5 0 0 1-3.5 3.5h-22.5A3.5 3.5 0 0 1 5.5 33V7.5A3.5 3.5 0 0 1 9 4z" fill="url(#g-violet)"/>
+      <path d="M24.5 4v7.5a3 3 0 0 0 3 3H35z" fill="#fff" fill-opacity=".42"/>
+      <path d="M20.2 18.5v10M15.2 23.5h10" stroke="#fff" stroke-width="3.2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="ic-todo" viewBox="0 0 40 40">
+      <rect x="5" y="5" width="30" height="30" rx="9.5" fill="url(#g-green)"/>
+      <path d="M12.8 20.6l5.2 5.1 9.6-10.2" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="ic-daily" viewBox="0 0 40 40">
+      <rect x="5" y="8" width="30" height="27.5" rx="7.5" fill="url(#g-amber)"/>
+      <path d="M5 16.5h30" stroke="#fff" stroke-opacity=".5" stroke-width="1.6"/>
+      <rect x="12" y="4" width="3.4" height="8.5" rx="1.7" fill="#D9701A"/>
+      <rect x="24.6" y="4" width="3.4" height="8.5" rx="1.7" fill="#D9701A"/>
+      <text x="20" y="31" text-anchor="middle" font-family="Segoe UI,PingFang SC,sans-serif" font-size="12.5" font-weight="800" fill="#fff">10</text>
+    </symbol>
+    <symbol id="ic-ai" viewBox="0 0 40 40">
+      <path d="M17 4c1.5 9.2 4.3 12 13.5 13.5C21.3 19 18.5 21.8 17 31c-1.5-9.2-4.3-12-13.5-13.5C12.7 16 15.5 13.2 17 4z" fill="url(#g-blue)"/>
+      <path d="M31 23.5c.6 3.4 1.6 4.4 5 5-3.4.6-4.4 1.6-5 5-.6-3.4-1.6-4.4-5-5 3.4-.6 4.4-1.6 5-5z" fill="url(#g-blue)" fill-opacity=".75"/>
+    </symbol>
+    <symbol id="ic-voice" viewBox="0 0 40 40">
+      <rect x="13" y="4" width="14" height="22" rx="7" fill="url(#g-sky)"/>
+      <path d="M8.5 19.5a11.5 11.5 0 0 0 23 0M20 31v5" fill="none" stroke="#3C7BE6" stroke-width="3" stroke-linecap="round"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="legend">
+  <h1>手机端 v4 原型 · 对齐 PC 端逻辑</h1>
+  视觉语言沿用 PC 端 v4（淡紫、深渐变主按钮、紫调中性色），信息架构与 PC 一一对应，功能只挪位置、不删。
+  <table>
+    <tr><th>PC 端</th><th>手机端落点</th></tr>
+    <tr><td>活动栏全部入口</td><td>底部 4 个可配 Tab + 固定「我的」；「我的 → 全部功能」列出活动栏除首页外的全部入口，顺序照活动栏</td></tr>
+    <tr><td>笔记侧栏的文件夹树</td><td>笔记页逐层进入文件夹，面包屑跳回任意一级；先子文件夹、后笔记；「文件夹 / 标签」切换同 PC 侧栏页签</td></tr>
+    <tr><td>编辑页顶栏按钮 / 工具栏 / 斜杠命令</td><td>顶栏只留 返回 · 编辑-阅读 · 问 AI · 更多；其余收进「更多」面板。富文本编辑器与 PC 同一套，常用格式钉在键盘上方，插入项与斜杠命令同一份清单</td></tr>
+    <tr><td>右键菜单</td><td>长按弹出底部面板，菜单项同 PC 右键；列表左滑露出最常用的两项</td></tr>
+    <tr><td>设计规则</td><td>标题 700 · 主色只给主操作和选中态 · 分组面板只靠白底、浮起卡只靠阴影 · 功能记号「↔ 链入 N」（双链）在笔记行 / 编辑器 / 搜索 / AI 引用反复出现</td></tr>
+    <tr><td>手机硬指标</td><td>触控热区 ≥ 44 · 文字 ≥ 12px · 正文对比度 ≥ 4.5:1 · 底栏实色无毛玻璃 · 遮罩不盖系统状态栏</td></tr>
+  </table>
+</div>
+
+<div class="gallery">
+
+<!-- ═══════════════════════ 01 首页 ═══════════════════════ -->
+<div class="shot" id="home">
+<div class="phone">
+  <div class="status"><span>9:41</span><span class="flex gap-1 s16"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></span></div>
+  <div class="scroll">
+    <div class="px pt-2 flex items-end">
+      <div>
+        <div class="t-meta">11 月 10 日 · 周二</div>
+        <div class="t-large mt-0.5">下午好</div>
+      </div>
+      <div class="flex-1"></div>
+      <a href="#me" class="tapx flex items-center gap-1.5 h-8 px-3 rounded-[8px] bg-white text-[13px] text-ink2 mb-1"><span class="dot" style="background:var(--ok)"></span>已同步</a>
+    </div>
+
+    <div class="px mt-4">
+      <a href="#search" class="flex items-center gap-2.5 h-11 px-4 rounded-[10px] bg-white text-[15px] text-ink3">
+        <i data-lucide="search" class="s18"></i><span class="flex-1">搜索笔记、待办</span><i data-lucide="mic" class="s18"></i>
+      </a>
+    </div>
+
+    <!-- 金刚区：彩色实心图标直接放在页面上，不垫底色块、不包卡片（同主流 App） -->
+    <div class="px mt-5 grid grid-cols-4">
+      <a href="#create" class="kk"><svg class="kk-ic"><use href="#ic-note"/></svg><span>新建笔记</span></a>
+      <a href="#sheet-task" class="kk"><svg class="kk-ic"><use href="#ic-todo"/></svg><span>添加待办</span></a>
+      <a href="#daily" class="kk"><svg class="kk-ic"><use href="#ic-daily"/></svg><span>今日日记</span></a>
+      <a href="#ai" class="kk"><svg class="kk-ic"><use href="#ic-ai"/></svg><span>问 AI</span></a>
+    </div>
+
+    <!-- 快速记一笔：一行输入条，点开才展开成多行；追加到今天的日记 -->
+    <div class="px mt-6">
+      <div class="flex items-center gap-2 h-12 pl-4 pr-1.5 rounded-[12px] bg-white">
+        <i data-lucide="pencil-line" class="s18 text-ink3"></i>
+        <span class="flex-1 text-[15px] text-ink3">记一笔，追加到今天的日记</span>
+        <span class="ib s18"><i data-lucide="mic"></i></span>
+      </div>
+    </div>
+
+    <!-- 今天：待办速览 -->
+    <div class="px mt-7 flex items-baseline">
+      <span class="t-sec">今天</span><span class="t-meta ml-2">2 项待办</span>
+      <a href="#tasks" class="tapx ml-auto tag" style="background:var(--bad-soft);color:var(--bad)">逾期 3</a>
+    </div>
+    <div class="px mt-2.5">
+      <div class="group">
+        <div class="row ic" style="min-height:56px"><span class="check"></span><div class="flex-1 min-w-0"><div class="text-[15px] truncate">回复群里的 md 解析反馈</div><div class="t-cap mt-0.5">工作 · 14:00</div></div><span class="dot" style="background:var(--bad)"></span></div>
+        <div class="row ic" style="min-height:56px"><span class="check"></span><div class="flex-1 min-w-0"><div class="text-[15px] truncate">整理手机端原型的反馈</div><div class="t-cap mt-0.5">知识库 · 18:00</div></div><span class="dot" style="background:var(--accent)"></span></div>
+        <div class="row ic" style="min-height:56px"><span class="check done s14"><i data-lucide="check"></i></span><div class="flex-1 min-w-0"><div class="text-[15px] truncate text-ink3 line-through">升级到 v3.1.0</div><div class="t-cap mt-0.5">09:30 完成</div></div></div>
+      </div>
+    </div>
+
+    <!-- 继续编辑：横滑内容卡，和上面的列表拉开版式 -->
+    <div class="px mt-7 flex items-baseline"><span class="t-sec">继续编辑</span><a href="#notes" class="tapx ml-auto text-[13px] font-semibold text-accent">全部笔记</a></div>
+    <div class="hscroll mt-2.5">
+      <div class="flex gap-3 px pb-3 w-max">
+        <a href="#editor" class="float w-[200px] p-4 flex flex-col">
+          <div class="t-cap">ruoyi / docs · 3 天前</div>
+          <div class="t-title mt-1.5 line-clamp-1">接口返回值统一规范</div>
+          <div class="text-[13px] leading-[1.6] text-ink2 mt-1 line-clamp-3">所有 Controller 返回 R&lt;T&gt;，前端只认 code 和 msg；分页接口直接返回 TableDataInfo。</div>
+          <div class="mt-3 flex items-center gap-1.5"><span class="lk"><i data-lucide="link-2" class="s14"></i>链入 4</span><span class="t-cap num">2,140 字</span></div>
+        </a>
+        <a href="#editor" class="float w-[200px] p-4 flex flex-col">
+          <div class="t-cap">日记 · 刚刚</div>
+          <div class="t-title mt-1.5 line-clamp-1">11 月 10 日 周二</div>
+          <div class="text-[13px] leading-[1.6] text-ink2 mt-1 line-clamp-3">早上过了一遍群反馈，md 属性块解析已修好；手机端要按 PC 逻辑重做。</div>
+          <div class="mt-3 flex items-center gap-1.5"><span class="lk"><i data-lucide="link-2" class="s14"></i>链出 2</span><span class="t-cap num">236 字</span></div>
+        </a>
+        <a href="#editor" class="float w-[200px] p-4 flex flex-col">
+          <div class="t-cap">知识库 · 5 天前</div>
+          <div class="t-title mt-1.5 line-clamp-1">知识库助手 (kb-mcp)</div>
+          <div class="text-[13px] leading-[1.6] text-ink2 mt-1 line-clamp-3">15 个读工具、写工具默认关闭；先查后改，批量操作前先给预览。</div>
+          <div class="mt-3 flex items-center gap-1.5"><span class="t-cap num">1,692 字</span></div>
+        </a>
+      </div>
+    </div>
+
+    <!-- 本周写作：小柱状图，对应 PC 写作活力卡 -->
+    <div class="px mt-4 pb-8">
+      <div class="group p-4">
+        <div class="flex items-baseline"><span class="t-sec">本周写作</span><span class="ml-auto text-[13px] font-semibold num" style="color:var(--ok)">↑ 18%</span></div>
+        <div class="flex items-end gap-1 mt-1"><span class="text-[26px] font-bold num leading-none">3,862</span><span class="t-meta mb-0.5">字 · 连续 6 天</span></div>
+        <div class="flex items-end gap-2 h-14 mt-4">
+          <span class="flex-1 rounded-md" style="height:38%;background:var(--accent-soft2)"></span>
+          <span class="flex-1 rounded-md" style="height:62%;background:var(--accent-soft2)"></span>
+          <span class="flex-1 rounded-md" style="height:30%;background:var(--accent-soft2)"></span>
+          <span class="flex-1 rounded-md" style="height:84%;background:var(--accent-soft2)"></span>
+          <span class="flex-1 rounded-md" style="height:52%;background:var(--accent-soft2)"></span>
+          <span class="flex-1 rounded-md" style="height:20%;background:var(--accent-soft2)"></span>
+          <span class="flex-1 rounded-md" style="height:70%;background:var(--accent)"></span>
+        </div>
+        <div class="grid grid-cols-7 gap-2 mt-1.5 text-center t-cap"><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span><span>一</span><span class="font-bold text-ink">今天</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="tabbar"><div class="r">
+    <a href="#home" class="tab on"><i data-lucide="house"></i><span class="l">首页</span></a>
+    <a href="#notes" class="tab"><i data-lucide="file-text"></i><span class="l">笔记</span></a>
+    <a href="#tasks" class="tab"><span class="relative inline-flex"><i data-lucide="square-check-big"></i><span class="badge num">13</span></span><span class="l">待办</span></a>
+    <a href="#ai" class="tab"><i data-lucide="sparkles"></i><span class="l">AI</span></a>
+    <a href="#me" class="tab"><i data-lucide="user-round"></i><span class="l">我的</span></a>
+  </div><div class="home-ind"></div></div>
+</div>
+<div class="shot-cap"><b>01 首页</b>金刚区四格直接放在页面上，只有「新建笔记」用主色；快速记一笔收成一行输入条；今天的待办、横滑的「继续编辑」、本周写作三种版式交替。置顶 / 问 AI 卡在下方继续滚动（受隐私模式控制）。</div>
+</div>
+
+<!-- ═══════════════════════ 02 笔记 · 文件夹层级 ═══════════════════════ -->
+<div class="shot" id="notes">
+<div class="phone">
+  <div class="status"><span>9:41</span><span class="flex gap-1 s16"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></span></div>
+  <div class="px pt-2 flex items-center">
+    <span class="t-large">笔记</span>
+    <div class="flex-1"></div>
+    <a href="#search" class="ib"><i data-lucide="search"></i></a>
+    <a href="#sheet-folder" class="ib"><i data-lucide="ellipsis"></i></a>
+    <!-- 笔记页的「新建」放顶栏：列表行宽、摘要会伸到右下角，FAB 会压住内容 -->
+    <a href="#create" class="ib text-white ml-1" style="background:var(--grad);box-shadow:var(--sh-btn)"><i data-lucide="plus"></i></a>
+  </div>
+  <div class="px mt-3"><div class="seg"><span class="on">文件夹</span><span>标签</span></div></div>
+  <div class="px mt-3 flex items-center gap-1 text-[14px] hscroll whitespace-nowrap">
+    <span class="text-ink3">全部</span><i data-lucide="chevron-right" class="s14 text-ink4"></i>
+    <span class="text-ink3">ruoyi-plus-uniapp</span><i data-lucide="chevron-right" class="s14 text-ink4"></i>
+    <span class="font-bold text-ink">docs</span>
+  </div>
+  <div class="scroll px">
+    <div class="group mt-3">
+      <a href="#notes" class="row ic"><span class="s22" style="color:#7A5FE2"><i data-lucide="folder"></i></span><span class="flex-1 text-[15px]">后端规范</span><span class="t-meta num">8</span><i data-lucide="chevron-right" class="s16 text-ink4"></i></a>
+      <a href="#notes" class="row ic"><span class="s22" style="color:#3C66BF"><i data-lucide="folder"></i></span><span class="flex-1 text-[15px]">前端 · uniapp</span><span class="t-meta num">5</span><i data-lucide="chevron-right" class="s16 text-ink4"></i></a>
+      <a href="#notes" class="row ic"><span class="s22" style="color:#2F8560"><i data-lucide="folder"></i></span><span class="flex-1 text-[15px]">部署 🚀</span><span class="t-meta num">2</span><i data-lucide="chevron-right" class="s16 text-ink4"></i></a>
+    </div>
+    <div class="flex items-center mt-6 mb-2"><span class="t-sec">笔记</span><span class="t-meta ml-2 num">6 篇</span><span class="ml-auto t-meta flex items-center gap-1"><i data-lucide="arrow-down-up" class="s14"></i>修改时间</span></div>
+    <div class="group">
+      <a href="#editor" class="row block" style="padding:14px 16px">
+        <div class="flex items-center gap-1.5"><span class="s14 text-accent"><i data-lucide="pin"></i></span><span class="t-title flex-1 truncate">接口返回值统一规范</span></div>
+        <div class="text-[14px] text-ink3 truncate mt-1">R&lt;T&gt; 统一包装，code=200 成功；分页用 TableDataInfo</div>
+        <div class="flex items-center gap-2 mt-2"><span class="t-cap">3 天前</span><span class="t-cap num">2,140 字</span><span class="lk"><i data-lucide="link-2" class="s14"></i>链入 4</span></div>
+      </a>
+      <!-- 左滑露出的两项（同 PC 右键菜单最常用的两项） -->
+      <div class="row" style="padding:0;overflow:hidden">
+        <div class="flex-1 min-w-0 bg-white" style="padding:14px 16px;transform:translateX(-132px);margin-right:-132px">
+          <div class="t-title truncate">AGENTS.md 项目开发规范</div>
+          <div class="text-[14px] text-ink3 truncate mt-1">对话语言设置，提交规范</div>
+          <div class="flex items-center gap-2 mt-2"><span class="t-cap">3 天前</span><span class="t-cap num">10,232 字</span></div>
+        </div>
+        <div class="flex self-stretch">
+          <span class="w-[66px] flex flex-col items-center justify-center gap-1 text-white text-[12px] font-semibold" style="background:var(--info)"><i data-lucide="folder-input" class="s18"></i>移动</span>
+          <span class="w-[66px] flex flex-col items-center justify-center gap-1 text-white text-[12px] font-semibold" style="background:var(--bad)"><i data-lucide="trash-2" class="s18"></i>删除</span>
+        </div>
+      </div>
+      <a href="#editor" class="row block" style="padding:14px 16px">
+        <div class="t-title truncate">数据权限注解用法</div>
+        <div class="text-[14px] text-ink3 truncate mt-1">@DataPermission 配合 DataColumn 按部门过滤</div>
+        <div class="flex items-center gap-2 mt-2"><span class="tag" style="background:var(--info-soft);color:var(--info)">后端</span><span class="t-cap">5 天前</span><span class="lk"><i data-lucide="link-2" class="s14"></i>链入 1</span></div>
+      </a>
+      <a href="#editor" class="row block" style="padding:14px 16px">
+        <div class="flex items-center gap-1.5"><span class="s14" style="color:var(--warn)"><i data-lucide="lock"></i></span><span class="t-title flex-1 truncate">生产库连接信息</span></div>
+        <div class="text-[14px] text-ink3 mt-1">已加密，解锁后查看</div>
+        <div class="flex items-center gap-2 mt-2"><span class="t-cap">10 月 19 日</span></div>
+      </a>
+    </div>
+    <div class="h-8"></div>
+  </div>
+  <div class="tabbar"><div class="r">
+    <a href="#home" class="tab"><i data-lucide="house"></i><span class="l">首页</span></a>
+    <a href="#notes" class="tab on"><i data-lucide="file-text"></i><span class="l">笔记</span></a>
+    <a href="#tasks" class="tab"><span class="relative inline-flex"><i data-lucide="square-check-big"></i><span class="badge num">13</span></span><span class="l">待办</span></a>
+    <a href="#ai" class="tab"><i data-lucide="sparkles"></i><span class="l">AI</span></a>
+    <a href="#me" class="tab"><i data-lucide="user-round"></i><span class="l">我的</span></a>
+  </div><div class="home-ind"></div></div>
+</div>
+<div class="shot-cap"><b>02 笔记 · 文件夹层级</b>对应 PC 侧栏文件夹树：逐层进入，面包屑跳回任意一级，在哪一层点 ＋ 就建在哪一层。笔记行三层信息：标题 / 摘要 / 时间·字数·链入数；新建按钮在顶栏右侧；左滑露出「移动 / 删除」，长按出完整菜单。</div>
+</div>
+
+<!-- ═══════════════════════ 03 长按文件夹 ═══════════════════════ -->
+<div class="shot" id="sheet-folder">
+<div class="phone">
+  <div class="status"><span>9:41</span><span class="flex gap-1 s16"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></span></div>
+  <div class="px pt-2"><span class="t-large">笔记</span></div>
+  <div class="flex-1"></div>
+  <div class="mask">
+    <div class="sheet">
+      <div class="grabber"></div>
+      <div class="px pt-2 pb-4 flex items-center gap-3"><span class="tile tile-n w-11 h-11 rounded-[10px]" style="color:#7A5FE2"><i data-lucide="folder-open"></i></span><div class="min-w-0"><div class="t-title">docs</div><div class="t-cap truncate">ruoyi-plus-uniapp / docs · 3 个文件夹 · 6 篇</div></div></div>
+      <div class="mx-4 group grid grid-cols-4 py-1">
+        <span class="flex flex-col items-center gap-2 py-3.5"><i data-lucide="file-plus-2" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">新建笔记</span></span>
+        <span class="flex flex-col items-center gap-2 py-3.5"><i data-lucide="folder-plus" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">子文件夹</span></span>
+        <span class="flex flex-col items-center gap-2 py-3.5"><i data-lucide="layout-template" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">从模板建</span></span>
+        <span class="flex flex-col items-center gap-2 py-3.5"><i data-lucide="pen-tool" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">新建白板</span></span>
+      </div>
+      <div class="px mt-3">
+        <div class="group">
+          <div class="row ic"><i data-lucide="pencil" class="s18 text-ink2"></i><span class="text-[15px]">重命名</span></div>
+          <div class="row ic"><i data-lucide="palette" class="s18 text-ink2"></i><span class="text-[15px]">颜色与图标</span></div>
+          <div class="row ic"><i data-lucide="folder-input" class="s18 text-ink2"></i><span class="text-[15px]">移动到…</span></div>
+          <div class="row ic"><i data-lucide="pin" class="s18 text-ink2"></i><span class="text-[15px]">设为默认文件夹</span></div>
+          <div class="row ic"><i data-lucide="folder-output" class="s18 text-ink2"></i><span class="text-[15px]">导出此文件夹…</span></div>
+        </div>
+        <div class="group mt-3"><div class="row ic" style="color:var(--bad)"><i data-lucide="trash-2" class="s18"></i><span class="text-[15px] font-semibold">删除文件夹</span></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="shot-cap"><b>03 长按文件夹</b>菜单项照搬 PC 文件夹右键菜单；新建类放上方一排，其余为列表，危险操作单独成组放最后。手机上不支持的导入类项目不显示。</div>
+</div>
+
+<!-- ═══════════════════════ 04 编辑器 ═══════════════════════ -->
+<div class="shot" id="editor">
+<div class="phone" style="background:#fff">
+  <div class="status"><span>9:41</span><span class="flex gap-1 s16"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></span></div>
+  <div class="flex items-center h-12 pl-1 pr-1.5">
+    <a href="#notes" class="ib"><i data-lucide="chevron-left" class="s24"></i></a>
+    <span class="t-cap flex items-center gap-1.5"><span class="dot" style="background:var(--ok);width:6px;height:6px"></span>已保存</span>
+    <div class="flex-1"></div>
+    <div class="seg" style="padding:2px;background:var(--well)"><span class="on" style="height:30px;line-height:30px;padding:0 12px;font-size:13px">编辑</span><span style="height:30px;line-height:30px;padding:0 12px;font-size:13px">阅读</span></div>
+    <a href="#ai" class="ib text-accent"><i data-lucide="sparkles"></i></a>
+    <a href="#sheet-note" class="ib"><i data-lucide="ellipsis"></i></a>
+  </div>
+  <div class="scroll px">
+    <div class="text-[26px] font-bold leading-snug pt-3" style="letter-spacing:-.01em">接口返回值统一规范</div>
+    <div class="flex items-center gap-2 mt-3 flex-wrap">
+      <span class="tag text-ink2" style="background:var(--well);font-weight:400"><i data-lucide="folder" class="s14 mr-1"></i>ruoyi / docs</span>
+      <span class="tag" style="background:var(--info-soft);color:var(--info)">后端</span>
+      <span class="tag text-ink3" style="background:var(--well);font-weight:400">＋ 标签</span>
+      <span class="lk ml-auto"><i data-lucide="link-2" class="s14"></i>链入 4</span>
+    </div>
+    <div class="mt-6 text-[16px] leading-[1.85] text-ink">
+      <div class="text-[19px] font-bold mb-2">一、统一包装</div>
+      <p>所有 Controller 返回 <code class="px-1.5 py-0.5 rounded-md text-[14px]" style="background:var(--well)">R&lt;T&gt;</code>，前端只认 <b>code</b> 和 <b>msg</b>，细则见 <span class="wk">[[全局异常处理]]</span>。</p>
+      <div class="mt-3 rounded-[10px] px-3.5 py-3 text-[15px] leading-[1.7]" style="background:var(--info-soft);color:#2D4E91">分页接口直接返回 TableDataInfo，不要再套一层 R&lt;T&gt;。</div>
+      <ul class="mt-3 pl-5 list-disc marker:text-ink4"><li>成功：code = 200</li><li>业务失败：code = 500，msg 给用户看</li><li>未登录：code = 401<span class="inline-block w-[2px] h-5 align-middle ml-0.5" style="background:var(--accent)"></span></li></ul>
+    </div>
+  </div>
+  <!-- 键盘上方的格式条：常用项钉住、可横滑；左侧 ＋ 打开插入面板（对应斜杠命令） -->
+  <div class="flex items-center h-12 hscroll px-1" style="background:#F7F6FB;border-top:.5px solid var(--hair)">
+    <a href="#sheet-insert" class="ib text-accent"><i data-lucide="circle-plus" class="s22"></i></a>
+    <span class="w-px h-5 flex-none mx-0.5" style="background:var(--hair)"></span>
+    <span class="ib text-[16px] font-bold">H</span>
+    <span class="ib"><i data-lucide="bold"></i></span>
+    <span class="ib"><i data-lucide="list"></i></span>
+    <span class="ib"><i data-lucide="list-checks"></i></span>
+    <span class="ib"><i data-lucide="highlighter"></i></span>
+    <span class="ib"><i data-lucide="image"></i></span>
+    <span class="ib"><i data-lucide="link-2"></i></span>
+    <span class="ib"><i data-lucide="undo-2"></i></span>
+    <span class="ib"><i data-lucide="keyboard-off"></i></span>
+  </div>
+  <div class="kbd">
+    <span>q</span><span>w</span><span>e</span><span>r</span><span>t</span><span>y</span><span>u</span><span>i</span><span>o</span><span>p</span>
+    <span>a</span><span>s</span><span>d</span><span>f</span><span>g</span><span>h</span><span>j</span><span>k</span><span>l</span><span>;</span>
+    <span>⇧</span><span>z</span><span>x</span><span>c</span><span>v</span><span>b</span><span>n</span><span>m</span><span>,</span><span>⌫</span>
+    <span class="text-[14px]">123</span><span>🙂</span><span class="col-span-6 text-[14px] text-ink3">空格</span><span class="col-span-2 text-[14px]" style="background:#B9B3CC">换行</span>
+  </div>
+</div>
+<div class="shot-cap"><b>04 编辑器</b>与 PC 同一套富文本编辑器（原来是纯文本框）；正文用白纸底，双链高亮可点。键盘上方格式条常用项钉住、可横滑，左侧 ＋ 打开插入面板。</div>
+</div>
+
+<!-- ═══════════════════════ 05 插入面板 ═══════════════════════ -->
+<div class="shot" id="sheet-insert">
+<div class="phone">
+  <div class="status"><span>9:41</span><span class="flex gap-1 s16"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></span></div>
+  <div class="flex-1"></div>
+  <div class="mask">
+    <div class="sheet">
+      <div class="grabber"></div>
+      <div class="px pt-1 flex items-baseline"><span class="t-sec">插入</span><span class="ml-auto t-cap">正文里输入 / 也能调出</span></div>
+      <div class="px mt-3 flex gap-2 hscroll"><span class="chip on">常用</span><span class="chip">格式</span><span class="chip">块</span><span class="chip">媒体</span><span class="chip">数据视图</span><span class="chip">日期</span></div>
+      <div class="px mt-4">
+        <div class="group grid grid-cols-4 py-2">
+          <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="image" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">图片</span></span>
+          <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="camera" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">拍照</span></span>
+          <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="table" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">表格</span></span>
+          <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="code" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">代码块</span></span>
+          <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="link-2" class="s22 text-accent"></i><span class="text-[12px] font-semibold text-accent">双链笔记</span></span>
+          <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="message-square-warning" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">提示框</span></span>
+          <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="list-checks" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">任务列表</span></span>
+          <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="minus" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">分割线</span></span>
+          <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="sigma" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">公式</span></span>
+          <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="workflow" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">流程图</span></span>
+          <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="paperclip" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">附件</span></span>
+          <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="clock" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">当前时间</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="shot-cap"><b>05 插入面板</b>清单与 PC 工具栏插入项 + 斜杠命令是同一份，按分组横滑切换；手机额外加「拍照」。图标一律中性色，只有「双链笔记」用主色。</div>
+</div>
+
+<!-- ═══════════════════════ 06 笔记「更多」 ═══════════════════════ -->
+<div class="shot" id="sheet-note">
+<div class="phone">
+  <div class="status"><span>9:41</span><span class="flex gap-1 s16"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></span></div>
+  <div class="flex-1"></div>
+  <div class="mask">
+    <div class="sheet">
+      <div class="grabber"></div>
+      <div class="px pt-1"><div class="t-title truncate">接口返回值统一规范</div><div class="flex items-center gap-2 mt-1"><span class="t-cap num">2,140 字 · 约 5 分钟</span><span class="lk"><i data-lucide="link-2" class="s14"></i>链出 3 · 链入 4</span></div></div>
+      <div class="mx-4 mt-4 group grid grid-cols-4 p-1.5 gap-1">
+        <span class="flex flex-col items-center gap-2 py-3.5 rounded-[10px]" style="background:var(--accent-soft2)"><i data-lucide="pin" class="s22 text-accent"></i><span class="text-[12px] font-bold text-accent">已置顶</span></span>
+        <span class="flex flex-col items-center gap-2 py-3.5"><i data-lucide="list-tree" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">大纲</span></span>
+        <span class="flex flex-col items-center gap-2 py-3.5"><i data-lucide="history" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">历史版本</span></span>
+        <span class="flex flex-col items-center gap-2 py-3.5"><i data-lucide="search" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">查找替换</span></span>
+        <span class="flex flex-col items-center gap-2 py-3.5"><i data-lucide="eye-off" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">隐藏</span></span>
+        <span class="flex flex-col items-center gap-2 py-3.5"><i data-lucide="lock" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">加密</span></span>
+        <span class="flex flex-col items-center gap-2 py-3.5"><i data-lucide="network" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">思维导图</span></span>
+        <span class="flex flex-col items-center gap-2 py-3.5"><i data-lucide="presentation" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">演示</span></span>
+      </div>
+      <div class="px mt-3">
+        <div class="group">
+          <div class="row ic"><i data-lucide="code-xml" class="s18 text-ink2"></i><span class="text-[15px] flex-1">源码模式</span><span class="w-[46px] h-[28px] rounded-full relative" style="background:#D9D5E6"><span class="absolute left-[3px] top-[3px] w-[22px] h-[22px] rounded-full bg-white"></span></span></div>
+          <div class="row ic"><i data-lucide="folder-input" class="s18 text-ink2"></i><span class="text-[15px]">移动到…</span></div>
+          <div class="row ic"><i data-lucide="share-2" class="s18 text-ink2"></i><span class="text-[15px] whitespace-nowrap">导出 / 分享</span><span class="ml-auto t-meta whitespace-nowrap">MD · Word · HTML · PDF</span></div>
+          <div class="row ic"><i data-lucide="link" class="s18 text-ink2"></i><span class="text-[15px]">复制 wiki 链接</span></div>
+        </div>
+        <div class="group mt-3"><div class="row ic" style="color:var(--bad)"><i data-lucide="trash-2" class="s18"></i><span class="text-[15px] font-semibold">删除笔记</span></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="shot-cap"><b>06 笔记「更多」</b>PC 编辑页顶栏的按钮都在这里：置顶 / 大纲 / 历史 / 查找替换 / 隐藏 / 加密 / 思维导图 / 演示 / 源码 / 移动 / 导出 / 删除。已开启的状态（已置顶）用主色底标出，删除单独成组。</div>
+</div>
+
+<!-- ═══════════════════════ 07 待办 ═══════════════════════ -->
+<div class="shot" id="tasks">
+<div class="phone">
+  <div class="status"><span>9:41</span><span class="flex gap-1 s16"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></span></div>
+  <div class="px pt-2 flex items-center">
+    <span class="t-large">全部任务</span><i data-lucide="chevron-down" class="s18 text-ink3 ml-1 mt-1"></i>
+    <div class="flex-1"></div>
+    <span class="ib"><i data-lucide="calendar-days"></i></span>
+    <span class="ib"><i data-lucide="ellipsis"></i></span>
+  </div>
+  <div class="px t-meta mt-1">28 条未完成 · <span style="color:var(--bad)">13 条紧急</span></div>
+  <div class="px mt-3 flex gap-2 hscroll"><span class="chip on">全部 <span class="num">28</span></span><span class="chip">逾期 <b class="num" style="color:var(--bad)">25</b></span><span class="chip">今天 <span class="num">0</span></span><span class="chip">即将到期 <span class="num">0</span></span><span class="chip">无截止 <span class="num">3</span></span></div>
+  <div class="scroll px">
+    <div class="flex items-center gap-1.5 mt-5 mb-2"><span class="t-sec" style="color:var(--bad)">逾期</span><span class="t-meta num">25</span></div>
+    <div class="group">
+      <div class="row ic" style="padding-top:13px;padding-bottom:13px;align-items:flex-start"><span class="check mt-0.5"></span><div class="flex-1 min-w-0"><div class="text-[15px] leading-snug">第 1 天起床流程：闹钟一响就起</div><div class="flex items-center gap-1.5 mt-1.5"><span class="tag" style="background:var(--warn-soft);color:var(--warn)">重要</span><span class="tag text-ink2" style="background:var(--well);font-weight:400"><i data-lucide="corner-down-right" class="s14 mr-0.5"></i>0/1</span><span class="t-cap num" style="color:var(--bad)">4 月 27 日</span></div></div><span class="dot mt-2" style="background:var(--bad)"></span></div>
+      <div class="row ic" style="padding-top:13px;padding-bottom:13px;align-items:flex-start"><span class="check mt-0.5"></span><div class="flex-1 min-w-0"><div class="text-[15px] leading-snug">早餐：1 勺蛋白粉 + 20g 燕麦</div><div class="flex items-center gap-1.5 mt-1.5"><span class="tag" style="background:var(--warn-soft);color:var(--warn)">重要</span><span class="t-cap num" style="color:var(--bad)">4 月 27 日</span></div></div><span class="dot mt-2" style="background:var(--bad)"></span></div>
+      <div class="row ic" style="padding-top:13px;padding-bottom:13px;align-items:flex-start"><span class="check mt-0.5"></span><div class="flex-1 min-w-0"><div class="text-[15px] leading-snug">复盘本周同步故障</div><div class="flex items-center gap-1.5 mt-1.5"><span class="tag" style="background:var(--info-soft);color:var(--info)">工作</span><span class="lk"><i data-lucide="link-2" class="s14"></i>同步 V1 设计</span><span class="t-cap num" style="color:var(--bad)">4 月 30 日</span></div></div><span class="dot mt-2" style="background:var(--accent)"></span></div>
+    </div>
+    <div class="flex items-center gap-1.5 mt-6 mb-2"><span class="t-sec">无截止</span><span class="t-meta num">3</span></div>
+    <div class="group">
+      <div class="row ic" style="padding-top:13px;padding-bottom:13px;align-items:flex-start"><span class="check mt-0.5"></span><div class="flex-1 min-w-0"><div class="text-[15px] leading-snug">整理待办清单并设置优先级</div><div class="t-meta mt-0.5 truncate">把会议记录里的行动项也拉进来</div></div><span class="dot mt-2" style="background:var(--accent)"></span></div>
+      <div class="row ic" style="padding-top:13px;padding-bottom:13px;align-items:flex-start"><span class="check done s14 mt-0.5"><i data-lucide="check"></i></span><div class="flex-1 min-w-0"><div class="text-[15px] leading-snug text-ink3 line-through">升级到 v3.1.0</div></div></div>
+    </div>
+    <div class="h-28"></div>
+  </div>
+  <a href="#sheet-task" class="fab s24"><i data-lucide="plus"></i></a>
+  <div class="tabbar"><div class="r">
+    <a href="#home" class="tab"><i data-lucide="house"></i><span class="l">首页</span></a>
+    <a href="#notes" class="tab"><i data-lucide="file-text"></i><span class="l">笔记</span></a>
+    <a href="#tasks" class="tab on"><span class="relative inline-flex"><i data-lucide="square-check-big"></i><span class="badge num">13</span></span><span class="l">待办</span></a>
+    <a href="#ai" class="tab"><i data-lucide="sparkles"></i><span class="l">AI</span></a>
+    <a href="#me" class="tab"><i data-lucide="user-round"></i><span class="l">我的</span></a>
+  </div><div class="home-ind"></div></div>
+</div>
+<div class="shot-cap"><b>07 待办</b>标题下拉 = PC 待办侧栏（全部 / 今天 / 本周 / 优先级 / 分类 / 已完成 / 已放弃）；胶囊 = PC 分组胶囊；日历图标切日历视图，看板 / 四象限 / 甘特在「…」里按单列展示。关联笔记用同一个双链记号。</div>
+</div>
+
+<!-- ═══════════════════════ 08 新建待办 ═══════════════════════ -->
+<div class="shot" id="sheet-task">
+<div class="phone">
+  <div class="status"><span>9:41</span><span class="flex gap-1 s16"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></span></div>
+  <div class="flex-1"></div>
+  <div class="mask">
+    <div class="sheet" style="padding-bottom:0;background:#fff">
+      <div class="grabber"></div>
+      <div class="px pt-2">
+        <div class="text-[18px] font-bold">回复群里的 md 解析反馈<span class="inline-block w-[2px] h-5 align-middle ml-0.5" style="background:var(--accent)"></span></div>
+        <div class="text-[15px] text-ink3 mt-2">添加备注</div>
+        <div class="flex gap-2 mt-4 hscroll pb-1">
+          <span class="chip" style="background:var(--accent-soft2);color:var(--accent);font-weight:700"><i data-lucide="calendar" class="s14"></i>今天 14:00</span>
+          <span class="chip" style="background:var(--well)"><i data-lucide="flag" class="s14"></i>紧急</span>
+          <span class="chip" style="background:var(--well)"><i data-lucide="star" class="s14"></i>重要</span>
+          <span class="chip" style="background:var(--well)"><i data-lucide="tag" class="s14"></i>分类</span>
+          <span class="chip" style="background:var(--well)"><i data-lucide="repeat" class="s14"></i>重复</span>
+          <span class="chip" style="background:var(--well)"><i data-lucide="bell" class="s14"></i>提醒</span>
+        </div>
+        <div class="flex items-center py-3 -ml-2.5">
+          <span class="ib"><i data-lucide="list-tree"></i></span>
+          <span class="ib"><i data-lucide="link-2"></i></span>
+          <span class="ib"><i data-lucide="mic"></i></span>
+          <span class="ib text-accent"><i data-lucide="sparkles"></i></span>
+          <div class="flex-1"></div>
+          <span class="btn">添加</span>
+        </div>
+      </div>
+      <div class="kbd">
+        <span>q</span><span>w</span><span>e</span><span>r</span><span>t</span><span>y</span><span>u</span><span>i</span><span>o</span><span>p</span>
+        <span>a</span><span>s</span><span>d</span><span>f</span><span>g</span><span>h</span><span>j</span><span>k</span><span>l</span><span>;</span>
+        <span>⇧</span><span>z</span><span>x</span><span>c</span><span>v</span><span>b</span><span>n</span><span>m</span><span>,</span><span>⌫</span>
+        <span class="text-[14px]">123</span><span>🙂</span><span class="col-span-6 text-[14px] text-ink3">空格</span><span class="col-span-2 text-[14px]" style="background:#B9B3CC">换行</span>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="shot-cap"><b>08 新建待办</b>贴着键盘弹出，标题输完就能加；截止 / 优先级 / 重要 / 分类 / 重复 / 提醒做成胶囊，子任务、关联笔记、语音、AI 规划在下方一排。字段与 PC 新建待办弹窗一致。</div>
+</div>
+
+<!-- ═══════════════════════ 09 日记 ═══════════════════════ -->
+<div class="shot" id="daily">
+<div class="phone">
+  <div class="status"><span>9:41</span><span class="flex gap-1 s16"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></span></div>
+  <div class="flex items-center h-12 pl-1 pr-3">
+    <a href="#me" class="ib"><i data-lucide="chevron-left" class="s24"></i></a>
+    <span class="text-[18px] font-bold">2026 年 11 月</span><i data-lucide="chevron-down" class="s16 text-ink3 ml-1"></i>
+    <div class="flex-1"></div>
+    <span class="tapx tag text-[13px]" style="background:var(--accent-soft2);color:var(--accent);height:30px;padding:0 12px">今天</span>
+  </div>
+  <div class="px mt-1">
+    <div class="grid grid-cols-7 text-center t-cap pb-1.5"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+    <div class="grid grid-cols-7 text-center gap-1">
+      <span class="h-12 rounded-[10px] flex flex-col items-center justify-center text-[16px] font-semibold num">9<span class="dot mt-1" style="width:4px;height:4px;background:var(--accent)"></span></span>
+      <span class="h-12 rounded-[10px] flex flex-col items-center justify-center text-[16px] font-bold text-white num" style="background:var(--grad);box-shadow:var(--sh-btn)">10<span class="dot mt-1" style="width:4px;height:4px;background:#fff"></span></span>
+      <span class="h-12 rounded-[10px] flex flex-col items-center justify-center text-[16px] text-ink3 num">11<span class="mt-1 h-1"></span></span>
+      <span class="h-12 rounded-[10px] flex flex-col items-center justify-center text-[16px] text-ink3 num">12<span class="mt-1 h-1"></span></span>
+      <span class="h-12 rounded-[10px] flex flex-col items-center justify-center text-[16px] text-ink3 num">13<span class="mt-1 h-1"></span></span>
+      <span class="h-12 rounded-[10px] flex flex-col items-center justify-center text-[16px] text-ink3 num">14<span class="mt-1 h-1"></span></span>
+      <span class="h-12 rounded-[10px] flex flex-col items-center justify-center text-[16px] text-ink3 num">15<span class="mt-1 h-1"></span></span>
+    </div>
+    <div class="w-9 h-1 rounded mx-auto mt-2.5" style="background:#C9C4DA"></div>
+  </div>
+  <div class="scroll px mt-3">
+    <div class="float p-5">
+      <div class="flex items-baseline"><span class="t-sec">11 月 10 日 · 周二</span><span class="ml-auto t-cap num">236 字</span></div>
+      <div class="mt-3 text-[15px] leading-[1.75]">
+        <div class="flex gap-3"><span class="t-cap num pt-0.5 w-10 flex-none">09:12</span><p>过了一遍 v3.1.0 的群反馈，<span class="wk">[[md 属性块解析]]</span> 已经修好。</p></div>
+        <div class="flex gap-3 mt-3"><span class="t-cap num pt-0.5 w-10 flex-none">14:30</span><p>手机端要按 PC 的逻辑重做，先出原型给大家看。</p></div>
+      </div>
+      <div class="mt-4 flex items-center gap-2 h-11 rounded-[10px] px-3.5 text-[15px] text-ink3" style="background:var(--well)"><i data-lucide="plus" class="s16"></i><span class="flex-1">记一笔，自动加时间</span><i data-lucide="mic" class="s18"></i></div>
+    </div>
+    <div class="flex items-baseline mt-6 mb-2"><span class="t-sec">本月</span><span class="t-meta ml-2 num">13 篇</span></div>
+    <div class="group">
+      <div class="row"><span class="w-8 text-[18px] font-bold num text-accent">9</span><span class="flex-1 text-[15px] truncate">整理了同步 bug 清单</span><span class="t-cap num">412 字</span></div>
+      <div class="row"><span class="w-8 text-[18px] font-bold num text-accent">6</span><span class="flex-1 text-[15px] truncate">发布 v3.1.0</span><span class="t-cap num">188 字</span></div>
+      <div class="row"><span class="w-8 text-[18px] font-bold num text-accent">5</span><span class="flex-1 text-[15px] truncate">换证书后 sidecar 重签</span><span class="t-cap num">305 字</span></div>
+      <div class="row"><span class="w-8 text-[18px] font-bold num text-accent">3</span><span class="flex-1 text-[15px] truncate">双屏 DPI 自愈复盘</span><span class="t-cap num">640 字</span></div>
+    </div>
+    <div class="h-8"></div>
+  </div>
+</div>
+<div class="shot-cap"><b>09 日记</b>对应 PC 日记页：周条可左右滑，下拉展开整月（有日记的日子带点）；当天日记按时间戳排成时间线，底部直接追加；下方是本月列表。</div>
+</div>
+
+<!-- ═══════════════════════ 10 搜索 ═══════════════════════ -->
+<div class="shot" id="search">
+<div class="phone">
+  <div class="status"><span>9:41</span><span class="flex gap-1 s16"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></span></div>
+  <div class="px flex items-center gap-3 h-14">
+    <div class="flex-1 flex items-center gap-2 h-11 px-3.5 rounded-[10px] bg-white text-[15px]" style="box-shadow:0 0 0 1.5px var(--accent)"><i data-lucide="search" class="s18 text-ink3"></i><span class="flex-1">返回值</span><i data-lucide="circle-x" class="s18 text-ink4"></i></div>
+    <a href="#home" class="tapx text-[15px] font-semibold text-accent">取消</a>
+  </div>
+  <div class="px mt-1 flex gap-2 hscroll"><span class="chip on">全部</span><span class="chip">笔记 <span class="num">6</span></span><span class="chip">待办 <span class="num">1</span></span><span class="chip"><i data-lucide="calendar" class="s14"></i>时间</span><span class="chip"><i data-lucide="folder" class="s14"></i>文件夹</span><span class="chip"><i data-lucide="tag" class="s14"></i>标签</span></div>
+  <div class="scroll px">
+    <div class="t-sec mt-5 mb-2">待办</div>
+    <div class="group"><div class="row ic"><span class="check"></span><span class="text-[15px]">核对接口<mark style="background:rgba(124,99,220,.18);color:var(--accent);border-radius:4px;padding:0 2px">返回值</mark>文档</span></div></div>
+    <div class="t-sec mt-6 mb-2">笔记</div>
+    <div class="group">
+      <a href="#editor" class="row block" style="padding:14px 16px"><div class="t-title">接口<mark style="background:rgba(124,99,220,.18);color:var(--accent);border-radius:4px;padding:0 2px">返回值</mark>统一规范</div><div class="text-[14px] leading-[1.6] text-ink2 mt-1 line-clamp-2">所有 Controller 的<mark style="background:rgba(124,99,220,.18);color:var(--accent);border-radius:4px;padding:0 2px">返回值</mark>都用 R&lt;T&gt; 包装，前端只认 code 和 msg</div><div class="flex items-center gap-2 mt-2"><span class="t-cap">ruoyi / docs · 3 天前</span><span class="lk"><i data-lucide="link-2" class="s14"></i>链入 4</span></div></a>
+      <a href="#editor" class="row block" style="padding:14px 16px"><div class="t-title">Rust Command 错误处理</div><div class="text-[14px] leading-[1.6] text-ink2 mt-1 line-clamp-2">Command 的<mark style="background:rgba(124,99,220,.18);color:var(--accent);border-radius:4px;padding:0 2px">返回值</mark>统一用 Result&lt;T, String&gt;，错误转成字符串给前端</div><div class="flex items-center gap-2 mt-2"><span class="t-cap">知识库 &amp; 工具 · 10 月 19 日</span></div></a>
+    </div>
+    <div class="t-sec mt-6 mb-2">最近搜索</div>
+    <div class="flex gap-2 flex-wrap"><span class="chip">同步</span><span class="chip">front-matter</span><span class="chip">evsign</span></div>
+  </div>
+</div>
+<div class="shot-cap"><b>10 搜索</b>对应 PC 搜索页 + 命令面板：笔记与待办同时出结果、关键词高亮；时间 / 文件夹 / 标签筛选做成胶囊。点结果进入笔记并定位到第一处命中。</div>
+</div>
+
+<!-- ═══════════════════════ 11 AI 问答 ═══════════════════════ -->
+<div class="shot" id="ai">
+<div class="phone">
+  <div class="status"><span>9:41</span><span class="flex gap-1 s16"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></span></div>
+  <div class="flex items-center h-12 px-1">
+    <span class="ib"><i data-lucide="panel-left"></i></span>
+    <div class="flex-1 text-center"><div class="text-[16px] font-bold">同步方案讨论</div><div class="t-cap">DeepSeek-V3 · 智能模式</div></div>
+    <span class="ib"><i data-lucide="square-pen"></i></span>
+  </div>
+  <div class="scroll px pt-3">
+    <div class="flex justify-end"><div class="max-w-[80%] rounded-[10px] rounded-br-[4px] px-4 py-2.5 text-[15px] leading-[1.6] text-white" style="background:var(--grad)">WebDAV 和 S3，手机上用哪个同步更好？</div></div>
+    <!-- 一轮回复 = 一张卡片，结构同 PC 端 TurnCard：卡片头（状态 + 统计）→ 执行过程（完成后收成一行）→ 回答 → 参考来源 → 操作栏 -->
+    <div class="float mt-4 overflow-hidden">
+      <div class="flex items-center gap-2 px-4 pt-3.5">
+        <span class="tile w-7 h-7 rounded-[7px] tile-a"><i data-lucide="sparkles" class="s14"></i></span>
+        <span class="text-[14px] font-bold">已完成</span>
+        <span class="t-cap num">3 步 · 4.2 秒</span>
+      </div>
+      <!-- 执行过程：回复中展开看每一步；完成后收成一行，点开看检索 / 工具调用明细；失败或停止时默认展开 -->
+      <div class="mx-4 mt-3 flex items-center gap-2 h-10 px-3 rounded-[8px] text-[13px] text-ink2" style="background:var(--well)">
+        <i data-lucide="list-tree" class="s16 text-ink3"></i><span class="flex-1 truncate">检索 3 篇笔记 · 读取 2 篇</span><i data-lucide="chevron-down" class="s16 text-ink3"></i>
+      </div>
+      <div class="px-4 mt-3 text-[15px] leading-[1.75]">
+        两种都能用，按你的情况选：
+        <ul class="mt-1.5 pl-5 list-disc marker:text-ink4">
+          <li>网络不稳：选 <b>S3</b>，传一半断了能续传</li>
+          <li>只同步文本：选 <b>WebDAV</b>，配置最简单</li>
+        </ul>
+      </div>
+      <div class="px-4 mt-3">
+        <div class="t-cap mb-1.5">参考来源</div>
+        <div class="flex gap-2 flex-wrap"><span class="lk" style="height:26px;padding:0 9px"><i data-lucide="link-2" class="s14"></i>同步 V1 设计</span><span class="lk" style="height:26px;padding:0 9px"><i data-lucide="link-2" class="s14"></i>S3 移动端支持</span><span class="lk" style="height:26px;padding:0 9px"><i data-lucide="link-2" class="s14"></i>坚果云配置</span></div>
+      </div>
+      <div class="flex items-center mt-2 px-1.5 pb-1 text-ink3" style="border-top:.5px solid var(--hair)">
+        <span class="ib"><i data-lucide="copy" class="s18"></i></span><span class="ib"><i data-lucide="rotate-ccw" class="s18"></i></span><span class="ib"><i data-lucide="file-plus-2" class="s18"></i></span>
+        <span class="ml-auto pr-2.5 t-cap num">1.2k tokens</span>
+      </div>
+    </div>
+    <div class="h-4"></div>
+  </div>
+  <div class="px pt-2 pb-2 bg-white" style="border-top:.5px solid var(--hair)">
+    <div class="flex gap-2 pb-2 hscroll"><span class="chip" style="background:var(--well)"><i data-lucide="at-sign" class="s14"></i>附加笔记</span><span class="chip" style="background:var(--well)"><i data-lucide="message-square-text" class="s14"></i>提示词</span><span class="chip" style="background:var(--well)"><i data-lucide="brain" class="s14"></i>智能模式</span></div>
+    <div class="flex items-center gap-2">
+      <div class="flex-1 h-11 rounded-[10px] px-4 flex items-center text-[15px] text-ink3" style="background:var(--well)">问问你的知识库…</div>
+      <span class="ib" style="background:var(--well)"><i data-lucide="mic"></i></span>
+      <span class="ib text-white" style="background:var(--grad);box-shadow:var(--sh-btn)"><i data-lucide="arrow-up"></i></span>
+    </div>
+  </div>
+  <div class="tabbar"><div class="r">
+    <a href="#home" class="tab"><i data-lucide="house"></i><span class="l">首页</span></a>
+    <a href="#notes" class="tab"><i data-lucide="file-text"></i><span class="l">笔记</span></a>
+    <a href="#tasks" class="tab"><span class="relative inline-flex"><i data-lucide="square-check-big"></i><span class="badge num">13</span></span><span class="l">待办</span></a>
+    <a href="#ai" class="tab on"><i data-lucide="sparkles"></i><span class="l">AI</span></a>
+    <a href="#me" class="tab"><i data-lucide="user-round"></i><span class="l">我的</span></a>
+  </div><div class="home-ind"></div></div>
+</div>
+<div class="shot-cap"><b>11 AI 问答</b>对应 PC AI 页：左上打开会话列表（置顶 / 重命名 / 删除）。一轮回复 = 一张卡片，与 PC 端同构：状态与耗时 → 执行过程（完成后收成一行，失败 / 停止时展开）→ 回答 → 参考来源（双链记号）→ 复制 / 重新生成 / 存为笔记。输入区带附加笔记、提示词、模式切换。</div>
+</div>
+
+<!-- ═══════════════════════ 12 我的 ═══════════════════════ -->
+<div class="shot" id="me">
+<div class="phone">
+  <div class="status"><span>9:41</span><span class="flex gap-1 s16"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></span></div>
+  <div class="scroll">
+    <div class="px pt-3 flex items-center gap-3.5">
+      <span class="tile w-14 h-14 rounded-[12px] text-white" style="background:var(--grad);box-shadow:var(--sh-btn)"><i data-lucide="book-open-text" class="s24"></i></span>
+      <div class="flex-1 min-w-0"><div class="text-[20px] font-bold">我的知识库</div><div class="t-meta num">41 篇笔记 · 52,310 字 · 128 条双链</div></div>
+    </div>
+    <div class="px mt-5"><a href="#me" class="group row ic" style="min-height:60px"><span class="tile w-9 h-9 rounded-[8px] -ml-1" style="background:var(--ok-soft);color:var(--ok)"><i data-lucide="cloud-check" class="s18"></i></span><div class="flex-1 min-w-0 ml-[-4px]"><div class="text-[15px] font-semibold">已同步</div><div class="t-cap">WebDAV · 3 分钟前拉取</div></div><span class="tapx text-[14px] font-bold text-accent">立即同步</span></a></div>
+
+    <div class="px mt-6 mb-2 flex items-baseline"><span class="t-sec">全部功能</span><span class="ml-auto t-cap">长按可设为底部 Tab</span></div>
+    <div class="px"><div class="group grid grid-cols-4 py-2">
+      <a href="#notes" class="flex flex-col items-center gap-2 py-3"><span class="relative"><i data-lucide="file-text" class="s22 text-ink2"></i><span class="absolute -top-1.5 -right-2.5 dot" style="width:7px;height:7px;background:var(--accent)"></span></span><span class="text-[12px] text-ink2">笔记</span></a>
+      <a href="#daily" class="flex flex-col items-center gap-2 py-3"><i data-lucide="calendar-days" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">日记</span></a>
+      <a href="#tasks" class="flex flex-col items-center gap-2 py-3"><span class="relative"><i data-lucide="square-check-big" class="s22 text-ink2"></i><span class="absolute -top-1.5 -right-2.5 dot" style="width:7px;height:7px;background:var(--accent)"></span></span><span class="text-[12px] text-ink2">待办</span></a>
+      <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="layers" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">复习</span></span>
+      <a href="#search" class="flex flex-col items-center gap-2 py-3"><i data-lucide="search" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">搜索</span></a>
+      <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="tag" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">标签</span></span>
+      <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="waypoints" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">图谱</span></span>
+      <a href="#ai" class="flex flex-col items-center gap-2 py-3"><span class="relative"><i data-lucide="sparkles" class="s22 text-ink2"></i><span class="absolute -top-1.5 -right-2.5 dot" style="width:7px;height:7px;background:var(--accent)"></span></span><span class="text-[12px] text-ink2">AI</span></a>
+      <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="message-square-text" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">提示词</span></span>
+      <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="bell-ring" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">推送</span></span>
+      <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="eye-off" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">隐藏笔记</span></span>
+      <span class="flex flex-col items-center gap-2 py-3"><i data-lucide="trash-2" class="s22 text-ink2"></i><span class="text-[12px] text-ink2">回收站</span></span>
+    </div></div>
+    <div class="px mt-1.5 t-cap flex items-center gap-1.5"><span class="dot" style="width:7px;height:7px;background:var(--accent)"></span>已在底部 Tab</div>
+
+    <div class="px mt-6 mb-2"><span class="t-sec">设置</span></div>
+    <div class="px"><div class="group">
+      <div class="row ic"><i data-lucide="palette" class="s18 text-ink2"></i><span class="text-[15px] flex-1">外观与主题</span><span class="t-meta">淡紫</span><i data-lucide="chevron-right" class="s16 text-ink4"></i></div>
+      <div class="row ic"><i data-lucide="pencil-line" class="s18 text-ink2"></i><span class="text-[15px] flex-1">编辑器</span><i data-lucide="chevron-right" class="s16 text-ink4"></i></div>
+      <div class="row ic"><i data-lucide="bot" class="s18 text-ink2"></i><span class="text-[15px] flex-1">AI 模型</span><span class="t-meta num">2 个</span><i data-lucide="chevron-right" class="s16 text-ink4"></i></div>
+      <div class="row ic"><i data-lucide="layout-grid" class="s18 text-ink2"></i><span class="text-[15px] flex-1">功能模块与底部 Tab</span><i data-lucide="chevron-right" class="s16 text-ink4"></i></div>
+      <div class="row ic"><i data-lucide="shield-check" class="s18 text-ink2"></i><span class="text-[15px] flex-1">应用锁与隐私</span><i data-lucide="chevron-right" class="s16 text-ink4"></i></div>
+      <div class="row ic"><i data-lucide="database" class="s18 text-ink2"></i><span class="text-[15px] flex-1">数据与导入导出</span><i data-lucide="chevron-right" class="s16 text-ink4"></i></div>
+      <div class="row ic"><i data-lucide="info" class="s18 text-ink2"></i><span class="text-[15px] flex-1">关于与更新</span><span class="tag" style="background:var(--bad-soft);color:var(--bad)">新版本</span><i data-lucide="chevron-right" class="s16 text-ink4"></i></div>
+    </div></div>
+    <div class="h-8"></div>
+  </div>
+  <div class="tabbar"><div class="r">
+    <a href="#home" class="tab"><i data-lucide="house"></i><span class="l">首页</span></a>
+    <a href="#notes" class="tab"><i data-lucide="file-text"></i><span class="l">笔记</span></a>
+    <a href="#tasks" class="tab"><span class="relative inline-flex"><i data-lucide="square-check-big"></i><span class="badge num">13</span></span><span class="l">待办</span></a>
+    <a href="#ai" class="tab"><i data-lucide="sparkles"></i><span class="l">AI</span></a>
+    <a href="#me" class="tab on"><span class="relative inline-flex"><i data-lucide="user-round"></i><span class="absolute -right-1 top-0 dot" style="width:7px;height:7px;background:var(--bad);box-shadow:0 0 0 2px #fff"></span></span><span class="l">我的</span></a>
+  </div><div class="home-ind"></div></div>
+</div>
+<div class="shot-cap"><b>12 我的</b>「全部功能」= PC 活动栏除首页外的全部入口，顺序照活动栏、受功能模块开关控制，一块面板里排 3 × 4，不给每格包卡片；已在底部 Tab 的带小点，长按换进 / 移出。设置分组对应 PC 设置页各节。</div>
+</div>
+
+<!-- ═══════════════════════ 13 新建（＋） ═══════════════════════ -->
+<div class="shot" id="create">
+<div class="phone">
+  <div class="status"><span>9:41</span><span class="flex gap-1 s16"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></span></div>
+  <div class="flex-1"></div>
+  <div class="mask">
+    <div class="sheet">
+      <div class="grabber"></div>
+      <div class="px pt-1 flex items-baseline"><span class="t-sec">新建</span><span class="ml-auto t-cap flex items-center gap-1"><i data-lucide="folder" class="s14"></i>ruoyi / docs<span class="tapx font-bold text-accent ml-1">更改</span></span></div>
+      <div class="px mt-4">
+        <a href="#editor" class="flex items-center gap-3.5 p-4 rounded-[12px] text-white" style="background:var(--grad);box-shadow:var(--sh-btn)">
+          <span class="tile w-11 h-11 rounded-[10px]" style="background:rgba(255,255,255,.18)"><i data-lucide="file-plus-2" class="s22"></i></span>
+          <div class="flex-1"><div class="text-[16px] font-bold">空白笔记</div><div class="text-[13px]" style="color:rgba(255,255,255,.85)">建在当前文件夹，带默认标签</div></div>
+          <i data-lucide="chevron-right" class="s18" style="opacity:.8"></i>
+        </a>
+      </div>
+      <div class="mx-4 mt-2.5 group grid grid-cols-3 py-1">
+        <a href="#daily" class="kk py-3.5"><svg class="kk-ic"><use href="#ic-daily"/></svg><span>记一笔</span></a>
+        <a href="#sheet-task" class="kk py-3.5"><svg class="kk-ic"><use href="#ic-todo"/></svg><span>待办</span></a>
+        <span class="kk py-3.5"><svg class="kk-ic"><use href="#ic-voice"/></svg><span>语音速记</span></span>
+      </div>
+      <div class="px mt-3">
+        <div class="group">
+          <div class="row ic"><i data-lucide="layout-template" class="s18 text-ink2"></i><span class="text-[15px]">从模板新建</span></div>
+          <div class="row ic"><i data-lucide="clipboard-paste" class="s18 text-ink2"></i><span class="text-[15px]">剪贴板内容建笔记</span></div>
+          <div class="row ic"><i data-lucide="globe" class="s18 text-ink2"></i><span class="text-[15px]">剪藏网页</span></div>
+          <div class="row ic"><i data-lucide="file-input" class="s18 text-ink2"></i><span class="text-[15px] flex-1">导入文件</span><span class="t-meta">md / txt / pdf</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="shot-cap"><b>13 新建（＋）</b>主操作「空白笔记」一条横贯，记一笔 / 待办 / 语音速记三格次之，其余方式收在列表里；建在哪个文件夹跟随当前所在层级，可改。</div>
+</div>
+
+</div>
+
+<!--
+落地到现有 React 代码：
+| 原型元素       | 本项目实现                                              |
+|----------------|---------------------------------------------------------|
+| 底部 Tab       | MobileLayout + mobileTabRegistry（保留 4 格可配）        |
+| 长按 / 更多    | components/mobile/ActionSheet + hooks/useLongPress      |
+| 左滑操作       | 新增 SwipeRow（与 ActionSheet 共用菜单数据）              |
+| 编辑器         | 复用 TiptapEditor + 新增 MobileEditorToolbar             |
+| 键盘回避       | hooks/useKeyboardInset                                   |
+| 设计令牌       | styles/variables.css 的 --kb-*，手机端覆盖文字色         |
+| 双链记号       | 新增 LinkCountBadge，数据来自现有 backlinks 接口          |
+-->
+<script>lucide.createIcons();</script>
+</body>
+</html>
