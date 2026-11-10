@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Bold,
   ChevronLeft,
@@ -82,6 +82,9 @@ export function MobileNoteEditor() {
   const navigate = useNavigate();
   const { id: idParam } = useParams<{ id: string }>();
   const noteId = Number(idParam);
+  // 从搜索结果进来会带 ?q=：交给编辑器自动展开查找条并定位到第一处命中（同 PC）
+  const [searchParams] = useSearchParams();
+  const initialSearch = (searchParams.get("q") ?? "").trim() || undefined;
   const keyboardInset = useKeyboardInset(); // 键盘弹出时整列顶到键盘上方
 
   const [note, setNote] = useState<Note | null>(null);
@@ -495,6 +498,7 @@ export function MobileNoteEditor() {
               showFooterStats={false}
               onStats={(s) => setWords(s.words)}
               onEditorReady={setEditor}
+              initialSearch={initialSearch}
               onWikiLinkClick={(t, id) => void openWikiLink(t, id)}
             />
           ) : null}

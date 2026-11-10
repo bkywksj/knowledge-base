@@ -347,6 +347,21 @@
   line-height: 1.85;
   color: var(--m-ink);
 }
+/* 查找条（PC 的 SearchReplaceBar，从搜索结果带 ?q= 进来会自动展开）：
+   PC 上是浮在右上角、最小宽 360 的浮条，手机上会盖住正文首行还溢出屏幕 → 改成吸顶的整行条，占文档流 */
+.m-editor-body .tiptap-wrapper > .sticky.z-30 {
+  height: auto !important;
+  margin-bottom: 12px;
+  background: var(--m-surface);
+}
+.m-editor-body .tiptap-wrapper > .sticky.z-30 > .absolute {
+  position: relative !important;
+  top: 0 !important;
+  right: auto !important;
+  min-width: 0 !important;
+  width: 100%;
+  box-shadow: none !important;
+}
 
 /* 金刚区：彩色实心图标 + 13px 标签，无底色块、无阴影；整格热区 */
 .m-kk {

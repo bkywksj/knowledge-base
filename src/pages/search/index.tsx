@@ -38,6 +38,7 @@ import { highlightText, highlightFocusedSnippet } from "@/lib/highlight";
 import { buildFolderPath } from "@/lib/folderPath";
 import { relativeTime } from "@/lib/utils";
 import { resolveBrowseSelection, type BrowseSelection } from "@/lib/searchBrowse";
+import { buildSearchFilters, toDayRange } from "@/lib/searchFilters";
 import { SearchBrowse, type SearchBrowseHandle } from "./SearchBrowse";
 import type {
   SearchResult,
@@ -54,72 +55,6 @@ const ESTIMATED_ROW_HEIGHT = 76;
 const ALL_MODE_NOTES_PREVIEW = 20;
 
 type Scope = "all" | "notes" | "tasks";
-
-/** 把文件夹树拍平成"该节点 + 全部子孙"的 id 列表 */
-function collectSubtreeIds(folders: Folder[], targetIds: number[]): number[] {
-  const out = new Set<number>();
-  const walk = (nodes: Folder[], inside: boolean) => {
-    for (const n of nodes) {
-      const hit = inside || targetIds.includes(n.id);
-      if (hit) out.add(n.id);
-      const children = (n as Folder & { children?: Folder[] }).children;
-      if (children?.length) walk(children, hit);
-    }
-  };
-  walk(folders, false);
-  return [...out];
-}
-
-/**
- * RangePicker 给出的 [起, 止] 日期串 → 后端要的时间范围（任一端为空返回 null = 不筛选）。
- *
- * 后端比的是 notes 表的 `YYYY-MM-DD HH:MM:SS`，补上时分秒才能让"选到今天"
- * 含当天全部笔记，而不是卡在 00:00:00。
- */
-function toDayRange(strs: [string, string]): [string, string] | null {
-  return strs[0] && strs[1] ? [`${strs[0]} 00:00:00`, `${strs[1]} 23:59:59`] : null;
-}
-
-/**
- * 组装成后端要的 filters。
- *
- * 🔴 没勾的维度必须**省略字段**而不是传 `[]` —— 后端 fail-closed，
- * 空数组表示"勾了但没选中"会直接返回零结果（见 types/SearchFilters 注释）。
- * 抽成纯函数：外部跳转时要按 URL 里的新条件立刻搜，不能等 state 更新后再读 useMemo。
- */
-function buildSearchFilters(
-  s: {
-    folders: number[];
-    tags: number[];
-    types: NoteType[];
-    dateRange: [string, string] | null;
-    createdRange: [string, string] | null;
-    titleOnly: boolean;
-  },
-  folderTree: Folder[],
-): SearchFilters | undefined {
-  const f: SearchFilters = {};
-  if (s.folders.length > 0) {
-    // 选了「工作」应当含其下所有子文件夹，否则用户会觉得"明明在这个目录里却搜不到"。
-    // 🔴 从 URL 恢复时文件夹树可能还没拉到：此时子树展开会得到 []，后端 fail-closed 直接零结果。
-    //    先用选中的 id 本身，树到了 filtersKey 变化会自动按子树重搜。
-    f.folderIds =
-      folderTree.length > 0 ? collectSubtreeIds(folderTree, s.folders) : s.folders;
-  }
-  if (s.tags.length > 0) f.tagIds = s.tags;
-  if (s.types.length > 0) f.noteTypes = s.types;
-  if (s.dateRange) {
-    f.updatedAfter = s.dateRange[0];
-    f.updatedBefore = s.dateRange[1];
-  }
-  if (s.createdRange) {
-    f.createdAfter = s.createdRange[0];
-    f.createdBefore = s.createdRange[1];
-  }
-  // 只在勾选时才传：不勾 = 省略字段，保持与旧版请求完全一致
-  if (s.titleOnly) f.titleOnly = true;
-  return Object.keys(f).length > 0 ? f : undefined;
-}
 
 function DesktopSearchPage() {
   const navigate = useNavigate();
