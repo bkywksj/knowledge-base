@@ -104,24 +104,28 @@
 - [x] 最近笔记卡：置顶 Pin / 文档图标；空标题「未命名笔记」；前 80 字预览；相对时间 `MobileHome.tsx:305-321`
 
 #### src/pages/notes/MobileNotes.tsx
-- [ ] 进入时拉笔记列表（第 1 页 30 条），无分页 `MobileNotes.tsx:25` `MobileNotes.tsx:35-46`
-- [ ] 加载失败只打 console `MobileNotes.tsx:41-42`
-- [ ] 编辑页返回后自动刷新（`notesRefreshTick`） `MobileNotes.tsx:49-53`
-- [ ] 顶栏「笔记」+「共 N 篇」 `MobileNotes.tsx:112-115`
-- [ ] 搜索按钮 → /search `MobileNotes.tsx:118-124`
-- [ ] 「更多」⋯ 空占位 `MobileNotes.tsx:125-130`
-- [ ] 文件夹 chip 只有静态「全部 N」 `MobileNotes.tsx:135-139`
-- [ ] 加载中且为空「加载中...」 `MobileNotes.tsx:144-147`
-- [ ] 为空「还没有笔记」+「点右下 + 按钮新建第一篇」 `MobileNotes.tsx:148-155`
-- [ ] 「置顶」分组 — 有置顶笔记时 `MobileNotes.tsx:158-170`
-- [ ] 「最近」分组 — 有未置顶笔记时 `MobileNotes.tsx:172-184`
-- [ ] 轻点笔记 → /notes/:id `MobileNotes.tsx:165` `MobileNotes.tsx:179` `MobileNotes.tsx:232`
-- [ ] 长按笔记弹底部面板（滑动不误触，禁文字选择和系统长按菜单） `MobileNotes.tsx:166` `MobileNotes.tsx:180` `MobileNotes.tsx:232-239`
-- [ ] 笔记卡：空标题「未命名笔记」；置顶 Pin；去 HTML 后前 80 字 2 行预览；相对时间 `MobileNotes.tsx:225-229` `MobileNotes.tsx:243-254`
-- [ ] 面板标题 = 笔记标题，可关闭 `MobileNotes.tsx:190-195`
-- [ ] 长按「置顶 / 取消置顶」→ `noteApi.togglePin`，提示后刷新 `MobileNotes.tsx:61-74`
-- [ ] 长按「复制笔记 ID」→ 剪贴板，提示「已复制 ID：N」 `MobileNotes.tsx:75-86`
-- [ ] 长按「删除」（危险）→ `trashApi.softDelete`，不二次确认，提示「已移到回收站」 `MobileNotes.tsx:87-102`
+
+> ✅ M3-2 验收（2026-11-10）：全部笔记列表保留在根目录（置顶 / 最近分组照旧，默认排序时）· 「共 N 篇」移到区块标题 ·
+> 「⋯」空占位 → 当前文件夹菜单 · 静态「全部」chip → 真正的文件夹层级（`?folder=` 与 PC 同参数，返回键回上一层，面包屑跳任意级）·
+> 只拉 30 条 → 加载更多 · 长按菜单保留置顶 / 复制 ID / 删除（仍不二次确认，进回收站），新增重命名 / 移动到 / 复制 wiki 链接 · 新增左滑移动 / 删除、排序、标签页签
+- [x] 进入时拉笔记列表（第 1 页 30 条），无分页 `MobileNotes.tsx:25` `MobileNotes.tsx:35-46`
+- [x] 加载失败只打 console `MobileNotes.tsx:41-42`
+- [x] 编辑页返回后自动刷新（`notesRefreshTick`） `MobileNotes.tsx:49-53`
+- [x] 顶栏「笔记」+「共 N 篇」 `MobileNotes.tsx:112-115`
+- [x] 搜索按钮 → /search `MobileNotes.tsx:118-124`
+- [x] 「更多」⋯ 空占位 `MobileNotes.tsx:125-130`
+- [x] 文件夹 chip 只有静态「全部 N」 `MobileNotes.tsx:135-139`
+- [x] 加载中且为空「加载中...」 `MobileNotes.tsx:144-147`
+- [x] 为空「还没有笔记」+「点右下 + 按钮新建第一篇」 `MobileNotes.tsx:148-155`
+- [x] 「置顶」分组 — 有置顶笔记时 `MobileNotes.tsx:158-170`
+- [x] 「最近」分组 — 有未置顶笔记时 `MobileNotes.tsx:172-184`
+- [x] 轻点笔记 → /notes/:id `MobileNotes.tsx:165` `MobileNotes.tsx:179` `MobileNotes.tsx:232`
+- [x] 长按笔记弹底部面板（滑动不误触，禁文字选择和系统长按菜单） `MobileNotes.tsx:166` `MobileNotes.tsx:180` `MobileNotes.tsx:232-239`
+- [x] 笔记卡：空标题「未命名笔记」；置顶 Pin；去 HTML 后前 80 字 2 行预览；相对时间 `MobileNotes.tsx:225-229` `MobileNotes.tsx:243-254`
+- [x] 面板标题 = 笔记标题，可关闭 `MobileNotes.tsx:190-195`
+- [x] 长按「置顶 / 取消置顶」→ `noteApi.togglePin`，提示后刷新 `MobileNotes.tsx:61-74`
+- [x] 长按「复制笔记 ID」→ 剪贴板，提示「已复制 ID：N」 `MobileNotes.tsx:75-86`
+- [x] 长按「删除」（危险）→ `trashApi.softDelete`，不二次确认，提示「已移到回收站」 `MobileNotes.tsx:87-102`
 
 #### src/pages/notes/MobileNoteEditor.tsx
 - [ ] 路由 /notes/:id 取 ID；无效显示「笔记 ID 无效」 `MobileNoteEditor.tsx:62-63` `MobileNoteEditor.tsx:281-287`
