@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
 import { theme as antdTheme } from "antd";
 import { NotebookText, Folder as FolderIcon } from "lucide-react";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 export interface WikiSuggestionItem {
   id: number;
@@ -22,6 +23,8 @@ export const WikiLinkSuggestionList = forwardRef<WikiLinkSuggestionListRef, Prop
   function WikiLinkSuggestionListInner({ items, command }, ref) {
     const [selectedIndex, setSelectedIndex] = useState(0);
     const { token } = antdTheme.useToken();
+    // 手机上候选行放大到 44 高、15px 字：原 6px 内边距的行只有 29 高，手指点不准
+    const isMobile = useIsMobile();
 
     useEffect(() => {
       setSelectedIndex(0);
@@ -57,7 +60,7 @@ export const WikiLinkSuggestionList = forwardRef<WikiLinkSuggestionListRef, Prop
             boxShadow: token.boxShadowSecondary,
             padding: "8px 12px",
             fontSize: 13,
-            color: token.colorTextTertiary,
+            color: token.colorTextSecondary,
           }}
         >
           无匹配笔记
@@ -90,8 +93,8 @@ export const WikiLinkSuggestionList = forwardRef<WikiLinkSuggestionListRef, Prop
                 command(item);
               }}
               style={{
-                padding: "6px 10px",
-                fontSize: 13,
+                padding: isMobile ? "12px 12px" : "6px 10px",
+                fontSize: isMobile ? 15 : 13,
                 borderRadius: 4,
                 cursor: "pointer",
                 display: "flex",
@@ -119,8 +122,8 @@ export const WikiLinkSuggestionList = forwardRef<WikiLinkSuggestionListRef, Prop
                     display: "flex",
                     alignItems: "center",
                     gap: 3,
-                    fontSize: 11,
-                    color: token.colorTextTertiary,
+                    fontSize: isMobile ? 12 : 11,
+                    color: isMobile ? token.colorTextSecondary : token.colorTextTertiary,
                     flexShrink: 0,
                     maxWidth: 100,
                     overflow: "hidden",

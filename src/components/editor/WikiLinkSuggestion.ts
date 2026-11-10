@@ -9,6 +9,7 @@ import {
 } from "@tiptap/pm/state";
 import tippy, { type Instance as TippyInstance } from "tippy.js";
 import { linkApi } from "@/lib/api";
+import { wikiSuggestionAllowed } from "@/lib/wikiLinkSuggest";
 import {
   WikiLinkSuggestionList,
   type WikiLinkSuggestionListRef,
@@ -97,16 +98,9 @@ export const WikiLinkSuggestion = Extension.create({
         // `中文[[`、`word[[` 也应触发候选列表（对齐 Obsidian 行为）。
         // 默认 `allowedPrefixes = [' ']` 会把这些场景拒掉。
         allowedPrefixes: null,
-        // 用户已经自己敲了 ]] 时应当退出
-        allow: ({ state, range }) => {
-          const before = state.doc.textBetween(
-            Math.max(0, range.from - 2),
-            range.to,
-            "\n",
-            "\0",
-          );
-          return !before.endsWith("]]");
-        },
+        // `[[` 到光标之间已经出现过 `]]` = 这对双链已闭合，不是在输入 → 退出（规则与单测见 lib/wikiLinkSuggest）
+        allow: ({ state, range }) =>
+          wikiSuggestionAllowed(state.doc.textBetween(range.from, range.to, "\n", "\0")),
         items: async ({ query }: { query: string }) => {
           const keyword = query.trim();
           try {
