@@ -93,7 +93,7 @@
 |---|---|---|---|---|
 | M3-1 ✅ | 首页 | 01 | `pages/home/MobileHome.tsx` | **2026-11-10 完成**：数字条 / 金刚区 / 快速记一笔（`lib/mobileQuickNote.ts`，格式同 PC）/ 今天待办可勾完成 / 横滑继续编辑 / 本周写作可展开 30 天热力图；淡紫 + 暖炭两套主题量化检查全过；底稿 24 条全部勾回 |
 | M3-2 ✅ | 笔记 · 文件夹层级 | 02 / 03 | `pages/notes/MobileNotes.tsx` | **2026-11-10 完成**（群反馈：手机端没有文件夹层级）：`?folder=` 逐层进入、返回键回上一层、面包屑；根目录保留全部笔记；左滑 / 长按完整菜单（重命名先取最新正文再存）；文件夹菜单（删除同 PC 两段式）；排序 / 加载更多 / 标签页签；新增 `FolderPickerSheet`、`TextPromptModal`。三套主题量化检查全过。**未做**：笔记行「链入 N」—— 列表接口不带链入数，待评估后端顺带返回 |
-| M3-3 | 编辑器 | 04 / 05 / 06 | `pages/notes/MobileNoteEditor.tsx` | **风险最大**：纯 textarea → 复用 TiptapEditor；分两步：①阅读态 + 富文本渲染 ②编辑态 + 键盘格式条 + 插入面板；保留源码模式开关兜底；安卓输入法要真机测 |
+| M3-3 🟡 | 编辑器 | 04 / 05 / 06 | `pages/notes/MobileNoteEditor.tsx` | **第一步 2026-11-10 完成**：正文换 TiptapEditor（新增 `hideToolbar` 属性，默认 false，PC 不受影响）；顶栏 / 文件夹路径 / 标签 / 链入数；键盘格式条 10 项；「…」面板（置顶 / 隐藏 / 源码模式 / 移动 / 复制 / 删除）；加密笔记只读；图片走 input+imageApi.save（安卓 content:// 路径存不了）。浏览器实测输入、加粗、自动保存出 Markdown、源码模式往返、撤销、只读拦截全对。**待做**：第二步（插入面板 / 查找替换 / 历史版本 / 大纲 / 标签编辑）；**安卓输入法真机验证** |
 | M3-4 | 新建面板 | 13 | `pages/quick-create/index.tsx` | 建在当前文件夹；空白笔记 / 记一笔 / 待办 / 语音 + 其它方式 |
 | M3-5 | 待办 | 07 / 08 | `MobileTasks.tsx` · `TaskCreateSheet.tsx` · `MobileTaskDetail.tsx` | 标题下拉 = PC 侧栏筛选；分组胶囊；贴键盘的新建面板 |
 | M3-6 | 日记 | 09 | `pages/daily/MobileDaily.tsx` | 周条 + 下拉展开整月；当天时间线 + 追加 |

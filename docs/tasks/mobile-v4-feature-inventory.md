@@ -128,28 +128,33 @@
 - [x] 长按「删除」（危险）→ `trashApi.softDelete`，不二次确认，提示「已移到回收站」 `MobileNotes.tsx:87-102`
 
 #### src/pages/notes/MobileNoteEditor.tsx
-- [ ] 路由 /notes/:id 取 ID；无效显示「笔记 ID 无效」 `MobileNoteEditor.tsx:62-63` `MobileNoteEditor.tsx:281-287`
-- [ ] 加载笔记，失败提示「加载笔记失败: …」 `MobileNoteEditor.tsx:90-108`
-- [ ] 全屏覆盖，盖住 Tab 和 FAB `MobileNoteEditor.tsx:292-298`
-- [ ] 键盘弹出整体顶起，工具栏不被挡 `MobileNoteEditor.tsx:64` `MobileNoteEditor.tsx:296`
-- [ ] 返回：取消防抖、立即保存、通知列表刷新、返回 `MobileNoteEditor.tsx:161-176` `MobileNoteEditor.tsx:301-307`
-- [ ] 手势返回等卸载时兜底保存并通知刷新 `MobileNoteEditor.tsx:179-196`
-- [ ] 顶栏「编辑笔记」+ 保存状态（保存中… / 已保存 · 刚刚，2.5 秒后隐藏） `MobileNoteEditor.tsx:309-313` `MobileNoteEditor.tsx:49` `MobileNoteEditor.tsx:128-131` `MobileNoteEditor.tsx:476-489`
-- [ ] 编辑 / 预览切换 `MobileNoteEditor.tsx:316-326`
-- [ ] 置顶切换（防重复点击，失败提示） `MobileNoteEditor.tsx:198-209` `MobileNoteEditor.tsx:327-338`
-- [ ] 「更多」⋮ 空占位 `MobileNoteEditor.tsx:339-344`
-- [ ] 标题输入框（占位「无标题笔记」），输入触发自动保存 `MobileNoteEditor.tsx:350-360`
-- [ ] 元信息：更新日期、字数 `MobileNoteEditor.tsx:289` `MobileNoteEditor.tsx:362-367`
-- [ ] 「已隐藏」徽标 — `note.is_hidden` `MobileNoteEditor.tsx:368-372`
-- [ ] 「已加密」徽标 — `note.is_encrypted` `MobileNoteEditor.tsx:373-377`
-- [ ] 正文 textarea（Markdown 源码），输入触发自动保存 — 编辑模式 `MobileNoteEditor.tsx:395-407`
-- [ ] 预览模式 ReactMarkdown 只读渲染 `MobileNoteEditor.tsx:380-388`
-- [ ] 预览时正文为空「（还没有内容，切回编辑模式开始写）」 `MobileNoteEditor.tsx:389-393`
-- [ ] 自动保存：停 1.2 秒调 `noteApi.update`（空标题用 `resolveNoteTitle` 兜底，带原 folder_id），失败提示 `MobileNoteEditor.tsx:47` `MobileNoteEditor.tsx:110-155`
-- [ ] 底部 Markdown 工具栏 — 仅编辑模式 `MobileNoteEditor.tsx:412-450`
-- [ ] 工具栏：加粗 / 斜体 / 一级标题 / 列表 / 任务项 / 双链 `[[…]]` / 图片 `![](…)` `MobileNoteEditor.tsx:418-438`
-- [ ] 插入后光标归位并保持焦点、触发自动保存；按下工具按钮不失焦 `MobileNoteEditor.tsx:239-279` `MobileNoteEditor.tsx:466-467`
-- [ ] 「针对本笔记问 AI」：先保存，新建对话（标题「关于：笔记名前 30 字」），挂本笔记，跳 /ai-chat/:id；请求中禁用 `MobileNoteEditor.tsx:216-237` `MobileNoteEditor.tsx:440-447`
+
+> ✅ M3-3 第一步验收（2026-11-10）：正文 textarea → TiptapEditor 富文本（存储仍是 Markdown）；textarea 保留为「…」里的源码模式开关 ·
+> 编辑 / 预览切换 → 编辑 / 阅读分段 · 置顶按钮挪进「…」操作格（同处新增隐藏）· 「⋮」空占位 → 「…」面板（源码模式 / 移动到 / 复制 wiki 链接 / 复制 ID / 删除）·
+> 格式条：加粗 / 斜体 / 标题（一级→二级→三级→正文轮换）/ 列表 / 任务 / 双链 `[[` / 图片（真插入，旧版只插 `![]()` 文字）+ 新增高亮 / 撤销 / 重做 / 收起键盘 ·
+> 问 AI 挪到顶栏 · 「已加密」徽标 → 加密笔记整页只读并提示（防止把占位内容存回去）· 新增文件夹路径（点击移动）/ 标签 / 链入数
+- [x] 路由 /notes/:id 取 ID；无效显示「笔记 ID 无效」 `MobileNoteEditor.tsx:62-63` `MobileNoteEditor.tsx:281-287`
+- [x] 加载笔记，失败提示「加载笔记失败: …」 `MobileNoteEditor.tsx:90-108`
+- [x] 全屏覆盖，盖住 Tab 和 FAB `MobileNoteEditor.tsx:292-298`
+- [x] 键盘弹出整体顶起，工具栏不被挡 `MobileNoteEditor.tsx:64` `MobileNoteEditor.tsx:296`
+- [x] 返回：取消防抖、立即保存、通知列表刷新、返回 `MobileNoteEditor.tsx:161-176` `MobileNoteEditor.tsx:301-307`
+- [x] 手势返回等卸载时兜底保存并通知刷新 `MobileNoteEditor.tsx:179-196`
+- [x] 顶栏「编辑笔记」+ 保存状态（保存中… / 已保存 · 刚刚，2.5 秒后隐藏） `MobileNoteEditor.tsx:309-313` `MobileNoteEditor.tsx:49` `MobileNoteEditor.tsx:128-131` `MobileNoteEditor.tsx:476-489`
+- [x] 编辑 / 预览切换 `MobileNoteEditor.tsx:316-326`
+- [x] 置顶切换（防重复点击，失败提示） `MobileNoteEditor.tsx:198-209` `MobileNoteEditor.tsx:327-338`
+- [x] 「更多」⋮ 空占位 `MobileNoteEditor.tsx:339-344`
+- [x] 标题输入框（占位「无标题笔记」），输入触发自动保存 `MobileNoteEditor.tsx:350-360`
+- [x] 元信息：更新日期、字数 `MobileNoteEditor.tsx:289` `MobileNoteEditor.tsx:362-367`
+- [x] 「已隐藏」徽标 — `note.is_hidden` `MobileNoteEditor.tsx:368-372`
+- [x] 「已加密」徽标 — `note.is_encrypted` `MobileNoteEditor.tsx:373-377`
+- [x] 正文 textarea（Markdown 源码），输入触发自动保存 — 编辑模式 `MobileNoteEditor.tsx:395-407`
+- [x] 预览模式 ReactMarkdown 只读渲染 `MobileNoteEditor.tsx:380-388`
+- [x] 预览时正文为空「（还没有内容，切回编辑模式开始写）」 `MobileNoteEditor.tsx:389-393`
+- [x] 自动保存：停 1.2 秒调 `noteApi.update`（空标题用 `resolveNoteTitle` 兜底，带原 folder_id），失败提示 `MobileNoteEditor.tsx:47` `MobileNoteEditor.tsx:110-155`
+- [x] 底部 Markdown 工具栏 — 仅编辑模式 `MobileNoteEditor.tsx:412-450`
+- [x] 工具栏：加粗 / 斜体 / 一级标题 / 列表 / 任务项 / 双链 `[[…]]` / 图片 `![](…)` `MobileNoteEditor.tsx:418-438`
+- [x] 插入后光标归位并保持焦点、触发自动保存；按下工具按钮不失焦 `MobileNoteEditor.tsx:239-279` `MobileNoteEditor.tsx:466-467`
+- [x] 「针对本笔记问 AI」：先保存，新建对话（标题「关于：笔记名前 30 字」），挂本笔记，跳 /ai-chat/:id；请求中禁用 `MobileNoteEditor.tsx:216-237` `MobileNoteEditor.tsx:440-447`
 
 #### src/pages/quick-create/index.tsx
 - [ ] 顶栏返回 + 标题「新建」 `index.tsx:140-147`
