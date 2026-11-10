@@ -73,30 +73,35 @@
 - [ ] 可配置格数固定 4 `mobileTabRegistry.ts:135`
 
 #### src/pages/home/MobileHome.tsx
-- [ ] 进入时并发拉取：统计、最近 2 篇笔记、未完成待办、待复习闪卡、30 天写作趋势；除统计外失败回退空值 `MobileHome.tsx:64-92`
-- [ ] 加载失败只打 console，没有错误 / 加载中 UI（统计未到显示「—」） `MobileHome.tsx:85-87` `MobileHome.tsx:127` `MobileHome.tsx:171`
-- [ ] 顶部日期和星期 `MobileHome.tsx:96-98` `MobileHome.tsx:107`
-- [ ] 按时段问候语（夜深了 / 早上好 / 中午好 / 下午好 / 晚上好） `MobileHome.tsx:39-50` `MobileHome.tsx:109`
-- [ ] 右上角头像 🦊，静态 `MobileHome.tsx:112-114`
-- [ ] **各模块显示与否由 `mobileDashboardItems` 配置控制**（下列每项都受控） `MobileHome.tsx:54-55`
-- [ ] 数据卡区：手机 2×2，≥600px 一行 4 列 `MobileHome.tsx:118`
-- [ ] 数据卡「今日字数」→ /daily（实际显示 total_words）— `today_words` `MobileHome.tsx:119-130`
-- [ ] 数据卡「待复习闪卡」→ /cards，副标题「去复习 / 暂无待复习」— `due_cards` `MobileHome.tsx:132-145`
-- [ ] 数据卡「今日待办」→ /tasks（最多显示 3）— `today_tasks_card` `MobileHome.tsx:147-160` `MobileHome.tsx:81`
-- [ ] 数据卡「笔记总数」附「今日更新 N」→ /notes — `total_notes` `MobileHome.tsx:162-177`
-- [ ] 快速操作区 — `quick_actions`：闪念 → /notes · 新建 → /notes · 今日日记 → /daily · 问 AI → /ai `MobileHome.tsx:181-213`
-- [ ] 今日待办速览「今日待办 · N 项」— `today_tasks_list` `MobileHome.tsx:216-221`
-- [ ] 待办速览「全部 →」→ /tasks `MobileHome.tsx:222-227`
-- [ ] 待办为空「暂无待办，享受当下 ✨」 `MobileHome.tsx:229-233`
-- [ ] 待办行（最多 3）点击 → /tasks；勾选框只读 `MobileHome.tsx:236-247`
-- [ ] 待办行有截止时间显示时:分 `MobileHome.tsx:251-258`
-- [ ] 30 天写作热力图，标题旁 30 天总字数 — `heatmap` `MobileHome.tsx:267-277`
-- [ ] 热力图：周日开头补空、5 档、今天加圈、悬浮「日期 · N 字」、图例「少 → 多」 `MobileHome.tsx:374-435` `MobileHome.tsx:446-455`
-- [ ] 最近编辑区 — `recent_notes` `MobileHome.tsx:280-281`
-- [ ] 最近编辑「全部 →」→ /notes `MobileHome.tsx:284-289`
-- [ ] 最近编辑为空「还没有笔记，去新建一篇吧」 `MobileHome.tsx:291-295`
-- [ ] 最近笔记卡（最多 2）→ /notes/:id `MobileHome.tsx:298-301` `MobileHome.tsx:70`
-- [ ] 最近笔记卡：置顶 Pin / 文档图标；空标题「未命名笔记」；前 80 字预览；相对时间 `MobileHome.tsx:305-321`
+
+> ✅ M3-1 验收（2026-11-10）：4 张数据卡 → 一行数字条（开关照旧；今日字数改用写作趋势的今天字数；今日待办 = 今天 + 逾期真实计数；「今日更新 N」改成数字旁 +N）·
+> 快速操作 → 金刚区（新建笔记直接建一篇、添加待办 /tasks?new=1、今日日记、问 AI；原「闪念」由「快速记一笔」输入条接替，真正追加到今天日记）·
+> 待办速览最多 5 条 + 还有 N 项，勾选可直接完成 · 热力图 → 本周写作，点开 30 天热力图（附 30 天合计）· 最近编辑 → 横滑「继续编辑」8 篇（置顶带图钉）·
+> 头像 🦊 是不可点的静态装饰，按底稿建议去掉，右上角换成「同步」入口
+- [x] 进入时并发拉取：统计、最近 2 篇笔记、未完成待办、待复习闪卡、30 天写作趋势；除统计外失败回退空值 `MobileHome.tsx:64-92`
+- [x] 加载失败只打 console，没有错误 / 加载中 UI（统计未到显示「—」） `MobileHome.tsx:85-87` `MobileHome.tsx:127` `MobileHome.tsx:171`
+- [x] 顶部日期和星期 `MobileHome.tsx:96-98` `MobileHome.tsx:107`
+- [x] 按时段问候语（夜深了 / 早上好 / 中午好 / 下午好 / 晚上好） `MobileHome.tsx:39-50` `MobileHome.tsx:109`
+- [x] 右上角头像 🦊，静态 `MobileHome.tsx:112-114`
+- [x] **各模块显示与否由 `mobileDashboardItems` 配置控制**（下列每项都受控） `MobileHome.tsx:54-55`
+- [x] 数据卡区：手机 2×2，≥600px 一行 4 列 `MobileHome.tsx:118`
+- [x] 数据卡「今日字数」→ /daily（实际显示 total_words）— `today_words` `MobileHome.tsx:119-130`
+- [x] 数据卡「待复习闪卡」→ /cards，副标题「去复习 / 暂无待复习」— `due_cards` `MobileHome.tsx:132-145`
+- [x] 数据卡「今日待办」→ /tasks（最多显示 3）— `today_tasks_card` `MobileHome.tsx:147-160` `MobileHome.tsx:81`
+- [x] 数据卡「笔记总数」附「今日更新 N」→ /notes — `total_notes` `MobileHome.tsx:162-177`
+- [x] 快速操作区 — `quick_actions`：闪念 → /notes · 新建 → /notes · 今日日记 → /daily · 问 AI → /ai `MobileHome.tsx:181-213`
+- [x] 今日待办速览「今日待办 · N 项」— `today_tasks_list` `MobileHome.tsx:216-221`
+- [x] 待办速览「全部 →」→ /tasks `MobileHome.tsx:222-227`
+- [x] 待办为空「暂无待办，享受当下 ✨」 `MobileHome.tsx:229-233`
+- [x] 待办行（最多 3）点击 → /tasks；勾选框只读 `MobileHome.tsx:236-247`
+- [x] 待办行有截止时间显示时:分 `MobileHome.tsx:251-258`
+- [x] 30 天写作热力图，标题旁 30 天总字数 — `heatmap` `MobileHome.tsx:267-277`
+- [x] 热力图：周日开头补空、5 档、今天加圈、悬浮「日期 · N 字」、图例「少 → 多」 `MobileHome.tsx:374-435` `MobileHome.tsx:446-455`
+- [x] 最近编辑区 — `recent_notes` `MobileHome.tsx:280-281`
+- [x] 最近编辑「全部 →」→ /notes `MobileHome.tsx:284-289`
+- [x] 最近编辑为空「还没有笔记，去新建一篇吧」 `MobileHome.tsx:291-295`
+- [x] 最近笔记卡（最多 2）→ /notes/:id `MobileHome.tsx:298-301` `MobileHome.tsx:70`
+- [x] 最近笔记卡：置顶 Pin / 文档图标；空标题「未命名笔记」；前 80 字预览；相对时间 `MobileHome.tsx:305-321`
 
 #### src/pages/notes/MobileNotes.tsx
 - [ ] 进入时拉笔记列表（第 1 页 30 条），无分页 `MobileNotes.tsx:25` `MobileNotes.tsx:35-46`
