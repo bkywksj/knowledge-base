@@ -53,7 +53,7 @@ export function activityBarWidth(showLabels: boolean): number {
     : ACTIVITY_BAR_WIDTH_ICON_ONLY;
 }
 
-interface ActivityItem {
+export interface ActivityItem {
   view: ActiveView;
   route: string;
   /** 完整名：悬停提示、aria-label、功能模块开关等处用 */
@@ -77,7 +77,8 @@ interface ActivityItem {
  *
  * 分组而非平铺的好处：用户扫一眼就能锁定意图所在区，比按使用频率排更省认知。
  */
-const MAIN_GROUPS: ActivityItem[][] = [
+/** 也给手机端「我的 → 全部功能」用：顺序与显示规则（core / 功能模块开关）两端一致 */
+export const MAIN_GROUPS: ActivityItem[][] = [
   // 概览
   [{ view: "home", route: "/", label: "首页", icon: <RailHome />, core: true }],
   // 创作 / 工作流
@@ -102,7 +103,7 @@ const MAIN_GROUPS: ActivityItem[][] = [
 ];
 
 /** 底部视图（放最下方，视觉上与主视图分组） */
-const BOTTOM_ITEMS: ActivityItem[] = [
+export const BOTTOM_ITEMS: ActivityItem[] = [
   { view: "hidden", route: "/hidden", label: "隐藏笔记", short: "隐藏", icon: <RailEyeOff /> },
   { view: "trash", route: "/trash", label: "回收站", icon: <RailTrash />, core: true },
   { view: "about", route: "/about", label: "关于", icon: <RailInfo />, core: true },

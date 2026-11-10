@@ -106,9 +106,10 @@ const PAGES_WITH_OWN_FAB = ["/ai", "/tasks"];
  * - 笔记列表：新建按钮在顶栏右侧；列表摘要会伸到右下角，FAB 会压住内容
  * - 日记：当天卡片自带「记一笔」和编辑入口；本月列表行尾的字数会被 FAB 压住
  * - 搜索：不是新建的场景；结果行右侧（白板标签、删除历史的 ×）会被 FAB 压住
+ * - 我的：设置页，不是新建的场景；设置行右侧的值和箭头会被 FAB 压住
  * Rail 形态的「新建」在侧边栏里、不压内容，照常显示。
  */
-const PAGES_WITHOUT_FAB = ["/", "/notes", "/daily", "/search"];
+const PAGES_WITHOUT_FAB = ["/", "/notes", "/daily", "/search", "/settings"];
 
 export function MobileLayout() {
   const navigate = useNavigate();

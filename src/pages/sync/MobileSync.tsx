@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   ChevronLeft,
   CloudUpload,
@@ -151,6 +151,19 @@ export function MobileSync() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // 「我的」页同步卡点「立即同步」会带 state.syncNow = 后端 id 跳过来：列表加载完就对它跑一键同步。
+  // 同步流程（推 → 拉、删除确认、问题汇总、系统通知）只在本页维护一份，不在「我的」页复制
+  const location = useLocation();
+  const syncNowRef = useRef<number | null>((location.state as { syncNow?: number } | null)?.syncNow ?? null);
+  useEffect(() => {
+    const id = syncNowRef.current;
+    if (id == null || loading) return;
+    syncNowRef.current = null;
+    navigate(location.pathname, { replace: true, state: null });
+    if (backends.some((b) => b.id === id)) void syncAll(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, backends]);
 
   function openAdd() {
     setEditingId(null);

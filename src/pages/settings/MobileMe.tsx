@@ -1,27 +1,23 @@
-import { useEffect, useRef, useState } from "react";
+import { cloneElement, isValidElement, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { message, Modal, Progress } from "antd";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { getVersion } from "@tauri-apps/api/app";
 import {
-  Settings,
-  Layers,
-  GitFork,
-  MessageSquareText,
-  CloudUpload,
-  Folder,
-  FileArchive,
-  Trash2,
-  Moon,
-  Palette,
-  LockKeyhole,
-  KeyRound,
   Boxes,
-  Sparkles,
-  Plug,
+  Cloud,
+  CloudOff,
+  FileArchive,
+  FolderInput,
   Info,
-  ChevronRight,
+  KeyRound,
+  LockKeyhole,
+  Palette,
+  Plug,
   RefreshCw,
+  Sparkles,
 } from "lucide-react";
 import {
   systemApi,
@@ -30,23 +26,41 @@ import {
   aiModelApi,
   promptApi,
   mobileUpdateApi,
+  syncV1Api,
 } from "@/lib/api";
 import {
   MOBILE_UPDATE_PROGRESS_EVENT,
   type DashboardStats,
   type MobileDownloadProgress,
   type MobileUpdateInfo,
+  type SyncBackend,
 } from "@/types";
-import { useAppStore } from "@/store";
+import { useAppStore, type ActiveView } from "@/store";
+import { relativeTime } from "@/lib/utils";
+import { themes, type ThemeMeta } from "@/theme/tokens";
+import { MOBILE_TAB_REGISTRY, type MobileTabKey } from "@/lib/mobileTabRegistry";
+import { BOTTOM_ITEMS, MAIN_GROUPS, type ActivityItem } from "@/components/layout/ActivityBar";
+import { useLongPress } from "@/hooks/useLongPress";
+import { MGroup, MPageHeader, MRow, MSectionHeader } from "@/components/mobile/primitives";
+import { MSheet, PickRow } from "@/components/mobile/MSheet";
+import { ActionSheet, type ActionSheetItem } from "@/components/mobile/ActionSheet";
 
 /**
- * 移动端「我的」页（设计稿：10-me.html）
+ * 移动端「我的」页（v4 原型 12 屏）
  *
- * 这是 5 Tab 之一，路由 /settings 在 isMobile=true 时渲染本组件。
- * 大部分二级入口（同步/导入/导出/外观/隐藏 PIN/Vault）暂不跳转 — 现状下他们大多是
- * 桌面专属功能，移动端要么走完整重写要么禁用。本页先把信息架构 + 数据搭起来，
- * 二级页跳转随后逐个 wire。
+ * 5 Tab 之一，路由 /settings 在 isMobile=true 时渲染本组件。
+ *
+ * - 头部：「我的知识库」+ 笔记 / 字数 / 双链 / 标签 / 今日更新
+ * - 同步卡：第一个启用的同步后端 + 上次同步时间；「立即同步」跳同步页并自动跑（流程只在同步页维护一份）
+ * - 全部功能：= PC 活动栏除首页 / 关于外的全部入口，顺序与显示规则（core / 功能模块开关）直接读 ActivityBar 的列表；
+ *   已在底部 Tab 的带点，长按选择放到底部哪个位置
+ * - 设置分组：外观与主题（手机上可切 9 套主题）/ 模型服务 / 功能模块与底部 Tab / 隐私 / 数据 / 关于与更新
  */
+
+/** 不进「全部功能」的视图：首页有自己的 Tab；关于在设置分组里 */
+const EXCLUDED_VIEWS: ActiveView[] = ["home", "about"];
+/** 格子上的名字：大多用活动栏短名；「隐藏」单独两个字意思不清，用全名 */
+const CELL_LABEL: Partial<Record<ActiveView, string>> = { hidden: "隐藏笔记" };
 
 interface CountStats {
   dueCards: number;
@@ -64,6 +78,19 @@ export function MobileMe() {
     modelCount: 0,
     promptCount: 0,
   });
+  const [backends, setBackends] = useState<SyncBackend[] | null>(null);
+  const [version, setVersion] = useState<string>("");
+  const [themeOpen, setThemeOpen] = useState(false);
+  const [tabFor, setTabFor] = useState<ActivityItem | null>(null);
+
+  const enabledViews = useAppStore((s) => s.enabledViews);
+  const tabKeys = useAppStore((s) => s.mobileTabKeys);
+  const urgentTodoCount = useAppStore((s) => s.urgentTodoCount);
+  const themeCategory = useAppStore((s) => s.themeCategory);
+  const lightTheme = useAppStore((s) => s.lightTheme);
+  const darkTheme = useAppStore((s) => s.darkTheme);
+  const currentTheme = themes.find((t) => t.key === (themeCategory === "light" ? lightTheme : darkTheme));
+
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   /** 非 null = 正在下载该版本的 APK，弹进度对话框 */
   const [downloading, setDownloading] = useState<MobileUpdateInfo | null>(null);
@@ -125,7 +152,7 @@ export function MobileMe() {
         Modal.confirm({
           title: "需要允许安装未知应用",
           content: (
-            <div className="text-sm text-slate-600">
+            <div className="text-sm text-[var(--m-ink2)]">
               新版已下载完成。Android 要求你在系统设置里给「知识库」单独打开「允许安装未知应用」，
               打开后返回本页再点一次「检查更新」即可安装。
             </div>
@@ -152,8 +179,8 @@ export function MobileMe() {
         title: "App 内更新失败",
         content: (
           <div className="text-sm">
-            <div className="mb-2 text-slate-600">{String(e)}</div>
-            <div className="text-xs text-slate-400">
+            <div className="mb-2 text-[var(--m-ink2)]">{String(e)}</div>
+            <div className="text-xs text-[var(--m-ink3)]">
               可以改用浏览器下载：下完在通知栏点一下就能装。
             </div>
           </div>
@@ -189,15 +216,15 @@ export function MobileMe() {
         title: `发现新版本 v${info.latest_version}`,
         content: (
           <div className="text-sm">
-            <div className="mb-2 text-slate-500">
+            <div className="mb-2 text-[var(--m-ink3)]">
               当前 v{info.current_version} → 最新 v{info.latest_version}
             </div>
             {info.notes && (
-              <div className="max-h-40 overflow-auto whitespace-pre-wrap rounded bg-slate-50 p-2 text-xs text-slate-700">
+              <div className="max-h-40 overflow-auto whitespace-pre-wrap rounded bg-[var(--m-well)] p-2 text-xs text-[var(--m-ink)]">
                 {info.notes}
               </div>
             )}
-            <div className="mt-2 text-xs text-slate-400">
+            <div className="mt-2 text-xs text-[var(--m-ink3)]">
               点"立即更新"会在 App 内下载，下完自动拉起安装器（首次需在系统里允许"安装未知应用"）。
             </div>
           </div>
@@ -241,200 +268,241 @@ export function MobileMe() {
         console.error("[MobileMe] load failed:", e);
       }
     })();
+    syncV1Api
+      .listBackends()
+      .then((b) => alive && setBackends(b))
+      .catch(() => alive && setBackends([]));
+    // 「关于」行原来写死 v1.7.1，改读真实版本
+    getVersion()
+      .then((v) => alive && setVersion(v))
+      .catch(() => {});
     return () => {
       alive = false;
     };
   }, []);
 
+  /** 全部功能：活动栏顺序 + 同一套显示规则 */
+  const features = useMemo(
+    () =>
+      [...MAIN_GROUPS.flat(), ...BOTTOM_ITEMS].filter(
+        (it) => !EXCLUDED_VIEWS.includes(it.view) && (it.core || enabledViews.has(it.view)),
+      ),
+    [enabledViews],
+  );
+
+  const badgeOf = (view: ActiveView): number => {
+    if (view === "cards") return counts.dueCards;
+    if (view === "tasks") return urgentTodoCount;
+    return 0;
+  };
+  const captionOf = (view: ActiveView): string | undefined => {
+    if (view === "graph" && stats) return `${stats.total_notes} 节点`;
+    if (view === "prompts") return `${counts.promptCount} 条`;
+    if (view === "trash" && counts.trashCount > 0) return `${counts.trashCount} 项`;
+    return undefined;
+  };
+
+  const backend = backends?.find((b) => b.enabled) ?? backends?.[0] ?? null;
+  const lastSync = backend ? [backend.lastPullTs, backend.lastPushTs].filter(Boolean).sort().pop() ?? null : null;
+
+  /** 长按格子：选放到底部哪个位置（4 个位置；已在的就是换位） */
+  const tabItems: ActionSheetItem[] = tabFor
+    ? (() => {
+        const key = tabFor.view as MobileTabKey;
+        return tabKeys.map((k, slot) => {
+          const here = k === key;
+          return {
+            key: `slot-${slot}`,
+            label: here ? `第 ${slot + 1} 个位置（当前）` : `放到第 ${slot + 1} 个位置`,
+            extra: here ? undefined : `替换「${MOBILE_TAB_REGISTRY[k]?.label ?? k}」`,
+            onClick: () => {
+              if (here) return;
+              useAppStore.getState().setMobileTabKey(slot, key);
+              message.success(`已放到底部第 ${slot + 1} 个位置`);
+            },
+          };
+        });
+      })()
+    : [];
+
+  function onFeatureLongPress(it: ActivityItem) {
+    if (!(it.view in MOBILE_TAB_REGISTRY)) {
+      message.info(`「${it.label}」暂不能放到底部 Tab`);
+      return;
+    }
+    setTabFor(it);
+  }
+
+  function pickTheme(t: ThemeMeta) {
+    // 与 PC ThemePicker 同一写法：先记下该类别用哪套，再切类别；store 订阅负责持久化
+    const st = useAppStore.getState();
+    if (t.category === "light") st.setLightTheme(t.key);
+    else st.setDarkTheme(t.key);
+    st.setThemeCategory(t.category);
+  }
+
+  const iconStyle = { color: "var(--m-ink2)" };
+
   return (
-    <div className="text-slate-800">
-      {/* 头部 banner */}
-      <div className="bg-gradient-to-br from-[#1677FF] to-blue-700 px-5 pt-4 pb-12 text-white">
-        <div className="flex items-start gap-4">
-          <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl bg-white/20 backdrop-blur">
-            <img
-              src="/app-icon.png"
-              alt="知识库"
-              className="h-full w-full object-cover"
+    <div className="mx-auto w-full max-w-[860px] pb-24">
+      <MPageHeader title="我的知识库" />
+      <div className="m-px m-t-meta mt-1">
+        {stats ? `${stats.total_notes} 篇笔记 · ${stats.total_words.toLocaleString()} 字 · ${stats.total_links} 条双链 · ${stats.total_tags} 个标签` : "　"}
+      </div>
+      {stats && stats.today_updated > 0 && <div className="m-px m-t-cap mt-0.5">今天更新了 {stats.today_updated} 篇</div>}
+
+      {/* 同步卡 */}
+      <div className="m-px mt-4">
+        <MGroup className="flex items-center gap-3 px-4 py-3">
+          <button type="button" className="flex min-h-[44px] min-w-0 flex-1 items-center gap-3 text-left" onClick={() => navigate("/sync")}>
+            <span className="flex w-6 shrink-0 justify-center" style={{ color: backend ? "var(--m-ok)" : "var(--m-ink3)" }}>
+              {backend ? <Cloud size={22} /> : <CloudOff size={22} />}
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-[15px] font-semibold" style={{ color: "var(--m-ink)" }}>
+                {backends === null ? "同步" : backend ? `${lastSync ? "已同步" : "未同步过"} ${backend.name}` : "还没配置同步"}
+              </span>
+              <span className="m-t-cap block truncate" style={backend?.lastError ? { color: "var(--m-bad)" } : undefined}>
+                {backend
+                  ? backend.lastError
+                    ? `上次同步出错：${backend.lastError}`
+                    : lastSync
+                      ? `${relativeTime(lastSync)}同步`
+                      : "点立即同步做第一次同步"
+                  : "WebDAV / S3，和桌面端互通"}
+              </span>
+            </span>
+          </button>
+          {backend ? (
+            <button
+              type="button"
+              className="m-chip shrink-0"
+              style={{ background: "var(--m-accent-soft2)", color: "var(--m-accent-ink)", fontWeight: 700 }}
+              onClick={() => navigate("/sync", { state: { syncNow: backend.id } })}
+            >
+              立即同步
+            </button>
+          ) : (
+            <button type="button" className="m-chip shrink-0" style={{ background: "var(--m-well)" }} onClick={() => navigate("/sync")}>
+              去设置
+            </button>
+          )}
+        </MGroup>
+      </div>
+
+      {/* 全部功能 */}
+      <div className="m-px mt-6">
+        <MSectionHeader className="mb-2 px-1" title="全部功能" action={<span className="m-t-cap">长按可放到底部 Tab</span>} />
+        <MGroup className="grid grid-cols-3 px-1 py-2">
+          {features.map((it) => (
+            <FeatureCell
+              key={it.view}
+              item={it}
+              label={CELL_LABEL[it.view] ?? it.short ?? it.label}
+              inTab={tabKeys.includes(it.view as MobileTabKey)}
+              badge={badgeOf(it.view)}
+              caption={captionOf(it.view)}
+              onClick={() => navigate(it.route)}
+              onLongPress={() => onFeatureLongPress(it)}
             />
-          </div>
-          <div className="flex-1 min-w-0">
-            <h2 className="text-xl font-bold">知识库</h2>
-            <p className="mt-0.5 text-sm text-blue-100">
-              个人知识库 · 共 {stats?.total_notes ?? 0} 篇
-            </p>
-            <div className="mt-2 flex flex-wrap gap-2 text-xs">
-              <span className="rounded bg-white/20 px-2 py-0.5">
-                📝 {stats?.total_notes ?? 0} 笔记
-              </span>
-              <span className="rounded bg-white/20 px-2 py-0.5">
-                🏷️ {stats?.total_tags ?? 0} 标签
-              </span>
+          ))}
+        </MGroup>
+        <div className="m-t-cap mt-1.5 flex items-center gap-1.5 px-1">
+          <span className="m-dot" style={{ background: "var(--m-accent)", width: 6, height: 6 }} /> 已在底部 Tab
+        </div>
+      </div>
+
+      {/* 设置 */}
+      <div className="m-px mt-6">
+        <MSectionHeader className="mb-2 px-1" title="设置" />
+        <MGroup>
+          <MRow icon={<Palette size={20} style={iconStyle} />} chevron right={currentTheme?.label} onClick={() => setThemeOpen(true)}>
+            外观与主题
+          </MRow>
+          <MRow icon={<Sparkles size={20} style={iconStyle} />} chevron right={`${counts.modelCount} 个`} onClick={() => navigate("/ai")}>
+            模型服务
+          </MRow>
+          <MRow icon={<Boxes size={20} style={iconStyle} />} chevron onClick={() => navigate("/feature-toggle")}>
+            功能模块与底部 Tab
+          </MRow>
+        </MGroup>
+
+        <div className="m-t-cap mt-4 mb-1.5 px-1">隐私</div>
+        <MGroup>
+          <MRow icon={<LockKeyhole size={20} style={iconStyle} />} chevron onClick={() => navigate("/hidden")}>
+            隐藏笔记 PIN
+          </MRow>
+          <DesktopOnlyRow icon={<KeyRound size={20} style={iconStyle} />} label="笔记加密 Vault" info="笔记加密在桌面端设置；手机端可只读已加密笔记" />
+        </MGroup>
+
+        <div className="m-t-cap mt-4 mb-1.5 px-1">数据</div>
+        <MGroup>
+          <MRow icon={<Cloud size={20} style={iconStyle} />} chevron right={backend?.name} onClick={() => navigate("/sync")}>
+            云端同步
+          </MRow>
+          <MRow icon={<FolderInput size={20} style={iconStyle} />} chevron right=".md / .txt" onClick={() => navigate("/quick-create")}>
+            导入笔记
+          </MRow>
+          <DesktopOnlyRow icon={<FileArchive size={20} style={iconStyle} />} label="导出 / 备份" info="导出与整库备份在桌面端操作" />
+          <DesktopOnlyRow icon={<Plug size={20} style={iconStyle} />} label="MCP 服务器" info="MCP 走子进程 sidecar，移动端沙盒禁止 spawn" />
+        </MGroup>
+
+        <div className="m-t-cap mt-4 mb-1.5 px-1">关于与更新</div>
+        <MGroup>
+          <MRow
+            icon={<RefreshCw size={20} style={iconStyle} />}
+            right={
+              checkingUpdate ? (
+                "检查中…"
+              ) : pendingUpdate ? (
+                // 启动静默检查已经发现新版了，直接把版本号摆出来，省一次点击
+                <span style={{ color: "var(--m-bad)", fontWeight: 600 }}>v{pendingUpdate.latest_version} 可更新</span>
+              ) : undefined
+            }
+            onClick={() => void handleCheckUpdate()}
+          >
+            检查更新
+          </MRow>
+          <MRow icon={<Info size={20} style={iconStyle} />} chevron right={version ? `v${version}` : undefined} onClick={() => navigate("/about")}>
+            关于
+          </MRow>
+        </MGroup>
+      </div>
+
+      {/* 外观与主题：手机端的颜色全部从主题变量推导，9 套都可用 */}
+      <MSheet open={themeOpen} title="外观与主题" caption="选哪套就切到哪套；浅色 / 深色各记住自己上次用的那套" onClose={() => setThemeOpen(false)}>
+        {(["light", "dark"] as const).map((cat) => (
+          <div key={cat} className={cat === "dark" ? "mt-3" : undefined}>
+            <div className="m-t-cap mb-1.5 px-1">{cat === "light" ? "浅色" : "深色"}</div>
+            <div className="m-group">
+              {themes
+                .filter((t) => t.category === cat)
+                .map((t) => (
+                  <PickRow
+                    key={t.key}
+                    label={
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate">{t.label}</span>
+                        <span className="m-t-cap truncate font-normal">{t.description}</span>
+                      </span>
+                    }
+                    icon={<ThemeSwatch colors={t.colors} />}
+                    active={t.key === currentTheme?.key}
+                    onClick={() => pickTheme(t)}
+                  />
+                ))}
             </div>
           </div>
-          <button
-            onClick={() => navigate("/about")}
-            aria-label="设置"
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 active:bg-white/25"
-          >
-            <Settings size={18} />
-          </button>
-        </div>
-      </div>
+        ))}
+      </MSheet>
 
-      {/* 数据统计卡（从 banner 下方上提） */}
-      <div className="-mt-7 mx-4 grid grid-cols-3 gap-2">
-        <StatCard
-          value={counts.dueCards}
-          label="今日待复习"
-          color="text-slate-900"
-        />
-        <StatCard
-          value={stats?.total_words ?? 0}
-          label="总字数"
-          color="text-slate-900"
-        />
-        <StatCard
-          value={stats?.today_updated ?? 0}
-          label="今日更新"
-          color="text-green-600"
-        />
-      </div>
-
-      {/* 学习与思考 */}
-      <SectionLabel text="学习与思考" />
-      <div className="px-4">
-        <div className="grid grid-cols-3 gap-3">
-          <LearnCard
-            icon={<Layers size={20} className="text-purple-600" />}
-            iconBg="bg-purple-100"
-            label="闪卡复习"
-            badge={counts.dueCards > 0 ? `${counts.dueCards} 待复` : undefined}
-            badgeColor="text-purple-600 bg-purple-50"
-            onClick={() => navigate("/cards")}
-          />
-          <LearnCard
-            icon={<GitFork size={20} className="text-blue-600" />}
-            iconBg="bg-blue-100"
-            label="知识图谱"
-            sub={`${stats?.total_notes ?? 0} 节点`}
-            onClick={() => navigate("/graph")}
-          />
-          <LearnCard
-            icon={<MessageSquareText size={20} className="text-[#FA8C16]" />}
-            iconBg="bg-orange-100"
-            label="Prompt 库"
-            sub={`${counts.promptCount} 条`}
-            onClick={() => navigate("/prompts")}
-          />
-        </div>
-      </div>
-
-      {/* 数据与同步 */}
-      <SectionLabel text="数据与同步" />
-      <ListGroup>
-        <Row
-          icon={<CloudUpload size={20} className="text-blue-500" />}
-          label="云端同步"
-          right={<span className="text-xs text-slate-400">WebDAV</span>}
-          onClick={() => navigate("/sync")}
-        />
-        <Row
-          icon={<Folder size={20} className="text-amber-500" />}
-          label="导入笔记"
-          right={<span className="text-xs text-slate-400">.md / .txt</span>}
-          onClick={() => navigate("/quick-create")}
-        />
-        <Row
-          icon={<FileArchive size={20} className="text-purple-500" />}
-          label="导出 / 备份"
-          info="桌面专属"
-        />
-        <Row
-          icon={<Trash2 size={20} className="text-red-500" />}
-          label="回收站"
-          right={
-            counts.trashCount > 0 ? (
-              <span className="text-xs text-slate-400">
-                {counts.trashCount} 项
-              </span>
-            ) : undefined
-          }
-          onClick={() => navigate("/trash")}
-        />
-      </ListGroup>
-
-      {/* 外观与隐私 */}
-      <SectionLabel text="外观与隐私" />
-      <ListGroup>
-        <Row
-          icon={<Moon size={20} className="text-slate-700" />}
-          label="深色模式"
-          right={<span className="text-xs text-slate-400">跟随系统</span>}
-          info="跟随系统设置，暂不支持手动切换"
-        />
-        <Row
-          icon={<Palette size={20} className="text-pink-500" />}
-          label="主题与字体"
-          info="桌面专属"
-        />
-        <Row
-          icon={<LockKeyhole size={20} className="text-red-500" />}
-          label="隐藏笔记 PIN"
-          onClick={() => navigate("/hidden")}
-        />
-        <Row
-          icon={<KeyRound size={20} className="text-amber-500" />}
-          label="笔记加密 Vault"
-          info="桌面专属（移动端只读已加密笔记）"
-        />
-      </ListGroup>
-
-      {/* 功能与扩展 */}
-      <SectionLabel text="功能与扩展" />
-      <ListGroup>
-        <Row
-          icon={<Boxes size={20} className="text-blue-500" />}
-          label="功能模块"
-          onClick={() => navigate("/feature-toggle")}
-        />
-        <Row
-          icon={<Sparkles size={20} className="text-[#FA8C16]" />}
-          label="模型服务"
-          right={
-            <span className="text-xs text-slate-400">
-              {counts.modelCount} 个
-            </span>
-          }
-          onClick={() => navigate("/ai")}
-        />
-        <Row
-          icon={<Plug size={20} className="text-blue-500" />}
-          label="MCP 服务器"
-          info="MCP 走子进程 sidecar，移动端沙盒禁止 spawn"
-        />
-        <Row
-          icon={<RefreshCw size={20} className="text-green-600" />}
-          label="检查更新"
-          right={
-            checkingUpdate ? (
-              <span className="text-xs text-slate-400">检查中…</span>
-            ) : pendingUpdate ? (
-              // 启动静默检查已经发现新版了，直接把版本号摆出来，省一次点击
-              <span className="text-xs font-medium text-[#ff4d4f]">
-                v{pendingUpdate.latest_version} 可更新
-              </span>
-            ) : undefined
-          }
-          onClick={() => void handleCheckUpdate()}
-        />
-        <Row
-          icon={<Info size={20} className="text-slate-500" />}
-          label="关于"
-          right={<span className="text-xs text-slate-400">v1.7.1</span>}
-          onClick={() => navigate("/about")}
-        />
-      </ListGroup>
+      <ActionSheet
+        open={!!tabFor}
+        title={tabFor ? `「${CELL_LABEL[tabFor.view] ?? tabFor.label}」放到底部 Tab` : ""}
+        subtitle="底部有 4 个位置可换，「我的」固定在最右"
+        items={tabItems}
+        onClose={() => setTabFor(null)}
+      />
 
       {/*
         下载进度：故意做成不可关闭（无 X / 点遮罩不关）—— 下载是后端 tokio 任务，
@@ -457,17 +525,16 @@ export function MobileMe() {
             progress.total > 0 ? `${progress.percent}%` : formatBytes(progress.downloaded)
           }
         />
-        <div className="mt-2 text-xs text-slate-400">
+        <div className="mt-2 text-xs text-[var(--m-ink3)]">
           {progress.total > 0
             ? `${formatBytes(progress.downloaded)} / ${formatBytes(progress.total)}`
             : "下载中…"}
         </div>
-        <div className="mt-3 text-xs text-slate-400">
+        <div className="mt-3 text-xs text-[var(--m-ink3)]">
           下载完成后会自动拉起系统安装器。请保持应用在前台。
         </div>
       </Modal>
 
-      <div className="h-24" />
     </div>
   );
 }
@@ -479,121 +546,60 @@ function formatBytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function LearnCard({
-  icon,
-  iconBg,
+/** 全部功能的一格：活动栏同款图标 + 名字；已在底部 Tab 带点；数量角标 / 小字说明 */
+function FeatureCell({
+  item,
   label,
+  inTab,
   badge,
-  badgeColor,
-  sub,
+  caption,
   onClick,
+  onLongPress,
 }: {
-  icon: React.ReactNode;
-  iconBg: string;
+  item: ActivityItem;
   label: string;
-  badge?: string;
-  badgeColor?: string;
-  sub?: string;
+  inTab: boolean;
+  badge: number;
+  caption?: string;
   onClick: () => void;
+  onLongPress: () => void;
 }) {
+  const lp = useLongPress(onLongPress, { onClick });
+  const icon = isValidElement(item.icon) ? cloneElement(item.icon as ReactElement<{ size?: number }>, { size: 26 }) : item.icon;
   return (
-    <button
-      onClick={onClick}
-      className="flex flex-col items-center gap-1 rounded-2xl bg-white py-4 shadow-sm active:scale-95 transition-transform"
-    >
-      <div
-        className={`flex h-10 w-10 items-center justify-center rounded-xl ${iconBg}`}
-      >
+    <div {...lp} role="button" tabIndex={0} aria-label={item.label} className="m-kk cursor-pointer select-none" style={{ WebkitTouchCallout: "none" }}>
+      <span className="relative" style={{ color: "var(--m-ink)" }}>
         {icon}
-      </div>
-      <span className="text-xs font-medium text-slate-700">{label}</span>
-      {badge && (
-        <span
-          className={`rounded-full px-1.5 text-[10px] font-medium ${badgeColor}`}
-        >
-          {badge}
-        </span>
-      )}
-      {!badge && sub && <span className="text-[10px] text-slate-500">{sub}</span>}
-    </button>
-  );
-}
-
-function StatCard({
-  value,
-  label,
-  color = "text-slate-900",
-}: {
-  value: number | string;
-  label: string;
-  color?: string;
-}) {
-  return (
-    <div className="rounded-2xl bg-white py-3 text-center shadow-sm">
-      <div className={`text-xl font-bold ${color}`}>{value}</div>
-      <div className="mt-0.5 text-[11px] text-slate-500">{label}</div>
+        {badge > 0 && (
+          <span className="m-badge m-num" aria-label={`${badge} 项待处理`}>
+            {badge > 99 ? "99+" : badge}
+          </span>
+        )}
+        {inTab && <span className="absolute -bottom-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full" style={{ background: "var(--m-accent)" }} aria-label="已在底部 Tab" />}
+      </span>
+      <span className="leading-tight">{label}</span>
+      {/* 说明行始终占位：有的格子有、有的没有时，各行高度才对齐 */}
+      <span className="m-t-cap -mt-1.5 leading-tight" aria-hidden={!caption}>{caption ?? " "}</span>
     </div>
   );
 }
 
-function SectionLabel({ text }: { text: string }) {
+/** 桌面端才能用的设置：右侧写「桌面端」、不带箭头，点了说明原因 */
+function DesktopOnlyRow({ icon, label, info }: { icon: ReactNode; label: string; info: string }) {
   return (
-    <div className="px-4 pt-4 pb-2 text-xs font-medium text-slate-400">
-      {text}
-    </div>
+    <MRow icon={icon} right="桌面端" onClick={() => message.info(info)}>
+      {label}
+    </MRow>
   );
 }
 
-function ListGroup({ children }: { children: React.ReactNode }) {
+/** 主题小色卡：底色 + 主色 + 点缀色 */
+function ThemeSwatch({ colors }: { colors: [string, string, string, string] }) {
+  const [bg, primary, accent] = colors;
   return (
-    <div className="px-4">
-      <div className="divide-y divide-slate-100 rounded-2xl bg-white">
-        {children}
-      </div>
-    </div>
+    <span className="relative inline-block h-6 w-6 overflow-hidden rounded-[var(--m-r-s)]" style={{ background: bg, boxShadow: "inset 0 0 0 1px var(--m-hair)" }}>
+      <span className="absolute right-0 bottom-0 left-0 h-2" style={{ background: primary }} />
+      <span className="absolute top-1 right-1 h-2 w-2 rounded-full" style={{ background: accent }} />
+    </span>
   );
 }
-
-function Row({
-  icon,
-  label,
-  right,
-  onClick,
-  info,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  right?: React.ReactNode;
-  onClick?: () => void;
-  /** 仅信息提示（点击后弹 toast 解释为什么不可用），不显示 chevron */
-  info?: string;
-}) {
-  const isInteractive = !!onClick && !info;
-  const handleClick = () => {
-    if (info) {
-      message.info(info);
-      return;
-    }
-    onClick?.();
-  };
-  return (
-    <button
-      onClick={handleClick}
-      className={`flex w-full items-center gap-3 px-4 py-3 ${
-        isInteractive ? "active:bg-slate-50" : "active:bg-slate-50"
-      } ${info ? "opacity-70" : ""}`}
-    >
-      {icon}
-      <span className="flex-1 text-left text-sm text-slate-800">{label}</span>
-      {info ? (
-        <span className="text-xs text-slate-400">不可用</span>
-      ) : (
-        right
-      )}
-      {isInteractive && (
-        <ChevronRight size={16} className="text-slate-300" />
-      )}
-    </button>
-  );
-}
-
