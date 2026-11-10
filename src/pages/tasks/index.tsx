@@ -651,7 +651,7 @@ function DesktopTasksPage() {
       {/* 顶栏（v4 原型 .bar，与笔记列表同款 .kb-page-bar）一行放下：
           标题（随侧栏筛选变化）+ 未完成 / 紧急计数 · 视图切换 ｜ 搜索 · 全部时间 ▾ · 项目管理（甘特）· 多选（列表）· 添加待办。
           顶栏 flex-shrink-0 永不滚动；下面列表区单独可滚 */}
-      <div className="kb-page-bar">
+      <div className="kb-page-bar kb-tasks-bar">
         <h1 className="flex items-center gap-2">
           {(() => {
             if (categoryParam === "none") return "未分类";
@@ -702,11 +702,12 @@ function DesktopTasksPage() {
           value={viewMode}
           onChange={(v) => setViewMode(v as ViewMode)}
           options={[
-            { value: "list", label: <span className="kb-seg-lb"><List size={13} />列表</span> },
-            { value: "kanban", label: <span className="kb-seg-lb"><Columns3 size={13} />看板</span> },
-            { value: "quadrant", label: <span className="kb-seg-lb"><LayoutGrid size={13} />四象限</span> },
-            { value: "calendar", label: <span className="kb-seg-lb"><CalendarDays size={13} />日历</span> },
-            { value: "gantt", label: <span className="kb-seg-lb"><GanttChart size={13} />甘特图</span> },
+            // 文字包一层 kb-seg-txt：窗口窄时 CSS 只藏文字留图标，title 兜底说明
+            { value: "list", title: "列表", label: <span className="kb-seg-lb"><List size={13} /><span className="kb-seg-txt">列表</span></span> },
+            { value: "kanban", title: "看板", label: <span className="kb-seg-lb"><Columns3 size={13} /><span className="kb-seg-txt">看板</span></span> },
+            { value: "quadrant", title: "四象限", label: <span className="kb-seg-lb"><LayoutGrid size={13} /><span className="kb-seg-txt">四象限</span></span> },
+            { value: "calendar", title: "日历", label: <span className="kb-seg-lb"><CalendarDays size={13} /><span className="kb-seg-txt">日历</span></span> },
+            { value: "gantt", title: "甘特图", label: <span className="kb-seg-lb"><GanttChart size={13} /><span className="kb-seg-txt">甘特图</span></span> },
           ]}
         />
         <span className="flex-1" />

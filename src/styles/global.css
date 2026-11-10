@@ -4719,6 +4719,30 @@ body.sidebar-resizing .kb-panel-resizer {
 .kb-view-seg.ant-segmented {
   margin-left: 6px;
 }
+/* 窄窗口适配：顶栏一行要放标题、计数、五个视图、搜索、日期、多选、添加待办，
+   约 1200px 才放得下；以前不换行也不收缩，窗口一窄最右的「添加待办」就被裁掉。
+   按顶栏自身宽度逐级让位：先把视图切换收成纯图标，再藏计数，搜索框可缩到 140px，
+   仍放不下就整体换行 —— 宁可多一行，也不让按钮被裁。 */
+.kb-tasks-bar {
+  container-type: inline-size;
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+/* 换行按 flex-basis 判断：基准写 140、靠 grow 撑到 220，才能「先缩搜索框、再换行」 */
+.kb-tasks-bar .kb-bar-search.ant-input-affix-wrapper {
+  flex: 1 1 140px;
+  max-width: 220px;
+}
+@container (max-width: 1200px) {
+  .kb-tasks-bar .kb-seg-txt {
+    display: none;
+  }
+}
+@container (max-width: 1020px) {
+  .kb-tasks-bar > .kb-page-sub {
+    display: none;
+  }
+}
 .kb-bar-btn.is-on.ant-btn {
   color: var(--kb-primary) !important;
   border-color: color-mix(in srgb, var(--kb-primary) 40%, transparent);
