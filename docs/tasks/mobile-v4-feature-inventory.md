@@ -23,8 +23,8 @@
 | `MobileHome.tsx:187-198` | 快速操作「闪念」「新建」都跳 `/notes` | 新版金刚区接真实动作 |
 | `MobileHome.tsx:236` | 首页待办勾选框只读 | 新版允许直接勾完成 |
 | `MobileHome.tsx:112` | 头像 🦊 不可点 | 去掉或接「我的」 |
-| `MobileDaily.tsx:157` | 顶栏「设置」空占位 | 去掉 |
-| `MobileDaily.tsx:267` | 选任何一天按钮都写「今天的日记」 | 文案跟随选中日期 |
+| `MobileDaily.tsx:157` | 顶栏「设置」空占位 | ✅ M3-6 已去掉 |
+| `MobileDaily.tsx:267` | 选任何一天按钮都写「今天的日记」 | ✅ M3-6 改为「打开 / 开始写 M 月 D 日的日记」 |
 | `MobileAi.tsx:326` | 顶栏「搜索」空占位 | 接会话搜索或去掉 |
 | `MobileAi.tsx:66-91` | 4 个快捷入口只建空对话，不预填 prompt | 接提示词库 |
 | `MobileAiChat.tsx:264` | 顶栏「更多」空占位 | 接会话菜单（重命名 / 删除 / 关联笔记） |
@@ -258,17 +258,23 @@
 - [x] 底部提示「分类 / 提醒 / 重复 / 子任务可在建完后进详情页设置」 `TaskCreateSheet.tsx:216-218`
 
 #### src/pages/daily/MobileDaily.tsx
-- [ ] 加载当月有日记的日期，切换年月重新加载 `MobileDaily.tsx:53-60` `MobileDaily.tsx:75-77`
-- [ ] 选中某天加载当天日记，失败按无日记 `MobileDaily.tsx:62-73` `MobileDaily.tsx:79-81`
-- [ ] 顶栏返回 + 标题「日记」 `MobileDaily.tsx:149-156`
-- [ ] 顶栏「设置」空占位 `MobileDaily.tsx:157-162`
-- [ ] 上个月 / 下个月（跨年） `MobileDaily.tsx:167-183` `MobileDaily.tsx:83-98`
-- [ ] 星期表头从周日开始 `MobileDaily.tsx:39` `MobileDaily.tsx:188-192`
-- [ ] 日历 6×7，含上下月日期（灰色），都能点 `MobileDaily.tsx:110-139` `MobileDaily.tsx:199-215`
-- [ ] 格子状态：选中 / 有日记 / 今天 / 非本月；图例 `MobileDaily.tsx:195-225`
-- [ ] 选中日期标题「YYYY-MM-DD 周X」，今天加「今天」标签；字数 `MobileDaily.tsx:231-243`
-- [ ] 加载中 / 预览最多 12 行 / 空白 / 「这一天还没有日记」 `MobileDaily.tsx:246-265`
-- [ ] 底部「继续编辑 / 开始记录今天的日记」→ `getOrCreate(选中日期)` → /notes/:id `MobileDaily.tsx:267-273` `MobileDaily.tsx:100-107`
+
+> ✅ M3-6 验收（2026-11-10）：按原型 09 屏重做。变化处：整月网格 → 周条（左右滑换周）+ 点月份 / 抓手 / 下拉展开整月（展开后可翻月），星期改为周一开头（同 PC 日期选择器）· 「有日记」从整格底色改为日期下的小点，颜色图例去掉 · 日期集合改用 `listAll` 一次拿全（仍随年月显示）·
+> 顶栏「设置」空占位去掉；不是底部 Tab 时保留返回键，设成 Tab 时隐藏 · 预览从原文直出（会露出 HTML / Markdown 标记）改为时间线：`lib/dailyTimeline.ts` 认首页记一笔的 HTML、编辑器存回的 Markdown、闪念捕获的 callout 三种时间戳写法（+6 单测），其余文字作预览（最多 6 行），[[双链]] 主色标出 ·
+> 底部按钮：选今天 = 卡片内「记一笔」输入（与首页同一写法，追加后时间线即时刷新）+ 右上铅笔进编辑器；选别的日子 = 「打开 / 开始写 M 月 D 日的日记」·
+> 新增「M 月 N 篇」本月列表（日期 / 标题 / 字数，点行切换）· 本页不再显示全局 FAB（本月列表行尾字数会被压住，同首页 / 笔记页做法）。
+
+- [x] 加载当月有日记的日期，切换年月重新加载 `MobileDaily.tsx:53-60` `MobileDaily.tsx:75-77`
+- [x] 选中某天加载当天日记，失败按无日记 `MobileDaily.tsx:62-73` `MobileDaily.tsx:79-81`
+- [x] 顶栏返回 + 标题「日记」 `MobileDaily.tsx:149-156`
+- [x] 顶栏「设置」空占位 `MobileDaily.tsx:157-162`
+- [x] 上个月 / 下个月（跨年） `MobileDaily.tsx:167-183` `MobileDaily.tsx:83-98`
+- [x] 星期表头从周日开始 `MobileDaily.tsx:39` `MobileDaily.tsx:188-192`
+- [x] 日历 6×7，含上下月日期（灰色），都能点 `MobileDaily.tsx:110-139` `MobileDaily.tsx:199-215`
+- [x] 格子状态：选中 / 有日记 / 今天 / 非本月；图例 `MobileDaily.tsx:195-225`
+- [x] 选中日期标题「YYYY-MM-DD 周X」，今天加「今天」标签；字数 `MobileDaily.tsx:231-243`
+- [x] 加载中 / 预览最多 12 行 / 空白 / 「这一天还没有日记」 `MobileDaily.tsx:246-265`
+- [x] 底部「继续编辑 / 开始记录今天的日记」→ `getOrCreate(选中日期)` → /notes/:id `MobileDaily.tsx:267-273` `MobileDaily.tsx:100-107`
 
 #### src/pages/search/MobileSearch.tsx
 - [ ] 从 `?q=` 读初始关键词；关键词变化回写 URL（replace） `MobileSearch.tsx:29-32` `MobileSearch.tsx:73-80`
