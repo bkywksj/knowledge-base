@@ -332,6 +332,22 @@
 }
 .m-fab:active { transform: scale(0.95); }
 
+/* ═══════════════════ 手机编辑器：复用 PC 的 TiptapEditor，去掉 PC 编辑区的卡片框，正文像一张白纸 ═══════════════════ */
+.m-editor-body .tiptap-wrapper {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+/* 选择器要比 global.css 里的「:not(.editor-content-area) > .tiptap-wrapper .tiptap-content .tiptap」（4 个类）更具体：
+   mobile.css 在 global.css 开头引入，同优先级会被后面的规则盖掉 */
+.m-editor-body .tiptap-wrapper .tiptap-content .tiptap.ProseMirror {
+  padding: 0;
+  min-height: 55vh;
+  font-size: 16px;
+  line-height: 1.85;
+  color: var(--m-ink);
+}
+
 /* 金刚区：彩色实心图标 + 13px 标签，无底色块、无阴影；整格热区 */
 .m-kk {
   display: flex;

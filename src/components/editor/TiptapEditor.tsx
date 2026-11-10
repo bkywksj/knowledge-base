@@ -917,6 +917,11 @@ interface TiptapEditorProps {
    * 自动展开查找浮条、定位到首个命中——省去用户进笔记后再 Ctrl+F 搜一遍。
    */
   initialSearch?: string;
+  /**
+   * 不渲染内置格式工具栏（默认 false）。手机端有自己贴在键盘上方的格式条，
+   * 通过 onEditorReady 拿到 editor 实例直接下命令；PC 的整排工具栏在手机上放不下。
+   */
+  hideToolbar?: boolean;
 }
 
 export function TiptapEditor({
@@ -933,6 +938,7 @@ export function TiptapEditor({
   onStats,
   toolbarSlot,
   initialSearch,
+  hideToolbar = false,
 }: TiptapEditorProps) {
   const isExternalUpdate = useRef(false);
 
@@ -2575,7 +2581,7 @@ export function TiptapEditor({
       {/* 阅读模式下隐藏工具栏与 AI 划词条；selection / 复制 / 滚动均正常 */}
       {!readingMode && (
         <>
-          {(() => {
+          {!hideToolbar && (() => {
             const toolbar = (
               <EditorToolbar
                 editor={editor}
