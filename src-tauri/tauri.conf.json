@@ -74,6 +74,7 @@
         "languages": ["SimpChinese", "English"],
         "installerIcon": "icons/icon.ico",
         "installerHooks": "./installer-hooks.nsi",
+        "template": "./nsis/installer.nsi",
         "customLanguageFiles": {
           "SimpChinese": "./nsis/SimpChinese.nsh",
           "English": "./nsis/English.nsh"
