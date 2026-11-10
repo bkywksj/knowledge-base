@@ -196,6 +196,27 @@ version = "1.0.0"
 
 ---
 
+## Windows 安装钩子：sidecar 改名让位（`[installer-std] sidecar-aside v1`）
+
+`kb-mcp.exe` 由外部 MCP host（Claude Code / Codex / Cursor）从安装目录拉起，升级时通常正被占着，直接覆盖会写不进去，安装停在半截。
+`src-tauri/installer-hooks.nsi` 用标准宏 `SIDECAR_ASIDE` 处理：写新文件前把它改名成 `.old`（被占就依次试 `.old2`…`.old5`，五个都占着才 `taskkill`），
+旧进程继续用改名后的文件，AI 会话不掉线。各应用用的是同一份宏，标准写法和验收清单以 Reeve 的 tauri-packaging 技能为准。
+
+| 钩子 | 做什么 |
+|---|---|
+| PREINSTALL | `!insertmacro SIDECAR_ASIDE "kb-mcp.exe" "kb_mcp"` |
+| POSTINSTALL | 删 `kb-mcp.exe.old*`（对应进程退出了才删得掉，删不掉不影响） |
+| PREUNINSTALL | 不写，不杀 sidecar：卸载时被占的 exe 留在原地，下次安装让位时清掉 |
+| POSTUNINSTALL | 删 `kb-mcp.exe.old*`，再 `RMDir "$INSTDIR"`（模板删目录在这个钩子之前，那时 `.old` 还在，目录删不掉） |
+
+- 🔴 别改回 `taskkill`：杀掉以后，外部客户端可能在安装器写到 sidecar 之前又把旧 exe 拉起来，照样写不进去；Claude Code 也不会自动重连。
+- 本文件 UTF-8 带 BOM（含中文快捷方式名，NSIS 只认带 BOM 的 UTF-8）。
+- 改宏先改 Reeve 那份标准，再同步各应用。查哪些应用落后：`grep -rl "\[installer-std\] sidecar-aside v1" /e/my/桌面软件tauri/*/src-tauri/`
+- 不全量打包先验语法：复制 `src-tauri/target/release/nsis/x64/` 整个目录，清空副本 `installer.nsi` 里的 `UNINSTALLERSIGNCOMMAND`，
+  再用 `$LOCALAPPDATA/tauri/NSIS/makensis.exe -V2` 编译（渲染脚本按绝对路径引用钩子文件，改了直接生效）。
+- 验收：AI 客户端连着本应用的 MCP 时升级 → 安装成功、会话不掉线，安装目录多出 `kb-mcp.exe.old`。
+- 手动运行安装包升级时，仍会出现上游模板的「卸载后安装」页。Reeve 已用自定义模板改成原地覆盖，本应用还没接入。
+
 ## 常见错误
 
 | 错误做法 | 正确做法 |
