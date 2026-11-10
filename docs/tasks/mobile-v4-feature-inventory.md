@@ -157,21 +157,26 @@
 - [x] 「针对本笔记问 AI」：先保存，新建对话（标题「关于：笔记名前 30 字」），挂本笔记，跳 /ai-chat/:id；请求中禁用 `MobileNoteEditor.tsx:216-237` `MobileNoteEditor.tsx:440-447`
 
 #### src/pages/quick-create/index.tsx
-- [ ] 顶栏返回 + 标题「新建」 `index.tsx:140-147`
-- [ ] 「空白笔记」：`noteApi.create`（无标题笔记），通知刷新后 replace 进编辑页 `index.tsx:112-120` `index.tsx:157-163`
-- [ ] 「闪念捕获」→ /quick-capture `index.tsx:164-170`
-- [ ] 「从模板」：提示「移动端模板功能待开发」 `index.tsx:176-182`
-- [ ] 「今天的日记」：`dailyApi.getOrCreate(今天)`，replace 进编辑页 `index.tsx:122-134` `index.tsx:183-189`
-- [ ] 「网页剪藏」（智能徽标）：打开剪藏弹窗，自动读剪贴板的 http(s) 链接预填 `index.tsx:75-89` `index.tsx:190-197`
-- [ ] 剪藏弹窗：自动聚焦、回车提交、空时禁用、抓取中 loading、可取消、关闭销毁、说明文字 `index.tsx:255-275`
-- [ ] 提交剪藏：校验 http(s)、`noteApi.clipUrl`、刷新、提示、replace 进编辑页 `index.tsx:91-110`
-- [ ] 「语音笔记」：提示「待开发」 `index.tsx:198-204`
-- [ ] 「拍照 / 扫描」：提示「待开发」 `index.tsx:205-211`
-- [ ] 「导入文件」：系统文件选择（.md / .markdown / .txt） `index.tsx:49-51` `index.tsx:212-218` `index.tsx:246-252`
-- [ ] 导入：读文本、去扩展名作标题（空时「导入的笔记」）、create、刷新、提示、进编辑页；重置 input 允许重选同一文件 `index.tsx:53-73`
-- [ ] 「新建任务」→ /tasks?new=1 `index.tsx:224-230`
-- [ ] 「新闪卡」→ /cards（不看模块开关） `index.tsx:231-237`
-- [ ] 底部提示「主页底部 + 按钮可呼出此页」 `index.tsx:240-242`
+
+> ✅ M3-4 验收（2026-11-10）：内容挪进 `components/mobile/QuickCreate.tsx`，FAB 改为在当前页弹出底部面板，/quick-create 整页保留（深链用，同一组件）·
+> 空白笔记 / 今日日记 / 剪藏 / 导入 / 新建任务 / 闪念捕获保留，可选「建在哪个文件夹」· 「从模板」接上模板接口 · 「新闪卡」按复习模块开关显示 ·
+> 「语音笔记」「拍照扫描」只是「待开发」提示，手机端没有对应能力，入口先隐藏（做好再加回）· 「主页底部 + 按钮可呼出此页」提示文案随整页形态去掉 ·
+> 新增「记一笔」（追加到今天日记）、「剪贴板内容建笔记」
+- [x] 顶栏返回 + 标题「新建」 `index.tsx:140-147`
+- [x] 「空白笔记」：`noteApi.create`（无标题笔记），通知刷新后 replace 进编辑页 `index.tsx:112-120` `index.tsx:157-163`
+- [x] 「闪念捕获」→ /quick-capture `index.tsx:164-170`
+- [x] 「从模板」：提示「移动端模板功能待开发」 `index.tsx:176-182`
+- [x] 「今天的日记」：`dailyApi.getOrCreate(今天)`，replace 进编辑页 `index.tsx:122-134` `index.tsx:183-189`
+- [x] 「网页剪藏」（智能徽标）：打开剪藏弹窗，自动读剪贴板的 http(s) 链接预填 `index.tsx:75-89` `index.tsx:190-197`
+- [x] 剪藏弹窗：自动聚焦、回车提交、空时禁用、抓取中 loading、可取消、关闭销毁、说明文字 `index.tsx:255-275`
+- [x] 提交剪藏：校验 http(s)、`noteApi.clipUrl`、刷新、提示、replace 进编辑页 `index.tsx:91-110`
+- [x] 「语音笔记」：提示「待开发」 `index.tsx:198-204`
+- [x] 「拍照 / 扫描」：提示「待开发」 `index.tsx:205-211`
+- [x] 「导入文件」：系统文件选择（.md / .markdown / .txt） `index.tsx:49-51` `index.tsx:212-218` `index.tsx:246-252`
+- [x] 导入：读文本、去扩展名作标题（空时「导入的笔记」）、create、刷新、提示、进编辑页；重置 input 允许重选同一文件 `index.tsx:53-73`
+- [x] 「新建任务」→ /tasks?new=1 `index.tsx:224-230`
+- [x] 「新闪卡」→ /cards（不看模块开关） `index.tsx:231-237`
+- [x] 底部提示「主页底部 + 按钮可呼出此页」 `index.tsx:240-242`
 
 #### src/pages/tasks/MobileTasks.tsx
 - [ ] 进入时同时拉未完成和已完成（已完成最近 20 条），失败按空 `MobileTasks.tsx:52-66`
