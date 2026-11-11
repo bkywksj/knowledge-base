@@ -2,12 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { message } from "antd";
 import { Check, ChevronDown, ChevronUp, Cloud, PencilLine, Pin, Search, SendHorizontal } from "lucide-react";
-import { cardApi, folderApi, noteApi, systemApi, taskApi } from "@/lib/api";
+import { cardApi, folderApi, noteApi, syncV1Api, systemApi, taskApi, taskCategoryApi } from "@/lib/api";
 import { appendQuickNoteToDaily } from "@/lib/mobileQuickNote";
 import { relativeTime } from "@/lib/utils";
 import { notePreviewText } from "@/lib/notePreview";
 import { useAppStore } from "@/store";
-import type { DailyWritingStat, DashboardStats, Folder, Note, Task } from "@/types";
+import type { DailyWritingStat, DashboardStats, Folder, Note, SyncBackend, Task, TaskCategory } from "@/types";
 import { KingKongIcon } from "@/components/mobile/KingKongIcons";
 import { MGroup, MPageHeader, MSectionHeader, MTag } from "@/components/mobile/primitives";
 
@@ -60,6 +60,9 @@ interface HomeData {
   dueCards: number;
   trend: DailyWritingStat[];
   folderNames: Map<number, string>;
+  /** 今天完成的待办（原型：排在未完成后面，打勾 + 删除线 +「09:30 完成」） */
+  doneToday: Task[];
+  categoryNames: Map<number, string>;
 }
 
 const EMPTY: HomeData = {
@@ -69,6 +72,8 @@ const EMPTY: HomeData = {
   dueCards: 0,
   trend: [],
   folderNames: new Map(),
+  doneToday: [],
+  categoryNames: new Map(),
 };
 
 function flattenFolderNames(list: Folder[], out = new Map<number, string>()): Map<number, string> {
@@ -85,17 +90,32 @@ export function MobileHome() {
   const show = (k: string) => dashItems.has(k as never);
   const [data, setData] = useState<HomeData>(EMPTY);
   const [loaded, setLoaded] = useState(false);
+  /** 同步状态（原型右上角「● 已同步」）：null = 加载中或没配同步，只显示入口 */
+  const [syncBackend, setSyncBackend] = useState<SyncBackend | null>(null);
+  useEffect(() => {
+    let alive = true;
+    syncV1Api
+      .listBackends()
+      .then((list) => alive && setSyncBackend(list.find((b) => b.enabled) ?? list[0] ?? null))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const load = useCallback(async () => {
     // 各项独立兜底：一项失败不拖垮整页（旧版统计失败整页都空）
-    const [stats, notesPage, tasks, dueCards, trend, folders] = await Promise.all([
+    const [stats, notesPage, tasks, dueCards, trend, folders, doneTasks, categories] = await Promise.all([
       systemApi.getDashboardStats().catch(() => null),
       noteApi.list({ page: 1, page_size: 8 }).catch(() => ({ items: [] as Note[] })),
       taskApi.list({ status: 0 }).catch(() => [] as Task[]),
       cardApi.listDue().catch(() => [] as unknown[]),
       systemApi.getWritingTrend(30).catch(() => [] as DailyWritingStat[]),
       folderApi.list().catch(() => [] as Folder[]),
+      taskApi.list({ status: 1 }).catch(() => [] as Task[]),
+      taskCategoryApi.list().catch(() => [] as TaskCategory[]),
     ]);
+    const today = ymd(new Date());
     setData({
       stats,
       notes: notesPage.items ?? [],
@@ -103,6 +123,12 @@ export function MobileHome() {
       dueCards: dueCards.length,
       trend,
       folderNames: flattenFolderNames(folders),
+      // completed_at 是本地时间 YYYY-MM-DD HH:MM:SS；子任务不上首页
+      doneToday: doneTasks
+        .filter((t) => t.status === 1 && t.parent_task_id == null && t.completed_at?.startsWith(today))
+        .sort((a, b) => (b.completed_at ?? "").localeCompare(a.completed_at ?? ""))
+        .slice(0, 3),
+      categoryNames: new Map(categories.map((c) => [c.id, c.name])),
     });
     setLoaded(true);
   }, []);
@@ -166,13 +192,12 @@ export function MobileHome() {
             style={{ background: "var(--m-surface)", color: "var(--m-ink2)" }}
             onClick={() => navigate("/sync")}
           >
-            <Cloud size={15} />
-            同步
+            <SyncBadge backend={syncBackend} />
           </button>
         }
       />
 
-      <div className="m-px mt-4">
+      <div className="m-gutter mt-4">
         <button
           type="button"
           className="flex h-11 w-full items-center gap-2.5 rounded-[var(--m-r-l)] px-4 text-[15px]"
@@ -186,7 +211,7 @@ export function MobileHome() {
 
       {/* 数字条：原 4 张数据卡收成一行，开关逻辑照旧 */}
       {statCells.length > 0 && (
-        <div className="m-px mt-3">
+        <div className="m-gutter mt-3">
           <MGroup>
             <div className="grid" style={{ gridTemplateColumns: `repeat(${statCells.length}, minmax(0, 1fr))` }}>
               {statCells.map((c, i) => (
@@ -215,7 +240,7 @@ export function MobileHome() {
 
       {/* 金刚区：彩色实心图标直接放在页面上，不垫底色、不包卡片 */}
       {show("quick_actions") && (
-        <div className="m-px mt-5 grid grid-cols-4">
+        <div className="m-gutter mt-5 grid grid-cols-4">
           <button type="button" className="m-kk" onClick={createBlankNote}>
             <KingKongIcon kind="note" />
             新建笔记
@@ -239,7 +264,7 @@ export function MobileHome() {
 
       {/* 今天：今天到期 + 逾期的未完成待办，可直接勾完成 */}
       {show("today_tasks_list") && (
-        <div className="m-px mt-7">
+        <div className="m-gutter mt-7">
           <MSectionHeader
             title="今天"
             count={loaded ? `${todayTasks.length} 项待办` : undefined}
@@ -256,20 +281,29 @@ export function MobileHome() {
             }
           />
           <div className="mt-2.5">
-            {todayTasks.length === 0 ? (
+            {todayTasks.length === 0 && data.doneToday.length === 0 ? (
               <MGroup className="py-7 text-center">
                 <span className="m-t-meta">{loaded ? "今天没有到期的待办" : "加载中…"}</span>
               </MGroup>
             ) : (
               <MGroup>
                 {todayTasks.slice(0, 5).map((t) => (
-                  <TaskRow key={t.id} task={t} onChanged={load} onOpen={() => navigate(`/task-detail/${t.id}`)} />
+                  <TaskRow
+                    key={t.id}
+                    task={t}
+                    category={t.category_id != null ? data.categoryNames.get(t.category_id) : undefined}
+                    onChanged={load}
+                    onOpen={() => navigate(`/task-detail/${t.id}`)}
+                  />
                 ))}
                 {todayTasks.length > 5 && (
                   <button type="button" className="m-row justify-center text-[14px] font-semibold" style={{ color: "var(--m-accent-ink)" }} onClick={() => navigate("/tasks")}>
                     还有 {todayTasks.length - 5} 项
                   </button>
                 )}
+                {data.doneToday.map((t) => (
+                  <DoneTaskRow key={t.id} task={t} onChanged={load} onOpen={() => navigate(`/task-detail/${t.id}`)} />
+                ))}
               </MGroup>
             )}
           </div>
@@ -280,7 +314,7 @@ export function MobileHome() {
       {show("recent_notes") && (
         <div className="mt-7">
           <MSectionHeader
-            className="m-px"
+            className="m-gutter"
             title="继续编辑"
             action={
               <button type="button" className="m-tapx text-[13px] font-semibold" style={{ color: "var(--m-accent-ink)" }} onClick={() => navigate("/notes")}>
@@ -289,14 +323,14 @@ export function MobileHome() {
             }
           />
           {data.notes.length === 0 ? (
-            <div className="m-px mt-2.5">
+            <div className="m-gutter mt-2.5">
               <MGroup className="py-7 text-center">
                 <span className="m-t-meta">{loaded ? "还没有笔记，点上面「新建笔记」开始" : "加载中…"}</span>
               </MGroup>
             </div>
           ) : (
             <div className="m-hscroll mt-2.5">
-              <div className="m-px flex w-max gap-3 pb-3">
+              <div className="m-gutter flex w-max gap-3 pb-3">
                 {data.notes.map((n) => (
                   <NoteCard key={n.id} note={n} folderName={n.folder_id != null ? data.folderNames.get(n.folder_id) : undefined} onOpen={() => navigate(`/notes/${n.id}`)} />
                 ))}
@@ -335,7 +369,7 @@ function QuickNoteBar({ onSaved }: { onSaved: () => void }) {
   }
 
   return (
-    <div className="m-px mt-6">
+    <div className="m-gutter mt-6">
       <div
         className="flex items-start gap-2 rounded-[var(--m-r-xl)] py-3 pl-4 pr-2"
         style={{ background: "var(--m-surface)" }}
@@ -370,7 +404,7 @@ function QuickNoteBar({ onSaved }: { onSaved: () => void }) {
 }
 
 // ─── 待办行：勾选框直接完成；循环任务勾选 = 完成本次（与待办页一致） ───
-function TaskRow({ task, onChanged, onOpen }: { task: Task; onChanged: () => void; onOpen: () => void }) {
+function TaskRow({ task, category, onChanged, onOpen }: { task: Task; category?: string; onChanged: () => void; onOpen: () => void }) {
   const [busy, setBusy] = useState(false);
   const due = new Date(task.due_date!);
   const overdue = due.getTime() < new Date().setHours(0, 0, 0, 0);
@@ -410,7 +444,9 @@ function TaskRow({ task, onChanged, onOpen }: { task: Task; onChanged: () => voi
       </button>
       <div className="min-w-0 flex-1">
         <div className="truncate text-[15px]">{task.title}</div>
-        <div className="m-t-cap mt-0.5" style={overdue ? { color: "var(--m-bad)" } : undefined}>
+        {/* 原型：「工作 · 14:00」—— 分类在前；逾期整行红字 */}
+        <div className="m-t-cap mt-0.5 truncate" style={overdue ? { color: "var(--m-bad)" } : undefined}>
+          {category ? `${category} · ` : ""}
           {overdue ? `逾期 · ${dueText}` : dueText}
         </div>
       </div>
@@ -420,6 +456,67 @@ function TaskRow({ task, onChanged, onOpen }: { task: Task; onChanged: () => voi
         aria-label={task.priority === 0 ? "紧急" : task.priority === 2 ? "低" : "普通"}
       />
     </div>
+  );
+}
+
+// ─── 今天已完成的待办：绿勾 + 删除线 +「09:30 完成」（原型）；点勾撤回为未完成 ───
+function DoneTaskRow({ task, onChanged, onOpen }: { task: Task; onChanged: () => void; onOpen: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const doneAt = task.completed_at?.slice(11, 16) ?? "";
+
+  async function undo(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (busy) return;
+    setBusy(true);
+    try {
+      await taskApi.toggleStatus(task.id);
+      useAppStore.getState().refreshTaskStats();
+      onChanged();
+    } catch (err) {
+      message.error(`操作失败: ${err}`);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="m-row m-row-icon cursor-pointer" style={{ minHeight: 56 }} onClick={onOpen} role="button" tabIndex={0}>
+      <button
+        type="button"
+        aria-label="撤回为未完成"
+        onClick={undo}
+        className="relative flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[var(--m-r-s)] after:absolute after:-inset-[11px] after:content-['']"
+        style={{ background: "var(--m-ok)", color: "#fff" }}
+      >
+        <Check size={14} strokeWidth={3} />
+      </button>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[15px] line-through" style={{ color: "var(--m-ink3)" }}>
+          {task.title}
+        </div>
+        <div className="m-t-cap mt-0.5">{doneAt ? `${doneAt} 完成` : "已完成"}</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── 右上角同步状态（原型：● 已同步）───
+// 没配同步 / 加载中只显示入口，不报一个不真实的状态；失败优先于「已同步」
+function SyncBadge({ backend }: { backend: SyncBackend | null }) {
+  if (!backend) {
+    return (
+      <>
+        <Cloud size={15} />
+        同步
+      </>
+    );
+  }
+  const last = [backend.lastPullTs, backend.lastPushTs].filter(Boolean).sort().pop();
+  const [dot, label] = backend.lastError ? ["var(--m-bad)", "同步失败"] : last ? ["var(--m-ok)", "已同步"] : ["var(--m-warn)", "未同步"];
+  return (
+    <>
+      <span className="m-dot" style={{ width: 7, height: 7, background: dot }} />
+      {label}
+    </>
   );
 }
 
@@ -477,7 +574,7 @@ function WritingCard({ trend }: { trend: DailyWritingStat[] }) {
   const max = Math.max(1, ...week.map((d) => d.words));
 
   return (
-    <div className="m-px mt-4">
+    <div className="m-gutter mt-4">
       <button type="button" className="m-group block w-full p-4 text-left" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}>
         <div className="flex items-baseline">
           <span className="m-t-sec">本周写作</span>

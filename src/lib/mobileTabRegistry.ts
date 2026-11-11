@@ -37,7 +37,7 @@ export const MOBILE_TAB_REGISTRY: Record<MobileTabKey, MobileTabMeta> = {
   home: {
     key: "home",
     icon: "home",
-    label: "主页",
+    label: "首页", // 与 PC 活动栏、原型一致（原「主页」）
     path: "/",
     matchPrefixes: ["/"],
   },
@@ -87,7 +87,7 @@ export const MOBILE_TAB_REGISTRY: Record<MobileTabKey, MobileTabMeta> = {
   prompts: {
     key: "prompts",
     icon: "prompts",
-    label: "Prompt",
+    label: "提示词", // 与 PC 活动栏一致（原「Prompt」）
     path: "/prompts",
     matchPrefixes: ["/prompts"],
   },
@@ -125,12 +125,13 @@ export const MOBILE_TAB_KEYS: readonly MobileTabKey[] = Object.keys(
   MOBILE_TAB_REGISTRY,
 ) as MobileTabKey[];
 
-/** 默认前 4 格（最后一格固定「我的」由 MobileLayout 单独画） */
+/** 默认前 4 格（最后一格固定「我的」由 MobileLayout 单独画）。顺序同原型：首页 · 笔记 · 待办 · AI
+ *  只影响新装 / 没改过 Tab 的用户：已存的 mobileTabKeys 原样保留 */
 export const DEFAULT_MOBILE_TAB_KEYS: readonly MobileTabKey[] = [
   "home",
   "notes",
-  "ai",
   "tasks",
+  "ai",
 ];
 
 export const MOBILE_TAB_SLOT_COUNT = 4;
