@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>软件更新 / 下载 · 交互原型（v4）</title>
+<style>
+/* 设计令牌照抄 kit.css（淡紫）+ dark.css（暖炭），单文件自包含 */
+:root{
+  --ff-ui:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","PingFang SC","Noto Sans SC",sans-serif;
+  --ff-mono:"Cascadia Code","JetBrains Mono",Consolas,"Microsoft YaHei UI",monospace;
+  --ease:cubic-bezier(.22,.7,.25,1);
+  --r-s:6px; --r-m:8px; --r-l:12px; --r-xl:14px;
+  --chrome:#F4F1FD; --sheet:#FFFFFF; --sheet-tint:#FAF8FF; --raised:#FFFFFF; --card-top:#FFFFFF; --card-bot:#FDFCFF;
+  --hover:rgba(124,99,220,.055); --press:rgba(124,99,220,.095);
+  --ink:#34304A; --ink2:#635D7B; --ink3:#9690AF; --ink4:#BFBAD4;
+  --hair:rgba(124,99,220,.10); --hair2:rgba(124,99,220,.17);
+  --accent:#7C63DC; --accent-soft:rgba(124,99,220,.075); --accent-soft2:rgba(124,99,220,.13); --accent-line:rgba(124,99,220,.32);
+  --link:#7158D4;
+  --grad:linear-gradient(135deg,#B3A3F6 0%,#937BE9 45%,#7C63DC 100%);
+  --grad-soft:linear-gradient(135deg,#F7F3FF 0%,#EFEAFE 100%);
+  --grad-bar:linear-gradient(180deg,#FCFBFF 0%,#F6F3FE 100%);
+  --ok:#3E9A72; --ok-soft:rgba(62,154,114,.1);
+  --bad:#D65A6E; --bad-soft:rgba(214,90,110,.09);
+  --warn:#C38D33; --warn-soft:rgba(195,141,51,.1);
+  --info:#5C86DA; --info-soft:rgba(92,134,218,.1);
+  --track:#ECE8F8; --sw-off:#DCD7EC; --menu-bg:rgba(255,255,255,.98); --seg-on:linear-gradient(180deg,#fff,#FBFAFF);
+  --sh-raised:0 0 0 .5px rgba(110,85,200,.13),0 1px 2px rgba(110,85,200,.06),0 2px 6px rgba(110,85,200,.045);
+  --sh-card:0 0 0 .5px rgba(110,85,200,.10),0 1px 2px rgba(110,85,200,.035),0 8px 24px -14px rgba(110,85,200,.18);
+  --sh-pop:0 0 0 .5px rgba(110,85,200,.14),0 4px 12px rgba(110,85,200,.08),0 20px 44px -12px rgba(110,85,200,.26);
+  --sh-btn:inset 0 1px 0 rgba(255,255,255,.3),0 0 0 .5px rgba(110,85,200,.25),0 3px 8px -2px rgba(124,99,220,.38);
+  color-scheme:light;
+}
+html.dark{
+  --d-line:255,245,230;
+  --chrome:#161514; --sheet:#1D1C1A; --sheet-tint:#21201E; --raised:#2D2B28; --card-top:#242321; --card-bot:#242321;
+  --hover:rgba(var(--d-line),.05); --press:rgba(var(--d-line),.085);
+  --ink:#EFEBE4; --ink2:#C4BEB4; --ink3:#958F85; --ink4:#68635C;
+  --hair:rgba(var(--d-line),.07); --hair2:rgba(var(--d-line),.12);
+  --accent:#A992FA; --accent-soft:rgba(169,146,250,.12); --accent-soft2:rgba(169,146,250,.2); --accent-line:rgba(169,146,250,.45);
+  --link:#B9A7FC;
+  --grad:linear-gradient(135deg,#9C86F2 0%,#8269E4 45%,#6C52D2 100%);
+  --grad-soft:linear-gradient(135deg,#242321 0%,#2D2B28 100%);
+  --grad-bar:linear-gradient(180deg,#21201E 0%,#1D1C1A 100%);
+  --ok:#62C79B; --ok-soft:rgba(98,199,155,.14);
+  --bad:#F0808F; --bad-soft:rgba(240,128,143,.14);
+  --warn:#E3B160; --warn-soft:rgba(227,177,96,.14);
+  --info:#86A9F2; --info-soft:rgba(134,169,242,.14);
+  --track:#312F2B; --sw-off:#3A3834; --menu-bg:rgba(40,38,35,.98); --seg-on:linear-gradient(180deg,#312F2B,#2D2B28);
+  --sh-raised:0 0 0 .5px rgba(var(--d-line),.09),0 1px 2px rgba(0,0,0,.35);
+  --sh-card:0 0 0 .5px rgba(var(--d-line),.08),0 10px 26px -16px rgba(0,0,0,.55);
+  --sh-pop:0 0 0 .5px rgba(var(--d-line),.12),0 6px 16px rgba(0,0,0,.4),0 24px 48px -12px rgba(0,0,0,.6);
+  color-scheme:dark;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:13px/1.5 var(--ff-ui);color:var(--ink);-webkit-font-smoothing:antialiased;background:var(--chrome);min-height:100vh}
+html:not(.dark) body{background:
+  radial-gradient(700px 420px at 0% 0%,#FDFBFF 0%,transparent 70%),
+  radial-gradient(620px 420px at 100% 0%,#F7EEFC 0%,transparent 70%),
+  radial-gradient(900px 520px at 70% 110%,#ECE5FC 0%,transparent 70%),var(--chrome);background-attachment:fixed}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+svg.sm{width:14px;height:14px} svg.xs{width:12px;height:12px} svg.lg{width:20px;height:20px}
+.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.muted{color:var(--ink3)} .faint{color:var(--ink4)} .sp{flex:1}
+
+/* ── 页面框架 ── */
+.top{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:12px;padding:12px 28px;background:var(--grad-bar);box-shadow:0 .5px 0 var(--hair2)}
+.logo{width:24px;height:24px;border-radius:7px;background:var(--grad);display:grid;place-items:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 2px 6px -1px rgba(124,99,220,.45)}
+.top h1{font-size:14px;font-weight:700}
+.top .sub{font-size:12px;color:var(--ink3)}
+.seg{display:flex;padding:2px;border-radius:var(--r-m);background:var(--accent-soft)}
+.seg button{height:26px;padding:0 10px;border-radius:6px;font-size:12px;color:var(--ink3);display:flex;align-items:center;gap:6px}
+.seg button.on{background:var(--seg-on);color:var(--accent);font-weight:600;box-shadow:var(--sh-raised)}
+.seg i{width:10px;height:10px;border-radius:3px}
+.page{padding:24px 28px 60px;display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:22px;align-items:start}
+.board{border-radius:var(--r-xl);background:var(--sheet-tint);box-shadow:var(--sh-card);overflow:hidden}
+.board.wide{grid-column:1/-1}
+.board.w2{grid-column:span 2}
+.bh{display:flex;align-items:baseline;gap:10px;padding:14px 18px 10px;border-bottom:.5px solid var(--hair)}
+.bh b{font-size:11px;font-weight:700;color:#fff;background:var(--grad);border-radius:5px;padding:1px 7px;line-height:18px}
+.bh h2{font-size:13.5px;font-weight:700}
+.bh p{font-size:12px;color:var(--ink3);flex:1;text-align:right}
+.bb{padding:22px 18px;display:flex;justify-content:center}
+.stage{background:
+  linear-gradient(var(--hair) 1px,transparent 1px) 0 0/18px 18px,
+  linear-gradient(90deg,var(--hair) 1px,transparent 1px) 0 0/18px 18px;}
+
+/* ── 按钮 ── */
+.btn{height:30px;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 13px;border-radius:var(--r-s);font-size:12.5px;font-weight:600;white-space:nowrap}
+.btn-p{background:var(--grad);color:#fff;box-shadow:var(--sh-btn)}
+.btn-s{background:var(--accent-soft);color:var(--accent)}
+.btn-o{background:var(--raised);color:var(--ink2);box-shadow:var(--sh-raised);font-weight:400}
+.btn-t{color:var(--ink2);font-weight:400}
+.btn-t:hover,.btn-o:hover{color:var(--accent)}
+.btn-d{background:var(--bad-soft);color:var(--bad)}
+.btn.sm{height:26px;padding:0 10px;font-size:12px}
+
+/* ── A 顶栏徽章 ── */
+.bar{width:100%;display:flex;flex-direction:column;gap:10px}
+.tb{height:46px;display:flex;align-items:center;gap:6px;padding:0 10px 0 14px;border-radius:var(--r-l);background:var(--grad-bar);box-shadow:var(--sh-raised)}
+.tb .lbl{font-size:12px;color:var(--ink3);width:62px}
+.tb .ghost{width:120px;height:8px;border-radius:4px;background:var(--hover)}
+.ib{width:30px;height:30px;border-radius:var(--r-s);display:grid;place-items:center;color:var(--ink3)}
+.badge{height:26px;display:inline-flex;align-items:center;gap:6px;padding:0 10px;border-radius:999px;font-size:12px;color:var(--ink3);cursor:default;white-space:nowrap}
+.badge.idle{background:transparent}
+.badge.idle:hover{background:var(--hover)}
+.badge.dl{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.badge.ready{background:var(--grad);color:#fff;font-weight:600;box-shadow:var(--sh-btn)}
+.badge.ready .dot{width:6px;height:6px;border-radius:50%;background:#fff;box-shadow:0 0 0 3px rgba(255,255,255,.3)}
+.badge.err{background:var(--bad-soft);color:var(--bad);font-weight:600}
+.ring{width:14px;height:14px;transform:rotate(-90deg)}
+.ring circle{fill:none;stroke-width:2.4}
+.ring .t{stroke:var(--accent-soft2)} .ring .v{stroke:var(--accent);stroke-linecap:round}
+
+/* ── 弹窗 ── */
+.dlg{width:440px;border-radius:var(--r-xl);background:var(--sheet);box-shadow:var(--sh-pop);overflow:hidden}
+.dh{display:flex;align-items:center;gap:10px;padding:16px 18px 6px}
+.dh .ico{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent)}
+.dh .ico.ok{background:var(--ok-soft);color:var(--ok)} .dh .ico.bad{background:var(--bad-soft);color:var(--bad)}
+.dh h3{font-size:14px;font-weight:700}
+.dh .ver{font-size:12px;color:var(--ink3)}
+.dh .x{margin-left:auto;width:26px;height:26px;border-radius:6px;display:grid;place-items:center;color:var(--ink4)}
+.db{padding:8px 18px 4px}
+.notes{border-radius:var(--r-m);background:var(--sheet-tint);box-shadow:inset 0 0 0 .5px var(--hair2)}
+.notes summary{list-style:none;display:flex;align-items:center;gap:6px;height:32px;padding:0 10px;font-size:12px;color:var(--ink2);cursor:pointer}
+.notes summary::-webkit-details-marker{display:none}
+.notes summary .chev{transition:transform .15s var(--ease);color:var(--ink4)}
+.notes[open] summary .chev{transform:rotate(90deg)}
+.notes ol{padding:0 12px 10px 30px;font-size:12px;color:var(--ink2);line-height:1.75}
+.prog{margin-top:14px}
+.prog .row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink2);margin-bottom:7px}
+.prog .row .pct{margin-left:auto;font-weight:700;color:var(--ink)}
+.track{height:6px;border-radius:3px;background:var(--track);overflow:hidden}
+.fill{height:100%;border-radius:3px;background:var(--grad);position:relative}
+.fill.paused{background:var(--ink4)}
+.fill.live::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);animation:sweep 1.6s linear infinite}
+@keyframes sweep{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.meta{display:flex;align-items:center;gap:6px;margin-top:7px;font-size:11.5px;color:var(--ink3)}
+.src{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;border-radius:999px;background:var(--hover);color:var(--ink2);font-size:11px}
+.src i{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.hint{margin-top:12px;font-size:11.5px;color:var(--ink3);line-height:1.6}
+.toast{display:flex;gap:8px;align-items:flex-start;margin-top:12px;padding:8px 10px;border-radius:var(--r-m);font-size:12px;line-height:1.55}
+.toast.info{background:var(--info-soft);color:var(--info)}
+.toast.ok{background:var(--ok-soft);color:var(--ok)}
+.toast.warn{background:var(--warn-soft);color:var(--warn)}
+.toast span{color:var(--ink2)}
+.df{display:flex;align-items:center;gap:8px;padding:14px 18px 16px}
+.check{display:flex;align-items:center;gap:8px;margin-top:14px;padding:10px 12px;border-radius:var(--r-m);background:var(--ok-soft);font-size:12px;color:var(--ink2)}
+.check svg{color:var(--ok)}
+.check b{color:var(--ink);font-weight:600}
+.fails{margin-top:12px;border-radius:var(--r-m);box-shadow:inset 0 0 0 .5px var(--hair2)}
+.fails summary{list-style:none;display:flex;align-items:center;gap:6px;height:32px;padding:0 10px;font-size:12px;color:var(--ink2);cursor:pointer}
+.fails summary::-webkit-details-marker{display:none}
+.fails[open] summary .chev{transform:rotate(90deg)}
+.fails .it{display:grid;grid-template-columns:64px 1fr;gap:8px;padding:6px 10px;border-top:.5px solid var(--hair);font-size:11.5px}
+.fails .it b{font-weight:600;color:var(--ink2)}
+.fails .it code{font-family:var(--ff-mono);font-size:11px;color:var(--bad)}
+.links{display:flex;gap:8px;margin-top:10px}
+.links a{flex:1;display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border-radius:var(--r-m);background:var(--raised);box-shadow:var(--sh-raised);font-size:12px;color:var(--ink2);text-decoration:none}
+.links a:hover{color:var(--accent)}
+.links a small{margin-left:auto;color:var(--ink4);font-size:11px}
+
+/* ── G 设置页 ── */
+.set{width:520px;border-radius:var(--r-xl);background:linear-gradient(180deg,var(--card-top),var(--card-bot));box-shadow:var(--sh-card)}
+.set .h{display:flex;align-items:center;gap:8px;height:46px;padding:0 18px;font-size:14px;font-weight:700}
+.set .h svg{color:var(--accent)}
+.si{display:flex;align-items:center;gap:12px;min-height:52px;padding:8px 18px;border-top:.5px solid var(--hair)}
+.si .t{flex:1;min-width:0}
+.si .t div{font-size:13px}
+.si .t p{font-size:11.5px;color:var(--ink3);margin-top:1px}
+.sw{width:32px;height:18px;border-radius:9px;background:var(--sw-off);position:relative;flex:none;cursor:pointer}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(80,60,150,.3);transition:transform .16s var(--ease)}
+.sw.on{background:var(--grad)} .sw.on::after{transform:translateX(14px)}
+.status{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink2)}
+.status .mini{width:120px}
+.tag-ok{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;border-radius:999px;background:var(--ok-soft);color:var(--ok);font-size:11px;font-weight:600}
+
+/* ── H 托盘 / 提示条 ── */
+.hgrid{width:100%;display:grid;grid-template-columns:220px 1fr;gap:18px;align-items:start}
+.menu{padding:5px;border-radius:11px;background:var(--menu-bg);box-shadow:var(--sh-pop)}
+.menu .mi{display:flex;align-items:center;gap:9px;height:32px;padding:0 10px;border-radius:7px;font-size:12.5px;white-space:nowrap}
+.menu .mi svg{color:var(--ink3)}
+.menu .mi.hl{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.menu .mi.hl svg{color:var(--accent)}
+.menu .mi .k{margin-left:auto;font-size:11px;color:var(--ink4)}
+.menu .mi.hl .k{color:var(--accent)}
+.menu hr{border:0;height:.5px;background:var(--hair2);margin:4px 6px}
+.strip{display:flex;align-items:center;gap:10px;height:40px;white-space:nowrap;padding:0 8px 0 14px;border-radius:var(--r-l);background:var(--grad-soft);box-shadow:var(--sh-raised);font-size:12.5px}
+.strip svg.lead{color:var(--accent)}
+.strip .sp{flex:1}
+.mock{border-radius:var(--r-l);overflow:hidden;box-shadow:var(--sh-raised);background:var(--sheet)}
+.mock .mt{height:30px;display:flex;align-items:center;gap:6px;padding:0 10px;background:var(--grad-bar);border-bottom:.5px solid var(--hair);font-size:11.5px;color:var(--ink3)}
+.mock .mb{padding:10px;display:flex;flex-direction:column;gap:8px}
+.mock .ln{height:8px;border-radius:4px;background:var(--hover)}
+
+/* ── I 交互说明 ── */
+.flow{width:100%}
+.flow svg text{font-family:var(--ff-ui)}
+.rules{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:18px}
+.rule{padding:12px 14px;border-radius:var(--r-l);background:var(--sheet);box-shadow:var(--sh-raised)}
+.rule h4{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:700;margin-bottom:4px}
+.rule h4 svg{color:var(--accent)}
+.rule p{font-size:11.5px;color:var(--ink3);line-height:1.6}
+.spin{animation:spin 1s linear infinite;transform-origin:center}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="dl" viewBox="0 0 24 24"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></symbol>
+    <symbol id="tick" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+    <symbol id="shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5.5c0 4.3 3 8 7 9.5 4-1.5 7-5.2 7-9.5V6z"/><path d="m9 12 2.2 2.2L15.5 10"/></symbol>
+    <symbol id="x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="pause" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></symbol>
+    <symbol id="play" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></symbol>
+    <symbol id="restart" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/></symbol>
+    <symbol id="swap" viewBox="0 0 24 24"><path d="M4 8h13l-3-3"/><path d="M20 16H7l3 3"/></symbol>
+    <symbol id="alert" viewBox="0 0 24 24"><path d="M12 4 2.8 19.5h18.4z"/><path d="M12 10v4.5M12 17.2v.1"/></symbol>
+    <symbol id="ext" viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+    <symbol id="bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></symbol>
+    <symbol id="refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-14.3 4.9"/><path d="M4 12A8 8 0 0 1 18.3 7.1"/><path d="M18.5 3v4.4h-4.4"/><path d="M5.5 21v-4.4h4.4"/></symbol>
+    <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4.5l3 2"/></symbol>
+    <symbol id="layers" viewBox="0 0 24 24"><path d="m12 4 8 4-8 4-8-4z"/><path d="m4 12 8 4 8-4"/><path d="m4 16 8 4 8-4"/></symbol>
+    <symbol id="bolt" viewBox="0 0 24 24"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/></symbol>
+    <symbol id="eyeoff" viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M10.6 6.1A9.6 9.6 0 0 1 12 6c5 0 8.5 4.5 9.5 6-.5.8-1.6 2.2-3.1 3.5M6.4 7.5C4.6 8.8 3.3 10.6 2.5 12c1 1.5 4.5 6 9.5 6 1.5 0 2.9-.4 4.1-1"/></symbol>
+    <symbol id="disk" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 4v5h8V4"/><path d="M8 20v-6h8v6"/></symbol>
+    <symbol id="gauge" viewBox="0 0 24 24"><path d="M4.5 17a8.5 8.5 0 1 1 15 0"/><path d="m12 13 4-4"/></symbol>
+    <symbol id="tray" viewBox="0 0 24 24"><path d="M4 13h4l1.5 2.5h5L16 13h4"/><path d="M5.5 6h13L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-5z"/></symbol>
+  </defs>
+</svg>
+
+<header class="top">
+  <div class="logo"><svg class="i sm" style="color:#fff"><use href="#dl"/></svg></div>
+  <div>
+    <h1>软件更新 / 下载 · 交互原型</h1>
+    <div class="sub">知识库桌面端 v4 视觉 · 示例：3.0.2 → 3.1.0，安装包 47.5 MB · 所有画板均为静态快照，按钮不可操作</div>
+  </div>
+  <div class="sp" style="flex:1"></div>
+  <div class="seg" id="theme">
+    <button class="on" data-t="light"><i style="background:linear-gradient(135deg,#F4F1FD,#937BE9)"></i>淡紫</button>
+    <button data-t="dark"><i style="background:linear-gradient(135deg,#1D1C1A 55%,#A992FA)"></i>暖炭</button>
+  </div>
+</header>
+
+<main class="page">
+
+  <!-- A 顶栏徽章 -->
+  <section class="board">
+    <div class="bh"><b>A</b><h2>顶栏右上角徽章</h2><p>全局唯一的进度入口，点击打开更新弹窗</p></div>
+    <div class="bb stage"><div class="bar">
+      <div class="tb"><span class="lbl">空闲</span><span class="ghost"></span><span class="sp"></span>
+        <span class="badge idle num">v3.0.2</span><span class="ib"><svg class="i"><use href="#bell"/></svg></span></div>
+      <div class="tb"><span class="lbl">下载中</span><span class="ghost"></span><span class="sp"></span>
+        <span class="badge dl num" title="正在下载 3.1.0 · 12.9 / 47.5 MB">
+          <svg class="ring" viewBox="0 0 16 16"><circle class="t" cx="8" cy="8" r="6"/><circle class="v" cx="8" cy="8" r="6" stroke-dasharray="37.7" stroke-dashoffset="27.5"/></svg>27%</span>
+        <span class="ib"><svg class="i"><use href="#bell"/></svg></span></div>
+      <div class="tb"><span class="lbl">已就绪</span><span class="ghost"></span><span class="sp"></span>
+        <span class="badge ready num"><span class="dot"></span>重启更新到 3.1.0</span>
+        <span class="ib"><svg class="i"><use href="#bell"/></svg></span></div>
+      <div class="tb"><span class="lbl">失败</span><span class="ghost"></span><span class="sp"></span>
+        <span class="badge err"><svg class="i xs"><use href="#alert"/></svg>更新下载失败</span>
+        <span class="ib"><svg class="i"><use href="#bell"/></svg></span></div>
+    </div></div>
+  </section>
+
+  <!-- B 下载中 -->
+  <section class="board">
+    <div class="bh"><b>B</b><h2>弹窗 · 下载中</h2><p>只在手动检查或点徽章时出现，关掉不影响下载</p></div>
+    <div class="bb stage">
+      <div class="dlg">
+        <div class="dh"><span class="ico"><svg class="i"><use href="#dl"/></svg></span>
+          <div><h3>发现新版本 3.1.0</h3><div class="ver num">当前 3.0.2 · 安装包 47.5 MB</div></div>
+          <button class="x"><svg class="i sm"><use href="#x"/></svg></button></div>
+        <div class="db">
+          <details class="notes"><summary><svg class="i xs chev"><use href="#chev"/></svg>更新内容（5 项）</summary>
+            <ol><li>打开带 YAML 属性的 .md 不再多出分割线和标题</li><li>标题里换行保存后不再错乱</li><li>搜索页不输入关键词时显示标签、文件夹、文件三列</li><li>搜索结果一屏能看到的条数翻倍</li><li>笔记列表、回收站可调行距</li></ol></details>
+          <div class="prog">
+            <div class="row">正在后台下载<span class="pct num">27%</span></div>
+            <div class="track"><div class="fill live" style="width:27%"></div></div>
+            <div class="meta num">12.9 MB / 47.5 MB · 2.3 MB/s · 约 15 秒<span class="sp"></span><span class="src"><i></i>R2</span></div>
+          </div>
+          <div class="hint">可以关掉这个窗口继续用，进度在右上角；下完会自动校验，再提示你重启。</div>
+        </div>
+        <div class="df"><button class="btn btn-t sm"><svg class="i sm"><use href="#pause"/></svg>暂停</button><span class="sp"></span><button class="btn btn-o">后台下载</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- C 自动换源 -->
+  <section class="board">
+    <div class="bh"><b>C</b><h2>弹窗 · 自动换源中</h2><p>换源是下载内部的自愈，状态仍是「下载中」，只多一条轻提示</p></div>
+    <div class="bb stage">
+      <div class="dlg">
+        <div class="dh"><span class="ico"><svg class="i"><use href="#dl"/></svg></span>
+          <div><h3>发现新版本 3.1.0</h3><div class="ver num">当前 3.0.2 · 安装包 47.5 MB</div></div>
+          <button class="x"><svg class="i sm"><use href="#x"/></svg></button></div>
+        <div class="db">
+          <div class="prog">
+            <div class="row">正在后台下载<span class="pct num">27%</span></div>
+            <div class="track"><div class="fill live" style="width:27%"></div></div>
+            <div class="meta num">12.9 MB / 47.5 MB · 正在连接…<span class="sp"></span><span class="src"><i style="background:var(--warn)"></i>GitHub</span></div>
+          </div>
+          <div class="toast info"><svg class="i sm"><use href="#swap"/></svg><span>R2 连接中断，已切换到 GitHub 继续下载（已保留 12.9 MB）</span></div>
+        </div>
+        <div class="df"><button class="btn btn-t sm"><svg class="i sm"><use href="#pause"/></svg>暂停</button><span class="sp"></span><button class="btn btn-o">后台下载</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- D 已暂停 -->
+  <section class="board">
+    <div class="bh"><b>D</b><h2>弹窗 · 已暂停</h2><p>已下的部分留在磁盘上，继续时从断点接着下</p></div>
+    <div class="bb stage">
+      <div class="dlg">
+        <div class="dh"><span class="ico"><svg class="i"><use href="#pause"/></svg></span>
+          <div><h3>下载已暂停</h3><div class="ver num">3.1.0 · 已下载 12.9 MB / 47.5 MB</div></div>
+          <button class="x"><svg class="i sm"><use href="#x"/></svg></button></div>
+        <div class="db">
+          <div class="prog">
+            <div class="row">已暂停<span class="pct num">27%</span></div>
+            <div class="track"><div class="fill paused" style="width:27%"></div></div>
+            <div class="meta num">12.9 MB / 47.5 MB<span class="sp"></span><span class="src"><i style="background:var(--ink4)"></i>R2</span></div>
+          </div>
+          <div class="hint">取消会删掉已下载的部分；只是暂停的话，重启应用后也能接着下。</div>
+        </div>
+        <div class="df"><button class="btn btn-t sm" style="color:var(--bad)">取消下载</button><span class="sp"></span><button class="btn btn-p"><svg class="i sm"><use href="#play"/></svg>继续</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- E 已就绪 -->
+  <section class="board">
+    <div class="bh"><b>E</b><h2>弹窗 · 已就绪</h2><p>下完立即验签，通过才进入此状态；安装时机由用户选</p></div>
+    <div class="bb stage">
+      <div class="dlg">
+        <div class="dh"><span class="ico ok"><svg class="i"><use href="#tick"/></svg></span>
+          <div><h3>3.1.0 已准备好</h3><div class="ver num">重启约需 5 秒，笔记会先自动保存</div></div>
+          <button class="x"><svg class="i sm"><use href="#x"/></svg></button></div>
+        <div class="db">
+          <details class="notes"><summary><svg class="i xs chev"><use href="#chev"/></svg>更新内容（5 项）</summary>
+            <ol><li>打开带 YAML 属性的 .md 不再多出分割线和标题</li><li>标题里换行保存后不再错乱</li><li>搜索页不输入关键词时显示标签、文件夹、文件三列</li><li>搜索结果一屏能看到的条数翻倍</li><li>笔记列表、回收站可调行距</li></ol></details>
+          <div class="check"><svg class="i"><use href="#shield"/></svg><div><b>更新包签名校验通过</b> · 47.5 MB</div></div>
+          <div class="hint">已下载的更新包会保留，关掉应用也不用重下。</div>
+        </div>
+        <div class="df"><button class="btn btn-o">下次启动时安装</button><span class="sp"></span><button class="btn btn-p"><svg class="i sm"><use href="#restart"/></svg>立即重启</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- F 失败 -->
+  <section class="board">
+    <div class="bh"><b>F</b><h2>弹窗 · 失败</h2><p>所有源都试过才算失败；给出每个源的原因和手动下载兜底</p></div>
+    <div class="bb stage">
+      <div class="dlg">
+        <div class="dh"><span class="ico bad"><svg class="i"><use href="#alert"/></svg></span>
+          <div><h3>3.1.0 下载失败</h3><div class="ver num">已保留 12.9 MB，重试会接着下</div></div>
+          <button class="x"><svg class="i sm"><use href="#x"/></svg></button></div>
+        <div class="db">
+          <details class="fails" open><summary><svg class="i xs chev"><use href="#chev"/></svg>2 个下载源都没连上</summary>
+            <div class="it"><b>R2</b><code>连接超时（20 秒没响应）</code></div>
+            <div class="it"><b>GitHub</b><code>error connecting to socks proxy</code></div>
+          </details>
+          <div class="toast warn"><svg class="i sm"><use href="#alert"/></svg><span>看起来系统设了代理但代理没在运行，关掉代理变量或打开代理后再试。</span></div>
+          <div class="links">
+            <a href="#"><svg class="i sm"><use href="#ext"/></svg>Gitee Releases<small>国内</small></a>
+            <a href="#"><svg class="i sm"><use href="#ext"/></svg>GitHub Releases<small>海外</small></a>
+          </div>
+        </div>
+        <div class="df"><button class="btn btn-t">稍后</button><span class="sp"></span><button class="btn btn-p"><svg class="i sm"><use href="#refresh"/></svg>重试</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- G 设置页 -->
+  <section class="board">
+    <div class="bh"><b>G</b><h2>设置页 ·「软件更新」分组</h2><p>状态行与徽章同源，这里也能直接继续 / 重启</p></div>
+    <div class="bb stage">
+      <div class="set">
+        <div class="h"><svg class="i"><use href="#refresh"/></svg>软件更新</div>
+        <div class="si"><div class="t"><div>当前版本</div><p>Knowledge Base · Windows x64</p></div><span class="num" style="font-weight:600">3.0.2</span></div>
+        <div class="si"><div class="t"><div>自动检查并后台下载</div><p>发现新版本后静默下载，不弹窗，只在右上角显示进度</p></div><span class="sw on"></span></div>
+        <div class="si"><div class="t"><div>安装时机</div><p>下载并校验完成之后怎么处理</p></div>
+          <div class="seg"><button class="on">提示我重启</button><button>下次启动时自动安装</button></div></div>
+        <div class="si"><div class="t"><div class="status">状态
+            <span class="mini"><span class="track" style="display:block"><span class="fill live" style="display:block;width:27%"></span></span></span>
+            <span class="num muted">下载 3.1.0 · 27%</span></div>
+          <p>上次检查：今天 14:30</p></div>
+          <button class="btn btn-o sm">查看</button><button class="btn btn-s sm">检查更新</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- H 托盘 + 提示条 -->
+  <section class="board w2">
+    <div class="bh"><b>H</b><h2>托盘菜单 / 待重启提示条</h2><p>托盘项随状态变；提示条只出现一次，可关闭，不打断</p></div>
+    <div class="bb stage"><div class="hgrid">
+      <div class="menu">
+        <div class="mi"><svg class="i sm"><use href="#tray"/></svg>显示主窗口</div>
+        <div class="mi"><svg class="i sm"><use href="#bolt"/></svg>快速记一笔<span class="k">Alt+N</span></div>
+        <hr>
+        <div class="mi hl"><svg class="i sm"><use href="#restart"/></svg>重启更新到 3.1.0<span class="k">已就绪</span></div>
+        <div class="mi"><svg class="i sm"><use href="#refresh"/></svg>检查更新…</div>
+        <hr>
+        <div class="mi"><svg class="i sm"><use href="#x"/></svg>退出</div>
+        <div style="font-size:11px;color:var(--ink4);padding:6px 10px 2px;line-height:1.5">下载中显示「正在下载更新 27%」（不可点）；失败显示「更新下载失败，查看…」</div>
+      </div>
+      <div class="mock">
+        <div class="mt">主窗口 · 编辑区顶部</div>
+        <div class="mb">
+          <div class="strip"><svg class="i lead"><use href="#tick"/></svg><span>3.1.0 已下载好，空闲时重启即可完成更新</span><span class="sp"></span>
+            <button class="btn btn-t sm">更新内容</button><button class="btn btn-p sm">立即重启</button>
+            <button class="ib" style="width:26px;height:26px"><svg class="i sm"><use href="#x"/></svg></button></div>
+          <div class="ln" style="width:60%"></div><div class="ln" style="width:85%"></div><div class="ln" style="width:72%"></div><div class="ln" style="width:40%"></div>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- I 交互说明 -->
+  <section class="board wide">
+    <div class="bh"><b>I</b><h2>交互说明 · 状态机与原则</h2><p>状态只存在 Rust 侧一处，所有界面都只是订阅它</p></div>
+    <div class="bb" style="display:block">
+      <div class="flow">
+        <svg viewBox="0 0 1180 250" width="100%" style="display:block">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" style="fill:var(--ink3)"/></marker>
+            <marker id="arb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" style="fill:var(--bad)"/></marker>
+          </defs>
+          <g font-size="12.5" text-anchor="middle">
+            <!-- 节点 -->
+            <g><rect x="10" y="70" width="110" height="46" rx="10" style="fill:var(--sheet);stroke:var(--hair2)"/><text x="65" y="91" style="fill:var(--ink)" font-weight="700">idle</text><text x="65" y="107" font-size="11" style="fill:var(--ink3)">无更新</text></g>
+            <g><rect x="160" y="70" width="120" height="46" rx="10" style="fill:var(--sheet);stroke:var(--hair2)"/><text x="220" y="91" style="fill:var(--ink)" font-weight="700">checking</text><text x="220" y="107" font-size="11" style="fill:var(--ink3)">单飞：并发共用一次</text></g>
+            <g><rect x="320" y="58" width="190" height="70" rx="12" style="fill:var(--accent-soft);stroke:var(--accent-line)"/><text x="415" y="84" style="fill:var(--accent)" font-weight="700">downloading</text><text x="415" y="101" font-size="11" style="fill:var(--ink2)">续传 · 卡顿重试 · 自动换源</text><text x="415" y="116" font-size="11" style="fill:var(--ink3)">（换源不改变状态）</text></g>
+            <g><rect x="355" y="178" width="120" height="46" rx="10" style="fill:var(--sheet);stroke:var(--hair2)"/><text x="415" y="199" style="fill:var(--ink)" font-weight="700">paused</text><text x="415" y="215" font-size="11" style="fill:var(--ink3)">断点留在磁盘</text></g>
+            <g><rect x="550" y="70" width="120" height="46" rx="10" style="fill:var(--sheet);stroke:var(--hair2)"/><text x="610" y="91" style="fill:var(--ink)" font-weight="700">verifying</text><text x="610" y="107" font-size="11" style="fill:var(--ink3)">下完即验签</text></g>
+            <g><rect x="710" y="70" width="130" height="46" rx="10" style="fill:var(--ok-soft);stroke:var(--ok)"/><text x="775" y="91" style="fill:var(--ok)" font-weight="700">ready</text><text x="775" y="107" font-size="11" style="fill:var(--ink3)">跨重启保留</text></g>
+            <g><rect x="880" y="70" width="130" height="46" rx="10" style="fill:var(--sheet);stroke:var(--hair2)"/><text x="945" y="91" style="fill:var(--ink)" font-weight="700">installing</text><text x="945" y="107" font-size="11" style="fill:var(--ink3)">先保存再装</text></g>
+            <g><rect x="550" y="178" width="290" height="46" rx="10" style="fill:var(--bad-soft);stroke:var(--bad)"/><text x="695" y="199" style="fill:var(--bad)" font-weight="700">error</text><text x="695" y="215" font-size="11" style="fill:var(--ink3)">所有源都失败 / 验签不过（坏包已删）</text></g>
+            <g><rect x="1040" y="70" width="130" height="46" rx="10" style="fill:var(--sheet);stroke:var(--hair2);stroke-dasharray:4 3"/><text x="1105" y="91" style="fill:var(--ink2)" font-weight="700">新版本启动</text><text x="1105" y="107" font-size="11" style="fill:var(--ink3)">清理旧包</text></g>
+            <!-- 连线 -->
+            <g fill="none" style="stroke:var(--ink3)" stroke-width="1.3" marker-end="url(#ar)">
+              <path d="M120 93h38"/><path d="M280 93h38"/><path d="M510 93h38"/><path d="M670 93h38"/><path d="M840 93h38"/><path d="M1010 93h28"/>
+              <path d="M400 128v48"/><path d="M430 176v-46"/>
+              <path d="M220 70v-34h-155v32"/>
+            </g>
+            <g font-size="11" style="fill:var(--ink3)">
+              <text x="139" y="86">有更新</text>
+              <text x="142" y="30">已是最新</text>
+              <text x="296" y="86">开始</text><text x="372" y="156">暂停</text><text x="458" y="156">继续</text>
+              <text x="529" y="86">下完</text><text x="689" y="86">通过</text><text x="859" y="86">重启</text>
+              <text x="775" y="150">「下次启动时安装」也从这里进 installing</text>
+            </g>
+            <g fill="none" style="stroke:var(--bad)" stroke-width="1.3" marker-end="url(#arb)" stroke-dasharray="4 3">
+              <path d="M470 128 Q520 165 556 182"/><path d="M610 116v60"/>
+            </g>
+            <g fill="none" style="stroke:var(--ink3)" stroke-width="1.3" marker-end="url(#ar)" stroke-dasharray="4 3">
+              <path d="M550 212 Q480 250 300 230 Q240 200 300 128"/>
+            </g>
+            <text x="300" y="246" font-size="11" style="fill:var(--ink3)">重试：从断点继续</text>
+          </g>
+        </svg>
+      </div>
+      <div class="rules">
+        <div class="rule"><h4><svg class="i sm"><use href="#layers"/></svg>全局只有一路下载</h4><p>状态机放在 Rust 侧单例里；徽章、弹窗、设置页、托盘、多窗口都只订阅同一份状态，并发检查共用一次请求，不会出现两路下载抢一个进度条。</p></div>
+        <div class="rule"><h4><svg class="i sm"><use href="#eyeoff"/></svg>静默，不主动弹窗</h4><p>自动检查发现新版本只在徽章上显示进度；只有用户手动「检查更新」或点徽章才打开弹窗。待重启时给一次可关闭的提示条。</p></div>
+        <div class="rule"><h4><svg class="i sm"><use href="#swap"/></svg>断点续传 + 自动换源</h4><p>按 R2 → GitHub 顺序尝试；60 秒没数据算卡住，同源重试几次再换源，已下的字节保留。所有源都失败才进入 error。</p></div>
+        <div class="rule"><h4><svg class="i sm"><use href="#shield"/></svg>下完立即验签</h4><p>校验通过才进入 ready；不通过就删掉坏包并提示重下，不会出现「点重启一直失败」。</p></div>
+        <div class="rule"><h4><svg class="i sm"><use href="#disk"/></svg>跨重启保留</h4><p>验签通过的包改成正式文件名，并记下版本和签名；下次启动直接是 ready，不用重下 47.5 MB。新版本启动后清理旧包。</p></div>
+        <div class="rule"><h4><svg class="i sm"><use href="#gauge"/></svg>进度节流 ≤ 4 次/秒</h4><p>Rust 侧按 250ms 合并后推一次完整快照（已下、总大小、速度、剩余时间、当前源）；界面重挂载时先取一次快照再订阅。</p></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+  // 主题切换：和 v4 原型一样用 html.dark 类
+  document.querySelectorAll('#theme button').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('#theme button').forEach(x => x.classList.toggle('on', x === b));
+    document.documentElement.classList.toggle('dark', b.dataset.t === 'dark');
+  }));
+</script>
+</body>
+</html>
