@@ -3126,40 +3126,41 @@ body.sidebar-resizing .kb-tb-left {
   font-weight: 500;
   margin-left: 2px;
 }
-/* 下载进度：整个胶囊就是进度条，已下载部分填上深浅相间的 45° 斜纹，斜纹匀速右移表示正在下载。
+/* 下载进度：整个胶囊就是进度条，已下载部分是从左到右由浅到深的渐变，一道高光反复扫过表示正在下载
+   （方案比较见 docs/design/ui-v4/update-badge-variants.html，选的是 D）。
    填充层垫在文字下面（文字 z-index 1），胶囊自身 overflow:hidden 负责裁成圆角 */
 .kb-upd > :not(.kb-upd-fill) {
   position: relative;
   z-index: 1;
 }
 .kb-upd-fill {
-  --kb-upd-fill-light: color-mix(in srgb, var(--kb-primary) 16%, transparent);
-  --kb-upd-fill-dark: color-mix(in srgb, var(--kb-primary) 30%, transparent);
+  --kb-upd-fill-from: color-mix(in srgb, var(--kb-primary) 10%, transparent);
+  --kb-upd-fill-to: color-mix(in srgb, var(--kb-primary) 30%, transparent);
+  --kb-upd-shine: rgba(255, 255, 255, 0.55);
   position: absolute;
   top: 0;
   bottom: 0;
   left: 0;
   z-index: 0;
   pointer-events: none;
-  background-color: var(--kb-upd-fill-light);
-  background-image: linear-gradient(
-    45deg,
-    var(--kb-upd-fill-dark) 25%,
-    transparent 25%,
-    transparent 50%,
-    var(--kb-upd-fill-dark) 50%,
-    var(--kb-upd-fill-dark) 75%,
-    transparent 75%,
-    transparent
-  );
-  background-size: 14px 14px;
+  background-image:
+    linear-gradient(100deg, transparent 0%, var(--kb-upd-shine) 50%, transparent 100%),
+    linear-gradient(90deg, var(--kb-upd-fill-from), var(--kb-upd-fill-to));
+  background-repeat: no-repeat;
+  background-size: 40% 100%, 100% 100%;
   transition: width 0.6s ease;
-  animation: kbUpdStripes 0.8s linear infinite;
+  animation: kbUpdShine 1.8s ease-in-out infinite;
 }
-/* 平移正好一个图案周期，循环无缝 */
-@keyframes kbUpdStripes {
-  from { background-position: 0 0; }
-  to { background-position: 14px 0; }
+/* 深色主题：白高光太刺眼，压暗；填充再深一点才看得清 */
+[data-theme-category="dark"] .kb-upd-fill {
+  --kb-upd-fill-from: color-mix(in srgb, var(--kb-primary) 12%, transparent);
+  --kb-upd-fill-to: color-mix(in srgb, var(--kb-primary) 34%, transparent);
+  --kb-upd-shine: rgba(255, 255, 255, 0.18);
+}
+/* 高光从填充左外侧扫到右外侧（只动第一层背景） */
+@keyframes kbUpdShine {
+  from { background-position: -60% 0, 0 0; }
+  to { background-position: 160% 0, 0 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .kb-upd-fill {
@@ -3195,10 +3196,10 @@ body.sidebar-resizing .kb-tb-left {
 .kb-upd.is-paused {
   background: color-mix(in srgb, var(--kb-primary) 5%, transparent);
 }
-/* 已暂停：斜纹变灰并停住 */
+/* 已暂停：填充变灰、去掉高光、不再扫 */
 .kb-upd.is-paused .kb-upd-fill {
-  --kb-upd-fill-light: color-mix(in srgb, var(--kb-text-tertiary) 14%, transparent);
-  --kb-upd-fill-dark: color-mix(in srgb, var(--kb-text-tertiary) 26%, transparent);
+  background-image: none;
+  background-color: color-mix(in srgb, var(--kb-text-tertiary) 22%, transparent);
   animation: none;
 }
 

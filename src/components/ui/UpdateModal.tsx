@@ -121,24 +121,21 @@ export function UpdateModal() {
             {totalSize > 0 && ` · 安装包 ${formatSize(totalSize)}`}
           </Text>
 
+          {/* 更新内容常驻显示（打开弹窗首先想看的就是这版改了什么），太长就在卡片里滚动 */}
           {update.body && (
-            <Collapse
-              className="mt-3"
-              size="small"
-              // 下载失败 / 暂停时用户关心的是怎么处理，更新内容先收起
-              defaultActiveKey={failed || paused ? [] : ["body"]}
-              items={[
-                {
-                  key: "body",
-                  label: "更新内容",
-                  children: (
-                    <div style={{ maxHeight: 200, overflow: "auto" }}>
-                      <Text style={{ whiteSpace: "pre-wrap" }}>{update.body}</Text>
-                    </div>
-                  ),
-                },
-              ]}
-            />
+            <div
+              className="mt-3 rounded-lg"
+              style={{ border: "1px solid var(--kb-border)", background: "var(--kb-bg-hover)" }}
+            >
+              <div className="px-3 pt-2.5 pb-1">
+                <Text strong style={{ fontSize: 13 }}>
+                  更新内容
+                </Text>
+              </div>
+              <div className="px-3 pb-3" style={{ maxHeight: 220, overflow: "auto" }}>
+                <Text style={{ whiteSpace: "pre-wrap" }}>{update.body}</Text>
+              </div>
+            </div>
           )}
 
           {(downloading || paused || verifying) && (
