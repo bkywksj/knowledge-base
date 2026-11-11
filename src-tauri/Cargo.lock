@@ -3337,6 +3337,7 @@ dependencies = [
  "jni 0.21.1",
  "kb-core",
  "log",
+ "minisign-verify",
  "ndk-context",
  "pdf-extract",
  "pdfium-render",

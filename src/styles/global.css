@@ -3155,6 +3155,19 @@ body.sidebar-resizing .kb-tb-left {
 .kb-upd.is-ready .kb-upd-from {
   color: color-mix(in srgb, var(--ant-color-success, #3E9A72) 70%, transparent);
 }
+/* 下载失败：警示色，点开看每个源的原因 */
+.kb-upd.is-error {
+  color: var(--ant-color-error, #D0505A);
+  background: color-mix(in srgb, var(--ant-color-error, #D0505A) 10%, transparent);
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--ant-color-error, #D0505A) 40%, transparent);
+}
+.kb-upd.is-error .kb-upd-from {
+  color: color-mix(in srgb, var(--ant-color-error, #D0505A) 70%, transparent);
+}
+/* 已暂停：进度条变灰，圆点不再呼吸 */
+.kb-upd.is-paused .kb-upd-bar > span {
+  background: var(--kb-text-tertiary);
+}
 /* 平时：中性灰的版本号胶囊，不抢眼 */
 .kb-upd.kb-upd-idle {
   color: var(--kb-text-tertiary);

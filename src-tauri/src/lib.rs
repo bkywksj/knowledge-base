@@ -608,6 +608,8 @@ pub fn run() {
                 Some(vec!["--start-minimized"]),
             ))
             .plugin(tauri_plugin_updater::Builder::new().build())
+            // 更新下载状态（只此一份，各窗口通过 updater://state 事件同步）
+            .manage(services::updater_download::UpdaterState::default())
             .plugin(tauri_plugin_global_shortcut::Builder::new().build());
     }
 
@@ -1218,6 +1220,19 @@ pub fn run() {
             commands::ocr::ocr_image,
             #[cfg(desktop)]
             commands::ocr::ocr_pdf,
+            // 软件更新（仅桌面端）
+            #[cfg(desktop)]
+            commands::updater::updater_check,
+            #[cfg(desktop)]
+            commands::updater::updater_state,
+            #[cfg(desktop)]
+            commands::updater::updater_start,
+            #[cfg(desktop)]
+            commands::updater::updater_pause,
+            #[cfg(desktop)]
+            commands::updater::updater_cancel,
+            #[cfg(desktop)]
+            commands::updater::updater_install,
             // 外部 MCP server 子进程仅桌面端
             #[cfg(desktop)]
             commands::mcp::mcp_external_list_tools,

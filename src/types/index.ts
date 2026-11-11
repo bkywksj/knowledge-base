@@ -2066,6 +2066,53 @@ export interface CardStats {
 }
 
 /**
+ * 桌面端更新状态（与 Rust `services::updater_download::Phase` 对齐）。
+ * - available：发现新版本，还没开始下载（关了自动更新 / 取消了下载）
+ * - verifying：下完了，正在校验签名
+ * - ready：已下载并验签，点重启即可安装
+ * - error：所有下载源都失败，或签名校验失败
+ */
+export type UpdaterPhase =
+  | "idle"
+  | "checking"
+  | "available"
+  | "downloading"
+  | "paused"
+  | "verifying"
+  | "ready"
+  | "installing"
+  | "error";
+
+/** 某个下载源的失败原因 */
+export interface UpdaterSourceFailure {
+  source: string;
+  reason: string;
+}
+
+/** 桌面端更新状态快照（与 Rust `UpdaterSnapshot` 对齐），也是 `updater://state` 事件的载荷 */
+export interface UpdaterSnapshot {
+  phase: UpdaterPhase;
+  /** 新版本号；没有可用更新时为 null */
+  version: string | null;
+  /** 更新说明 */
+  body: string | null;
+  /** 已下载字节数（含续传前已有的部分） */
+  downloaded: number;
+  /** 总字节数，服务器没给长度时为 0 */
+  total: number;
+  /** 下载速度，字节 / 秒 */
+  speed: number;
+  /** 当前下载源（R2 / GitHub …） */
+  source: string | null;
+  /** 自动换源这类提示，不影响状态 */
+  notice: string | null;
+  error: string | null;
+  failures: UpdaterSourceFailure[];
+  /** 已就绪的包是本次启动从磁盘恢复的（上次就下好了） */
+  restored: boolean;
+}
+
+/**
  * 移动端"检查更新"结果（与 Rust `MobileUpdateInfo` 对齐）。
  * 桌面端用 tauri-plugin-updater 自动热替换；移动端只能"检查 → 引导用户去下载新 APK"。
  */

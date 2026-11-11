@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { check } from "@tauri-apps/plugin-updater";
 import {
   enable as autostartEnable,
   disable as autostartDisable,
@@ -140,6 +139,7 @@ import type {
   NoteSnapshot,
   SnapshotUsage,
   NoteExcerpt,
+  UpdaterSnapshot,
 } from "@/types";
 
 /** 系统相关 API */
@@ -195,9 +195,25 @@ export const systemApi = {
     invoke<TextHealthReport>("check_db_text_health", { repair }),
 };
 
-/** 更新相关 API */
+/** 桌面端更新状态变化事件，载荷为 {@link UpdaterSnapshot}，广播给所有窗口 */
+export const UPDATER_STATE_EVENT = "updater://state";
+
+/**
+ * 桌面端更新 API。检查、下载、验签、安装全在 Rust（services::updater_download），
+ * 全局只有一份状态、同一时刻最多一路下载；前端只订阅 {@link UPDATER_STATE_EVENT} 显示。
+ */
 export const updaterApi = {
-  checkUpdate: () => check(),
+  /** 检查更新；autoDownload 为真时发现新版本立即后台下载。下载中 / 已就绪时直接返回当前状态 */
+  check: (autoDownload: boolean) => invoke<UpdaterSnapshot>("updater_check", { autoDownload }),
+  state: () => invoke<UpdaterSnapshot>("updater_state"),
+  /** 开始下载；已暂停时从断点继续 */
+  start: () => invoke<UpdaterSnapshot>("updater_start"),
+  /** 暂停，保留已下载的部分 */
+  pause: () => invoke<UpdaterSnapshot>("updater_pause"),
+  /** 取消并删除已下载的部分 */
+  cancel: () => invoke<UpdaterSnapshot>("updater_cancel"),
+  /** 安装已下载的更新包（Windows 上安装器会结束本进程，其它平台返回后需 relaunch） */
+  install: () => invoke<void>("updater_install"),
 };
 
 /** 开机启动 API

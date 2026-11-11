@@ -472,17 +472,10 @@ export function AppLayout() {
   const update = updater?.update ?? null;
   const updatePhase = updater?.phase ?? "idle";
   const updateProgress = updater?.progress ?? 0;
-  const updateDownloadedSize = updater?.downloadedSize ?? 0;
-  const updateTotalSize = updater?.totalSize ?? 0;
-  const updateError = updater?.error ?? null;
-  const modalOpen = updater?.modalOpen ?? false;
   const openModal = updater?.openModal ?? (() => {});
-  const closeModal = updater?.closeModal ?? (() => {});
   const checkManually =
     updater?.checkManually ??
     (async (): Promise<{ hasUpdate: boolean; error?: string }> => ({ hasUpdate: false }));
-  const updateStartDownload = updater?.startDownload ?? (() => {});
-  const updateInstallAndRelaunch = updater?.installAndRelaunch ?? (() => {});
 
   // 启动时静默 pull：让用户从其他设备做的修改自动拉到本地，避免后续编辑产生冲突。
   // 只主窗（label === 'main'）跑一次：pop-out 子窗共用同一个 DB，没必要重复 pull。
@@ -930,18 +923,8 @@ export function AppLayout() {
         open={quickNoteOpen}
         onClose={() => setQuickNoteOpen(false)}
       />
-      <UpdateModal
-        open={modalOpen}
-        onClose={closeModal}
-        update={update}
-        phase={updatePhase}
-        progress={updateProgress}
-        downloadedSize={updateDownloadedSize}
-        totalSize={updateTotalSize}
-        error={updateError}
-        onStartDownload={updateStartDownload}
-        onInstall={updateInstallAndRelaunch}
-      />
+      {/* 状态直接取自全局更新状态（useUpdater），不用逐个传 */}
+      <UpdateModal />
       <AttachmentPreviewModal />
       <AiImportRequestHost />
       <AsrToggleController />

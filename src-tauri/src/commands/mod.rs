@@ -49,6 +49,9 @@ pub mod task_attachment;
 pub mod tasks;
 pub mod template;
 pub mod trash;
+// 软件更新（tauri-plugin-updater 仅桌面端）
+#[cfg(desktop)]
+pub mod updater;
 pub mod vault;
 pub mod videos;
 pub mod whiteboard;

@@ -102,6 +102,9 @@ pub mod task_attachment;
 pub mod tasks;
 pub mod template;
 pub mod trash;
+// 更新包后台下载 / 续传换源 / 验签（tauri-plugin-updater 仅桌面端）
+#[cfg(desktop)]
+pub mod updater_download;
 // 出网 URL 的 SSRF 校验，仅供剪藏 / 外链图片用（AI / WebDAV / S3 走用户自填地址，不适用）
 pub mod url_safety;
 pub mod vault;

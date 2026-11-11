@@ -2,11 +2,10 @@ import { useEffect, useState } from "react";
 import { Tooltip } from "antd";
 import { ArrowRight, RefreshCw } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
-import type { Update } from "@tauri-apps/plugin-updater";
-import type { UpdatePhase } from "@/hooks/useUpdateChecker";
+import type { UpdateInfo, UpdatePhase } from "@/hooks/useUpdateChecker";
 
 interface Props {
-  update: Update | null;
+  update: UpdateInfo | null;
   phase: UpdatePhase;
   progress: number;
   /** 有更新时点击：打开更新弹窗 */
@@ -18,9 +17,11 @@ interface Props {
 /**
  * 顶部栏右侧的版本 / 更新徽章，随 phase 切换：
  * - idle / checking：中性的「v1.2.3 ⟳」，点击手动检查（检查中图标转圈、禁用）
- * - available / error：「● v旧 → v新」，点击弹窗手动下载/重试
- * - downloading：同上 + 「· X%」+ 底部细进度条（圆点呼吸），仍可点开看进度
+ * - available：「● v旧 → v新」，点击弹窗手动下载
+ * - downloading / verifying：同上 + 「· X%」/「· 校验中」+ 底部细进度条（圆点呼吸），仍可点开看进度
+ * - paused：同上 + 「· 已暂停」，进度条变灰
  * - ready：绿色「● v旧 → v新 · 重启生效」，点击弹窗确认重启秒装
+ * - error：红色「· 下载失败」，点击弹窗看原因 / 重试
  * - installing：不渲染（已在弹窗里处理）
  *
  * 平时也常驻版本号：关掉「自动更新」的用户，右上角就是最顺手的手动检查入口。
@@ -57,21 +58,38 @@ export function UpdateBadge({ update, phase, progress, onClick, onCheck }: Props
 
   const ready = phase === "ready";
   const downloading = phase === "downloading";
+  const verifying = phase === "verifying";
+  const paused = phase === "paused";
+  const failed = phase === "error";
+  const showBar = downloading || verifying || paused;
 
   const from = version ? `v${version} → ` : "";
+  const target = `${from}v${update.version}`;
   const tip = ready
-    ? `新版本 ${from}v${update.version} 已下载完成，点击重启秒装`
+    ? `新版本 ${target} 已下载完成，点击重启秒装`
     : downloading
-      ? `正在后台下载 ${from}v${update.version}（${progress}%）`
-      : `发现新版本 ${from}v${update.version}，点击查看`;
+      ? `正在后台下载 ${target}（${progress}%）`
+      : verifying
+        ? `${target} 已下载，正在校验签名`
+        : paused
+          ? `${target} 下载已暂停（${progress}%），点击继续`
+          : failed
+            ? `${target} 下载失败，点击查看原因`
+            : `发现新版本 ${target}，点击查看`;
+
+  const stateClass = ready
+    ? " is-ready"
+    : downloading || verifying
+      ? " is-downloading"
+      : paused
+        ? " is-paused"
+        : failed
+          ? " is-error"
+          : "";
 
   return (
     <Tooltip title={tip}>
-      <button
-        type="button"
-        onClick={onClick}
-        className={`kb-upd${ready ? " is-ready" : downloading ? " is-downloading" : ""}`}
-      >
+      <button type="button" onClick={onClick} className={`kb-upd${stateClass}`}>
         <i className="kb-upd-dot" />
         {version && (
           <>
@@ -81,10 +99,13 @@ export function UpdateBadge({ update, phase, progress, onClick, onCheck }: Props
         )}
         <b>v{update.version}</b>
         {downloading && <em>· {progress}%</em>}
+        {verifying && <em>· 校验中</em>}
+        {paused && <em>· 已暂停</em>}
+        {failed && <em>· 下载失败</em>}
         {ready && <em>· 重启生效</em>}
-        {downloading && (
+        {showBar && (
           <span className="kb-upd-bar">
-            <span style={{ width: `${progress}%` }} />
+            <span style={{ width: `${verifying ? 100 : progress}%` }} />
           </span>
         )}
       </button>

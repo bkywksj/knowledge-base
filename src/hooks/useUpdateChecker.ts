@@ -1,11 +1,32 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import type { Update } from "@tauri-apps/plugin-updater";
+import { listen } from "@tauri-apps/api/event";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { configApi, updaterApi } from "@/lib/api";
+import { message } from "antd";
+import { configApi, updaterApi, UPDATER_STATE_EVENT } from "@/lib/api";
 import { flushSettingsToDisk } from "@/store";
+import type { UpdaterPhase, UpdaterSnapshot } from "@/types";
 
 /** app_config 键："0" = 关闭自动检查 + 后台下载；缺省 / 其它值 = 开启。 */
 const AUTO_CHECK_KEY = "update.auto_check";
+/** app_config 键：更新包下好后什么时候装。缺省 = prompt。 */
+const INSTALL_TIMING_KEY = "update.install_timing";
+/** app_config 键：弹窗里点了「下次启动时安装」的那个版本号（只对这一版生效，不改上面的设置） */
+const INSTALL_ONCE_KEY = "update.install_next_launch_version";
+
+/**
+ * - prompt：下好后提示，用户点「立即重启」才装
+ * - next_launch：下好后不打扰，下次启动应用时自动安装
+ */
+export type InstallTiming = "prompt" | "next_launch";
+
+/** 兼容旧名：各组件按这个名字引用更新状态 */
+export type UpdatePhase = UpdaterPhase;
+
+/** 弹窗 / 徽章要显示的新版本信息 */
+export interface UpdateInfo {
+  version: string;
+  body: string | null;
+}
 
 /**
  * 每次自动 tick 现读配置而不是缓存：设置页可能在子窗口里改，主窗口的定时器
@@ -19,25 +40,27 @@ async function readAutoCheck(): Promise<boolean> {
   }
 }
 
-/**
- * 更新生命周期状态机。
- *
- * idle        无可用更新（或检查失败静默忽略）
- * checking    正在检查（仅手动检查时短暂经过）
- * available   发现新版本，尚未下载完成（自动后台下载会立即把它推向 downloading）
- * downloading 后台静默下载中（只下载、不安装）
- * ready       已下载完，字节在本地待命，点重启即可秒装
- * installing  正在安装并重启
- * error       下载/安装失败，可在 Modal 里重试或走镜像手动下载
- */
-export type UpdatePhase =
-  | "idle"
-  | "checking"
-  | "available"
-  | "downloading"
-  | "ready"
-  | "installing"
-  | "error";
+async function readInstallTiming(): Promise<InstallTiming> {
+  try {
+    return (await configApi.get(INSTALL_TIMING_KEY)) === "next_launch" ? "next_launch" : "prompt";
+  } catch {
+    return "prompt";
+  }
+}
+
+const EMPTY: UpdaterSnapshot = {
+  phase: "idle",
+  version: null,
+  body: null,
+  downloaded: 0,
+  total: 0,
+  speed: 0,
+  source: null,
+  notice: null,
+  error: null,
+  failures: [],
+  restored: false,
+};
 
 interface Options {
   /** 应用启动多久后第一次检查（毫秒）。默认 5000。 */
@@ -45,142 +68,94 @@ interface Options {
   /** 后续轮询间隔（毫秒）。默认 30 分钟。 */
   interval?: number;
   /**
-   * 是否启用自动检查 + 后台下载。默认 true。
-   * 多窗口场景下只让主窗口启用，避免每个子窗口都重复后台下载同一个更新包。
+   * 是否由本窗口负责自动检查。默认 true。多窗口时只让主窗口开；
+   * 状态在 Rust 只有一份，其它窗口照样能看到进度。
    * 同时还要用户没在设置页关掉「自动更新」（app_config `update.auto_check`）。
    */
   enabled?: boolean;
 }
 
 /**
- * 应用级自动检查 + 后台预下载更新。
+ * 应用级更新状态。检查、下载、验签、安装都在 Rust（services::updater_download），
+ * 这里只订阅 `updater://state` 事件把状态镜像出来，再提供几个按钮动作。
  *
- * 设计目标：用户「点重启就秒装」，不用干等下载。
- * - 启动 initialDelay 后静默 check；之后每 interval 再 check 一次。
- * - 一旦发现新版本，**立即在后台静默 `download()`（只下不装）**，把更新包字节下到本地。
- * - 下载完进入 ready，UI（徽章/Modal）提示「重启以更新」。
- * - 用户点重启时走 `install()`（复用已下载好的字节，不二次下载）+ `relaunch()`。
- *
- * Update 对象用 ref 跨渲染保活：download() 下好的字节绑定在这个实例上，
- * install() 必须用同一个实例才能复用，绝不能重新 check() 拿新实例。
+ * 设计目标：用户「点重启就秒装」，不用干等下载，也不被打扰。
+ * - 启动 initialDelay 后静默检查，之后每 interval 再查一次；发现新版本立即后台下载；
+ * - 下载断了自动续传、换源；下完立刻验签；下好的包跨重启保留；
+ * - 只有用户手动检查才弹窗，自动检查只更新右上角徽章；
+ * - 安装时机可选「提示我重启」或「下次启动时自动安装」。
  */
 export function useUpdateChecker(options: Options = {}) {
   const { initialDelay = 5000, interval = 30 * 60 * 1000, enabled = true } = options;
 
-  const [update, setUpdate] = useState<Update | null>(null);
-  const [phase, setPhaseState] = useState<UpdatePhase>("idle");
-  const [progress, setProgress] = useState(0);
-  const [downloadedSize, setDownloadedSize] = useState(0);
-  const [totalSize, setTotalSize] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const [snap, setSnap] = useState<UpdaterSnapshot>(EMPTY);
   const [modalOpen, setModalOpen] = useState(false);
   const [autoCheck, setAutoCheck] = useState(true);
+  const [installTiming, setInstallTimingState] = useState<InstallTiming>("prompt");
+  const [installOnceVersion, setInstallOnceVersion] = useState<string | null>(null);
+  // 「下次启动时安装」每次启动只尝试一次，装失败就停在已就绪，别反复拉起安装器
+  const launchInstallTried = useRef(false);
 
-  // Update 实例保活：download() 的字节绑在它身上，install() 要用同一个。
-  const updateRef = useRef<Update | null>(null);
-  // phase 镜像到 ref，避免轮询闭包读到过期的 phase。
-  const phaseRef = useRef<UpdatePhase>("idle");
-
-  const setPhase = useCallback((p: UpdatePhase) => {
-    phaseRef.current = p;
-    setPhaseState(p);
+  // 订阅 Rust 的状态广播；挂载时先取一次，窗口晚打开 / 组件重挂载也能对齐
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<UpdaterSnapshot>(UPDATER_STATE_EVENT, (e) => setSnap(e.payload)).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+    // 移动端没有这些命令，失败按「无更新」处理
+    updaterApi.state().then((s) => !disposed && setSnap(s)).catch(() => {});
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
-  /** 后台下载更新包（只下载、不安装）。下载完进入 ready。 */
-  const startDownload = useCallback(async () => {
-    const u = updateRef.current;
-    if (!u) return;
-    // 正在下载 / 已下完 / 正在装，不重复触发。
-    if (phaseRef.current === "downloading" || phaseRef.current === "installing") return;
-
-    setPhase("downloading");
-    setProgress(0);
-    setDownloadedSize(0);
-    setTotalSize(0);
-    setError(null);
-
-    try {
-      let total = 0;
-      let done = 0;
-      await u.download((event) => {
-        if (event.event === "Started") {
-          total = event.data.contentLength ?? 0;
-          setTotalSize(total);
-        } else if (event.event === "Progress") {
-          done += event.data.chunkLength;
-          setDownloadedSize(done);
-          // contentLength 为权威总大小；累加值偶有虚高（tauri 进度事件特性），
-          // 百分比 clamp 到 100，避免出现「138%」「已下载 > 总」的观感问题。
-          if (total > 0) setProgress(Math.min(100, Math.round((done / total) * 100)));
-        } else if (event.event === "Finished") {
-          setProgress(100);
-        }
-      });
-      setPhase("ready");
-    } catch (e) {
-      setError(String(e));
-      setPhase("error");
-    }
-  }, [setPhase]);
-
-  /** 安装已下载好的更新并重启（秒装，复用 download() 的字节）。 */
   const installAndRelaunch = useCallback(async () => {
-    const u = updateRef.current;
-    if (!u || phaseRef.current !== "ready") return;
-    setPhase("installing");
-    setError(null);
     try {
-      // install() 会拉起安装器，安装器为了替换 exe 必须先杀掉本进程 —— 此时还没落盘的
+      // install 会拉起安装器，安装器为了替换 exe 必须先结束本进程 —— 此时还没落盘的
       // 设置改动就永久丢了（用户观感就是"更新之后设置被重置"）。先同步刷一次。
       // 刷盘失败不该挡住更新：settings 是次要数据，装不上新版本才是大事。
       await flushSettingsToDisk().catch(() => {});
-      await u.install();
+      await updaterApi.install();
+      // Windows 上走不到这里（安装器已结束本进程）；macOS / Linux 装完要自己重启
       await relaunch();
     } catch (e) {
-      // 安装失败回退到 ready，允许用户重试或走镜像手动下载。
-      setError(String(e));
-      setPhase("ready");
+      // 失败原因 Rust 已写进状态（回到 ready + error），弹窗里会显示
+      console.warn("[updater] 安装失败", e);
     }
-  }, [setPhase]);
+  }, []);
 
-  /** 内部统一的检查逻辑。manual=true 时无视轮询节流并自动弹 Modal。 */
+  // 已就绪且选了「下次启动时安装」（设置项，或弹窗里只对这一版点的）
+  const installOnNextLaunch =
+    snap.version !== null && (installTiming === "next_launch" || installOnceVersion === snap.version);
+
+  // 下次启动时安装：本次启动恢复出上次下好的包，且用户选了这个时机，就直接装
+  useEffect(() => {
+    if (!enabled || launchInstallTried.current) return;
+    if (snap.phase !== "ready" || !snap.restored || !installOnNextLaunch) return;
+    launchInstallTried.current = true;
+    message.loading({ content: `正在安装上次下载好的更新 v${snap.version}…`, duration: 0, key: "updater-launch-install" });
+    void installAndRelaunch().finally(() => message.destroy("updater-launch-install"));
+  }, [enabled, snap.phase, snap.restored, snap.version, installOnNextLaunch, installAndRelaunch]);
+
+  /** 内部统一的检查逻辑。manual=true 时发现新版本自动弹 Modal。 */
   const runCheck = useCallback(
     async (manual: boolean): Promise<{ hasUpdate: boolean; error?: string }> => {
-      // 已经在处理某个版本（下载中/已就绪/安装中）：手动点就直接把 Modal 打开看进度，
-      // 自动轮询则直接跳过，别打断正在进行的下载。
-      if (
-        updateRef.current &&
-        (phaseRef.current === "available" ||
-          phaseRef.current === "downloading" ||
-          phaseRef.current === "ready" ||
-          phaseRef.current === "installing" ||
-          phaseRef.current === "error")
-      ) {
-        if (manual) setModalOpen(true);
-        return { hasUpdate: true };
-      }
-
       try {
-        if (manual) setPhase("checking");
-        const result = await updaterApi.checkUpdate();
-        if (result) {
-          updateRef.current = result;
-          setUpdate(result);
-          setPhase("available");
-          if (manual) setModalOpen(true);
-          // 发现即后台下载，用户无需等待。
-          void startDownload();
-          return { hasUpdate: true };
-        }
-        setPhase("idle");
-        return { hasUpdate: false };
+        // 手动检查也后台下载：用户点检查就是想更新。自动检查走到这里说明自动更新开着
+        const s = await updaterApi.check(true);
+        setSnap(s);
+        const hasUpdate = s.version !== null;
+        if (manual && hasUpdate) setModalOpen(true);
+        return { hasUpdate };
       } catch (e) {
         // 自动检查静默失败（没网/端点不通不影响应用运行）；手动检查把错误回传给调用方。
-        if (manual) setPhase("idle");
         return { hasUpdate: false, error: String(e) };
       }
     },
-    [setPhase, startDownload]
+    []
   );
 
   /** 自动检查入口：用户关了开关就整个跳过（不检查、不下载）。 */
@@ -201,6 +176,8 @@ export function useUpdateChecker(options: Options = {}) {
 
   useEffect(() => {
     void readAutoCheck().then(setAutoCheck);
+    void readInstallTiming().then(setInstallTimingState);
+    configApi.get(INSTALL_ONCE_KEY).then((v) => setInstallOnceVersion(v || null)).catch(() => {});
   }, []);
 
   /** 设置页开关：持久化后更新状态；从关到开时立刻检查一次，不用等下个周期。 */
@@ -213,8 +190,21 @@ export function useUpdateChecker(options: Options = {}) {
     [enabled, runCheck]
   );
 
+  /** 设置页「安装时机」 */
+  const setInstallTiming = useCallback(async (next: InstallTiming) => {
+    await configApi.set(INSTALL_TIMING_KEY, next);
+    setInstallTimingState(next);
+  }, []);
+
+  /** 弹窗「下次启动时安装」：只对当前这个版本生效 */
+  const installCurrentOnNextLaunch = useCallback(async () => {
+    if (!snap.version) return;
+    await configApi.set(INSTALL_ONCE_KEY, snap.version);
+    setInstallOnceVersion(snap.version);
+  }, [snap.version]);
+
   const openModal = useCallback(() => {
-    if (updateRef.current) setModalOpen(true);
+    setModalOpen(true);
   }, []);
 
   const closeModal = useCallback(() => {
@@ -223,28 +213,49 @@ export function useUpdateChecker(options: Options = {}) {
   }, []);
 
   /**
-   * 用户手动触发检查（托盘菜单「检查更新…」）。
+   * 用户手动触发检查（托盘菜单「检查更新…」、右上角版本号、设置页、关于页）。
    * 有更新时弹出 Modal；已是最新或失败时由调用方给出反馈。
    */
-  const checkManually = useCallback(
-    () => runCheck(true),
-    [runCheck]
-  );
+  const checkManually = useCallback(() => runCheck(true), [runCheck]);
+
+  // 按钮动作：失败原因由 Rust 写进状态，这里只兜住 reject
+  const startDownload = useCallback(() => {
+    updaterApi.start().then(setSnap).catch((e) => message.error(`开始下载失败：${e}`));
+  }, []);
+  const pauseDownload = useCallback(() => {
+    updaterApi.pause().then(setSnap).catch(() => {});
+  }, []);
+  const cancelDownload = useCallback(() => {
+    updaterApi.cancel().then(setSnap).catch(() => {});
+  }, []);
+
+  const update: UpdateInfo | null = snap.version ? { version: snap.version, body: snap.body } : null;
+  const progress = snap.total > 0 ? Math.min(100, Math.floor((snap.downloaded / snap.total) * 100)) : 0;
 
   return {
     update,
-    phase,
+    phase: snap.phase,
     progress,
-    downloadedSize,
-    totalSize,
-    error,
+    downloadedSize: snap.downloaded,
+    totalSize: snap.total,
+    speed: snap.speed,
+    source: snap.source,
+    notice: snap.notice,
+    error: snap.error,
+    failures: snap.failures,
     modalOpen,
     autoCheck,
     setAutoCheckEnabled,
+    installTiming,
+    setInstallTiming,
+    installOnNextLaunch,
+    installCurrentOnNextLaunch,
     openModal,
     closeModal,
     checkManually,
     startDownload,
+    pauseDownload,
+    cancelDownload,
     installAndRelaunch,
   };
 }

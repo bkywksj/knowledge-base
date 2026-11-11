@@ -147,6 +147,9 @@ tauri-plugin-single-instance = "2"
 # 不然设了 ALL_PROXY=socks5://… 的用户检查更新必失败。Cargo 会把 feature 合并到依赖树里同版本的 reqwest 上，
 # TLS 仍由 updater 自己选。
 reqwest013 = { package = "reqwest", version = "0.13", default-features = false, features = ["socks"] }
+# 更新包自己下载（services/updater_download），装之前要自己验签：插件的 install() 不验签，
+# 验签只在它自带的 download() 里做。与 tauri-plugin-updater 用的是同一个 crate，不新增依赖。
+minisign-verify = "0.2"
 # PDFium fallback（pdf-extract 对中文 CMap 不支持，运行时动态加载 pdfium.dll 兜底）
 # 移动端 NDK 加载动态库受沙盒限制，暂不支持，待 T-M012 决策
 pdfium-render = "0.8"

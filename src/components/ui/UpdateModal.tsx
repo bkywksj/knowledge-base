@@ -1,14 +1,21 @@
-import { Modal, Button, Progress, Typography, Space } from "antd";
-import { CheckCircleOutlined, SyncOutlined, DownloadOutlined } from "@ant-design/icons";
-import type { Update } from "@tauri-apps/plugin-updater";
+import { useEffect, useState } from "react";
+import { Modal, Button, Progress, Typography, Space, Alert, Collapse, Tag } from "antd";
+import {
+  CheckCircleOutlined,
+  SyncOutlined,
+  DownloadOutlined,
+  PauseOutlined,
+  CaretRightOutlined,
+  SafetyCertificateOutlined,
+} from "@ant-design/icons";
+import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { UpdatePhase } from "@/hooks/useUpdateChecker";
+import { useUpdater } from "@/components/updater/UpdaterProvider";
 
 const { Text, Paragraph } = Typography;
 
 /**
  * 自动更新失败时的"手动下载"备选地址。
- * 顺序与 tauri.conf.json 的 updater.endpoints 一致：R2 → Gitee → GitHub。
  * R2 是裸文件存储没有 release 页，所以只暴露 Gitee / GitHub 两个 release 页。
  */
 const FALLBACK_DOWNLOAD_PAGES = [
@@ -22,62 +29,86 @@ const FALLBACK_DOWNLOAD_PAGES = [
   },
 ];
 
-interface UpdateModalProps {
-  open: boolean;
-  onClose: () => void;
-  update: Update | null;
-  /** 更新生命周期状态（由 useUpdateChecker 驱动）。 */
-  phase: UpdatePhase;
-  progress: number;
-  downloadedSize: number;
-  totalSize: number;
-  error: string | null;
-  /** 触发/重试后台下载。 */
-  onStartDownload: () => void;
-  /** 安装已下载好的更新并重启（秒装）。 */
-  onInstall: () => void;
-}
-
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** 剩余时间：速度为 0（刚开始 / 卡住）时不显示，免得出现「约 ∞ 秒」 */
+function formatEta(remaining: number, speed: number): string | null {
+  if (speed <= 0 || remaining <= 0) return null;
+  const secs = Math.ceil(remaining / speed);
+  if (secs < 60) return `约 ${secs} 秒`;
+  if (secs < 3600) return `约 ${Math.ceil(secs / 60)} 分钟`;
+  return "超过 1 小时";
+}
+
 /**
- * 软件更新弹窗。
+ * 软件更新弹窗。状态全部来自全局更新状态（Rust 那一份），这里只负责显示和按钮。
  *
- * 配合「后台预下载」模式：多数情况下用户点开时下载早已在后台完成（phase=ready），
- * 直接点「立即重启」即可秒装；若仍在下载则显示进度；下载失败给镜像手动下载兜底。
+ * 配合「后台预下载」：多数时候用户点开时已经下好（ready），直接「立即重启」秒装；
+ * 还在下就显示进度，可暂停 / 关掉弹窗后台继续；下载失败列出每个源的原因，并给镜像页手动下载兜底。
  */
-export function UpdateModal({
-  open,
-  onClose,
-  update,
-  phase,
-  progress,
-  downloadedSize,
-  totalSize,
-  error,
-  onStartDownload,
-  onInstall,
-}: UpdateModalProps) {
+export function UpdateModal() {
+  const updater = useUpdater();
+  const [currentVersion, setCurrentVersion] = useState("");
+
+  useEffect(() => {
+    getVersion().then(setCurrentVersion).catch(() => {});
+  }, []);
+
+  if (!updater) return null;
+  const {
+    update,
+    phase,
+    progress,
+    downloadedSize,
+    totalSize,
+    speed,
+    source,
+    notice,
+    error,
+    failures,
+    modalOpen,
+    closeModal,
+    startDownload,
+    pauseDownload,
+    cancelDownload,
+    installAndRelaunch,
+    installOnNextLaunch,
+    installCurrentOnNextLaunch,
+  } = updater;
+
   const downloading = phase === "downloading";
+  const paused = phase === "paused";
+  const verifying = phase === "verifying";
   const ready = phase === "ready";
   const installing = phase === "installing";
   const failed = phase === "error";
 
   function handleClose() {
     // 只有安装中不允许关（安装器马上要接管进程）。下载中关掉弹窗不会中断下载：
-    // closeModal 只是隐藏，下载状态在 useUpdateChecker 里，右上角徽章继续显示进度。
+    // 只是隐藏，下载在 Rust 后台继续，右上角徽章继续显示进度。
     if (installing) return;
-    onClose();
+    closeModal();
   }
+
+  const title = ready
+    ? `${update?.version ?? ""} 已准备好`
+    : paused
+      ? "下载已暂停"
+      : failed
+        ? `${update?.version ?? ""} 下载失败`
+        : `发现新版本 ${update?.version ?? ""}`;
+
+  const sizeLine = totalSize > 0 ? `${formatSize(Math.min(downloadedSize, totalSize))} / ${formatSize(totalSize)}` : formatSize(downloadedSize);
+  const eta = formatEta(totalSize - downloadedSize, speed);
 
   return (
     <Modal
-      title="软件更新"
-      open={open}
+      title={title}
+      open={modalOpen}
       onCancel={handleClose}
       closable={!installing}
       maskClosable={!installing}
@@ -85,61 +116,123 @@ export function UpdateModal({
     >
       {update && (
         <div>
-          <Paragraph>
-            <Text strong>新版本：</Text>
-            <Text>{update.version}</Text>
-          </Paragraph>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {currentVersion && `当前 ${currentVersion}`}
+            {totalSize > 0 && ` · 安装包 ${formatSize(totalSize)}`}
+          </Text>
 
           {update.body && (
-            <Paragraph>
-              <Text strong>更新内容：</Text>
-              <div
-                className="mt-2 p-3 rounded-md"
-                style={{ background: "rgba(0,0,0,0.04)", maxHeight: 220, overflow: "auto" }}
-              >
-                <Text style={{ whiteSpace: "pre-wrap" }}>{update.body}</Text>
-              </div>
-            </Paragraph>
+            <Collapse
+              className="mt-3"
+              size="small"
+              // 下载失败 / 暂停时用户关心的是怎么处理，更新内容先收起
+              defaultActiveKey={failed || paused ? [] : ["body"]}
+              items={[
+                {
+                  key: "body",
+                  label: "更新内容",
+                  children: (
+                    <div style={{ maxHeight: 200, overflow: "auto" }}>
+                      <Text style={{ whiteSpace: "pre-wrap" }}>{update.body}</Text>
+                    </div>
+                  ),
+                },
+              ]}
+            />
           )}
 
-          {downloading && (
+          {(downloading || paused || verifying) && (
             <div className="mt-4">
-              <div className="flex items-center gap-2 mb-2">
-                <SyncOutlined spin />
-                <Text>正在后台下载更新...</Text>
+              <div className="flex items-center justify-between mb-1">
+                <span className="flex items-center gap-2">
+                  {downloading && <SyncOutlined spin />}
+                  {paused && <PauseOutlined />}
+                  {verifying && <SafetyCertificateOutlined />}
+                  <Text>{verifying ? "正在校验更新包签名…" : paused ? "已暂停" : "正在后台下载"}</Text>
+                </span>
+                {source && !verifying && <Tag bordered={false}>{source}</Tag>}
               </div>
-              <Progress percent={progress} />
-              {totalSize > 0 && (
-                <Text type="secondary" className="text-xs">
-                  {/* 以 contentLength 为权威总大小，已下载 clamp 到不超过总大小，
-                      避免下载统计虚高时出现「18.7 MB / 13.6 MB」这种已下载 > 总的观感。 */}
-                  {formatSize(Math.min(downloadedSize, totalSize))} / {formatSize(totalSize)}
-                </Text>
+              <Progress percent={verifying ? 100 : progress} status={paused ? "normal" : "active"} showInfo />
+              <Text type="secondary" className="text-xs">
+                {sizeLine}
+                {downloading && speed > 0 && ` · ${formatSize(speed)}/s`}
+                {downloading && eta && ` · ${eta}`}
+                {downloading && speed === 0 && downloadedSize > 0 && " · 正在连接…"}
+              </Text>
+              {notice && downloading && (
+                <Alert className="mt-3" type="info" showIcon message={notice} />
               )}
               <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
-                可以先关掉这个窗口继续使用，下载会在后台进行，进度见右上角版本号；下载完成后点它重启即可。
+                {paused
+                  ? "取消会删除已下载的部分；只是暂停的话，重启应用后也能接着下。"
+                  : "可以关掉这个窗口继续使用，下载在后台进行，进度见右上角版本号；下完会自动校验，再提示你重启。"}
               </Paragraph>
             </div>
           )}
 
-          {ready && (
-            <div className="mt-4 flex items-center gap-2">
-              <CheckCircleOutlined style={{ color: "#52c41a", fontSize: 18 }} />
-              <Text>更新已下载完成，点「立即重启」即可秒速完成安装</Text>
-            </div>
-          )}
-
-          {installing && (
-            <div className="mt-4 flex items-center gap-2">
-              <SyncOutlined spin />
-              <Text>正在安装并重启...</Text>
+          {(ready || installing) && (
+            <div className="mt-4">
+              <div className="flex items-center gap-2">
+                {installing ? (
+                  <SyncOutlined spin />
+                ) : (
+                  <CheckCircleOutlined style={{ color: "var(--ant-color-success, #52c41a)", fontSize: 16 }} />
+                )}
+                <Text>{installing ? "正在安装并重启…" : "更新包签名校验通过"}</Text>
+              </div>
+              {ready && (
+                <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
+                  已下载的更新包会保留，关掉应用也不用重下。
+                  {installOnNextLaunch && "下次启动应用时会自动安装。"}
+                </Paragraph>
+              )}
+              {error && (
+                <Alert className="mt-3" type="error" showIcon message="安装没有完成" description={error} />
+              )}
             </div>
           )}
 
           {failed && (
             <div className="mt-4">
               <Paragraph type="danger" style={{ marginBottom: 8 }}>
-                自动下载失败，可重试或从下方任一镜像页手动下载安装：
+                {error ?? "自动下载失败"}
+                {downloadedSize > 0 && `（已保留 ${formatSize(downloadedSize)}，重试会接着下）`}
+              </Paragraph>
+              {failures.length > 0 && (
+                <Collapse
+                  size="small"
+                  items={[
+                    {
+                      key: "failures",
+                      label: `${failures.length} 个下载源都没连上`,
+                      children: (
+                        <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                          {failures.map((f) => (
+                            <div key={f.source} className="flex gap-2 text-xs">
+                              <Text strong style={{ fontSize: 12, flexShrink: 0 }}>
+                                {f.source}
+                              </Text>
+                              <Text type="secondary" style={{ fontSize: 12, wordBreak: "break-all" }}>
+                                {f.reason}
+                              </Text>
+                            </div>
+                          ))}
+                        </Space>
+                      ),
+                    },
+                  ]}
+                />
+              )}
+              {failures.some((f) => /proxy|代理/i.test(f.reason)) && (
+                <Alert
+                  className="mt-3"
+                  type="warning"
+                  showIcon
+                  message="看起来是系统里设置的代理没在运行：关掉代理设置，或打开代理软件后重试。"
+                />
+              )}
+              <Paragraph type="secondary" style={{ fontSize: 12, margin: "12px 0 8px" }}>
+                也可以从下面任一镜像页手动下载安装：
               </Paragraph>
               <Space direction="vertical" style={{ width: "100%" }}>
                 {FALLBACK_DOWNLOAD_PAGES.map((page) => (
@@ -153,11 +246,6 @@ export function UpdateModal({
                   </Button>
                 ))}
               </Space>
-              {error && (
-                <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}>
-                  错误详情：{error}
-                </Paragraph>
-              )}
             </div>
           )}
         </div>
@@ -168,9 +256,21 @@ export function UpdateModal({
   function renderFooter() {
     if (ready) {
       return (
-        <Button type="primary" icon={<CheckCircleOutlined />} onClick={onInstall}>
-          立即重启
-        </Button>
+        <Space>
+          {!installOnNextLaunch && (
+            <Button
+              onClick={() => {
+                void installCurrentOnNextLaunch();
+                closeModal();
+              }}
+            >
+              下次启动时安装
+            </Button>
+          )}
+          <Button type="primary" icon={<CheckCircleOutlined />} onClick={() => void installAndRelaunch()}>
+            立即重启
+          </Button>
+        </Space>
       );
     }
     if (installing) {
@@ -181,23 +281,47 @@ export function UpdateModal({
       );
     }
     if (downloading) {
-      return <Button onClick={handleClose}>后台下载</Button>;
+      return (
+        <Space>
+          <Button icon={<PauseOutlined />} onClick={pauseDownload}>
+            暂停
+          </Button>
+          <Button type="primary" onClick={handleClose}>
+            后台下载
+          </Button>
+        </Space>
+      );
+    }
+    if (verifying) {
+      return <Button onClick={handleClose}>后台进行</Button>;
+    }
+    if (paused) {
+      return (
+        <Space>
+          <Button type="text" danger onClick={cancelDownload}>
+            取消下载
+          </Button>
+          <Button type="primary" icon={<CaretRightOutlined />} onClick={startDownload}>
+            继续
+          </Button>
+        </Space>
+      );
     }
     if (failed) {
       return (
         <Space>
           <Button onClick={handleClose}>稍后</Button>
-          <Button type="primary" icon={<DownloadOutlined />} onClick={onStartDownload}>
-            重新下载
+          <Button type="primary" icon={<DownloadOutlined />} onClick={startDownload}>
+            重试
           </Button>
         </Space>
       );
     }
-    // available：后台下载通常已自动开始；这里兜底给一个立即下载按钮。
+    // available：关了自动更新、或取消过下载
     return (
       <Space>
         <Button onClick={handleClose}>稍后</Button>
-        <Button type="primary" icon={<DownloadOutlined />} onClick={onStartDownload}>
+        <Button type="primary" icon={<DownloadOutlined />} onClick={startDownload}>
           立即下载
         </Button>
       </Space>

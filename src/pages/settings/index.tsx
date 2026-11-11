@@ -61,6 +61,7 @@ import { LIST_DENSITY_OPTIONS, type ListDensity } from "@/lib/listDensity";
 import { beginImportJob, beginTrackedImportJob } from "@/lib/importJob";
 import { Checkbox } from "antd";
 import { useUpdater } from "@/components/updater/UpdaterProvider";
+import type { InstallTiming, UpdatePhase } from "@/hooks/useUpdateChecker";
 import { RecommendCards } from "@/components/ui/RecommendCards";
 import { SyncTabs } from "@/components/settings/SyncTabs";
 import { AsrSection } from "@/components/settings/AsrSection";
@@ -136,6 +137,26 @@ function cancelIdle(handle: IdleHandle): void {
 }
 
 /** 作者社区信息 */
+/** 设置页「软件更新」状态行文案 */
+function describeUpdateStatus(phase: UpdatePhase, version: string, progress: number): string {
+  switch (phase) {
+    case "downloading":
+      return `正在下载 ${version} · ${progress}%`;
+    case "paused":
+      return `${version} 下载已暂停 · ${progress}%`;
+    case "verifying":
+      return `${version} 已下载，正在校验签名`;
+    case "ready":
+      return `${version} 已下载好，重启即可安装`;
+    case "installing":
+      return `正在安装 ${version}`;
+    case "error":
+      return `${version} 下载失败`;
+    default:
+      return `发现新版本 ${version}`;
+  }
+}
+
 const BILIBILI_URL = "https://space.bilibili.com/520725002";
 const BILIBILI_TUTORIAL_URL = "https://www.bilibili.com/video/BV1xvosBREbr";
 const ZSXQ_NAME = "后端转AI实战派";
@@ -289,6 +310,14 @@ function DesktopSettingsPage() {
   async function handleAutoCheckToggle(next: boolean) {
     try {
       await updater?.setAutoCheckEnabled(next);
+    } catch (e) {
+      message.error(`保存失败: ${e}`);
+    }
+  }
+
+  async function handleInstallTimingChange(next: InstallTiming) {
+    try {
+      await updater?.setInstallTiming(next);
     } catch (e) {
       message.error(`保存失败: ${e}`);
     }
@@ -1495,6 +1524,44 @@ function DesktopSettingsPage() {
             onChange={handleAutoCheckToggle}
           />
         </div>
+        <div
+          className="flex items-center justify-between py-1 mt-2"
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
+        >
+          <div>
+            <div>安装时机</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              更新包下载并校验完之后怎么处理。
+            </Text>
+          </div>
+          <Radio.Group
+            optionType="button"
+            size="small"
+            value={updater?.installTiming ?? "prompt"}
+            disabled={!updater}
+            onChange={(e) => void handleInstallTimingChange(e.target.value)}
+            options={[
+              { label: "提示我重启", value: "prompt" },
+              { label: "下次启动时自动安装", value: "next_launch" },
+            ]}
+          />
+        </div>
+        {updater?.update && (
+          <div
+            className="flex items-center justify-between py-1 mt-2"
+            style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
+          >
+            <div>
+              <div>状态</div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {describeUpdateStatus(updater.phase, updater.update.version, updater.progress)}
+              </Text>
+            </div>
+            <Button size="small" onClick={updater.openModal}>
+              查看
+            </Button>
+          </div>
+        )}
       </Card>
 
       <Card
