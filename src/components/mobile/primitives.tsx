@@ -129,10 +129,11 @@ export function MPageHeader({
   titleSuffix?: ReactNode;
 }) {
   return (
-    <div className="m-gutter flex items-end pt-2">
+    // 原型：带日期副标题的（首页）底对齐、标题上留 2px；只有标题的（笔记 / 待办…）与右侧 44 图标按钮垂直居中
+    <div className={subtitle != null ? "m-gutter flex items-end pt-2" : "m-gutter flex items-center pt-2"}>
       <div className="min-w-0">
         {subtitle != null && <div className="m-t-meta">{subtitle}</div>}
-        <div className="flex items-center gap-1.5">
+        <div className={subtitle != null ? "mt-0.5 flex items-center gap-1.5" : "flex items-center gap-1.5"}>
           <h1 className="m-t-large truncate">{title}</h1>
           {titleSuffix}
         </div>

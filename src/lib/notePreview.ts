@@ -1,6 +1,9 @@
 import { dailyToPlainLines } from "./dailyTimeline";
 import { stripMarkdownLine } from "./noteTitle";
 
+/** 非 HTML 的「<」在去标记期间的占位符（私用区字符，正文里不会出现） */
+const LT = "\uE000";
+
 /**
  * 笔记卡片 / 列表行的正文预览：去掉 HTML 与 Markdown 标记，压成一行。
  *
@@ -19,12 +22,15 @@ export function notePreviewText(
   if (opts.noteType === "whiteboard") return "白板";
   if (!content) return "";
   // 代码块围栏要在交给 dailyToPlainLines 之前删：它会先去掉反引号，```js 只剩孤零零的 js（分割线它自己会滤）
-  const lines = dailyToPlainLines(content.replace(/^\s*`{3,}.*$/gm, ""))
+  // 不是 HTML 标签的尖括号先换成占位符：dailyToPlainLines 和 stripMarkdownLine 都会把 <...> 当标签删掉，
+  // `R<T>`、`List<String>` 会丢字。小写字母开头的才算 HTML 标签；全部处理完再换回 <
+  const escaped = content.replace(/^\s*`{3,}.*$/gm, "").replace(/<(?!\/?[a-z][a-z0-9]*(?:[\s/>]|$)|!--)/g, LT);
+  const lines = dailyToPlainLines(escaped)
     // 只剩标记的行：编辑器把空标题存成单独一个 `#`、空列表项存成 `-`，去标记的规则要求后面跟空格，漏网后预览里一串「# # # - -」（真机实测）
     .filter((l) => !/^\s*(#{1,6}|[-*+]|>|\d+[.)])\s*$/.test(l))
     .map((l) => stripMarkdownLine(l))
     .filter(Boolean);
   const title = opts.title?.trim();
   if (title && lines[0] === title) lines.shift();
-  return lines.join(" ").replace(/\s+/g, " ").trim().slice(0, opts.max ?? 90);
+  return lines.join(" ").replace(/\s+/g, " ").split(LT).join("<").trim().slice(0, opts.max ?? 90);
 }

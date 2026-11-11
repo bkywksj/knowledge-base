@@ -13,7 +13,9 @@
   --m-page: var(--kb-bg-panel, #F6F3FD);
   --m-surface: var(--kb-bg-raised, #FFFFFF);
   --m-well: #F1EEF8;
-  --m-well: color-mix(in srgb, var(--kb-primary) 8%, var(--kb-bg-raised));
+  /* 凹陷底（输入框、分段控件底槽、胶囊）：原来混在卡片白上，结果和页面底色几乎一样（#F5F3FC vs #F6F3FD），
+     放在页面上的分段控件底槽完全看不出来。改为混在页面底色上，淡紫下 ≈ 原型 #F1EEF8 */
+  --m-well: color-mix(in srgb, var(--kb-primary) 6%, var(--m-page));
 
   /* ── 文字：PC 的三级文字色里，tertiary 对比度不够正文用（淡紫白底 2.9:1），
         手机端辅助文字一律用 secondary，tertiary 只给图标、分隔这类非文字元素 ── */
@@ -115,7 +117,11 @@
 .m-page { background: var(--m-page); color: var(--m-ink); }
 /* 手机页面默认行高 1.5（同原型）：antd App 外层给的是 1.615（21/13），往下继承后列表每行都比原型高一截。
    .m-root = 不在 MobileLayout 里的独立路由页（任务详情 / AI 对话 / 同步）的根 */
-.m-page, .m-root { line-height: 1.5; }
+.m-page, .m-root {
+  line-height: 1.5;
+  /* 字体栈同原型（手机端不读桌面的「主题与字体」设置）：苹方 → 鸿蒙 → MiSans → 雅黑 → 系统 */
+  font-family: "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+}
 /* 页边距：原名 m-px，和 Tailwind 工具类 m-px（margin: 1px）撞名，所有用到的容器四周多出 1px 外边距 → 改名 */
 .m-gutter { padding-left: var(--m-page-px); padding-right: var(--m-page-px); }
 /* 分组面板只靠白底和页面底色区分 */

@@ -23,6 +23,11 @@ describe("笔记预览文字", () => {
     expect(notePreviewText("#\n\n#\n\n### 的单位知识星球\n\n-\n\n- 来了")).toBe("的单位知识星球 来了");
   });
 
+  it("代码里的泛型尖括号不当 HTML 标签删掉", () => {
+    expect(notePreviewText("所有 Controller 返回 R<T>，列表用 List<String>")).toBe("所有 Controller 返回 R<T>，列表用 List<String>");
+    expect(notePreviewText("<p>真正的 <b>HTML</b></p>")).toBe("真正的 HTML");
+  });
+
   it("白板固定显示「白板」，不露出 JSON", () => {
     expect(notePreviewText('{"type":"excalidraw","elements":[]}', { noteType: "whiteboard" })).toBe("白板");
   });

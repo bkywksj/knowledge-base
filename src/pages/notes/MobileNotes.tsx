@@ -21,9 +21,9 @@ import {
   Search,
   Trash2,
 } from "lucide-react";
-import { folderApi, noteApi, tagApi, trashApi } from "@/lib/api";
+import { folderApi, linkApi, noteApi, tagApi, trashApi } from "@/lib/api";
 import { useAppStore } from "@/store";
-import type { Folder, Note, NoteQuery, Tag } from "@/types";
+import type { Folder, Note, NoteQuery, NoteTagBrief, Tag } from "@/types";
 import { relativeTime } from "@/lib/utils";
 import { notePreviewText } from "@/lib/notePreview";
 import { useLongPress } from "@/hooks/useLongPress";
@@ -31,7 +31,7 @@ import { ActionSheet, type ActionSheetItem } from "@/components/mobile/ActionShe
 import { FolderPickerSheet } from "@/components/mobile/FolderPickerSheet";
 import { SwipeRow } from "@/components/mobile/SwipeRow";
 import { TextPromptModal } from "@/components/mobile/TextPromptModal";
-import { MGroup, MPageHeader, MSectionHeader, MTag } from "@/components/mobile/primitives";
+import { LinkBadge, MGroup, MPageHeader, MSectionHeader, MTag } from "@/components/mobile/primitives";
 
 /**
  * 移动端笔记页（v4 原型第 02 / 03 屏；功能底稿 docs/tasks/mobile-v4-feature-inventory.md）
@@ -78,6 +78,8 @@ export function MobileNotes() {
 
   const [folders, setFolders] = useState<Folder[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
+  /** 每行的标签 + 入链数（按页批量取，见 loadNotes） */
+  const [rowExtra, setRowExtra] = useState<Map<number, RowExtra>>(new Map());
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -122,6 +124,18 @@ export function MobileNotes() {
         setNotes((prev) => (nextPage === 1 ? res.items ?? [] : [...prev, ...(res.items ?? [])]));
         setTotal(res.total ?? 0);
         setPage(nextPage);
+        // 行上的标签胶囊 +「↔ 链入 N」（原型 02）：这一页的笔记批量取，失败不影响列表
+        const ids = (res.items ?? []).map((n) => n.id);
+        if (ids.length > 0) {
+          Promise.all([linkApi.getBacklinkCounts(ids).catch(() => []), tagApi.getForNotes(ids).catch(() => ({}))]).then(([counts, tags]) => {
+            setRowExtra((prev) => {
+              const next = nextPage === 1 ? new Map<number, RowExtra>() : new Map(prev);
+              const linkMap = new Map(counts ?? []);
+              for (const id of ids) next.set(id, { links: linkMap.get(id) ?? 0, tags: (tags as Record<number, NoteTagBrief[]>)[id] ?? [] });
+              return next;
+            });
+          });
+        }
       } catch (e) {
         console.error("[MobileNotes] load notes failed:", e);
       } finally {
@@ -446,12 +460,12 @@ export function MobileNotes() {
                     <div className="m-t-cap mb-1.5 flex items-center gap-1">
                       <Pin size={12} /> 置顶
                     </div>
-                    <NoteGroup notes={pinned} onOpen={(n) => navigate(`/notes/${n.id}`)} onMenu={setSheetNote} onMove={(n) => setMoveTarget({ kind: "note", note: n })} onDelete={deleteNote} />
+                    <NoteGroup notes={pinned} extra={rowExtra} onOpen={(n) => navigate(`/notes/${n.id}`)} onMenu={setSheetNote} onMove={(n) => setMoveTarget({ kind: "note", note: n })} onDelete={deleteNote} />
                     {rest.length > 0 && <div className="m-t-cap mt-4 mb-1.5">最近</div>}
                   </>
                 )}
                 {rest.length > 0 && (
-                  <NoteGroup notes={rest} onOpen={(n) => navigate(`/notes/${n.id}`)} onMenu={setSheetNote} onMove={(n) => setMoveTarget({ kind: "note", note: n })} onDelete={deleteNote} />
+                  <NoteGroup notes={rest} extra={rowExtra} onOpen={(n) => navigate(`/notes/${n.id}`)} onMenu={setSheetNote} onMove={(n) => setMoveTarget({ kind: "note", note: n })} onDelete={deleteNote} />
                 )}
                 {notes.length < total && (
                   <button
@@ -559,14 +573,22 @@ function FolderRow({ folder, onOpen, onMenu }: { folder: Folder; onOpen: () => v
 }
 
 // ─── 笔记分组：左滑「移动 / 删除」，轻点进入，长按出完整菜单 ───
+/** 笔记行的附加信息：标签 + 入链数（按页批量取） */
+interface RowExtra {
+  links: number;
+  tags: NoteTagBrief[];
+}
+
 function NoteGroup({
   notes,
+  extra,
   onOpen,
   onMenu,
   onMove,
   onDelete,
 }: {
   notes: Note[];
+  extra: Map<number, RowExtra>;
   onOpen: (n: Note) => void;
   onMenu: (n: Note) => void;
   onMove: (n: Note) => void;
@@ -584,7 +606,7 @@ function NoteGroup({
               { key: "del", label: "删除", icon: <Trash2 size={18} />, tone: "bad", onClick: () => onDelete(n) },
             ]}
           >
-            <NoteRow note={n} onOpen={() => onOpen(n)} onMenu={() => onMenu(n)} />
+            <NoteRow note={n} extra={extra.get(n.id)} onOpen={() => onOpen(n)} onMenu={() => onMenu(n)} />
           </SwipeRow>
         </div>
       ))}
@@ -592,7 +614,7 @@ function NoteGroup({
   );
 }
 
-function NoteRow({ note, onOpen, onMenu }: { note: Note; onOpen: () => void; onMenu: () => void }) {
+function NoteRow({ note, extra, onOpen, onMenu }: { note: Note; extra?: RowExtra; onOpen: () => void; onMenu: () => void }) {
   const lp = useLongPress(onMenu, { onClick: onOpen });
   const preview = note.is_encrypted ? "已加密，解锁后查看" : notePreviewText(note.content, { title: note.title, max: 80, noteType: note.note_type });
   return (
@@ -610,10 +632,17 @@ function NoteRow({ note, onOpen, onMenu }: { note: Note; onOpen: () => void; onM
           {preview}
         </div>
       )}
-      <div className="mt-2 flex items-center gap-2">
+      {/* 原型：[标签] 时间 · 字数 · ↔ 链入 N；标签最多 2 个，免得一行挤不下 */}
+      <div className="mt-2 flex min-w-0 items-center gap-2 overflow-hidden">
         {note.is_daily && <MTag tone="warn">日记</MTag>}
-        <span className="m-t-cap">{relativeTime(note.updated_at)}</span>
-        <span className="m-t-cap m-num">{note.word_count.toLocaleString()} 字</span>
+        {extra?.tags.slice(0, 2).map((t) => (
+          <MTag key={t.id} tone="info" className="max-w-[6em] shrink-0 truncate">
+            {t.name}
+          </MTag>
+        ))}
+        <span className="m-t-cap shrink-0">{relativeTime(note.updated_at)}</span>
+        <span className="m-t-cap m-num shrink-0">{note.word_count.toLocaleString()} 字</span>
+        {extra && extra.links > 0 && <LinkBadge>链入 {extra.links}</LinkBadge>}
       </div>
     </div>
   );
