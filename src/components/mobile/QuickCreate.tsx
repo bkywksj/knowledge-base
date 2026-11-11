@@ -33,6 +33,12 @@ import { MGroup } from "./primitives";
  * 新增「记一笔」（追加到今天日记，同首页）与「剪贴板内容建笔记」（同 PC 托盘）。
  */
 
+/**
+ * 三格的上下内边距（原型 13 是 14px）。写成内联而不是 py-3.5：.m-kk 在未分层的 mobile.css 里，
+ * 会压过 Tailwind 工具类，py-3.5 实际不生效。
+ */
+const KK_PAD = { paddingTop: 14, paddingBottom: 14 };
+
 function findPath(list: Folder[], id: number, trail: Folder[] = []): Folder[] | null {
   for (const f of list) {
     const next = [...trail, f];
@@ -252,15 +258,15 @@ export function QuickCreatePanel({ defaultFolderId = null, onDone, replaceOnNavi
 
       <div className="mx-4 mt-2.5">
         <MGroup className="grid grid-cols-3 py-1">
-          <button type="button" className="m-kk py-3.5" onClick={() => setNoteOpen(true)}>
+          <button type="button" className="m-kk" style={KK_PAD} onClick={() => setNoteOpen(true)}>
             <KingKongIcon kind="note" />
             记一笔
           </button>
-          <button type="button" className="m-kk py-3.5" onClick={() => go("/tasks?new=1")}>
+          <button type="button" className="m-kk" style={KK_PAD} onClick={() => go("/tasks?new=1")}>
             <KingKongIcon kind="todo" />
             待办
           </button>
-          <button type="button" className="m-kk py-3.5" onClick={() => void openTodayDaily()}>
+          <button type="button" className="m-kk" style={KK_PAD} onClick={() => void openTodayDaily()}>
             <KingKongIcon kind="daily" />
             今日日记
           </button>

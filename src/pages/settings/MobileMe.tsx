@@ -6,8 +6,10 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getVersion } from "@tauri-apps/api/app";
 import {
+  BookOpenText,
   Boxes,
   Cloud,
+  CloudCheck,
   CloudOff,
   FileArchive,
   FolderInput,
@@ -41,7 +43,7 @@ import { themes, type ThemeMeta } from "@/theme/tokens";
 import { MOBILE_TAB_REGISTRY, type MobileTabKey } from "@/lib/mobileTabRegistry";
 import { BOTTOM_ITEMS, MAIN_GROUPS, type ActivityItem } from "@/components/layout/ActivityBar";
 import { useLongPress } from "@/hooks/useLongPress";
-import { MGroup, MPageHeader, MRow, MSectionHeader } from "@/components/mobile/primitives";
+import { MGroup, MRow, MSectionHeader } from "@/components/mobile/primitives";
 import { MSheet, PickRow } from "@/components/mobile/MSheet";
 import { ActionSheet, type ActionSheetItem } from "@/components/mobile/ActionSheet";
 
@@ -345,18 +347,31 @@ export function MobileMe() {
 
   return (
     <div className="mx-auto w-full max-w-[860px] pb-24">
-      <MPageHeader title="我的知识库" />
-      <div className="m-gutter m-t-meta mt-1">
-        {stats ? `${stats.total_notes} 篇笔记 · ${stats.total_words.toLocaleString()} 字 · ${stats.total_links} 条双链 · ${stats.total_tags} 个标签` : "　"}
+      {/* 头部（原型 12）：渐变图标块 + 20px 标题 + 统计 */}
+      <div className="m-gutter flex items-center gap-3.5 pt-3">
+        <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[12px]" style={{ background: "var(--m-grad)", color: "var(--m-on-accent)" }}>
+          <BookOpenText size={24} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[20px] font-bold" style={{ color: "var(--m-ink)" }}>
+            我的知识库
+          </div>
+          <div className="m-t-meta m-num">
+            {stats ? `${stats.total_notes} 篇笔记 · ${stats.total_words.toLocaleString()} 字 · ${stats.total_links} 条双链 · ${stats.total_tags} 个标签` : "　"}
+          </div>
+          {stats && stats.today_updated > 0 && <div className="m-t-cap">今天更新了 {stats.today_updated} 篇</div>}
+        </div>
       </div>
-      {stats && stats.today_updated > 0 && <div className="m-gutter m-t-cap mt-0.5">今天更新了 {stats.today_updated} 篇</div>}
 
-      {/* 同步卡 */}
-      <div className="m-gutter mt-4">
-        <MGroup className="flex items-center gap-3 px-4 py-3">
+      {/* 同步行（原型 12）：状态图标块 + 两行文字 + 右侧文字按钮 */}
+      <div className="m-gutter mt-5">
+        <MGroup className="flex min-h-[60px] items-center gap-3 pr-1 pl-3">
           <button type="button" className="flex min-h-[44px] min-w-0 flex-1 items-center gap-3 text-left" onClick={() => navigate("/sync")}>
-            <span className="flex w-6 shrink-0 justify-center" style={{ color: backend ? "var(--m-ok)" : "var(--m-ink3)" }}>
-              {backend ? <Cloud size={22} /> : <CloudOff size={22} />}
+            <span
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px]"
+              style={backend ? { background: "var(--m-ok-soft)", color: "var(--m-ok)" } : { background: "var(--m-well)", color: "var(--m-ink3)" }}
+            >
+              {backend ? <CloudCheck size={18} /> : <CloudOff size={18} />}
             </span>
             <span className="min-w-0">
               <span className="block truncate text-[15px] font-semibold" style={{ color: "var(--m-ink)" }}>
@@ -376,14 +391,14 @@ export function MobileMe() {
           {backend ? (
             <button
               type="button"
-              className="m-chip shrink-0"
-              style={{ background: "var(--m-accent-soft2)", color: "var(--m-accent-ink)", fontWeight: 700 }}
+              className="flex h-11 shrink-0 items-center px-3 text-[14px] font-bold"
+              style={{ color: "var(--m-accent-ink)" }}
               onClick={() => navigate("/sync", { state: { syncNow: backend.id } })}
             >
               立即同步
             </button>
           ) : (
-            <button type="button" className="m-chip shrink-0" style={{ background: "var(--m-well)" }} onClick={() => navigate("/sync")}>
+            <button type="button" className="flex h-11 shrink-0 items-center px-3 text-[14px] font-bold" style={{ color: "var(--m-accent-ink)" }} onClick={() => navigate("/sync")}>
               去设置
             </button>
           )}
@@ -392,8 +407,8 @@ export function MobileMe() {
 
       {/* 全部功能 */}
       <div className="m-gutter mt-6">
-        <MSectionHeader className="mb-2 px-1" title="全部功能" action={<span className="m-t-cap">长按可放到底部 Tab</span>} />
-        <MGroup className="grid grid-cols-3 px-1 py-2">
+        <MSectionHeader className="mb-2" title="全部功能" action={<span className="m-t-cap">长按可放到底部 Tab</span>} />
+        <MGroup className="grid grid-cols-4 py-2">
           {features.map((it) => (
             <FeatureCell
               key={it.view}
@@ -407,14 +422,14 @@ export function MobileMe() {
             />
           ))}
         </MGroup>
-        <div className="m-t-cap mt-1.5 flex items-center gap-1.5 px-1">
-          <span className="m-dot" style={{ background: "var(--m-accent)", width: 6, height: 6 }} /> 已在底部 Tab
+        <div className="m-t-cap mt-1.5 flex items-center gap-1.5">
+          <span className="m-dot" style={{ background: "var(--m-accent)", width: 7, height: 7 }} /> 已在底部 Tab
         </div>
       </div>
 
       {/* 设置 */}
       <div className="m-gutter mt-6">
-        <MSectionHeader className="mb-2 px-1" title="设置" />
+        <MSectionHeader className="mb-2" title="设置" />
         <MGroup>
           <MRow icon={<Palette size={20} style={iconStyle} />} chevron right={currentTheme?.label} onClick={() => setThemeOpen(true)}>
             外观与主题
@@ -565,21 +580,28 @@ function FeatureCell({
   onLongPress: () => void;
 }) {
   const lp = useLongPress(onLongPress, { onClick });
-  const icon = isValidElement(item.icon) ? cloneElement(item.icon as ReactElement<{ size?: number }>, { size: 26 }) : item.icon;
+  const icon = isValidElement(item.icon) ? cloneElement(item.icon as ReactElement<{ size?: number }>, { size: 22 }) : item.icon;
   return (
-    <div {...lp} role="button" tabIndex={0} aria-label={item.label} className="m-kk cursor-pointer select-none" style={{ WebkitTouchCallout: "none" }}>
-      <span className="relative" style={{ color: "var(--m-ink)" }}>
+    <div
+      {...lp}
+      role="button"
+      tabIndex={0}
+      aria-label={item.label}
+      className="flex min-h-[70px] cursor-pointer select-none flex-col items-center justify-center gap-2 py-3 text-[12px] active:opacity-70"
+      style={{ WebkitTouchCallout: "none", color: "var(--m-ink2)" }}
+    >
+      <span className="relative flex">
         {icon}
         {badge > 0 && (
           <span className="m-badge m-num" aria-label={`${badge} 项待处理`}>
             {badge > 99 ? "99+" : badge}
           </span>
         )}
-        {inTab && <span className="absolute -bottom-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full" style={{ background: "var(--m-accent)" }} aria-label="已在底部 Tab" />}
+        {inTab && badge === 0 && <span className="absolute -top-1.5 -right-2.5 h-[7px] w-[7px] rounded-full" style={{ background: "var(--m-accent)" }} aria-label="已在底部 Tab" />}
       </span>
-      <span className="leading-tight">{label}</span>
-      {/* 说明行始终占位：有的格子有、有的没有时，各行高度才对齐 */}
-      <span className="m-t-cap -mt-1.5 leading-tight" aria-hidden={!caption}>{caption ?? " "}</span>
+      <span className="leading-[18px]">{label}</span>
+      {/* 4 列下格子窄，原来第二行的说明（「N 条」等）收进读屏文字 */}
+      {caption && <span className="sr-only">{caption}</span>}
     </div>
   );
 }

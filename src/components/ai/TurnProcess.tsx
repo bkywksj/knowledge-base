@@ -49,6 +49,8 @@ export function TurnProcess({ view, open, onToggle }: Props) {
 
   return (
     <div
+      // kb-turn-process：手机端（.m-ai-thread）按原型改成凹陷圆角条，PC 不受影响
+      className="kb-turn-process"
       style={{
         background: token.colorFillQuaternary,
         borderTop: `1px solid ${token.colorBorderSecondary}`,
@@ -57,7 +59,7 @@ export function TurnProcess({ view, open, onToggle }: Props) {
     >
       <button
         type="button"
-        className="w-full flex items-center gap-1.5 px-4 py-2 text-xs text-left"
+        className="kb-turn-process-toggle w-full flex items-center gap-1.5 px-4 py-2 text-xs text-left"
         style={{ color: token.colorTextSecondary }}
         onClick={onToggle}
       >

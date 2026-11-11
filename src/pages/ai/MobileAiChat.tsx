@@ -2,7 +2,9 @@ import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowUp,
+  AtSign,
   BookText,
+  Brain,
   ChevronDown,
   Copy,
   FileDown,
@@ -453,12 +455,13 @@ export function MobileAiChat() {
     >
       <div className="shrink-0">
         <MNavBar
+          center
           onBack={() => navigate("/ai")}
           title={
-            // 标题 + 副标题合成一个整块热区：点开切模型
-            <button type="button" className="flex min-h-[44px] w-full min-w-0 flex-col items-start justify-center text-left" onClick={() => setModelSheet(true)} aria-label="切换模型">
-              <span className="w-full truncate">{conv?.title || "对话"}</span>
-              <span className="m-t-cap flex w-full min-w-0 items-center gap-1 font-normal">
+            // 标题 + 副标题合成一个整块热区：点开切模型（原型 11：居中、标题 16px）
+            <button type="button" className="flex min-h-[44px] w-full min-w-0 flex-col items-center justify-center text-center" onClick={() => setModelSheet(true)} aria-label="切换模型">
+              <span className="w-full truncate text-[16px]">{conv?.title || "对话"}</span>
+              <span className="m-t-cap flex min-w-0 max-w-full items-center gap-1 font-normal">
                 {streaming && <span className="m-dot shrink-0 animate-pulse" style={{ background: "var(--m-accent)" }} />}
                 <span className="truncate">
                   {model?.name ?? "未选模型"} · {useSkills ? "智能模式" : "纯聊天"}
@@ -518,7 +521,15 @@ export function MobileAiChat() {
       </main>
 
       {/* 输入区 */}
-      <footer className="m-gutter shrink-0 pt-2" style={{ paddingBottom: keyboardInset ? 8 : "calc(8px + env(safe-area-inset-bottom, 0px))" }}>
+      {/* 原型 11：白底贴底栏 + 顶部细线；胶囊行在上，凹陷输入框 + 发送键在下 */}
+      <footer
+        className="m-gutter shrink-0 pt-2"
+        style={{
+          background: "var(--m-surface)",
+          borderTop: "0.5px solid var(--m-hair)",
+          paddingBottom: keyboardInset ? 8 : "calc(8px + env(safe-area-inset-bottom, 0px))",
+        }}
+      >
         {editingFrom && (
           <div className="mb-2 flex items-center gap-2 rounded-[var(--m-r-m)] px-3 py-2" style={{ background: "var(--m-warn-soft)", color: "var(--m-warn)" }}>
             <Pencil size={14} className="shrink-0" />
@@ -535,9 +546,9 @@ export function MobileAiChat() {
             </button>
           </div>
         )}
-        <div className="rounded-[var(--m-r-xl)] px-3 pt-2 pb-1.5" style={{ background: "var(--m-surface)" }}>
+        <div>
           {(attached.length > 0 || preset) && (
-            <div className="m-hscroll mb-1.5 flex items-center gap-1.5">
+            <div className="m-hscroll mb-2 flex items-center gap-1.5">
               {preset && (
                 <Tag icon={<Wand2 size={12} />} label={preset.title} onRemove={() => void setPreset(null)} removeLabel="不使用提示词" />
               )}
@@ -552,6 +563,11 @@ export function MobileAiChat() {
               ))}
             </div>
           )}
+          <div className="m-hscroll flex items-center gap-2 pb-2">
+            <ComposerChip icon={<AtSign size={14} />} label="附加笔记" count={attached.length} onClick={() => setPickerOpen(true)} />
+            <ComposerChip icon={<Wand2 size={14} />} label="提示词" on={!!preset} onClick={() => setPresetSheet(true)} />
+            <ComposerChip icon={<Brain size={14} />} label="智能模式" on={useSkills} pressed={useSkills} onClick={() => setUseSkills((v) => !v)} />
+          </div>
           <div className="flex items-end gap-2">
             <textarea
               ref={inputRef}
@@ -560,8 +576,8 @@ export function MobileAiChat() {
               onChange={(e) => setInput(e.target.value)}
               placeholder="问问你的知识库…"
               aria-label="输入问题"
-              className="min-h-[44px] min-w-0 flex-1 resize-none bg-transparent py-2.5 text-[16px] leading-snug outline-none placeholder:text-[var(--m-ink3)]"
-              style={{ color: "var(--m-ink)" }}
+              className="max-h-32 min-h-[44px] min-w-0 flex-1 resize-none rounded-[var(--m-r-l)] px-4 py-2.5 text-[15px] leading-snug outline-none placeholder:text-[var(--m-ink3)]"
+              style={{ color: "var(--m-ink)", background: "var(--m-well)", fieldSizing: "content" } as React.CSSProperties}
             />
             {streaming ? (
               <button type="button" aria-label="停止" className="m-icon-btn is-primary mb-0.5 shrink-0" onClick={() => void cancel()}>
@@ -579,11 +595,6 @@ export function MobileAiChat() {
                 <ArrowUp size={20} />
               </button>
             )}
-          </div>
-          <div className="m-hscroll -mx-1 flex items-center gap-1">
-            <ComposerChip icon={<Plus size={15} />} label="附加笔记" count={attached.length} onClick={() => setPickerOpen(true)} />
-            <ComposerChip icon={<Wand2 size={15} />} label="提示词" on={!!preset} onClick={() => setPresetSheet(true)} />
-            <ComposerChip icon={<Sparkles size={15} />} label="智能模式" on={useSkills} pressed={useSkills} onClick={() => setUseSkills((v) => !v)} />
           </div>
         </div>
       </footer>
@@ -704,7 +715,7 @@ function AskBubble({ msg, editing, onMenu }: { msg: AiMessage; editing: boolean;
     <div className="mb-3 flex flex-col items-end gap-1">
       <div
         {...lp}
-        className="max-w-[82%] min-w-0 select-none whitespace-pre-wrap rounded-[12px_12px_4px_12px] px-3.5 py-2.5 text-[15px] leading-relaxed"
+        className="max-w-[80%] min-w-0 select-none whitespace-pre-wrap rounded-[10px_10px_4px_10px] px-4 py-2.5 text-[15px] leading-[1.6]"
         style={{
           background: "var(--m-grad)",
           color: "var(--m-on-accent)",
@@ -752,11 +763,12 @@ function ComposerChip({
   onClick: () => void;
 }) {
   const active = on || (count ?? 0) > 0;
+  // 原型 11：凹陷底胶囊；开着 / 有附加时主色浅底高亮
   return (
     <button
       type="button"
-      className="flex h-11 shrink-0 items-center gap-1 rounded-[var(--m-r-m)] px-2 text-[13px] font-semibold"
-      style={{ color: active ? "var(--m-accent-ink)" : "var(--m-ink2)" }}
+      className="m-chip shrink-0"
+      style={active ? { background: "var(--m-accent-soft2)", color: "var(--m-accent-ink)", fontWeight: 700 } : { background: "var(--m-well)" }}
       aria-pressed={pressed}
       onClick={onClick}
     >

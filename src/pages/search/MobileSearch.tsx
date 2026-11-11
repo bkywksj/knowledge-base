@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ChevronDown, CircleCheck, Circle, Clock, Search as SearchIcon, X, XCircle } from "lucide-react";
-import { folderApi, searchApi, tagApi, taskApi } from "@/lib/api";
+import { Calendar, Check, Folder as FolderIcon, Search as SearchIcon, Tag as TagIcon, XCircle } from "lucide-react";
+import { message } from "antd";
+import { folderApi, linkApi, searchApi, tagApi, taskApi } from "@/lib/api";
+import { useLongPress } from "@/hooks/useLongPress";
 import { useAppStore } from "@/store";
 import { relativeTime } from "@/lib/utils";
 import { dueShortText, describeDueDate } from "@/lib/taskFilters";
@@ -14,7 +16,7 @@ import {
   type SearchTimePreset,
 } from "@/lib/searchFilters";
 import type { Folder, SearchResult, Tag, TaskSearchHit } from "@/types";
-import { MGroup, MSectionHeader, MTag } from "@/components/mobile/primitives";
+import { LinkBadge, MGroup, MSectionHeader, MTag } from "@/components/mobile/primitives";
 import { MSheet, PickRow } from "@/components/mobile/MSheet";
 import { FolderPickerSheet } from "@/components/mobile/FolderPickerSheet";
 
@@ -168,6 +170,21 @@ export function MobileSearch() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keyword]);
 
+  // 笔记结果的「链入 N」（原型 10），结果变了再批量取一次
+  const [backlinks, setBacklinks] = useState<Map<number, number>>(new Map());
+  useEffect(() => {
+    const ids = notes.map((n) => n.id);
+    if (ids.length === 0) return setBacklinks(new Map());
+    let alive = true;
+    linkApi
+      .getBacklinkCounts(ids)
+      .then((pairs) => alive && setBacklinks(new Map(pairs)))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [notes]);
+
   const paths = useMemo(() => folderPaths(folders), [folders]);
   const flatTags = useMemo(() => flattenTags(allTags), [allTags]);
   const hasFilter = !!(time || folderId != null || tagIds.length || titleOnly);
@@ -193,8 +210,8 @@ export function MobileSearch() {
   return (
     <div className="mx-auto w-full max-w-[860px] pb-24">
       {/* 搜索框 + 取消 */}
-      <div className="m-gutter flex items-center gap-3 pt-2">
-        <div className="flex h-11 min-w-0 flex-1 items-center gap-2 rounded-[var(--m-r-l)] px-3" style={{ background: "var(--m-surface)" }}>
+      <div className="m-gutter flex h-14 items-center gap-3">
+        <div className="m-search-box flex h-11 min-w-0 flex-1 items-center gap-2 rounded-[var(--m-r-l)] px-3.5" style={{ background: "var(--m-surface)" }}>
           <SearchIcon size={18} style={{ color: "var(--m-ink3)" }} className="shrink-0" />
           <input
             autoFocus
@@ -203,11 +220,11 @@ export function MobileSearch() {
             placeholder="搜索笔记 / 标题 / 正文"
             aria-label="搜索"
             enterKeyHint="search"
-            className="h-full min-w-0 flex-1 bg-transparent text-[16px] outline-none placeholder:text-[var(--m-ink3)]"
+            className="h-full min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-[var(--m-ink3)]"
             style={{ color: "var(--m-ink)" }}
           />
           {keyword && (
-            <button type="button" onClick={() => setKeyword("")} aria-label="清空" className="m-tapx flex h-6 w-6 shrink-0 items-center justify-center" style={{ color: "var(--m-ink3)" }}>
+            <button type="button" onClick={() => setKeyword("")} aria-label="清空" className="m-tapx flex h-6 w-6 shrink-0 items-center justify-center" style={{ color: "var(--m-ink4)" }}>
               <XCircle size={18} />
             </button>
           )}
@@ -218,7 +235,7 @@ export function MobileSearch() {
       </div>
 
       {/* 范围 + 筛选胶囊 */}
-      <div className="m-gutter m-hscroll mt-3 flex items-center gap-2 pb-1">
+      <div className="m-gutter m-hscroll mt-1 flex items-center gap-2 pb-1">
         {q && (
           <>
             <ScopeChip on={scope === "all"} onClick={() => setScope("all")}>全部</ScopeChip>
@@ -228,12 +245,11 @@ export function MobileSearch() {
             <ScopeChip on={scope === "tasks"} onClick={() => setScope("tasks")}>
               待办 <span className="m-num">{tasks.length}</span>
             </ScopeChip>
-            <span className="mx-1 h-5 w-px shrink-0" style={{ background: "var(--m-hair)" }} />
           </>
         )}
-        <FilterChip label="时间" value={timeLabel} onClick={() => setSheet("time")} />
-        <FilterChip label="文件夹" value={folderLabel} onClick={() => setSheet("folder")} />
-        <FilterChip label="标签" value={tagLabel} onClick={() => setSheet("tag")} />
+        <FilterChip icon={<Calendar size={14} />} label="时间" value={timeLabel} onClick={() => setSheet("time")} />
+        <FilterChip icon={<FolderIcon size={14} />} label="文件夹" value={folderLabel} onClick={() => setSheet("folder")} />
+        <FilterChip icon={<TagIcon size={14} />} label="标签" value={tagLabel} onClick={() => setSheet("tag")} />
         <button
           type="button"
           className="m-chip shrink-0"
@@ -253,12 +269,12 @@ export function MobileSearch() {
         </div>
       )}
 
-      <div className="m-gutter mt-4">
+      <div className="m-gutter mt-5">
         {!q ? (
           recentSearches.length > 0 ? (
             <>
               <MSectionHeader
-                className="mb-2 px-1"
+                className="mb-2"
                 title="最近搜索"
                 action={
                   <button type="button" className="m-tapx text-[14px] font-semibold" style={{ color: "var(--m-ink3)" }} onClick={() => useAppStore.getState().clearRecentSearches()}>
@@ -266,21 +282,12 @@ export function MobileSearch() {
                   </button>
                 }
               />
-              <MGroup>
+              <div className="flex flex-wrap gap-2">
                 {recentSearches.map((s) => (
-                  <div key={s} className="m-row m-row-icon pr-1">
-                    <span className="flex w-6 shrink-0 justify-center" style={{ color: "var(--m-ink3)" }}>
-                      <Clock size={18} />
-                    </span>
-                    <button type="button" className="min-w-0 flex-1 self-stretch truncate text-left text-[15px]" onClick={() => setKeyword(s)}>
-                      {s}
-                    </button>
-                    <button type="button" aria-label={`删除「${s}」`} className="m-icon-btn shrink-0" style={{ color: "var(--m-ink3)" }} onClick={() => useAppStore.getState().removeRecentSearch(s)}>
-                      <X size={18} />
-                    </button>
-                  </div>
+                  <RecentChip key={s} text={s} onPick={() => setKeyword(s)} />
                 ))}
-              </MGroup>
+              </div>
+              <div className="m-t-cap mt-2">长按可删除单条</div>
             </>
           ) : (
             <Hint text="搜索笔记的标题和正文，以及待办" sub="支持中文分词，输入即时搜索" />
@@ -294,7 +301,7 @@ export function MobileSearch() {
             {showTasks && (
               <section className="mb-6">
                 <MSectionHeader
-                  className="mb-2 px-1"
+                  className="mb-2"
                   title="待办"
                   count={tasks.length}
                   action={
@@ -315,7 +322,7 @@ export function MobileSearch() {
             {showNotes && (
               <section>
                 <MSectionHeader
-                  className="mb-2 px-1"
+                  className="mb-2"
                   title="笔记"
                   count={notes.length}
                   action={
@@ -333,6 +340,7 @@ export function MobileSearch() {
                       hit={r}
                       keyword={q}
                       path={r.folder_id != null ? paths.get(r.folder_id) ?? "" : "未分类"}
+                      backlinks={backlinks.get(r.id) ?? 0}
                       divider={i > 0}
                       onClick={() => navigate(`/notes/${r.id}?q=${encodeURIComponent(q)}`)}
                     />
@@ -418,8 +426,8 @@ function ScopeChip({ on, onClick, children }: { on: boolean; onClick: () => void
   );
 }
 
-/** 筛选胶囊：未选显示维度名 + ▾，已选显示当前值（主色浅底） */
-function FilterChip({ label, value, onClick }: { label: string; value: string | null | undefined; onClick: () => void }) {
+/** 筛选胶囊：前置图标 + 维度名（原型 10），已选显示当前值（主色浅底） */
+function FilterChip({ icon, label, value, onClick }: { icon: ReactNode; label: string; value: string | null | undefined; onClick: () => void }) {
   const on = !!value;
   return (
     <button
@@ -429,8 +437,8 @@ function FilterChip({ label, value, onClick }: { label: string; value: string | 
       onClick={onClick}
       aria-label={on ? `${label}：${value}` : label}
     >
+      {icon}
       <span className="max-w-[9em] truncate">{value || label}</span>
-      <ChevronDown size={14} />
     </button>
   );
 }
@@ -439,10 +447,15 @@ function TaskHitRow({ hit, keyword, divider, onClick }: { hit: TaskSearchHit; ke
   const done = hit.status === 1;
   const due = describeDueDate(hit.dueDate, done);
   return (
-    <button type="button" className="relative flex w-full items-start gap-3 px-4 py-3 text-left" onClick={onClick}>
+    <button type="button" className="relative flex min-h-[52px] w-full items-start gap-3 px-4 py-[14px] text-left" onClick={onClick}>
       {divider && <span className="pointer-events-none absolute top-0 right-0 left-[52px] h-[0.5px]" style={{ background: "var(--m-hair)" }} />}
-      <span className="mt-0.5 flex w-6 shrink-0 justify-center" style={{ color: done ? "var(--m-ok)" : "var(--m-ink3)" }}>
-        {done ? <CircleCheck size={20} /> : <Circle size={20} />}
+      <span className="flex w-6 shrink-0 justify-center">
+        <span
+          className="flex h-[22px] w-[22px] items-center justify-center rounded-[var(--m-r-s)]"
+          style={done ? { background: "var(--m-ok)", color: "#fff" } : { boxShadow: "inset 0 0 0 1.6px var(--m-ink4)" }}
+        >
+          {done && <Check size={14} strokeWidth={3} />}
+        </span>
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[15px]" style={done ? { color: "var(--m-ink3)", textDecoration: "line-through" } : { color: "var(--m-ink)" }}>
@@ -468,24 +481,26 @@ function TaskHitRow({ hit, keyword, divider, onClick }: { hit: TaskSearchHit; ke
   );
 }
 
-function NoteHitRow({ hit, keyword, path, divider, onClick }: { hit: SearchResult; keyword: string; path: string; divider: boolean; onClick: () => void }) {
+function NoteHitRow({ hit, keyword, path, backlinks, divider, onClick }: { hit: SearchResult; keyword: string; path: string; backlinks: number; divider: boolean; onClick: () => void }) {
   return (
-    <button type="button" className="relative block w-full px-4 py-3 text-left" onClick={onClick}>
+    <button type="button" className="relative block w-full px-4 py-[14px] text-left" onClick={onClick}>
       {divider && <span className="pointer-events-none absolute top-0 right-0 left-4 h-[0.5px]" style={{ background: "var(--m-hair)" }} />}
       <span className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-[15px] font-semibold" style={{ color: "var(--m-ink)" }}>
+        <span className="m-t-title min-w-0 flex-1 truncate">
           <Highlight text={hit.title || "未命名笔记"} keyword={keyword} />
         </span>
         {hit.note_type === "whiteboard" && <MTag tone="info">白板</MTag>}
       </span>
       {hit.snippet && (
-        <span className="m-t-meta mt-1 line-clamp-2" style={{ color: "var(--m-ink2)" }}>
+        <span className="mt-1 line-clamp-2 text-[14px] leading-[1.6]" style={{ color: "var(--m-ink2)" }}>
           <Highlight text={hit.snippet} keyword={keyword} />
         </span>
       )}
-      <span className="m-t-cap mt-1.5 flex items-center gap-1.5">
-        <span className="min-w-0 truncate">{path}</span>
-        <span className="shrink-0">· {relativeTime(hit.updated_at)}</span>
+      <span className="mt-2 flex items-center gap-2">
+        <span className="m-t-cap min-w-0 truncate">
+          {path} · {relativeTime(hit.updated_at)}
+        </span>
+        {backlinks > 0 && <LinkBadge>链入 {backlinks}</LinkBadge>}
       </span>
     </button>
   );
@@ -513,7 +528,7 @@ function Highlight({ text, keyword }: { text: string; keyword: string }) {
     <>
       {parts.map((p, idx) =>
         p.hit ? (
-          <mark key={idx} className="rounded-[3px] px-0.5" style={{ background: "var(--m-accent-soft2)", color: "var(--m-accent-ink)", fontWeight: 700 }}>
+          <mark key={idx} className="rounded-[4px] px-0.5" style={{ background: "var(--m-accent-soft2)", color: "var(--m-accent-ink)" }}>
             {p.t}
           </mark>
         ) : (
@@ -521,6 +536,22 @@ function Highlight({ text, keyword }: { text: string; keyword: string }) {
         ),
       )}
     </>
+  );
+}
+
+/** 最近搜索胶囊：点 = 再搜一次；长按 = 删掉这条（原来列表里的 × 挪到长按，功能不少） */
+function RecentChip({ text, onPick }: { text: string; onPick: () => void }) {
+  const lp = useLongPress(
+    () => {
+      useAppStore.getState().removeRecentSearch(text);
+      message.success(`已删除「${text}」`);
+    },
+    { onClick: onPick },
+  );
+  return (
+    <button type="button" {...lp} className="m-chip max-w-full select-none" style={{ WebkitTouchCallout: "none" }} aria-label={`搜索「${text}」，长按删除`}>
+      <span className="truncate">{text}</span>
+    </button>
   );
 }
 

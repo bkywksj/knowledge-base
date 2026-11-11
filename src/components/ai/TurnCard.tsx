@@ -360,7 +360,8 @@ function ActionButton({
   onClick: () => void;
 }) {
   return (
-    <Button size="small" type="text" icon={icon} disabled={disabled} onClick={onClick} title={title}>
+    // aria-label：手机端底栏只露图标（原型 11），读屏仍念得出按钮名
+    <Button size="small" type="text" icon={icon} disabled={disabled} onClick={onClick} title={title} aria-label={label}>
       <span className="text-xs">{label}</span>
     </Button>
   );
