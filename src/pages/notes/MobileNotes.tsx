@@ -6,8 +6,10 @@ import {
   Check,
   ChevronRight,
   Copy,
+  Download,
   Ellipsis,
   FilePlus2,
+  FileStack,
   Folder as FolderIcon,
   FolderInput,
   FolderOpen,
@@ -15,13 +17,19 @@ import {
   Inbox,
   Link,
   Lock,
+  Palette,
   Pencil,
+  PenTool,
   Pin,
   Plus,
   Search,
+  Sparkles,
   Trash2,
 } from "lucide-react";
-import { folderApi, linkApi, noteApi, tagApi, trashApi } from "@/lib/api";
+import { TAG_COLORS } from "@/components/TagColorPicker";
+import { MSheet } from "@/components/mobile/MSheet";
+import { QuickCreateSheet } from "@/components/mobile/QuickCreate";
+import { aiChatApi, folderApi, linkApi, noteApi, tagApi, trashApi, whiteboardApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import type { Folder, Note, NoteQuery, NoteTagBrief, Tag } from "@/types";
 import { relativeTime } from "@/lib/utils";
@@ -89,6 +97,10 @@ export function MobileNotes() {
   // 弹层状态
   const [sheetNote, setSheetNote] = useState<Note | null>(null);
   const [sheetFolder, setSheetFolder] = useState<Folder | null>(null);
+  /** 「图标颜色」面板（同 PC 文件夹右键的颜色选择） */
+  const [colorFolder, setColorFolder] = useState<Folder | null>(null);
+  /** 「从模板建」：打开新建面板，目标文件夹预选为这个 */
+  const [templateFolderId, setTemplateFolderId] = useState<number | null | undefined>(undefined);
   const [sortOpen, setSortOpen] = useState(false);
   const [moveTarget, setMoveTarget] = useState<{ kind: "note"; note: Note } | { kind: "folder"; folder: Folder } | null>(null);
   const [prompt, setPrompt] = useState<
@@ -191,6 +203,37 @@ export function MobileNotes() {
       navigate(`/notes/${note.id}`);
     } catch (e) {
       message.error(`创建失败: ${e}`);
+    }
+  }
+
+  /** 在文件夹里新建白板（同 PC 新建白板：先建再进画布） */
+  async function createWhiteboard(targetFolderId: number) {
+    try {
+      const wb = await whiteboardApi.create(undefined, targetFolderId);
+      useAppStore.getState().bumpNotesRefresh();
+      navigate(`/whiteboard/${wb.id}`);
+    } catch (e) {
+      message.error(`创建白板失败: ${e}`);
+    }
+  }
+
+  /** 对此文件夹问 AI：新建一个检索范围限定在本文件夹（含子孙）的会话，同 PC 文件夹右键 */
+  async function askAiAboutFolder(folder: Folder) {
+    try {
+      const conv = await aiChatApi.createConversation(`📁 ${folder.name}`, undefined, folder.id);
+      navigate(`/ai-chat/${conv.id}`);
+    } catch (e) {
+      message.error(`发起文件夹问答失败: ${e}`);
+    }
+  }
+
+  async function setFolderColor(folder: Folder, color: string | null) {
+    try {
+      await folderApi.setColor(folder.id, color);
+      useAppStore.getState().bumpFoldersRefresh();
+      setColorFolder(null);
+    } catch (e) {
+      message.error(`设置颜色失败: ${e}`);
     }
   }
 
@@ -328,7 +371,18 @@ export function MobileNotes() {
   const folderItems: ActionSheetItem[] = sheetFolder
     ? [
         { key: "rename", label: "重命名", icon: <Pencil size={20} />, onClick: () => setPrompt({ kind: "rename-folder", folder: sheetFolder }) },
+        { key: "color", label: "图标颜色", icon: <Palette size={20} />, onClick: () => setColorFolder(sheetFolder) },
         { key: "move", label: "移动到…", icon: <FolderInput size={20} />, onClick: () => setMoveTarget({ kind: "folder", folder: sheetFolder }) },
+        { key: "ask-ai", label: "对此文件夹问 AI", icon: <Sparkles size={20} />, onClick: () => void askAiAboutFolder(sheetFolder) },
+        {
+          key: "export",
+          label: "导出此文件夹…",
+          icon: <Download size={20} />,
+          extra: "桌面端",
+          // 导出要选保存位置（系统保存对话框），手机上没有可靠的落盘位置；同「我的」页的桌面专属项说明
+          onClick: () =>
+            Modal.info({ title: "导出文件夹请在桌面端操作", content: "桌面端在文件夹上右键 →「导出此文件夹…」，可导出为 Markdown / Word / PDF。", okText: "知道了", centered: true }),
+        },
         { key: "delete", label: "删除文件夹", icon: <Trash2 size={20} />, danger: true, onClick: () => deleteFolder(sheetFolder) },
       ]
     : [];
@@ -490,19 +544,49 @@ export function MobileNotes() {
       <ActionSheet
         open={!!sheetFolder}
         title={sheetFolder?.name}
-        subtitle={sheetFolder ? `${(findPath(folders, sheetFolder.id) ?? []).map((f) => f.name).join(" / ")} · ${sheetFolder.note_count} 篇` : undefined}
+        subtitle={sheetFolder ? [(findPath(folders, sheetFolder.id) ?? []).map((f) => f.name).join(" / "), sheetFolder.children?.length ? `${sheetFolder.children.length} 个文件夹` : null, `${sheetFolder.note_count} 篇`].filter(Boolean).join(" · ") : undefined}
         headerIcon={<FolderOpen size={22} style={{ color: sheetFolder?.color || undefined }} />}
         grid={
           sheetFolder
             ? [
                 { key: "new-note", label: "新建笔记", icon: <FilePlus2 size={22} />, onClick: () => createNote(sheetFolder.id) },
                 { key: "new-folder", label: "子文件夹", icon: <FolderPlus size={22} />, onClick: () => setPrompt({ kind: "new-folder", parentId: sheetFolder.id }) },
+                { key: "from-template", label: "从模板建", icon: <FileStack size={22} />, onClick: () => setTemplateFolderId(sheetFolder.id) },
+                { key: "new-wb", label: "新建白板", icon: <PenTool size={22} />, onClick: () => void createWhiteboard(sheetFolder.id) },
               ]
             : undefined
         }
         items={folderItems}
         onClose={() => setSheetFolder(null)}
       />
+
+      {/* 图标颜色：PC 文件夹右键同款色板（标签色板第一排 10 色）+ 恢复默认 */}
+      <MSheet open={!!colorFolder} title="图标颜色" caption={colorFolder?.name} onClose={() => setColorFolder(null)}>
+        <div className="m-group grid grid-cols-5 gap-y-1 p-2">
+          {TAG_COLORS.slice(0, 10).map((c) => {
+            const on = (colorFolder?.color ?? "").toLowerCase() === c.toLowerCase();
+            return (
+              <button key={c} type="button" aria-label={`颜色 ${c}`} aria-pressed={on} className="flex h-12 items-center justify-center" onClick={() => colorFolder && void setFolderColor(colorFolder, c)}>
+                <span className="flex h-8 w-8 items-center justify-center rounded-full" style={{ background: c, boxShadow: on ? "0 0 0 2px var(--m-surface), 0 0 0 4px var(--m-accent-ink)" : undefined }}>
+                  {on && <Check size={16} color="#fff" />}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="m-group mt-3">
+          <button type="button" className="m-row m-row-icon" onClick={() => colorFolder && void setFolderColor(colorFolder, null)}>
+            <span className="flex w-6 shrink-0 justify-center" style={{ color: "var(--m-ink2)" }}>
+              <FolderIcon size={20} />
+            </span>
+            <span className="min-w-0 flex-1 text-[15px]">恢复默认颜色</span>
+            {!colorFolder?.color && <Check size={18} style={{ color: "var(--m-accent-ink)" }} />}
+          </button>
+        </div>
+      </MSheet>
+
+      {/* 从模板建：复用新建面板（含模板列表），目标文件夹预选为当前文件夹 */}
+      <QuickCreateSheet open={templateFolderId !== undefined} onClose={() => setTemplateFolderId(undefined)} defaultFolderId={templateFolderId ?? null} />
 
       <ActionSheet
         open={sortOpen}

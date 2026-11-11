@@ -76,10 +76,12 @@ const EMPTY: HomeData = {
   categoryNames: new Map(),
 };
 
-function flattenFolderNames(list: Folder[], out = new Map<number, string>()): Map<number, string> {
+/** 文件夹 id → 完整路径「ruoyi / docs」（继续编辑卡片顶部，同原型） */
+function flattenFolderNames(list: Folder[], out = new Map<number, string>(), prefix = ""): Map<number, string> {
   for (const f of list) {
-    out.set(f.id, f.name);
-    if (f.children?.length) flattenFolderNames(f.children, out);
+    const path = prefix ? `${prefix} / ${f.name}` : f.name;
+    out.set(f.id, path);
+    if (f.children?.length) flattenFolderNames(f.children, out, path);
   }
   return out;
 }
