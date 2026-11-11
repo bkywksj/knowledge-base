@@ -108,7 +108,7 @@
 - [x] 深色主题逐页（2026-11-10，e2a8b5a / e7e5c81）：22 个页面 × 暗炭 / 纯黑 / 琥珀 / 深海 + 浅色淡紫量化检查全过。修：正文双链字色、PC 渐变主按钮在手机上改实色、4 处热区、首页 / 笔记列表预览去 Markdown 标记（白板显示「白板」，`lib/notePreview` +6 单测）；顺带修 **双链候选在光标停在已闭合双链后误弹**（PC 也受益，`lib/wikiLinkSuggest` +3 单测）
 - [x] 系统栏跟随主题（2026-11-10，43048bf）：T-M028 遗留的导航栏留白写死白色 → 原生 `KbSystemBars` 接口 + 前端 `lib/systemBars`，底色与图标深浅跟主题；Kotlin 编译通过
 - [x] 更新 `mobile-migration-tasks.md` 的 T-M029 / T-M023 / T-M028 状态、看板
-- [ ] **真机整体回归**：清单 👉 `docs/tasks/mobile-v4-device-regression.md`（2026-11-10 手机未连接，待用户接上后逐条过）
+- [x] **真机整体回归**（2026-11-11，小米 15 Ultra / 安卓 16）：清单 👉 `docs/tasks/mobile-v4-device-regression.md`。修 7 处（f977cf6 / a9b809b），其中**原生导航栏留白（T-M028）与系统栏接口此前从未生效**；真机通过 14 项、未单独测 18 项（多为浏览器已测的交互；另有三键导航 / 横屏 / 同步 / 提醒 / 文件导出没条件测），逐条见清单
 - [ ] 视需要发移动端版本（独立版本线 `mobile-v*`，见记忆 project_android_keystore）——真机回归通过后再定
 
 ---
@@ -121,7 +121,7 @@
 | M1 令牌与组件 | 2 | 2 | ✅ `completed` |
 | M2 外框 | 1 | 1 | ✅ `completed` |
 | M3 逐页 | 11 | 11 | ✅ `completed` |
-| M4 收尾 | 6 | 4 | `in_progress`（剩真机回归、发版） |
+| M4 收尾 | 6 | 5 | `in_progress`（剩发版，待用户定） |
 
 ## 历史记录
 
@@ -152,3 +152,4 @@
   需要保护的页面应在页面自身做校验（隐藏笔记 PIN 即此例）
 - **2026-11-10** M3-3 编辑器第二步完成，M3 全部完成。插入面板不手抄清单，直接用 `buildSlashCommandItems`，调用时传光标处的空区间（斜杠命令第一步是删「/查询词」，空区间等于不删）；依赖文件对话框 / 工具栏浮层的几项（图片、视频、附件、表格）由手机编辑页 overrides 接管。测试坑：`document.querySelector('main')` 拿到的是布局的 main，编辑页自己的滚动容器是 `main.m-px`；检查脚本的颜色解析要用 canvas 归一化，主题色里有 oklab / color(srgb) 写法
 - **2026-11-10** M4 白板 / 深色 / 系统栏完成。教训：① 手机端换了入口组件，PC 在入口里做的「改道」也跟着丢（白板改道、隐藏 PIN 都是这个模式），以后手机新增页面要对照 PC 同名页面的入口逻辑；② 本项目 antd 弹窗内容层类名是 `.ant-modal-container`；③ PC 主按钮渐变来自 themes.css 一条高具体度 !important 规则，手机覆盖要带 `[data-theme]` 前缀和同样的 `:not()`；④ 测试时 `enabledViews` 是 Set，别用对象覆盖（会把编辑页弄崩）
+- **2026-11-11** M4 真机回归完成。教训：① 浏览器预览没有状态栏，全屏层（演示、抽屉、Excalidraw）压状态栏的问题只能真机发现；② 「Kotlin 编译通过」不等于生效，原生改动必须真机量 WebView 尺寸 / 查 JS 接口是否存在；③ Windows 上 TaskStop 停不掉 `tauri android dev` 的孙进程，会占着 lock.android 让下次启动永远等锁；④ 自动点按真机前必须查通话状态与前台应用（本次误接过一次来电）
