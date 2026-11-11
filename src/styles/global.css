@@ -3126,53 +3126,43 @@ body.sidebar-resizing .kb-tb-left {
   font-weight: 500;
   margin-left: 2px;
 }
-/* 下载进度：整个胶囊从左往右被「水」填满，右边缘是上下流动的波浪，里面再扫过一道反光。
+/* 下载进度：整个胶囊就是进度条，已下载部分填上深浅相间的 45° 斜纹，斜纹匀速右移表示正在下载。
    填充层垫在文字下面（文字 z-index 1），胶囊自身 overflow:hidden 负责裁成圆角 */
 .kb-upd > :not(.kb-upd-fill) {
   position: relative;
   z-index: 1;
 }
 .kb-upd-fill {
-  --kb-upd-water: color-mix(in srgb, var(--kb-primary) 38%, transparent);
+  --kb-upd-fill-light: color-mix(in srgb, var(--kb-primary) 16%, transparent);
+  --kb-upd-fill-dark: color-mix(in srgb, var(--kb-primary) 30%, transparent);
   position: absolute;
   top: 0;
   bottom: 0;
   left: 0;
   z-index: 0;
   pointer-events: none;
-  background: var(--kb-upd-water);
+  background-color: var(--kb-upd-fill-light);
+  background-image: linear-gradient(
+    45deg,
+    var(--kb-upd-fill-dark) 25%,
+    transparent 25%,
+    transparent 50%,
+    var(--kb-upd-fill-dark) 50%,
+    var(--kb-upd-fill-dark) 75%,
+    transparent 75%,
+    transparent
+  );
+  background-size: 14px 14px;
   transition: width 0.6s ease;
+  animation: kbUpdStripes 0.8s linear infinite;
 }
-/* 液面：贴在填充右缘的一列半圆，向下滚动一个周期 = 波浪在流动 */
-.kb-upd-fill::after {
-  content: "";
-  position: absolute;
-  top: -10px;
-  bottom: -10px;
-  right: -8px;
-  width: 8px;
-  background: radial-gradient(circle at 0 50%, var(--kb-upd-water) 6px, transparent 6.5px) 0 0 / 8px 12px repeat-y;
-  animation: kbUpdWave 0.9s linear infinite;
-}
-/* 反光：一道斜向亮光慢慢扫过水面 */
-.kb-upd-fill::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.5) 50%, transparent 70%) no-repeat;
-  background-size: 200% 100%;
-  animation: kbUpdShine 2.4s ease-in-out infinite;
-}
-@keyframes kbUpdWave {
-  to { transform: translateY(12px); }
-}
-@keyframes kbUpdShine {
-  from { background-position: 150% 0; }
-  to { background-position: -50% 0; }
+/* 平移正好一个图案周期，循环无缝 */
+@keyframes kbUpdStripes {
+  from { background-position: 0 0; }
+  to { background-position: 14px 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .kb-upd-fill::after,
-  .kb-upd-fill::before {
+  .kb-upd-fill {
     animation: none;
   }
 }
@@ -3200,25 +3190,16 @@ body.sidebar-resizing .kb-tb-left {
 .kb-upd.is-error .kb-upd-from {
   color: color-mix(in srgb, var(--ant-color-error, #D0505A) 70%, transparent);
 }
-/* 下载中 / 暂停：胶囊本身调浅，衬出水位 */
+/* 下载中 / 暂停：胶囊本身调浅，衬出已填充的部分 */
 .kb-upd.is-downloading,
 .kb-upd.is-paused {
   background: color-mix(in srgb, var(--kb-primary) 5%, transparent);
 }
-/* 已暂停：水变灰、液面和反光都停下 */
+/* 已暂停：斜纹变灰并停住 */
 .kb-upd.is-paused .kb-upd-fill {
-  --kb-upd-water: color-mix(in srgb, var(--kb-text-tertiary) 30%, transparent);
-}
-.kb-upd.is-paused .kb-upd-fill::after,
-.kb-upd.is-paused .kb-upd-fill::before {
+  --kb-upd-fill-light: color-mix(in srgb, var(--kb-text-tertiary) 14%, transparent);
+  --kb-upd-fill-dark: color-mix(in srgb, var(--kb-text-tertiary) 26%, transparent);
   animation: none;
-}
-.kb-upd.is-paused .kb-upd-fill::before {
-  opacity: 0;
-}
-/* 校验中：已经满了，只留反光，不要露在胶囊右边外的液面 */
-.kb-upd.is-verifying .kb-upd-fill::after {
-  display: none;
 }
 
 /* 更新已下载好的轻提示条（原型 H .strip）：内容区上方单独一行，右边距与纸张（.kb-sheet 右 8px）对齐 */

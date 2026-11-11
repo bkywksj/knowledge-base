@@ -18,8 +18,8 @@ interface Props {
  * 顶部栏右侧的版本 / 更新徽章，随 phase 切换：
  * - idle / checking：中性的「v1.2.3 ⟳」，点击手动检查（检查中图标转圈、禁用）
  * - available：「● v旧 → v新」，点击弹窗手动下载
- * - downloading / verifying：同上 + 「· X%」/「· 校验中」，整个胶囊按进度被「水」填满（圆点呼吸），仍可点开看进度
- * - paused：同上 + 「· 已暂停」，水变灰、不再流动
+ * - downloading / verifying：同上 + 「· X%」/「· 校验中」，整个胶囊就是进度条，已下载部分填上流动的斜纹（圆点呼吸），仍可点开看进度
+ * - paused：同上 + 「· 已暂停」，斜纹变灰、停住
  * - ready：绿色「● v旧 → v新 · 重启生效」，点击弹窗确认重启秒装
  * - error：红色「· 下载失败」，点击弹窗看原因 / 重试
  * - installing：不渲染（已在弹窗里处理）
@@ -92,7 +92,7 @@ export function UpdateBadge({ update, phase, progress, onClick, onCheck }: Props
   return (
     <Tooltip title={tip}>
       <button type="button" onClick={onClick} className={`kb-upd${stateClass}`}>
-        {/* 进度 = 胶囊被水填满的比例（样式见 global.css .kb-upd-fill） */}
+        {/* 进度 = 胶囊被斜纹填满的比例（样式见 global.css .kb-upd-fill） */}
         {showFill && <span className="kb-upd-fill" style={{ width: `${verifying ? 100 : progress}%` }} />}
         <i className="kb-upd-dot" />
         {version && (
