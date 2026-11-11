@@ -693,6 +693,8 @@ export interface TurnMeta {
   roundTexts?: string[];
   /** 推理模型走 reasoning_content 的思考过程 */
   reasoning?: string;
+  /** 回答撞到单次输出上限后自动续写的次数（没续写时不出现） */
+  autoContinued?: number;
 }
 
 /** AI Skill 调用记录（T-004）*/

@@ -778,6 +778,13 @@ pub struct TurnMeta {
     /// 混在正文里的 `<think>` 块不在这里，前端渲染时自己拆。
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub reasoning: String,
+    /// 回答撞到单次输出上限后自动续写了几次（0 = 没续写）。卡片头显示，方便用户理解长度和费用
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub auto_continued: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// AI 聊天请求

@@ -247,6 +247,8 @@ function CardHeader({ view, toolCount, onStop }: { view: TurnView; toolCount: nu
   const stats = [
     view.rounds.length > 0 && `${view.rounds.length} 轮`,
     toolCount > 0 && `${toolCount} 次工具`,
+    // 说明这篇回答是几段拼起来的（也解释了为什么比平时长、费用高）
+    !!view.autoContinued && `自动续写 ${view.autoContinued} 次`,
     elapsed != null &&
       elapsed > 0 &&
       // 流式中每秒跳一次，显示整秒（「3s」而不是「3.0s」）；结束后显示精确耗时

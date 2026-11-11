@@ -511,7 +511,7 @@ fn fail_turn(
         error: Some(err.clone()),
         duration_ms: started.elapsed().as_millis() as u64,
         round_texts,
-        reasoning: String::new(),
+        ..Default::default()
     };
     if let Err(e) = save_turn(db, conversation_id, partial.trim(), None, skill_calls, &meta) {
         log::warn!("[ai] 保存失败卡片出错（conversation {}）: {}", conversation_id, e);
@@ -692,16 +692,31 @@ impl From<AppError> for StreamFailure {
     }
 }
 
+/// 一段流式回答：正文 + 是否因撞到单次输出上限（`finish_reason = length`）而停下。
+#[derive(Debug)]
+struct StreamText {
+    text: String,
+    truncated: bool,
+}
+
+impl StreamText {
+    /// 被停止 / 没截断的结局
+    fn whole(text: String) -> Self {
+        Self { text, truncated: false }
+    }
+}
+
 /// 纯文本的 SSE 流（写作助手 / RAG 对话）：边读边推 token，收尾返回完整正文。
 ///
 /// 取消时返回已生成的那一截（`Ok`），由调用方决定怎么存；失败先发错误事件再返回 `Err`，
 /// 失败前已收到的正文放在 [`StreamFailure::partial`]。
+/// 撞到长度上限时 `truncated = true`，续不续写由调用方决定（见 [`may_auto_continue`]）。
 async fn consume_text_stream(
     emitter: &dyn AiEventEmitter,
     response: reqwest::Response,
     protocol: Protocol,
     cancel_rx: &mut watch::Receiver<bool>,
-) -> Result<String, StreamFailure> {
+) -> Result<StreamText, StreamFailure> {
     let read = read_sse_stream(response, protocol, cancel_rx, |ev| {
         if let DecodedEvent::TextDelta { text, .. } = ev {
             emitter.emit_token(text);
@@ -709,11 +724,81 @@ async fn consume_text_stream(
     })
     .await;
     match read.end {
-        SseEnd::Complete | SseEnd::Cancelled => Ok(read.outcome.text()),
+        SseEnd::Complete => Ok(StreamText {
+            truncated: openai_finish_reason(&read.outcome).as_deref() == Some("length"),
+            text: read.outcome.text(),
+        }),
+        SseEnd::Cancelled => Ok(StreamText::whole(read.outcome.text())),
         SseEnd::Failed(msg) => {
             emitter.emit_error(&msg);
             Err(StreamFailure { error: AppError::Custom(msg), partial: read.outcome.text() })
         }
+    }
+}
+
+// ─────────────────────────── 自动续写 ───────────────────────────
+//
+// 回答撞到单次输出上限（finish_reason = length）时，不再停在半截等用户发「继续」：
+// 把已写出的正文作为 assistant 消息、再追加一句「接着写」重新请求，新内容接着流进同一张卡片。
+// 用追加 user 消息而不是 Anthropic 的 assistant 预填：三种协议通用，较新的 Claude 也不再支持预填。
+
+/// 一轮回答最多自动续写几次（总长度最多是单次上限的 4 倍），防止失控烧钱
+const MAX_AUTO_CONTINUE: u32 = 3;
+
+/// 还能不能再续一次：次数没用完，且上一段确实写出了东西
+/// （推理模型把额度全花在思考上时正文为空，再续也一样，直接收手）
+fn may_auto_continue(done: u32, last_segment: &str) -> bool {
+    done < MAX_AUTO_CONTINUE && !last_segment.trim().is_empty()
+}
+
+/// 续写请求的消息：原请求消息 + 已写出的正文（assistant）+ 接着写的指令（user）。
+/// 中间这两条只用于这次请求，不进会话历史。
+fn continuation_messages(base: &[Value], written: &str) -> Vec<Value> {
+    let mut instruction = String::from(
+        "上一条回答因长度限制被截断。请从断点处直接接着写，不要重复已经写过的内容，不要加开场白或总结。",
+    );
+    // 断在代码块里时（``` 出现奇数次），模型常会重新开一个代码块，把代码拆成两截
+    if written.matches("```").count() % 2 == 1 {
+        instruction.push_str("你正写到一个代码块中间，直接续写代码，不要重新输出 ```。");
+    }
+    let mut messages = base.to_vec();
+    messages.push(json!({ "role": "assistant", "content": written }));
+    messages.push(json!({ "role": "user", "content": instruction }));
+    messages
+}
+
+/// 截断后没再续（次数用完 / 上一段为空）时追加在正文末尾的提示
+fn truncation_notice(continued: u32) -> String {
+    if continued == 0 {
+        // 这句在 v61 之前是**死指路** —— 设置里根本没有 max_tokens 这一项。现在有了，所以指明位置。
+        "\n\n> ⚠️ 回答达到长度上限被截断。到「设置 → 模型服务 → 编辑 → 单次回答上限 token」调大即可（留空为服务商默认）。".into()
+    } else {
+        format!(
+            "\n\n> ⚠️ 已自动续写 {continued} 次仍未写完。可以发送「继续」接着写，或到「设置 → 模型服务 → 编辑 → 单次回答上限 token」调大。"
+        )
+    }
+}
+
+/// 续写请求失败时追加的提示。前面已写出的内容是有效的，整轮按完成保存，不变成错误卡片
+fn continuation_failed_notice(err: &str) -> String {
+    format!("\n\n> ⚠️ 自动续写失败（{err}），以上内容不完整，可以发送「继续」重试。")
+}
+
+/// 续写段专用：token / 思考照常推给前端，错误不推。
+///
+/// 续写失败不算这一轮失败（见 [`continuation_failed_notice`]），而笔记抽屉一收到 `ai:error`
+/// 就清空流式文本、弹红条，会把已经写好的大半篇回答从界面上抹掉。
+struct QuietErrors<'a>(&'a dyn AiEventEmitter);
+
+impl AiEventEmitter for QuietErrors<'_> {
+    fn emit_token(&self, content: &str) {
+        self.0.emit_token(content);
+    }
+    fn emit_error(&self, error: &str) {
+        log::warn!("[ai] 自动续写出错（不推给前端）: {error}");
+    }
+    fn emit_reasoning(&self, content: &str) {
+        self.0.emit_reasoning(content);
     }
 }
 
@@ -734,7 +819,7 @@ async fn consume_tool_stream(
     protocol: Protocol,
     cancel_rx: &mut watch::Receiver<bool>,
     reasoning_out: &mut String,
-) -> Result<(String, Vec<ToolCallAccum>), StreamFailure> {
+) -> Result<ToolRound, StreamFailure> {
     let mut content = String::new();
     // reasoning 模型（deepseek-r1 / qwq / o1）：思考过程独立发 ai:reasoning，
     // 正文全空时再兜底拼到正文
@@ -767,7 +852,7 @@ async fn consume_tool_stream(
     match &read.end {
         SseEnd::Cancelled => {
             reasoning_out.push_str(&reasoning_content);
-            return Ok((content, Vec::new()));
+            return Ok(ToolRound { content, tool_calls: Vec::new(), truncated: false });
         }
         SseEnd::Failed(msg) => {
             emitter.emit_error(msg);
@@ -776,29 +861,18 @@ async fn consume_tool_stream(
         SseEnd::Complete => {}
     }
 
-    // content 全空但 reasoning 非空时，把累积的 reasoning 提升为正文
-    // （前端流式过程中已经收到 ai:reasoning，这里只补一次 ai:token 让 UI 文本不为空）
-    if content.trim().is_empty() && !reasoning_content.trim().is_empty() {
-        content.push_str(&reasoning_content);
-        emitter.emit_token(&reasoning_content);
-    } else {
-        reasoning_out.push_str(&reasoning_content);
-    }
-
     // finish_reason 异常处理：
     // - length：模型生成达 max_tokens 上限，**已有部分内容**，不当致命错误。
-    //   追加一行提示让用户知道被截断，返回 Ok 保留已渲染的内容（前面 emit_token
-    //   已经流式发过）；用户可视情况调大 max_tokens 或缩短上下文重试。
+    //   标记 truncated 交给调用方自动续写（续不了时由调用方追加提示）。
+    //   这一段的工具调用一律丢弃：参数 JSON 可能只写了一半，续写请求仍带着工具，模型要调会重新发。
     // - content_filter / refusal 等非 stop|tool_calls：当致命错误抛出（红色 toast）。
+    let mut truncated = false;
     if let Some(reason) = openai_finish_reason(&read.outcome) {
         match reason.as_str() {
             "stop" | "tool_calls" => {}
             "length" => {
-                // 这句在 v61 之前是**死指路** —— 设置里根本没有 max_tokens 这一项。
-                // 现在有了（设置 → AI 模型 → 编辑 → 单次回答上限 token），所以指明位置。
-                let tip = "\n\n> ⚠️ 回答达到长度上限被截断。到「设置 → 模型服务 → 编辑 → 单次回答上限 token」调大即可（留空为服务商默认）。";
-                content.push_str(tip);
-                emitter.emit_token(tip);
+                truncated = true;
+                tool_accum.clear();
                 log::warn!("[ai] 输出截断 (finish_reason=length)");
             }
             _ => {
@@ -809,13 +883,33 @@ async fn consume_tool_stream(
         }
     }
 
+    // content 全空但 reasoning 非空时，把累积的 reasoning 提升为正文
+    // （前端流式过程中已经收到 ai:reasoning，这里只补一次 ai:token 让 UI 文本不为空）。
+    // 被截断时不提升：那是思考写到一半撞了上限，拿思考当正文去续写只会续出一段思考
+    if !truncated && content.trim().is_empty() && !reasoning_content.trim().is_empty() {
+        content.push_str(&reasoning_content);
+        emitter.emit_token(&reasoning_content);
+    } else {
+        reasoning_out.push_str(&reasoning_content);
+    }
+
     // 收尾：id 在外层 chat_stream_with_skills 已做兜底合成，这里只丢 name 为空的
     let tool_calls: Vec<ToolCallAccum> = tool_accum
         .into_values()
         .filter(|t| !t.name.trim().is_empty())
         .collect();
 
-    Ok((content, tool_calls))
+    Ok(ToolRound { content, tool_calls, truncated })
+}
+
+/// 智能模式一次请求的结果
+#[derive(Debug)]
+struct ToolRound {
+    content: String,
+    /// 只有正常结束（且没被截断）才可能非空
+    tool_calls: Vec<ToolCallAccum>,
+    /// 撞到单次输出上限，见 [`StreamText::truncated`]
+    truncated: bool,
 }
 
 /// 从用户首条消息生成会话标题：去首尾空白、压缩换行、截断至 24 个字符。
@@ -1743,7 +1837,8 @@ impl AiService {
             return Err(AppError::Custom(format_openai_api_error(status, &body)));
         }
 
-        // 取消：已生成的那一截照常返回。写作助手的结果不入库，失败时的半截正文用不上
+        // 取消：已生成的那一截照常返回。写作助手的结果不入库，失败时的半截正文用不上；
+        // 写作助手不自动续写（结果要插回编辑器，用户自己掌控长度）
         consume_text_stream(
             emitter,
             response,
@@ -1751,6 +1846,7 @@ impl AiService {
             &mut cancel_rx,
         )
         .await
+        .map(|t| t.text)
         .map_err(|f| f.error)
     }
 
@@ -1930,29 +2026,17 @@ impl AiService {
                 max_hist
             );
 
-            let result: Result<String, StreamFailure> = match model.provider.as_str() {
-                // Ollama 原生路径不在 ai-profile 解码范围，保持原样（失败时不带半截正文）
-                "ollama" => {
-                    Self::stream_ollama(&app, conversation_id, &model, &messages, cancel_rx.clone())
-                        .await
-                        .map_err(StreamFailure::from)
-                }
-                // T-012: 默认走 OpenAI 兼容协议（OpenAI / Claude 代理 / DeepSeek / 智谱 /
-                // Minimax / SiliconFlow / LM Studio / 用户自定义 baseUrl）
-                _ => {
-                    Self::stream_openai_compatible(
-                        &app,
-                        conversation_id,
-                        &model,
-                        &messages,
-                        cancel_rx.clone(),
-                    )
-                    .await
-                }
+            let emitter = ConversationEmitter { app: &app, conversation_id };
+            // 只有第一段请求的失败交给下面的降档重试；续写阶段的失败在 continue_rag_answer 里收住，
+            // 否则一次续写失败会让整轮从头再生成一遍
+            let first = Self::stream_rag_once(&emitter, &model, &messages, cancel_rx.clone()).await;
+            let result: Result<(String, u32), StreamFailure> = match first {
+                Ok(seg) => Ok(Self::continue_rag_answer(&emitter, &model, &messages, seg, &cancel_rx).await),
+                Err(f) => Err(f),
             };
 
             match result {
-                Ok(response) => {
+                Ok((response, auto_continued)) => {
                     // 引用校验：模型在末尾自报用了哪几篇（`<!--refs:[1,3]-->`），但**绝不直接采信**。
                     // 编号必须落在本次实际投喂的 ref_ids 范围内，越界的一律丢弃
                     // —— 与其在 prompt 里叮嘱"别编造"，不如让编造不可能生效。
@@ -1989,6 +2073,7 @@ impl AiService {
                     let meta = TurnMeta {
                         end_reason: if stopped { "stopped" } else { "done" }.into(),
                         duration_ms: started.elapsed().as_millis() as u64,
+                        auto_continued,
                         ..Default::default()
                     };
                     // 保存 AI 回复（引用挂在 assistant 消息上，表示"这条回答用了哪些笔记"）
@@ -2072,7 +2157,9 @@ impl AiService {
              1. 只根据已知信息作答，不要编造事实。\n\
              2. 不确定或信息不足时，请明确说明，不要强行给出结论。\n\
              3. 你读不到用户电脑上的文件。用户给出本地路径时，告诉他用笔记侧栏文件夹右键的\
-             「导入 Markdown 文件夹…」等导入功能，或在输入框加附件，不要假装读过。",
+             「导入 Markdown 文件夹…」等导入功能，或在输入框加附件，不要假装读过。\n\
+             4. 用户要的内容本身很长（长文、完整代码、多个章节）时一次写完，\
+             不要写一部分就停下来问是否继续。",
         );
         // 附加笔记（用户主动挂载的强制上下文）放在最前面，权重最高
         if !attached_context.is_empty() {
@@ -2140,14 +2227,79 @@ impl AiService {
         messages
     }
 
+    /// 对话（RAG 路径）的一次流式请求，按协议分流。被停止时返回已生成的那一截（`truncated = false`）
+    async fn stream_rag_once(
+        emitter: &dyn AiEventEmitter,
+        model: &AiModel,
+        messages: &[Value],
+        cancel_rx: watch::Receiver<bool>,
+    ) -> Result<StreamText, StreamFailure> {
+        match model.provider.as_str() {
+            // Ollama 原生路径不在 ai-profile 解码范围，保持原样（失败时不带半截正文）
+            "ollama" => Self::stream_ollama(emitter, model, messages, cancel_rx)
+                .await
+                .map_err(StreamFailure::from),
+            // T-012: 默认走 OpenAI 兼容协议（OpenAI / Claude 代理 / DeepSeek / 智谱 /
+            // Minimax / SiliconFlow / LM Studio / 用户自定义 baseUrl）
+            _ => Self::stream_openai_compatible(emitter, model, messages, cancel_rx).await,
+        }
+    }
+
+    /// 第一段被长度上限截断时自动续写，返回 `(完整正文, 续写次数)`。
+    ///
+    /// - 续写的 token 接着推给前端，同一张卡片里连成一篇
+    /// - 被停止：不再续，已写的照常返回（调用方按 stopped 存）
+    /// - 续不了（次数用完 / 上一段为空）：末尾追加截断提示
+    /// - 续写请求失败：保留已写的内容，末尾注明失败原因，**不报错**（错误也不推给前端，见 [`QuietErrors`]）
+    async fn continue_rag_answer(
+        emitter: &dyn AiEventEmitter,
+        model: &AiModel,
+        messages: &[Value],
+        first: StreamText,
+        cancel_rx: &watch::Receiver<bool>,
+    ) -> (String, u32) {
+        let mut text = first.text;
+        let mut truncated = first.truncated;
+        // 最近一段在 text 里的起点（字节下标），判断它是不是空的
+        let mut last_start = 0usize;
+        let mut continued = 0u32;
+        let quiet = QuietErrors(emitter);
+
+        while truncated && !*cancel_rx.borrow() {
+            if !may_auto_continue(continued, &text[last_start..]) {
+                let notice = truncation_notice(continued);
+                emitter.emit_token(&notice);
+                text.push_str(&notice);
+                break;
+            }
+            continued += 1;
+            log::info!("[ai] 回答被长度上限截断，自动续写第 {continued} 次（已写 {} 字）", text.chars().count());
+            let req = continuation_messages(messages, &text);
+            match Self::stream_rag_once(&quiet, model, &req, cancel_rx.clone()).await {
+                Ok(seg) => {
+                    last_start = text.len();
+                    truncated = seg.truncated;
+                    text.push_str(&seg.text);
+                }
+                Err(f) => {
+                    text.push_str(&f.partial);
+                    let notice = continuation_failed_notice(&f.error.to_string());
+                    emitter.emit_token(&notice);
+                    text.push_str(&notice);
+                    break;
+                }
+            }
+        }
+        (text, continued)
+    }
+
     /// Ollama 流式请求
     async fn stream_ollama(
-        app: &AppHandle,
-        conversation_id: i64,
+        emitter: &dyn AiEventEmitter,
         model: &AiModel,
         messages: &[Value],
         mut cancel_rx: watch::Receiver<bool>,
-    ) -> Result<String, AppError> {
+    ) -> Result<StreamText, AppError> {
         let url = format!("{}/api/chat", ollama_native_root(&model.api_url));
         let client = build_ollama_client();
         log::info!(
@@ -2167,14 +2319,14 @@ impl AiService {
 
         let response = match send_unless_cancelled(client.post(&url).json(&body), &mut cancel_rx).await {
             // 还没开口就被停止：返回空文本，由 chat_stream 存成「已停止」卡片
-            None => return Ok(String::new()),
+            None => return Ok(StreamText::whole(String::new())),
             Some(Ok(r)) => r,
             Some(Err(e)) => {
                 // Bug B: 请求没发出去（连接失败 / read_timeout）也要让前端收到 ai:error，
                 // 否则只靠 command reject 不够显眼，用户只见 UI"一直停止"
                 log::warn!("[Ollama] 请求发送失败: {}", ollama_send_error_diag(&e, &url));
                 let msg = format_ollama_send_error(&e, &url);
-                emit_ai_error(app, conversation_id, &msg);
+                emitter.emit_error(&msg);
                 return Err(AppError::Custom(msg));
             }
         };
@@ -2188,7 +2340,7 @@ impl AiService {
                 body.chars().take(500).collect::<String>()
             );
             let msg = format!("Ollama 返回错误 {}: {}", status, body);
-            emit_ai_error(app, conversation_id, &msg);
+            emitter.emit_error(&msg);
             return Err(AppError::Custom(msg));
         }
 
@@ -2212,16 +2364,18 @@ impl AiService {
                                 if let Ok(data) = serde_json::from_str::<Value>(&line) {
                                     if let Some(content) = data["message"]["content"].as_str() {
                                         full_response.push_str(content);
-                                        emit_ai_token(app, conversation_id, content);
+                                        emitter.emit_token(content);
                                     }
                                     if data["done"].as_bool() == Some(true) {
-                                        return Ok(full_response);
+                                        // num_predict 用完时 done_reason = "length"（迁移时默认 -1 无限，用户设了才会撞上）
+                                        let truncated = data["done_reason"].as_str() == Some("length");
+                                        return Ok(StreamText { text: full_response, truncated });
                                     }
                                 }
                             }
                         }
                         Some(Err(e)) => {
-                            emit_ai_error(app, conversation_id, &e.to_string());
+                            emitter.emit_error(&e.to_string());
                             return Err(AppError::Custom(format!("流读取错误: {}", e)));
                         }
                         None => break,
@@ -2230,7 +2384,7 @@ impl AiService {
                 _ = cancel_rx.changed() => {
                     if *cancel_rx.borrow() {
                         // 不在这里发 ai:done：调用方把这一截存成「已停止」卡片后再发，否则前端先刷到一个没有这轮回复的列表
-                        return Ok(full_response);
+                        return Ok(StreamText::whole(full_response));
                     }
                 }
             }
@@ -2244,38 +2398,40 @@ impl AiService {
                 if let Ok(data) = serde_json::from_str::<Value>(line) {
                     if let Some(content) = data["message"]["content"].as_str() {
                         full_response.push_str(content);
-                        emit_ai_token(app, conversation_id, content);
+                        emitter.emit_token(content);
                     }
                 }
             }
         }
 
-        Ok(full_response)
+        Ok(StreamText::whole(full_response))
     }
 
     /// 对话（RAG 路径）的流式请求：OpenAI 兼容与 Anthropic 协议都走这里
     async fn stream_openai_compatible(
-        app: &AppHandle,
-        conversation_id: i64,
+        emitter: &dyn AiEventEmitter,
         model: &AiModel,
         messages: &[Value],
         mut cancel_rx: watch::Receiver<bool>,
-    ) -> Result<String, StreamFailure> {
+    ) -> Result<StreamText, StreamFailure> {
         let client = crate::services::http_client::shared();
-        let body = json!({
+        let mut body = json!({
             "model": model.model_id,
             "messages": messages,
             "stream": true
         });
+        // 以前这里漏了：设置里的「单次回答上限」对普通模式的 OpenAI 兼容配置不生效，
+        // 截断提示却叫用户去调它
+        apply_max_tokens(&mut body, model);
         let request = model_chat_request(client, model, &body);
 
         let response = match send_unless_cancelled(request, &mut cancel_rx).await {
             // 还没开口就被停止：返回空文本，由 chat_stream 存成「已停止」卡片
-            None => return Ok(String::new()),
+            None => return Ok(StreamText::whole(String::new())),
             Some(Ok(r)) => r,
             Some(Err(e)) => {
                 let msg = format!("API 请求失败: {}", e);
-                emit_ai_error(app, conversation_id, &msg);
+                emitter.emit_error(&msg);
                 return Err(AppError::Custom(msg).into());
             }
         };
@@ -2284,13 +2440,13 @@ impl AiService {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             let msg = format_openai_api_error(status, &body);
-            emit_ai_error(app, conversation_id, &msg);
+            emitter.emit_error(&msg);
             return Err(AppError::Custom(msg).into());
         }
 
         // 取消：同 stream_ollama，ai:done 由调用方存库后再发
         consume_text_stream(
-            &ConversationEmitter { app, conversation_id },
+            emitter,
             response,
             model_service::protocol_of(&model.provider),
             &mut cancel_rx,
@@ -2411,7 +2567,9 @@ impl AiService {
             没有该工具时告诉他用应用自带的导入（桌面端）：\
             笔记侧栏的文件夹上右键 →「导入 Markdown 文件夹…」（保留目录层级、自动去重）或\
             「导入 Markdown / TXT 文件…」「导入 PDF…」；只想让你看一两个文件，可在输入框加附件。\
-            导入完成后，你再用知识库工具按用户的规则归类、打标签、整理。";
+            导入完成后，你再用知识库工具按用户的规则归类、打标签、整理。\n\
+            6. 用户要的内容本身很长（长文、完整代码、多个章节）时一次写完，\
+            不要写一部分就停下来问是否继续。";
 
         // 文件夹范围会话：在 system prompt 末尾追加硬约束说明，让模型明确知道检索面被限定，
         // 不要声称能看到范围外的笔记（工具层已做硬过滤，这里是给模型的认知对齐）。
@@ -2463,6 +2621,8 @@ impl AiService {
         let mut round_texts: Vec<String> = Vec::new();
         // 推理模型走 reasoning_content 的思考过程，跨轮累积
         let mut reasoning = String::new();
+        // 整轮回答累计的自动续写次数（存进 TurnMeta，卡片头显示）
+        let mut auto_continued = 0u32;
         // M5-3：tool_schemas 现在融合内置 5 skills + 所有 enabled 外部 MCP server 的工具
         // 工具命名约定：MCP 工具加 mcp__<server_id>__ 前缀；dispatch 时按前缀路由
         let tool_schemas = skills::tool_schemas_with_mcp(&app).await;
@@ -2512,16 +2672,17 @@ impl AiService {
                     .map(|c| (c, tool_calls.unwrap_or_default()))
                     .map_err(StreamFailure::from)
             } else {
-                Self::stream_openai_with_tools(
-                    &app,
-                    conversation_id,
+                Self::tool_round_continuing(
+                    &ConversationEmitter { app: &app, conversation_id },
                     &model,
                     req_messages.as_ref(),
                     tools_arg,
-                    cancel_rx.clone(),
+                    &cancel_rx,
                     &mut reasoning,
+                    &mut auto_continued,
                 )
                 .await
+                .map(|r| (r.content, r.tool_calls))
             };
 
             let (content, mut tool_calls) = match round_result {
@@ -2558,6 +2719,7 @@ impl AiService {
                     duration_ms: started.elapsed().as_millis() as u64,
                     round_texts,
                     reasoning,
+                    auto_continued,
                     ..Default::default()
                 };
                 save_turn(
@@ -2704,6 +2866,7 @@ impl AiService {
             duration_ms: started.elapsed().as_millis() as u64,
             round_texts,
             reasoning,
+            auto_continued,
             ..Default::default()
         };
         save_turn(db, conversation_id, &final_content, None, &all_skill_calls, &meta)?;
@@ -2730,14 +2893,13 @@ impl AiService {
     /// `reasoning_out`：本轮 `reasoning_content` 追加到这里（跨轮累积，存进 TurnMeta）。
     /// 正文为空、思考被提升成正文时不追加，免得卡片上同一段话显示两遍。
     async fn stream_openai_with_tools(
-        app: &AppHandle,
-        conversation_id: i64,
+        emitter: &dyn AiEventEmitter,
         model: &AiModel,
         messages: &[Value],
         tools: &[Value],
         mut cancel_rx: watch::Receiver<bool>,
         reasoning_out: &mut String,
-    ) -> Result<(String, Vec<ToolCallAccum>), StreamFailure> {
+    ) -> Result<ToolRound, StreamFailure> {
         let client = crate::services::http_client::shared();
         // Anthropic 协议同样走这里：请求体在 model_chat_request 里转换，流由 ai-profile 的解码器按协议解
 
@@ -2756,11 +2918,13 @@ impl AiService {
 
         let response = match send_unless_cancelled(request, &mut cancel_rx).await {
             // 还没开口就被停止：chat_stream_with_skills 看到取消信号后存「已停止」卡片
-            None => return Ok((String::new(), Vec::new())),
+            None => {
+                return Ok(ToolRound { content: String::new(), tool_calls: Vec::new(), truncated: false })
+            }
             Some(Ok(r)) => r,
             Some(Err(e)) => {
                 let msg = format!("API 请求失败: {}", e);
-                emit_ai_error(app, conversation_id, &msg);
+                emitter.emit_error(&msg);
                 return Err(AppError::Custom(msg).into());
             }
         };
@@ -2768,18 +2932,70 @@ impl AiService {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             let msg = format_openai_api_error(status, &body);
-            emit_ai_error(app, conversation_id, &msg);
+            emitter.emit_error(&msg);
             return Err(AppError::Custom(msg).into());
         }
 
         consume_tool_stream(
-            &ConversationEmitter { app, conversation_id },
+            emitter,
             response,
             model_service::protocol_of(&model.provider),
             &mut cancel_rx,
             reasoning_out,
         )
         .await
+    }
+
+    /// 智能模式的一次请求 + 截断后自动续写。续写留在**同一轮**里：不发 `ai:round`、不占工具轮数，
+    /// 卡片时间线不会被切开。
+    ///
+    /// - 返回的 `content` 是各段拼起来的完整正文，工具调用只来自最后一段（被截断的段已丢弃）
+    /// - `continued`：整轮回答累计的续写次数，上限 [`MAX_AUTO_CONTINUE`] 按整轮算，不是每轮各 3 次
+    /// - 被停止 / 续不了 / 续写失败的处理同 [`AiService::continue_rag_answer`]；只有第一段的失败返回 `Err`
+    async fn tool_round_continuing(
+        emitter: &dyn AiEventEmitter,
+        model: &AiModel,
+        messages: &[Value],
+        tools: &[Value],
+        cancel_rx: &watch::Receiver<bool>,
+        reasoning_out: &mut String,
+        continued: &mut u32,
+    ) -> Result<ToolRound, StreamFailure> {
+        let mut seg =
+            Self::stream_openai_with_tools(emitter, model, messages, tools, cancel_rx.clone(), reasoning_out)
+                .await?;
+        let mut content = std::mem::take(&mut seg.content);
+        let mut last_start = 0usize;
+        let quiet = QuietErrors(emitter);
+
+        while seg.truncated && !*cancel_rx.borrow() {
+            if !may_auto_continue(*continued, &content[last_start..]) {
+                let notice = truncation_notice(*continued);
+                emitter.emit_token(&notice);
+                content.push_str(&notice);
+                break;
+            }
+            *continued += 1;
+            log::info!("[skills] 回答被长度上限截断，自动续写第 {} 次（已写 {} 字）", continued, content.chars().count());
+            let req = continuation_messages(messages, &content);
+            match Self::stream_openai_with_tools(&quiet, model, &req, tools, cancel_rx.clone(), reasoning_out).await {
+                Ok(mut next) => {
+                    last_start = content.len();
+                    content.push_str(&std::mem::take(&mut next.content));
+                    seg = next;
+                }
+                Err(f) => {
+                    content.push_str(&f.partial);
+                    let notice = continuation_failed_notice(&f.error.to_string());
+                    emitter.emit_token(&notice);
+                    content.push_str(&notice);
+                    seg = ToolRound { content: String::new(), tool_calls: Vec::new(), truncated: false };
+                    break;
+                }
+            }
+        }
+        seg.content = content;
+        Ok(seg)
     }
 
     /// Ollama `/api/chat` 流式请求 + tool_calls 支持
@@ -5404,10 +5620,10 @@ mod sse_stream_tests {
         frames.iter().map(|f| f.clone().into_bytes()).collect()
     }
 
-    async fn text_stream(
+    async fn text_stream_raw(
         protocol: Protocol,
         chunks: Vec<Vec<u8>>,
-    ) -> (Result<String, StreamFailure>, Arc<Rec>) {
+    ) -> (Result<StreamText, StreamFailure>, Arc<Rec>) {
         let rec = Arc::new(Rec::default());
         let url = serve("text/event-stream", chunks, false).await;
         let (_tx, mut rx) = watch::channel(false);
@@ -5415,16 +5631,34 @@ mod sse_stream_tests {
         (r, rec)
     }
 
-    async fn tool_stream(
+    /// 只看正文（大多数用例不关心截断标记）
+    async fn text_stream(
         protocol: Protocol,
         chunks: Vec<Vec<u8>>,
-    ) -> (Result<(String, Vec<ToolCallAccum>), StreamFailure>, Arc<Rec>, String) {
+    ) -> (Result<String, StreamFailure>, Arc<Rec>) {
+        let (r, rec) = text_stream_raw(protocol, chunks).await;
+        (r.map(|t| t.text), rec)
+    }
+
+    async fn tool_stream_raw(
+        protocol: Protocol,
+        chunks: Vec<Vec<u8>>,
+    ) -> (Result<ToolRound, StreamFailure>, Arc<Rec>, String) {
         let rec = Arc::new(Rec::default());
         let url = serve("text/event-stream", chunks, false).await;
         let (_tx, mut rx) = watch::channel(false);
         let mut reasoning = String::new();
         let r = consume_tool_stream(rec.as_ref(), request(url).await, protocol, &mut rx, &mut reasoning).await;
         (r, rec, reasoning)
+    }
+
+    /// `(正文, 工具调用)`（大多数用例不关心截断标记）
+    async fn tool_stream(
+        protocol: Protocol,
+        chunks: Vec<Vec<u8>>,
+    ) -> (Result<(String, Vec<ToolCallAccum>), StreamFailure>, Arc<Rec>, String) {
+        let (r, rec, reasoning) = tool_stream_raw(protocol, chunks).await;
+        (r.map(|t| (t.content, t.tool_calls)), rec, reasoning)
     }
 
     fn failure_msg(r: &Result<impl std::fmt::Debug, StreamFailure>) -> String {
@@ -5539,16 +5773,20 @@ mod sse_stream_tests {
         assert_eq!(calls[0].args_json, "{\"query\":\"周报\"}");
     }
 
-    /// 结束原因换算：length 追加截断提示（已有行为）并保留工具调用判断；content_filter / refusal 报错
+    /// 结束原因换算：length 只标记截断（提示 / 续写交给调用方，正文里不掺提示）；content_filter / refusal 报错
     #[tokio::test]
     async fn finish_reasons_map_to_existing_behaviour() {
-        let (r, rec, _) = tool_stream(OA, sse(&[[oa_text("半"), oa_finish("length"), OA_DONE.to_string()].concat()])).await;
-        let (content, _) = r.ok().unwrap();
-        assert!(content.starts_with('半') && content.contains("回答达到长度上限"), "{content}");
-        assert!(rec.tokens().contains("回答达到长度上限"));
+        let (r, rec, _) = tool_stream_raw(OA, sse(&[[oa_text("半"), oa_finish("length"), OA_DONE.to_string()].concat()])).await;
+        let t = r.ok().unwrap();
+        assert!(t.truncated);
+        assert_eq!(t.content, "半", "提示由调用方追加，否则会夹在续写内容中间");
+        assert_eq!(rec.tokens(), "半");
 
-        let (r, _, _) = tool_stream(AN, sse(&[[an_text(0, "半"), an_stop("max_tokens")].concat()])).await;
-        assert!(r.ok().unwrap().0.contains("回答达到长度上限"), "Anthropic max_tokens 也要换成 length");
+        let (r, _, _) = tool_stream_raw(AN, sse(&[[an_text(0, "半"), an_stop("max_tokens")].concat()])).await;
+        assert!(r.ok().unwrap().truncated, "Anthropic max_tokens 也要换成 length");
+
+        let (r, _, _) = tool_stream_raw(OA, sse(&[[oa_text("完"), oa_finish("stop"), OA_DONE.to_string()].concat()])).await;
+        assert!(!r.ok().unwrap().truncated);
 
         let (r, rec, _) = tool_stream(OA, sse(&[[oa_text("x"), oa_finish("content_filter"), OA_DONE.to_string()].concat()])).await;
         assert!(failure_msg(&r).contains("content_filter"));
@@ -5680,7 +5918,9 @@ mod sse_stream_tests {
         let started = std::time::Instant::now();
         let r = consume_text_stream(rec.as_ref(), request(url).await, OA, &mut rx).await;
         canceller.await.unwrap();
-        assert_eq!(r.ok().unwrap(), "写到一半");
+        let t = r.ok().unwrap();
+        assert_eq!(t.text, "写到一半");
+        assert!(!t.truncated, "停止不是截断，不能触发自动续写");
         assert!(rec.errors().is_empty(), "取消不是错误");
         assert!(started.elapsed() < Duration::from_secs(5), "取消没有及时生效");
     }
@@ -5703,9 +5943,261 @@ mod sse_stream_tests {
         let mut reasoning = String::new();
         let r = consume_tool_stream(rec.as_ref(), request(url).await, OA, &mut rx, &mut reasoning).await;
         canceller.await.unwrap();
-        let (content, calls) = r.ok().unwrap();
-        assert_eq!(content, "我先搜");
-        assert!(calls.is_empty(), "半截工具调用不能执行：{calls:?}");
+        let t = r.ok().unwrap();
+        assert_eq!(t.content, "我先搜");
+        assert!(t.tool_calls.is_empty(), "半截工具调用不能执行：{:?}", t.tool_calls);
+    }
+
+    // ───────────── 截断标记 ─────────────
+
+    /// 纯文本流（普通模式）也要认出截断 —— 以前这里不看 finish_reason，撞上限就悄悄结束
+    #[tokio::test]
+    async fn text_stream_reports_truncation() {
+        let (r, _) = text_stream_raw(OA, sse(&[[oa_text("半"), oa_finish("length"), OA_DONE.to_string()].concat()])).await;
+        let t = r.ok().unwrap();
+        assert!(t.truncated && t.text == "半", "{t:?}");
+
+        let (r, _) = text_stream_raw(AN, sse(&[[an_text(0, "半"), an_stop("max_tokens")].concat()])).await;
+        assert!(r.ok().unwrap().truncated);
+
+        let (r, _) = text_stream_raw(OA, sse(&[[oa_text("完"), oa_finish("stop"), OA_DONE.to_string()].concat()])).await;
+        assert!(!r.ok().unwrap().truncated);
+    }
+
+    /// 截断时写了一半的工具调用丢弃（参数可能不完整）
+    #[tokio::test]
+    async fn truncated_tool_stream_drops_tool_calls() {
+        let body = [oa_text("我先搜"), oa_tool(0, "c1", "search_notes", "{\"query\":\"周"), oa_finish("length"), OA_DONE.to_string()].concat();
+        let (r, _, _) = tool_stream_raw(OA, sse(&[body])).await;
+        let t = r.ok().unwrap();
+        assert!(t.truncated);
+        assert!(t.tool_calls.is_empty(), "{:?}", t.tool_calls);
+    }
+
+    /// 思考写到一半撞上限：不把思考提升成正文（否则续写会拿思考当回答接着写）
+    #[tokio::test]
+    async fn truncated_reasoning_is_not_promoted_to_content() {
+        let body = [oa(json!({ "reasoning_content": "想到一半" }), None), oa_finish("length"), OA_DONE.to_string()].concat();
+        let (r, _, reasoning) = tool_stream_raw(OA, sse(&[body])).await;
+        let t = r.ok().unwrap();
+        assert!(t.truncated && t.content.is_empty(), "{t:?}");
+        assert_eq!(reasoning, "想到一半");
+    }
+
+    // ───────────── 自动续写 ─────────────
+
+    #[test]
+    fn continuation_messages_append_written_text_and_instruction() {
+        let base = vec![json!({ "role": "system", "content": "s" }), json!({ "role": "user", "content": "写长文" })];
+        let m = continuation_messages(&base, "第一段");
+        assert_eq!(m.len(), 4);
+        assert_eq!(m[2], json!({ "role": "assistant", "content": "第一段" }));
+        assert_eq!(m[3]["role"], "user");
+        let ins = m[3]["content"].as_str().unwrap();
+        assert!(ins.contains("接着写") && !ins.contains("代码块"), "{ins}");
+
+        // 断在代码块里：提醒别重新开代码块
+        let m = continuation_messages(&base, "示例：\n```rust\nfn main() {");
+        assert!(m[3]["content"].as_str().unwrap().contains("代码块中间"));
+        // 代码块已闭合：不提醒
+        let m = continuation_messages(&base, "```rust\nfn main() {}\n```\n接下来");
+        assert!(!m[3]["content"].as_str().unwrap().contains("代码块中间"));
+    }
+
+    #[test]
+    fn may_auto_continue_stops_at_cap_or_empty_segment() {
+        assert!(may_auto_continue(0, "有字"));
+        assert!(may_auto_continue(MAX_AUTO_CONTINUE - 1, "有字"));
+        assert!(!may_auto_continue(MAX_AUTO_CONTINUE, "有字"), "次数用完");
+        assert!(!may_auto_continue(0, "  \n"), "上一段为空：再续也一样");
+    }
+
+    /// 假服务端（多次请求）：按顺序回 `responses`，每个连接一条；记下每次请求的 body。
+    /// 返回模型的 base 地址（`http://127.0.0.1:端口/v1`，由 crate 拼 `chat/completions`）
+    async fn serve_seq(responses: Vec<(u16, String)>) -> (String, Arc<Mutex<Vec<Value>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let bodies = Arc::new(Mutex::new(Vec::new()));
+        let seen = bodies.clone();
+        tokio::spawn(async move {
+            for (status, body) in responses {
+                let Ok((mut sock, _)) = listener.accept().await else { return };
+                sock.set_nodelay(true).ok();
+                let req = read_request_body(&mut sock).await;
+                seen.lock().unwrap().push(serde_json::from_slice(&req).unwrap_or(Value::Null));
+                let ctype = if status == 200 { "text/event-stream" } else { "application/json" };
+                let head = format!("HTTP/1.1 {status} X\r\ncontent-type: {ctype}\r\nconnection: close\r\n\r\n");
+                let _ = sock.write_all(head.as_bytes()).await;
+                let _ = sock.write_all(body.as_bytes()).await;
+                let _ = sock.flush().await;
+            }
+        });
+        (format!("http://{addr}/v1"), bodies)
+    }
+
+    async fn read_request_body(sock: &mut TcpStream) -> Vec<u8> {
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 8192];
+        loop {
+            let n = sock.read(&mut tmp).await.unwrap_or(0);
+            if n == 0 {
+                return Vec::new();
+            }
+            buf.extend_from_slice(&tmp[..n]);
+            let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+            let head = String::from_utf8_lossy(&buf[..pos]).to_lowercase();
+            let len = head
+                .lines()
+                .find_map(|l| l.strip_prefix("content-length:"))
+                .and_then(|v| v.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            while buf.len() < pos + 4 + len {
+                let n = sock.read(&mut tmp).await.unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&tmp[..n]);
+            }
+            return buf[pos + 4..].to_vec();
+        }
+    }
+
+    fn test_model(api_url: String) -> AiModel {
+        AiModel {
+            id: 1,
+            name: "t".into(),
+            provider: "openai_compatible_custom".into(),
+            api_url,
+            api_key: None,
+            has_api_key: false,
+            model_id: "m".into(),
+            is_default: true,
+            max_context: 0,
+            max_tokens: None,
+            created_at: String::new(),
+            limits_source: None,
+            max_output: None,
+        }
+    }
+
+    fn oa_answer(text: &str, finish: &str) -> (u16, String) {
+        (200, [oa_text(text), oa_finish(finish), OA_DONE.to_string()].concat())
+    }
+
+    /// 普通模式走完整链路：第一段 + 续写，经由真实请求
+    async fn rag_answer(responses: Vec<(u16, String)>) -> ((String, u32), Arc<Rec>, Vec<Value>) {
+        let (url, bodies) = serve_seq(responses).await;
+        let model = test_model(url);
+        let rec = Arc::new(Rec::default());
+        let (_tx, rx) = watch::channel(false);
+        let messages = vec![json!({ "role": "user", "content": "写长文" })];
+        let first = AiService::stream_rag_once(rec.as_ref(), &model, &messages, rx.clone())
+            .await
+            .ok()
+            .expect("第一段应成功");
+        let r = AiService::continue_rag_answer(rec.as_ref(), &model, &messages, first, &rx).await;
+        let bodies = bodies.lock().unwrap().clone();
+        (r, rec, bodies)
+    }
+
+    /// 截断 → 续写一次 → 正常结束：两段连成一篇推给前端，续写请求带着已写内容 + 接着写的指令
+    #[tokio::test]
+    async fn rag_auto_continue_stitches_segments() {
+        let ((text, n), rec, bodies) =
+            rag_answer(vec![oa_answer("第一段", "length"), oa_answer("第二段", "stop")]).await;
+        assert_eq!(text, "第一段第二段");
+        assert_eq!(n, 1);
+        assert_eq!(rec.tokens(), "第一段第二段");
+        assert_eq!(bodies.len(), 2);
+        let msgs = bodies[1]["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 3, "原消息 + assistant + user");
+        assert_eq!(msgs[1], json!({ "role": "assistant", "content": "第一段" }));
+        assert!(msgs[2]["content"].as_str().unwrap().contains("接着写"));
+    }
+
+    /// 一直被截断：续满 3 次就停，末尾提示可以手动「继续」；不再多发请求
+    #[tokio::test]
+    async fn rag_auto_continue_stops_at_cap() {
+        let ((text, n), _, bodies) = rag_answer(vec![
+            oa_answer("a", "length"),
+            oa_answer("b", "length"),
+            oa_answer("c", "length"),
+            oa_answer("d", "length"),
+        ])
+        .await;
+        assert_eq!(n, MAX_AUTO_CONTINUE);
+        assert!(text.starts_with("abcd") && text.contains("已自动续写 3 次"), "{text}");
+        assert_eq!(bodies.len(), 4);
+    }
+
+    /// 续写请求失败：已写的保留，注明失败原因，不报错、不推 ai:error
+    #[tokio::test]
+    async fn rag_auto_continue_failure_keeps_written_text() {
+        let ((text, n), rec, _) = rag_answer(vec![
+            oa_answer("写好的大半篇", "length"),
+            (500, json!({ "error": { "message": "boom" } }).to_string()),
+        ])
+        .await;
+        assert_eq!(n, 1);
+        assert!(text.starts_with("写好的大半篇") && text.contains("自动续写失败"), "{text}");
+        assert!(rec.errors().is_empty(), "续写失败不能让前端清空已显示的回答：{:?}", rec.errors());
+        assert!(rec.tokens().contains("自动续写失败"));
+    }
+
+    /// 续写一段什么都没写出来：不再续，给出截断提示
+    #[tokio::test]
+    async fn rag_auto_continue_stops_on_empty_segment() {
+        let ((text, n), _, bodies) = rag_answer(vec![oa_answer("x", "length"), oa_answer("", "length")]).await;
+        assert_eq!(n, 1);
+        assert!(text.starts_with('x') && text.contains("已自动续写 1 次"), "{text}");
+        assert_eq!(bodies.len(), 2);
+    }
+
+    /// 用户已点停止：被截断也不再续写，不追加提示（调用方按「已停止」存）
+    #[tokio::test]
+    async fn rag_no_continuation_after_stop() {
+        let rec = Rec::default();
+        let (tx, rx) = watch::channel(false);
+        tx.send(true).unwrap();
+        let first = StreamText { text: "半截".into(), truncated: true };
+        let model = test_model("http://127.0.0.1:9/v1".into()); // 不该有请求发出去
+        let (text, n) = AiService::continue_rag_answer(&rec, &model, &[], first, &rx).await;
+        assert_eq!((text.as_str(), n), ("半截", 0));
+        assert!(rec.tokens().is_empty());
+    }
+
+    /// 没截断：一次请求、原样返回、不追加任何提示
+    #[tokio::test]
+    async fn rag_no_truncation_no_continuation() {
+        let ((text, n), _, bodies) = rag_answer(vec![oa_answer("完整回答", "stop")]).await;
+        assert_eq!((text.as_str(), n, bodies.len()), ("完整回答", 0, 1));
+    }
+
+    /// 智能模式：截断段的半截工具调用丢弃，续写请求仍带工具，最后一段的工具调用照常交出
+    #[tokio::test]
+    async fn tool_round_auto_continue_keeps_tools_and_final_calls() {
+        let (url, bodies) = serve_seq(vec![
+            (200, [oa_text("前半"), oa_tool(0, "c0", "search_notes", "{\"qu"), oa_finish("length"), OA_DONE.to_string()].concat()),
+            (200, [oa_text("后半"), oa_tool(0, "c1", "list_tags", "{}"), oa_finish("tool_calls"), OA_DONE.to_string()].concat()),
+        ])
+        .await;
+        let model = test_model(url);
+        let rec = Arc::new(Rec::default());
+        let (_tx, rx) = watch::channel(false);
+        let messages = vec![json!({ "role": "user", "content": "q" })];
+        let tools = vec![json!({ "type": "function", "function": { "name": "list_tags", "parameters": {} } })];
+        let mut reasoning = String::new();
+        let mut continued = 0;
+        let r = AiService::tool_round_continuing(rec.as_ref(), &model, &messages, &tools, &rx, &mut reasoning, &mut continued)
+            .await
+            .ok()
+            .unwrap();
+        assert_eq!(r.content, "前半后半");
+        assert_eq!(continued, 1);
+        assert_eq!(r.tool_calls.len(), 1);
+        assert_eq!(r.tool_calls[0].id, "c1", "只交出最后一段的完整调用");
+        let bodies = bodies.lock().unwrap().clone();
+        assert!(bodies[1]["tools"].is_array(), "续写请求仍带工具");
     }
 }
 

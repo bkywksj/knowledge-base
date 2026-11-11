@@ -85,6 +85,12 @@ describe("已存消息 → 卡片", () => {
     expect(v.durationMs).toBe(3200);
   });
 
+  it("带出自动续写次数；没续写的消息不带", () => {
+    const v = turnFromMessage(assistant("长文", { turn_meta: JSON.stringify({ endReason: "done", autoContinued: 2 }) }));
+    expect(v.autoContinued).toBe(2);
+    expect(turnFromMessage(assistant("短", { turn_meta: JSON.stringify({ endReason: "done" }) })).autoContinued).toBeUndefined();
+  });
+
   it("存量消息（没有 round / turn_meta）全部归到第 0 轮、按已完成处理", () => {
     const legacy = [{ id: "a", name: "get_note", argsJson: "{}", result: "x", status: "ok" }];
     const v = turnFromMessage(assistant("答", { skill_calls: JSON.stringify(legacy) }));

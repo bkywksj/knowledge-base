@@ -37,6 +37,8 @@ export interface TurnView {
   error?: string;
   /** 已结束的回复：总耗时（存量消息没有） */
   durationMs?: number;
+  /** 已结束的回复：撞到长度上限后自动续写了几次 */
+  autoContinued?: number;
   /** 流式中：开始时间，卡片头据此跑计时 */
   startedAt?: number;
   /** 回答参考了哪些笔记 */
@@ -150,6 +152,7 @@ export function turnFromMessage(msg: AiMessage): TurnView {
     thinkingOpen: false,
     error: meta?.error,
     durationMs: meta?.durationMs,
+    autoContinued: meta?.autoContinued,
     refs,
     message: msg,
     live: false,
