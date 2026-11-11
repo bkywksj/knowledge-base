@@ -1345,11 +1345,6 @@ body,
      完全跳过这段，导致选区边界异常；font-size:0 保持文档结构同时 0 宽。 */
 }
 
-/* 笔记 Tab 栏的滚动容器 — 隐藏 webkit 滚动条 */
-.tabbar-scroller::-webkit-scrollbar {
-  display: none;
-}
-
 /* Tippy.js wiki-suggestion 主题 — 去掉默认黑色背景/边距 */
 .tippy-box[data-theme~="wiki-suggestion"] {
   background: transparent;
@@ -3050,11 +3045,14 @@ body.sidebar-resizing .kb-tb-left {
   min-width: 0;
   padding-left: 6px;
 }
+/* flex:none —— 标签多时只许中间标签区收缩滚动，右侧按钮组不被挤（否则「已同步」会折成两行） */
 .kb-tb-actions {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 2px;
   height: 100%;
+  white-space: nowrap;
 }
 
 /* 图标按钮：30×30、圆角 8，平时三级文字色，悬停浅底 + 主文字色（原型 .ib） */
@@ -3334,14 +3332,93 @@ body.sidebar-resizing .kb-panel-resizer {
 }
 .kb-tabs-scroller {
   flex: 0 1 auto;
-  min-width: 0;
   height: 100%;
+}
+/* 横向标签条（components/ui/ScrollableTabStrip.tsx）：藏滚动条，滚轮横滚 + 两端按需浮出圆箭头 */
+.kb-tabstrip {
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: 2px;
+  /* 没有 min-width:0，flex 子项按内容撑开，滚动容器永远不会溢出 */
+  min-width: 0;
+}
+.kb-tabstrip-scroller {
+  flex: 1;
+  min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
+}
+.kb-tabstrip-scroller::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+/* 边缘淡出：mask 直接把内容画淡（标题栏透明底，纯色遮罩会显出色差）；宽度容得下 20px 圆箭头 */
+.kb-tabstrip-scroller[data-fade="left"] {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--kb-tabstrip-fade, 36px));
+  mask-image: linear-gradient(to right, transparent 0, #000 var(--kb-tabstrip-fade, 36px));
+}
+.kb-tabstrip-scroller[data-fade="right"] {
+  -webkit-mask-image: linear-gradient(to left, transparent 0, #000 var(--kb-tabstrip-fade, 36px));
+  mask-image: linear-gradient(to left, transparent 0, #000 var(--kb-tabstrip-fade, 36px));
+}
+.kb-tabstrip-scroller[data-fade="both"] {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--kb-tabstrip-fade, 36px),
+    #000 calc(100% - var(--kb-tabstrip-fade, 36px)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--kb-tabstrip-fade, 36px),
+    #000 calc(100% - var(--kb-tabstrip-fade, 36px)),
+    transparent 100%
+  );
+}
+/* width:max-content：标签保持各自宽度向右溢出，而不是被挤扁 */
+.kb-tabstrip-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: max-content;
+  height: 100%;
+}
+.kb-tabstrip-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--kb-border);
+  border-radius: 50%;
+  background: var(--kb-bg-raised, #fff);
+  color: var(--kb-text-secondary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.16);
+  cursor: pointer;
+  /* 常态不参与交互：不吃点击，避免点到透明按钮 */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+.kb-tabstrip-arrow[data-visible="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+.kb-tabstrip-arrow:hover {
+  color: var(--kb-primary);
+  border-color: color-mix(in srgb, var(--kb-primary) 55%, transparent);
+}
+.kb-tabstrip-arrow.is-left {
+  left: 0;
+}
+.kb-tabstrip-arrow.is-right {
+  right: 0;
 }
 .kb-tab-home,
 .kb-tab-add {

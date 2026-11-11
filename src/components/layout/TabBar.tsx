@@ -1,10 +1,11 @@
 import { useNavigate, useLocation } from "react-router-dom";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Dropdown, Tooltip, Modal, Button, App as AntdApp, type MenuProps } from "antd";
 import { X, ListTree, Plus } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTabsStore, type NoteTab } from "@/store/tabs";
 import { FileTypeIcon } from "@/components/FileTypeIcon";
+import { ScrollableTabStrip } from "@/components/ui/ScrollableTabStrip";
 import { noteApi } from "@/lib/api";
 import { useAppStore } from "@/store";
 import { createBlankAndOpen } from "@/lib/noteCreator";
@@ -32,8 +33,6 @@ export function TabBar({ variant = "titlebar" }: { variant?: "titlebar" | "row" 
   const location = useLocation();
   const { message } = AntdApp.useApp();
 
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const tabRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   // dirty tab 关闭确认 Modal 的目标 tab；null 表示未弹出
   const [confirmTab, setConfirmTab] = useState<NoteTab | null>(null);
@@ -52,7 +51,6 @@ export function TabBar({ variant = "titlebar" }: { variant?: "titlebar" | "row" 
       const wasActive = activeId === id;
       const isViewing = wasActive && location.pathname === `/notes/${id}`;
       const nextActive = closeTab(id);
-      tabRefs.current.delete(id);
       if (isViewing) {
         if (nextActive !== null) navigate(`/notes/${nextActive}`);
         else navigate("/notes");
@@ -118,15 +116,6 @@ export function TabBar({ variant = "titlebar" }: { variant?: "titlebar" | "row" 
     return () => window.removeEventListener("keydown", onKey);
   }, [activeId, handleClose]);
 
-  // 激活的 tab 超出可视区时自动滚入视界
-  useEffect(() => {
-    if (activeId === null) return;
-    const el = tabRefs.current.get(activeId);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
-    }
-  }, [activeId, tabs.length]);
-
   /** 关闭全部：清空所有 tab；若正在看某笔记则跳回列表。有未保存草稿时先确认。
    *  🔴 必须放在下方 `if (tabs.length === 0) return null` 这个 early return **之前**——
    *  否则无 tab 时提前 return 会跳过这个 useCallback，导致两次渲染 hook 数量不一致
@@ -135,7 +124,6 @@ export function TabBar({ variant = "titlebar" }: { variant?: "titlebar" | "row" 
     const doIt = () => {
       const viewingNote = location.pathname.startsWith("/notes/");
       closeAllTabs();
-      tabRefs.current.clear();
       if (viewingNote) navigate("/notes");
     };
     const hasDirty = tabs.some((t) => t.dirty);
@@ -183,7 +171,9 @@ export function TabBar({ variant = "titlebar" }: { variant?: "titlebar" | "row" 
   /** 标签条空白处：单击拖动窗口、双击最大化（只在标题栏形态下，且只响应空白处，不抢标签 / 按钮的点击） */
   function handleStripMouseDown(e: React.MouseEvent) {
     if (variant !== "titlebar" || e.button !== 0) return;
-    if (e.target !== e.currentTarget) return;
+    // 空白处 = 外层自身，或标签条里的容器层（冒泡上来，标签不满时右侧留白落在 scroller 上）
+    const t = e.target as HTMLElement;
+    if (t !== e.currentTarget && !t.matches(".kb-tabstrip, .kb-tabstrip-scroller, .kb-tabstrip-row")) return;
     try {
       const win = getCurrentWindow();
       if (e.detail === 2) void win.toggleMaximize();
@@ -227,11 +217,10 @@ export function TabBar({ variant = "titlebar" }: { variant?: "titlebar" | "row" 
         <p>关闭此笔记会丢失尚未持久化的修改。请选择操作。</p>
       </Modal>
 
-      {/* 中间可滚动 tab 容器 */}
-      <div
-        ref={scrollerRef}
-        className="kb-tabs-scroller tabbar-scroller"
-        onMouseDown={handleStripMouseDown}
+      {/* 中间可滚动 tab 容器：隐藏滚动条，滚轮横滚 + 两端按需浮出左右箭头 */}
+      <ScrollableTabStrip
+        className="kb-tabs-scroller"
+        activeKey={activeId}
       >
         {tabs.map((tab) => {
           const isActive = tab.id === activeId;
@@ -247,10 +236,7 @@ export function TabBar({ variant = "titlebar" }: { variant?: "titlebar" | "row" 
               {/* 宽度：禁止收缩 + 下限 140 / 上限 200（原型 200）。标签一多就被压到 minWidth，
                   中文只剩一两个字看不出是哪篇，所以宁可横向滚动（切换 tab 会 scrollIntoView） */}
               <div
-                ref={(el) => {
-                  if (el) tabRefs.current.set(tab.id, el);
-                  else tabRefs.current.delete(tab.id);
-                }}
+                data-strip-key={tab.id}
                 onClick={() => handleSelect(tab.id)}
                 onAuxClick={(e) => {
                   if (e.button === 1) {
@@ -277,7 +263,7 @@ export function TabBar({ variant = "titlebar" }: { variant?: "titlebar" | "row" 
             </Dropdown>
           );
         })}
-      </div>
+      </ScrollableTabStrip>
       {/* 放在滚动区外面：标签多到横向滚动时「+」也始终可见 */}
       <Tooltip title="新建笔记 (Ctrl+N)">
         <button type="button" className="kb-tab-add" onClick={handleNewNote} aria-label="新建笔记">
