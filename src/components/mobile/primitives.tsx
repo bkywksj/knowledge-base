@@ -114,6 +114,15 @@ export function LinkBadge({
   );
 }
 
+/** 开关外观（46×28，同原型）：只负责画，交互挂在外层按钮 / 行上 */
+export function MSwitch({ on }: { on: boolean }) {
+  return (
+    <span aria-hidden className="relative inline-block h-[28px] w-[46px] shrink-0 rounded-full transition-colors" style={{ background: on ? "var(--m-btn)" : "var(--m-ink4)" }}>
+      <span className="absolute top-[3px] h-[22px] w-[22px] rounded-full bg-white transition-[left]" style={{ left: on ? 21 : 3 }} />
+    </span>
+  );
+}
+
 /** 一级页面头部：28px 大标题 + 右侧操作 */
 export function MPageHeader({
   title,

@@ -60,7 +60,7 @@ export function EditorInsertSheet({
   }
 
   return (
-    <MSheet open={open} title="插入" caption="正文里输入 / 也能调出同一份清单" onClose={onClose}>
+    <MSheet open={open} title="插入" aside="正文里输入 / 也能调出" onClose={onClose}>
       <div className="m-hscroll -mx-4 flex gap-2 px-4 pb-1" role="tablist" aria-label="插入分组">
         {MOBILE_INSERT_GROUPS.map((g) => (
           <button key={g.key} type="button" role="tab" aria-selected={g.key === group} className={g.key === group ? "m-chip is-on" : "m-chip"} onClick={() => setGroup(g.key)}>
@@ -72,19 +72,19 @@ export function EditorInsertSheet({
         {current.entries.map((en) => {
           const slash = slashByKey.get(en.key);
           const label = en.label ?? slash?.title ?? en.key;
-          const icon = slash ? <slash.icon size={22} /> : EXTRA_ICON[en.key];
+          const icon = slash ? <slash.icon size={20} /> : EXTRA_ICON[en.key];
           // 原型：图标一律中性色，只有「双链笔记」用主色
           const accent = en.key === "wikiLink";
           return (
             <button
               key={en.key}
               type="button"
-              className="flex min-h-[76px] flex-col items-center justify-center gap-2 rounded-[var(--m-r-l)] px-1 py-3 active:bg-[var(--m-accent-soft)]"
+              className="flex min-h-[70px] flex-col items-center justify-center gap-2 rounded-[var(--m-r-l)] px-1 py-3 active:bg-[var(--m-accent-soft)]"
               style={{ color: accent ? "var(--m-accent-ink)" : "var(--m-ink2)" }}
               onClick={() => run(en.key)}
             >
               {icon}
-              <span className={accent ? "text-center text-[12px] font-semibold leading-tight" : "text-center text-[12px] leading-tight"}>{label}</span>
+              <span className={accent ? "text-center text-[12px] font-semibold leading-[18px]" : "text-center text-[12px] leading-[18px]"}>{label}</span>
             </button>
           );
         })}
@@ -94,7 +94,7 @@ export function EditorInsertSheet({
 }
 
 const EXTRA_ICON: Record<string, ReactNode> = {
-  camera: <Camera size={22} />,
-  attachment: <Paperclip size={22} />,
-  link: <Link size={22} />,
+  camera: <Camera size={20} />,
+  attachment: <Paperclip size={20} />,
+  link: <Link size={20} />,
 };

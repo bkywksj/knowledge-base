@@ -17,7 +17,6 @@ import {
   ListTree,
   Network,
   Presentation,
-  Tag as TagIcon,
   X,
   Image as ImageIcon,
   Italic,
@@ -53,8 +52,7 @@ import { TextPromptModal } from "@/components/mobile/TextPromptModal";
 import { NoteOutlineSheet } from "@/components/mobile/NoteOutlineSheet";
 import { NoteHistorySheet } from "@/components/mobile/NoteHistorySheet";
 import { NoteTagsSheet } from "@/components/mobile/NoteTagsSheet";
-import { LinkBadge } from "@/components/mobile/primitives";
-import { tagDot } from "@/lib/tagColor";
+import { LinkBadge, MSwitch } from "@/components/mobile/primitives";
 import { SlideshowView } from "@/components/notes/SlideshowView";
 
 // 思维导图依赖 markmap，体积不小：用到才加载（同 PC）
@@ -80,8 +78,8 @@ const SAVED_TOAST_MS = 2500;
 
 /**
  * 顶栏状态机：
- * - idle:   不显示指示器
- * - dirty:  刚输入、还在 debounce —— 也不显示，避免噪音
+ * - idle:   「● 已保存」（原型常驻）
+ * - dirty:  刚输入、还在 debounce —— 「● 未保存」（灰点），不报假状态
  * - saving: 正在写后端 —— 「保存中…」
  * - saved:  刚刚保存成功 —— 「已保存」，SAVED_TOAST_MS 后自动归 idle
  */
@@ -122,6 +120,10 @@ export function MobileNoteEditor() {
   const [askingAi, setAskingAi] = useState(false);
   const [words, setWords] = useState(0);
   const [backlinks, setBacklinks] = useState(0);
+  /** 链出数（「…」面板头部「链出 N · 链入 N」，同原型 06） */
+  const [outlinks, setOutlinks] = useState(0);
+  /** 阅读时长（分钟），编辑器统计回调给的 */
+  const [readMin, setReadMin] = useState(0);
   const [tags, setTags] = useState<Tag[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -184,7 +186,14 @@ export function MobileNoteEditor() {
       message.error(`加载笔记失败: ${e}`);
     }
     // 链入数 / 标签 / 文件夹树：附属信息，失败不影响编辑
-    linkApi.getBacklinks(noteId).then((l) => setBacklinks(l.length)).catch(() => {});
+    // 出链 + 入链一次取齐（同 PC 编辑器底部链接状态条），口径与入链列表一致
+    linkApi
+      .getLinkSummary(noteId)
+      .then((s) => {
+        setBacklinks(s.incoming.length);
+        setOutlinks(s.outgoing.length);
+      })
+      .catch(() => {});
     tagApi.getNoteTags(noteId).then(setTags).catch(() => {});
     folderApi.list().then(setFolders).catch(() => {});
   }, [noteId]);
@@ -529,7 +538,7 @@ export function MobileNoteEditor() {
       key: "source",
       label: "源码模式",
       icon: <CodeXml size={20} />,
-      extra: sourceMode ? "已开启" : "关闭",
+      extra: <MSwitch on={sourceMode} />,
       onClick: () => (readOnly ? message.info("加密笔记手机端只读") : setSource(!sourceMode)),
     },
     { key: "move", label: "移动到…", icon: <FolderInput size={20} />, onClick: () => setMoveOpen(true) },
@@ -605,25 +614,24 @@ export function MobileNoteEditor() {
             <FolderIcon size={13} className="shrink-0" />
             <span className="truncate">{folderLabel}</span>
           </button>
-          {/* 标签色是用户自定义的，直接当文字色在暗色主题下可能看不清 → 色点 + 中性字 */}
-          {/* 点任一标签或「＋标签」打开标签编辑面板（加密笔记只读，不给改） */}
+          {/* 标签胶囊同原型与笔记列表：信息色（不用标签自定义色当字色，暗色主题下可能看不清）。
+              点任一标签或「＋ 标签」打开标签编辑面板（加密笔记只读，不给改） */}
           {tags.map((t) => (
             <button
               key={t.id}
               type="button"
               className="m-tag m-tapx"
-              style={{ background: "var(--m-well)", color: "var(--m-ink2)" }}
+              style={{ background: "var(--m-info-soft)", color: "var(--m-info)" }}
               disabled={readOnly}
               aria-label={`标签「${t.name}」，点按编辑标签`}
               onClick={() => setTagsOpen(true)}
             >
-              <span className="m-dot" style={{ width: 6, height: 6, background: tagDot(t.color) }} />
               {t.name}
             </button>
           ))}
           {!readOnly && note && (
-            <button type="button" className="m-tag m-tapx" style={{ background: "transparent", color: "var(--m-ink3)", border: "0.5px dashed var(--m-hair)" }} aria-label="编辑标签" onClick={() => setTagsOpen(true)}>
-              <TagIcon size={12} /> {tags.length > 0 ? "＋" : "加标签"}
+            <button type="button" className="m-tag m-tapx" style={{ background: "var(--m-well)", color: "var(--m-ink3)", fontWeight: 400 }} aria-label="编辑标签" onClick={() => setTagsOpen(true)}>
+              ＋ 标签
             </button>
           )}
           {note?.is_pinned && (
@@ -638,9 +646,7 @@ export function MobileNoteEditor() {
           )}
           {backlinks > 0 && <span className="ml-auto"><LinkBadge>链入 {backlinks}</LinkBadge></span>}
         </div>
-        <div className="m-t-cap m-num mt-2">
-          {note ? `更新于 ${new Date(note.updated_at).toLocaleDateString("zh-CN")}` : "—"} · {words.toLocaleString()} 字
-        </div>
+        {/* 「更新于 · 字数」同原型挪进「…」面板的副标题，标题区只留路径 / 标签 / 链入 */}
 
         {readOnly && (
           <div className="mt-4 flex items-start gap-2 rounded-[var(--m-r-l)] p-3 text-[14px] leading-[1.6]" style={{ background: "var(--m-warn-soft)", color: "var(--m-warn)" }}>
@@ -649,7 +655,7 @@ export function MobileNoteEditor() {
           </div>
         )}
 
-        <div className="m-editor-body mt-5">
+        <div className="m-editor-body mt-6">
           {sourceMode && !readOnly ? (
             <textarea
               value={sourceText}
@@ -678,7 +684,10 @@ export function MobileNoteEditor() {
               readingMode={readingMode || readOnly}
               hideToolbar
               showFooterStats={false}
-              onStats={(s) => setWords(s.words)}
+              onStats={(s) => {
+                setWords(s.words);
+                setReadMin(parseInt(s.readingTime, 10) || 0);
+              }}
               onEditorReady={setEditor}
               initialSearch={initialSearch}
               openSearchRequest={searchReq}
@@ -773,7 +782,16 @@ export function MobileNoteEditor() {
       <ActionSheet
         open={moreOpen}
         title={title || "未命名笔记"}
-        subtitle={`${words.toLocaleString()} 字${backlinks > 0 ? ` · 链入 ${backlinks}` : ""}`}
+        // 原型 06：「2,140 字 · 约 5 分钟」+「链出 3 · 链入 4」；更新时间从标题区挪过来放最前，放不下就换行
+        subtitle={
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 whitespace-normal">
+            <span className="m-num">
+              {note ? `${new Date(note.updated_at).toLocaleDateString("zh-CN")} 更新 · ` : ""}
+              {words.toLocaleString()} 字{readMin > 0 ? ` · 约 ${readMin} 分钟` : ""}
+            </span>
+            {(outlinks > 0 || backlinks > 0) && <LinkBadge>{`链出 ${outlinks} · 链入 ${backlinks}`}</LinkBadge>}
+          </span>
+        }
         grid={[
           { key: "pin", label: note?.is_pinned ? "已置顶" : "置顶", icon: <Pin size={22} />, active: !!note?.is_pinned, onClick: () => void togglePin() },
           { key: "outline", label: "大纲", icon: <ListTree size={22} />, onClick: openOutline },
@@ -936,13 +954,13 @@ function formatSize(bytes: number): string {
 }
 
 function SaveBadge({ status }: { status: SaveStatus }) {
+  // 原型：常驻「● 已保存」。刚打完字、还在等自动保存的那 1.2 秒如实显示「未保存」，不报假状态
   if (status === "saving") return <span className="m-t-cap">保存中…</span>;
-  if (status === "saved")
-    return (
-      <span className="m-t-cap flex items-center gap-1.5">
-        <span className="m-dot" style={{ width: 6, height: 6, background: "var(--m-ok)" }} />
-        已保存
-      </span>
-    );
-  return null;
+  const dirty = status === "dirty";
+  return (
+    <span className="m-t-cap flex items-center gap-1.5">
+      <span className="m-dot" style={{ width: 6, height: 6, background: dirty ? "var(--m-ink4)" : "var(--m-ok)" }} />
+      {dirty ? "未保存" : "已保存"}
+    </span>
+  );
 }

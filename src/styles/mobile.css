@@ -167,6 +167,9 @@
 }
 .m-grid-cell:active { background: var(--m-accent-soft); }
 .m-grid-cell.is-on { background: var(--m-accent-soft2); color: var(--m-accent-ink); font-weight: 700; }
+/* 操作格图标统一 20（原型实测；调用方多传的是 22），格高 74 */
+.m-grid-cell svg { width: 20px; height: 20px; }
+.m-grid-cell { line-height: 18px; }
 
 /* ═══════════════════ 小件 ═══════════════════ */
 /* 胶囊：视觉 32 高，透明热区撑到 44 */
@@ -462,8 +465,46 @@
 .m-slideshow button[aria-label="上一页"] { left: 24px !important; }
 .m-slideshow button[aria-label="下一页"] { right: 24px !important; }
 
-/* 正文里的双链：PC 用主题原色当字色，暗色主题下对比度只有 3.8；手机换「主色字」令牌（深浅两头都过 4.5） */
-.m-editor-body .tiptap .wiki-link { color: var(--m-accent-ink); }
+/* 正文里的双链：PC 用主题原色当字色，暗色主题下对比度只有 3.8；手机换「主色字」令牌（深浅两头都过 4.5）。
+   形状同原型 .wk：600 字重、4 圆角、浅主色底 */
+.m-editor-body .tiptap .wiki-link {
+  color: var(--m-accent-ink);
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 1px 4px;
+  background: var(--m-accent-soft);
+}
+
+/* ── 正文排版按原型 04（PC 编辑器的相对字号在手机上偏大：h2 = 1.5em = 24px，原型 19px）── */
+.m-editor-body .tiptap h1 { font-size: 22px; font-weight: 700; line-height: 1.45; margin: 0.9em 0 0.35em; }
+.m-editor-body .tiptap h2 { font-size: 19px; font-weight: 700; line-height: 1.5; margin: 0.8em 0 0.4em; }
+.m-editor-body .tiptap h3 { font-size: 17px; font-weight: 700; line-height: 1.5; margin: 0.7em 0 0.3em; }
+.m-editor-body .tiptap h4 { font-size: 16px; font-weight: 700; line-height: 1.5; margin: 0.6em 0 0.25em; }
+.m-editor-body .tiptap > :first-child { margin-top: 0; }
+/* 行内代码：14px、凹陷底、6 圆角（原型 code.rounded-md） */
+.m-editor-body .tiptap :not(pre) > code {
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--m-well);
+  color: var(--m-ink);
+}
+/* 列表：缩进 20、圆点用弱色（原型 pl-5 marker:text-ink4） */
+.m-editor-body .tiptap ul:not([data-type="taskList"]),
+.m-editor-body .tiptap ol { padding-left: 20px; }
+.m-editor-body .tiptap li::marker { color: var(--m-ink4); }
+/* 提示框：原型是整块浅色底 + 深色字、10 圆角、无左边框，15px / 1.7；四种类型用手机语义色（跟随主题） */
+.m-editor-body .tiptap .tiptap-callout {
+  border-left: none;
+  border-radius: 10px;
+  font-size: 15px;
+  line-height: 1.7;
+  background: var(--m-info-soft);
+  color: var(--m-info);
+}
+.m-editor-body .tiptap .tiptap-callout[data-callout="tip"] { background: var(--m-ok-soft); color: var(--m-ok); }
+.m-editor-body .tiptap .tiptap-callout[data-callout="warning"] { background: var(--m-warn-soft); color: var(--m-warn); }
+.m-editor-body .tiptap .tiptap-callout[data-callout="danger"] { background: var(--m-bad-soft); color: var(--m-bad); }
 
 /* 手机白板「历史版本」：复用 PC 的 SnapshotDrawer（mobile 模式加 rootClassName），次要字换手机令牌、按钮热区 44 */
 .m-wb-history .ant-typography-secondary { color: var(--m-ink3) !important; }

@@ -15,11 +15,14 @@ export function MSheet({
   children,
   footer,
   cancelText = "取消",
+  aside,
 }: {
   open: boolean;
   title: string;
   /** 标题下的一行说明 */
   caption?: ReactNode;
+  /** 标题同一行靠右的小字说明（原型 05 插入面板：「正文里输入 / 也能调出」） */
+  aside?: ReactNode;
   onClose: () => void;
   children: ReactNode;
   /** 替换底部「取消」组（如「取消 / 保存」并排）；传 null 则不要底部 */
@@ -43,7 +46,10 @@ export function MSheet({
       <div className="m-sheet">
         <div className="m-sheet-grabber" />
         <div className="m-gutter pt-1 pb-3">
-          <div className="m-t-sec">{title}</div>
+          <div className="flex items-baseline gap-2">
+            <div className="m-t-sec min-w-0 truncate">{title}</div>
+            {aside != null && <div className="m-t-cap ml-auto shrink-0">{aside}</div>}
+          </div>
           {caption != null && <div className="m-t-cap mt-1">{caption}</div>}
         </div>
         <div className="m-gutter">
