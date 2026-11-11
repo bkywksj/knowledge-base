@@ -1,14 +1,14 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowUp, ChevronDown, ChevronLeft, ChevronRight, Pencil } from "lucide-react";
+import { ArrowUp, ChevronDown, ChevronLeft, ChevronRight, Pencil, Plus } from "lucide-react";
 import { message } from "antd";
 import { dailyApi } from "@/lib/api";
 import { parseDailyTimeline } from "@/lib/dailyTimeline";
 import { appendQuickNoteToDaily } from "@/lib/mobileQuickNote";
 import { useAppStore } from "@/store";
 import type { DailyEntry, Note } from "@/types";
-import { MGroup, MNavBar, MPageHeader, MSectionHeader, MTag } from "@/components/mobile/primitives";
+import { MGroup, MSectionHeader } from "@/components/mobile/primitives";
 
 /**
  * 移动端日记页（v4 原型 09 屏，对应 PC 日记页）
@@ -194,6 +194,7 @@ export function MobileDaily() {
   }
 
   const isToday = selected === todayStr;
+  const isCurrentMonth = headYear === new Date().getFullYear() && headMonth === new Date().getMonth() + 1;
   const dayLabel = `${sel.getMonth() + 1} 月 ${sel.getDate()} 日`;
   const timeline = useMemo(() => parseDailyTimeline(selectedNote?.content), [selectedNote]);
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(mondayOf(selected), i));
@@ -201,44 +202,39 @@ export function MobileDaily() {
 
   return (
     <div className="mx-auto w-full max-w-[860px] pb-28">
-      {!isTab && <MNavBar onBack={() => navigate(-1)} />}
-      <MPageHeader
-        title={
-          <button type="button" className="m-tapx flex items-center gap-1" onClick={() => toggleExpanded()} aria-expanded={expanded} aria-label={expanded ? "收起整月" : "展开整月"}>
-            {headYear} 年 {headMonth} 月
-            <ChevronDown size={22} style={{ color: "var(--m-ink3)", transform: expanded ? "rotate(180deg)" : undefined, transition: "transform .2s" }} />
+      {/* 原型 09：紧凑顶栏（返回 + 18px 月份 + 「今天」），不用大标题 */}
+      <div className={`flex h-12 items-center pr-3 ${isTab ? "pl-4" : "pl-1"}`}>
+        {!isTab && (
+          <button type="button" aria-label="返回" className="m-icon-btn" onClick={() => navigate(-1)}>
+            <ChevronLeft size={24} />
           </button>
-        }
-        actions={
+        )}
+        <button type="button" className="m-tapx flex items-center gap-1 text-[18px] font-bold" style={{ color: "var(--m-ink)" }} onClick={() => toggleExpanded()} aria-expanded={expanded} aria-label={expanded ? "收起整月" : "展开整月"}>
+          {headYear} 年 {headMonth} 月
+          <ChevronDown size={16} style={{ color: "var(--m-ink3)", transform: expanded ? "rotate(180deg)" : undefined, transition: "transform .2s" }} />
+        </button>
+        <div className="flex-1" />
+        {expanded && (
           <>
-            {expanded && (
-              <>
-                <button type="button" aria-label="上个月" className="m-icon-btn" onClick={() => shiftMonth(-1)}>
-                  <ChevronLeft size={22} />
-                </button>
-                <button type="button" aria-label="下个月" className="m-icon-btn" onClick={() => shiftMonth(1)}>
-                  <ChevronRight size={22} />
-                </button>
-              </>
-            )}
-            <button
-              type="button"
-              className="m-chip mr-2"
-              style={isToday && (!expanded || (view.year === new Date().getFullYear() && view.month === new Date().getMonth() + 1)) ? { background: "var(--m-well)" } : { background: "var(--m-accent-soft2)", color: "var(--m-accent-ink)", fontWeight: 700 }}
-              onClick={goToday}
-            >
-              今天
+            <button type="button" aria-label="上个月" className="m-icon-btn" onClick={() => shiftMonth(-1)}>
+              <ChevronLeft size={20} />
+            </button>
+            <button type="button" aria-label="下个月" className="m-icon-btn" onClick={() => shiftMonth(1)}>
+              <ChevronRight size={20} />
             </button>
           </>
-        }
-      />
+        )}
+        <button type="button" className="m-tag m-tapx" style={{ height: 30, padding: "0 12px", fontSize: 13, background: "var(--m-accent-soft2)", color: "var(--m-accent-ink)" }} onClick={goToday}>
+          今天
+        </button>
+      </div>
 
-      {/* 日历：周条 / 整月 */}
-      <div className="m-gutter mt-3 select-none" style={{ touchAction: "pan-y" }} onPointerDown={onCalDown} onPointerUp={onCalUp} onPointerCancel={() => (drag.current = null)}>
-        <MGroup className="px-2 pt-2">
-          <div className="grid grid-cols-7 text-center">
+      {/* 日历：周条 / 整月（原型不套卡片，直接铺在页面上） */}
+      <div className="m-gutter mt-1 select-none" style={{ touchAction: "pan-y" }} onPointerDown={onCalDown} onPointerUp={onCalUp} onPointerCancel={() => (drag.current = null)}>
+        <div>
+          <div className="grid grid-cols-7 pb-1.5 text-center">
             {WEEK_HEAD.map((w) => (
-              <div key={w} className="m-t-cap py-1">
+              <div key={w} className="m-t-cap">
                 {w}
               </div>
             ))}
@@ -256,24 +252,23 @@ export function MobileDaily() {
               />
             ))}
           </div>
-          <button type="button" className="m-tapx flex h-8 w-full items-center justify-center" aria-label={expanded ? "收起整月" : "展开整月"} onClick={() => toggleExpanded()}>
+          <button type="button" className="m-tapx flex h-3.5 w-full items-end justify-center" aria-label={expanded ? "收起整月" : "展开整月"} onClick={() => toggleExpanded()}>
             <span className="h-1 w-9 rounded-full" style={{ background: "var(--m-ink4)", opacity: 0.5 }} />
           </button>
-        </MGroup>
+        </div>
       </div>
 
-      {/* 当天卡片 */}
-      <div className="m-gutter mt-5">
-        <MGroup className="px-4 pt-3 pb-4">
+      {/* 当天卡片（原型：浮起卡 p-5） */}
+      <div className="m-gutter mt-3">
+        <div className="m-float p-5">
           <div className="flex items-center gap-2">
-            <span className="m-t-title">
+            <span className="m-t-sec">
               {dayLabel} · {weekdayCN(selected)}
             </span>
-            {isToday && <MTag tone="accent">今天</MTag>}
             <div className="flex-1" />
-            {selectedNote && <span className="m-t-meta m-num">{selectedNote.word_count} 字</span>}
-            <button type="button" aria-label={`编辑 ${dayLabel} 的日记`} className="m-icon-btn -mr-2" onClick={() => void openSelectedDay()}>
-              <Pencil size={18} />
+            {selectedNote && <span className="m-t-cap m-num">{selectedNote.word_count} 字</span>}
+            <button type="button" aria-label={`编辑 ${dayLabel} 的日记`} className="m-icon-btn -my-2 -mr-3" onClick={() => void openSelectedDay()}>
+              <Pencil size={16} />
             </button>
           </div>
 
@@ -295,13 +290,11 @@ export function MobileDaily() {
                 </div>
               )}
               {timeline.entries.length > 0 && (
-                <div className={timeline.rest.length > 0 ? "mt-3" : "mt-1"}>
+                <div className="mt-3 text-[15px] leading-[1.75]" style={{ color: "var(--m-ink)" }}>
                   {timeline.entries.map((e, i) => (
-                    <div key={i} className="flex gap-3 py-1.5">
-                      <span className="m-num w-11 shrink-0 pt-px text-[13px] font-semibold" style={{ color: "var(--m-accent-ink)" }}>
-                        {e.time}
-                      </span>
-                      <span className="m-t-body min-w-0 flex-1 whitespace-pre-wrap">{withWikiLinks(e.text)}</span>
+                    <div key={i} className={`flex gap-3 ${i > 0 ? "mt-3" : ""}`}>
+                      <span className="m-t-cap m-num w-10 shrink-0 pt-0.5">{e.time}</span>
+                      <span className="min-w-0 flex-1 whitespace-pre-wrap">{withWikiLinks(e.text)}</span>
                     </div>
                   ))}
                 </div>
@@ -310,7 +303,9 @@ export function MobileDaily() {
           )}
 
           {isToday ? (
-            <div className="mt-3 flex items-center gap-2">
+            // 原型：一个凹陷框「＋ 记一笔，自动加时间」；有字时右侧出现发送键
+            <div className="mt-4 flex h-11 items-center gap-2 rounded-[var(--m-r-l)] pl-3.5" style={{ background: "var(--m-well)" }}>
+              <Plus size={16} className="shrink-0" style={{ color: "var(--m-ink3)" }} />
               <input
                 value={quick}
                 onChange={(e) => setQuick(e.target.value)}
@@ -319,43 +314,43 @@ export function MobileDaily() {
                 }}
                 placeholder="记一笔，自动加时间"
                 aria-label="记一笔"
-                className="h-11 min-w-0 flex-1 rounded-[var(--m-r-l)] px-3 text-[16px] outline-none placeholder:text-[var(--m-ink3)]"
-                style={{ background: "var(--m-well)", color: "var(--m-ink)" }}
+                className="h-full min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-[var(--m-ink3)]"
+                style={{ color: "var(--m-ink)" }}
               />
-              <button type="button" aria-label="记下" className="m-icon-btn is-primary shrink-0" disabled={!quick.trim() || sending} style={!quick.trim() || sending ? { opacity: 0.45 } : undefined} onClick={() => void sendQuick()}>
-                <ArrowUp size={20} />
-              </button>
+              {quick.trim() && (
+                <button type="button" aria-label="记下" className="flex h-11 w-11 shrink-0 items-center justify-center" disabled={sending} onClick={() => void sendQuick()}>
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full" style={{ background: "var(--m-grad)", color: "var(--m-on-accent)" }}>
+                    <ArrowUp size={16} />
+                  </span>
+                </button>
+              )}
             </div>
           ) : (
-            <button type="button" className="m-btn mt-3 w-full" onClick={() => void openSelectedDay()}>
+            <button type="button" className="m-btn mt-4 w-full" onClick={() => void openSelectedDay()}>
               {selectedNote ? "打开" : "开始写"} {dayLabel}的日记
             </button>
           )}
-        </MGroup>
+        </div>
       </div>
 
       {/* 本月列表 */}
       <div className="m-gutter mt-6">
-        <MSectionHeader className="mb-2 px-1" title={`${headMonth} 月`} count={`${monthList.length} 篇`} />
+        <MSectionHeader className="mb-2" title={isCurrentMonth ? "本月" : `${headMonth} 月`} count={`${monthList.length} 篇`} />
         <MGroup>
           {monthList.length === 0 ? (
             <div className="m-t-meta py-6 text-center">这个月还没有日记</div>
           ) : (
-            monthList.map((d, i) => {
+            monthList.map((d) => {
               const on = d.daily_date === selected;
               return (
-                <button key={d.id} type="button" className="relative flex min-h-[56px] w-full items-center gap-3 px-4 py-2.5 text-left" onClick={() => setSelected(d.daily_date)} aria-current={on ? "date" : undefined}>
-                  {i > 0 && <span className="pointer-events-none absolute top-0 right-0 left-[64px] h-[0.5px]" style={{ background: "var(--m-hair)" }} />}
-                  <span className="flex w-9 shrink-0 flex-col items-center">
-                    <span className="m-num text-[20px] font-bold leading-tight" style={{ color: on ? "var(--m-accent-ink)" : "var(--m-ink)" }}>
-                      {parseDate(d.daily_date).getDate()}
-                    </span>
-                    <span className="m-t-cap leading-tight">{weekdayCN(d.daily_date)}</span>
+                <button key={d.id} type="button" className="m-row" style={{ "--m-inset": "60px" } as React.CSSProperties} onClick={() => setSelected(d.daily_date)} aria-current={on ? "date" : undefined} aria-label={`${d.daily_date} ${weekdayCN(d.daily_date)}`}>
+                  <span className="m-num w-8 shrink-0 text-[18px] font-bold" style={{ color: "var(--m-accent-ink)" }}>
+                    {parseDate(d.daily_date).getDate()}
                   </span>
                   <span className="min-w-0 flex-1 truncate text-[15px]" style={on ? { color: "var(--m-accent-ink)", fontWeight: 700 } : { color: "var(--m-ink)" }}>
                     {d.title || d.daily_date}
                   </span>
-                  <span className="m-t-meta m-num shrink-0">{d.word_count} 字</span>
+                  <span className="m-t-cap m-num shrink-0">{d.word_count} 字</span>
                 </button>
               );
             })
@@ -368,17 +363,18 @@ export function MobileDaily() {
 
 function DayCell({ date, dim, selected, today, has, onClick }: { date: DateStr; dim: boolean; selected: boolean; today: boolean; has: boolean; onClick: () => void }) {
   const day = parseDate(date).getDate();
+  // 原型 09：整格圆角 10；选中 = 深渐变白字；有日记 = 深色半粗；没日记 = 灰字；外月再淡一档
   const style = selected
-    ? { background: "var(--m-btn)", color: "var(--m-on-accent)", fontWeight: 700 }
+    ? { background: "var(--m-grad)", color: "var(--m-on-accent)", fontWeight: 700 }
     : today
       ? { color: "var(--m-accent-ink)", fontWeight: 700, boxShadow: "inset 0 0 0 1.5px var(--m-accent-ink)" }
-      : { color: dim ? "var(--m-ink3)" : "var(--m-ink)" };
+      : has
+        ? { color: dim ? "var(--m-ink3)" : "var(--m-ink)", fontWeight: 600 }
+        : { color: dim ? "var(--m-ink4)" : "var(--m-ink3)" };
   return (
-    <button type="button" className="flex h-12 flex-col items-center justify-center gap-0.5" onClick={onClick} aria-label={`${date}${has ? "，有日记" : ""}`} aria-pressed={selected}>
-      <span className="m-num flex h-9 w-9 items-center justify-center rounded-full text-[15px]" style={style}>
-        {day}
-      </span>
-      <span className="h-1 w-1 rounded-full" style={{ background: has ? (selected ? "var(--m-accent-ink)" : "var(--m-accent)") : "transparent" }} />
+    <button type="button" className="m-num flex h-12 flex-col items-center justify-center rounded-[10px] text-[16px]" style={style} onClick={onClick} aria-label={`${date}${has ? "，有日记" : ""}`} aria-pressed={selected}>
+      {day}
+      <span className="mt-1 h-1 w-1 rounded-full" style={{ background: has ? (selected ? "var(--m-on-accent)" : "var(--m-accent)") : "transparent" }} />
     </button>
   );
 }

@@ -9,9 +9,7 @@ import {
   Pencil,
   Plus,
   Search,
-  Star,
   Trash2,
-  TriangleAlert,
   X,
 } from "lucide-react";
 import { taskApi, taskCategoryApi } from "@/lib/api";
@@ -214,6 +212,7 @@ export function MobileTasks() {
     onOpen: (t: Task) => navigate(`/task-detail/${t.id}`),
     onMenu: setSheetTask,
     onDelete: confirmDelete,
+    categoryOf: (id: number | null) => (id != null ? categories.find((c) => c.id === id)?.name : undefined),
   };
 
   return (
@@ -300,7 +299,7 @@ export function MobileTasks() {
           sections.map((s) => (
             <div key={s.key}>
               <div className="mt-5 mb-2 flex items-center gap-1.5">
-                {s.key === "overdue" && <TriangleAlert size={15} style={{ color: "var(--m-bad)" }} />}
+
                 <span className="m-t-sec" style={s.key === "overdue" ? { color: "var(--m-bad)" } : undefined}>
                   {GROUP_LABEL[s.key]}
                 </span>
@@ -410,6 +409,8 @@ interface RowHandlers {
   onOpen: (t: Task) => void;
   onMenu: (t: Task) => void;
   onDelete: (t: Task) => void;
+  /** 分类 id → 名称（行上的分类胶囊，同原型 07） */
+  categoryOf: (id: number | null) => string | undefined;
 }
 
 function TaskGroup({ tasks, ...h }: { tasks: Task[] } & RowHandlers) {
@@ -438,10 +439,14 @@ function TaskGroup({ tasks, ...h }: { tasks: Task[] } & RowHandlers) {
   );
 }
 
-function TaskRow({ task, onToggle, onOpen, onMenu }: { task: Task } & RowHandlers) {
+function TaskRow({ task, onToggle, onOpen, onMenu, categoryOf }: { task: Task } & RowHandlers) {
   const lp = useLongPress(() => onMenu(task), { onClick: () => onOpen(task) });
   const done = task.status === 1;
   const due = describeDueDate(task.due_date, done);
+  const category = categoryOf(task.category_id);
+  const links = task.links ?? [];
+  // 关联：只有一个时直接显示目标名（原型「↔ 同步 V1 设计」），多个时「名称 等 N 个」
+  const linkLabel = links.length === 0 ? "" : links.length === 1 ? links[0].label || "关联 1" : `${links[0].label || "关联"} 等 ${links.length} 个`;
   return (
     <div className="flex items-start gap-3 px-4 py-3.5">
       {/* 勾选框独立于长按区：点它只切换完成，不触发长按 / 进详情 */}
@@ -459,26 +464,25 @@ function TaskRow({ task, onToggle, onOpen, onMenu }: { task: Task } & RowHandler
           {task.title}
         </div>
         {task.description && !done && <div className="m-t-meta mt-0.5 truncate">{task.description}</div>}
-        {(task.priority === 0 || task.important || task.subtask_total > 0 || task.due_date || (task.links?.length ?? 0) > 0) && (
+        {(task.priority === 0 || task.important || category || task.subtask_total > 0 || task.due_date || links.length > 0) && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {task.priority === 0 && !done && <MTag tone="bad">紧急</MTag>}
-            {task.important && (
-              <MTag tone="warn">
-                <Star size={12} /> 重要
-              </MTag>
-            )}
+            {task.important && <MTag tone="warn">重要</MTag>}
+            {category && <MTag tone="info">{category}</MTag>}
             {task.subtask_total > 0 && (
-              <MTag>
+              // 原型：凹陷底、常规字重、灰字
+              <span className="m-tag" style={{ background: "var(--m-well)", color: "var(--m-ink2)", fontWeight: 400 }}>
                 <CornerDownRight size={12} />
                 <span className="m-num">
                   {task.subtask_done}/{task.subtask_total}
                 </span>
-              </MTag>
+              </span>
             )}
-            {(task.links?.length ?? 0) > 0 && <LinkBadge>关联 {task.links!.length}</LinkBadge>}
+            {links.length > 0 && <LinkBadge>{linkLabel}</LinkBadge>}
             {task.due_date && (
-              <span className="m-t-cap m-num" style={due.overdue ? { color: "var(--m-bad)", fontWeight: 600 } : undefined} title={due.text}>
-                {due.overdue ? due.text : dueShortText(task.due_date)}
+              // 逾期按原型写日期「11 月 8 日」红字（「逾期」二字已在分组标题上）；悬停 / 读屏仍给完整说明
+              <span className="m-t-cap m-num" style={due.overdue ? { color: "var(--m-bad)" } : undefined} title={due.text}>
+                {due.overdue ? overdueDateText(task.due_date) : dueShortText(task.due_date)}
               </span>
             )}
           </div>
@@ -487,4 +491,11 @@ function TaskRow({ task, onToggle, onOpen, onMenu }: { task: Task } & RowHandler
       {!done && <span className="m-dot mt-2" style={{ background: PRIORITY_COLOR[task.priority] ?? "var(--m-accent)" }} aria-label={task.priority === 0 ? "紧急" : task.priority === 2 ? "低" : "普通"} />}
     </div>
   );
+}
+
+/** 逾期日期写法同原型：「4 月 27 日」，跨年带年份 */
+function overdueDateText(due: string): string {
+  const [y, m, d] = due.slice(0, 10).split("-").map(Number);
+  const prefix = y !== new Date().getFullYear() ? `${y} 年 ` : "";
+  return `${prefix}${m} 月 ${d} 日`;
 }

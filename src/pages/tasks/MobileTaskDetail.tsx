@@ -12,6 +12,7 @@ import TaskAttachments from "@/components/tasks/TaskAttachments";
 import { AttachmentPreviewModal } from "@/components/preview/AttachmentPreviewModal";
 import { MGroup, MNavBar, MRow, MSectionHeader, MTag } from "@/components/mobile/primitives";
 import { MSheet, PickRow } from "@/components/mobile/MSheet";
+import { REMIND_OPTIONS, flattenCategories, remindLabel, toLocalInput, toSqliteDate } from "@/lib/taskForm";
 import { RepeatSheet } from "@/components/mobile/RepeatSheet";
 import { TextPromptModal } from "@/components/mobile/TextPromptModal";
 
@@ -38,57 +39,6 @@ type SaveStatus = "idle" | "dirty" | "saving" | "saved";
 const PRIORITY_LABELS = ["紧急", "普通", "低"];
 const PRIORITY_TONE = ["bad", "accent", "neutral"] as const;
 const PRIORITY_DOT = ["var(--m-bad)", "var(--m-accent)", "var(--m-ink4)"];
-
-/** 原手机端 7 档 + PC 端独有的准时 / 3 小时 / 1 周，两端设的值在这里都能选中 */
-const REMIND_OPTIONS: (number | null)[] = [null, 0, 5, 15, 30, 60, 120, 180, 1440, 10080];
-
-/** 提醒值 → 文案；0 = 到点准时提醒，不是「不提醒」，只有 null 才是不提醒 */
-function remindLabel(min: number | null | undefined): string {
-  if (min == null) return "不提醒";
-  if (min === 0) return "准时提醒";
-  if (min % 10080 === 0) return `提前 ${min / 10080} 周`;
-  if (min % 1440 === 0) return `提前 ${min / 1440} 天`;
-  if (min % 60 === 0) return `提前 ${min / 60} 小时`;
-  return `提前 ${min} 分钟`;
-}
-
-/** 多级分类拍平成「父在前、子紧随」的顺序，带层级（选择面板缩进用） */
-function flattenCategories(list: TaskCategory[]): { c: TaskCategory; depth: number }[] {
-  const byParent = new Map<number | null, TaskCategory[]>();
-  for (const c of list) {
-    const p = c.parent_id ?? null;
-    byParent.set(p, [...(byParent.get(p) ?? []), c]);
-  }
-  const out: { c: TaskCategory; depth: number }[] = [];
-  const seen = new Set<number>();
-  const walk = (parent: number | null, depth: number) => {
-    for (const c of (byParent.get(parent) ?? []).sort((a, b) => a.sort_order - b.sort_order)) {
-      if (seen.has(c.id)) continue;
-      seen.add(c.id);
-      out.push({ c, depth });
-      walk(c.id, depth + 1);
-    }
-  };
-  walk(null, 0);
-  // 父分类已不存在的孤儿也列出来，别让任务的分类在面板里「消失」
-  for (const c of list) if (!seen.has(c.id)) out.push({ c, depth: 0 });
-  return out;
-}
-
-/** "YYYY-MM-DDTHH:MM" → "YYYY-MM-DD HH:MM:SS"（SQLite 友好），空字符串保留为 null */
-function toSqliteDate(local: string): string | null {
-  if (!local) return null;
-  const [date, time] = local.split("T");
-  return time ? `${date} ${time}:00` : `${date} 23:59:59`;
-}
-
-/** 反向：SQLite 字符串 → datetime-local input 接受的 "YYYY-MM-DDTHH:MM" */
-function toLocalInput(sql: string | null): string {
-  if (!sql) return "";
-  const [date, time] = sql.split(" ");
-  if (!time) return `${date}T23:59`;
-  return `${date}T${time.slice(0, 5)}`;
-}
 
 export function MobileTaskDetail() {
   const navigate = useNavigate();
