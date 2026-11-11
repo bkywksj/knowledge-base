@@ -150,7 +150,7 @@ export function UpdateModal() {
                   {verifying && <SafetyCertificateOutlined />}
                   <Text>{verifying ? "正在校验更新包签名…" : paused ? "已暂停" : "正在后台下载"}</Text>
                 </span>
-                {source && !verifying && <Tag bordered={false}>{source}</Tag>}
+                {source && !verifying && <Tag variant="filled">{source}</Tag>}
               </div>
               <Progress percent={verifying ? 100 : progress} status={paused ? "normal" : "active"} showInfo />
               <Text type="secondary" className="text-xs">
