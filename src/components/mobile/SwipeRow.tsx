@@ -49,6 +49,19 @@ export function SwipeRow({ actions, children }: { actions: SwipeAction[]; childr
     return () => window.removeEventListener(OPEN_EVENT, onOpen);
   }, []);
 
+  // 展开时点这一行以外的任何地方（页面标题、筛选、别的区域、滚动列表）都收起；
+  // 只收起、不拦截那次点击，用户本来要点的东西照常生效（真机回归：原来只能点本行或滑别的行才收）
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const isOpen = offset !== 0 && !dragging;
+  useEffect(() => {
+    if (!isOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOffset(0);
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [isOpen]);
+
   const onPointerDown = (e: React.PointerEvent) => {
     start.current = { x: e.clientX, y: e.clientY, base: offset, dir: null };
     swallowClick.current = offset !== 0;
@@ -85,7 +98,7 @@ export function SwipeRow({ actions, children }: { actions: SwipeAction[]; childr
   };
 
   return (
-    <div className="relative overflow-hidden" style={{ touchAction: "pan-y" }}>
+    <div ref={rootRef} className="relative overflow-hidden" style={{ touchAction: "pan-y" }}>
       {/* 静止时整层隐藏：外层圆角裁切的抗锯齿边会把按钮底色透出一道细边 */}
       <div
         className="absolute inset-y-0 right-0 flex"

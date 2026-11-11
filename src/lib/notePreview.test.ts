@@ -19,6 +19,10 @@ describe("笔记预览文字", () => {
     expect(notePreviewText("开头\n\n---\n\n```js\nconst a = 1\n```")).toBe("开头 const a = 1");
   });
 
+  it("跳过只剩标记的行（空标题 #、空列表项 -）", () => {
+    expect(notePreviewText("#\n\n#\n\n### 的单位知识星球\n\n-\n\n- 来了")).toBe("的单位知识星球 来了");
+  });
+
   it("白板固定显示「白板」，不露出 JSON", () => {
     expect(notePreviewText('{"type":"excalidraw","elements":[]}', { noteType: "whiteboard" })).toBe("白板");
   });

@@ -20,6 +20,8 @@ export function notePreviewText(
   if (!content) return "";
   // 代码块围栏要在交给 dailyToPlainLines 之前删：它会先去掉反引号，```js 只剩孤零零的 js（分割线它自己会滤）
   const lines = dailyToPlainLines(content.replace(/^\s*`{3,}.*$/gm, ""))
+    // 只剩标记的行：编辑器把空标题存成单独一个 `#`、空列表项存成 `-`，去标记的规则要求后面跟空格，漏网后预览里一串「# # # - -」（真机实测）
+    .filter((l) => !/^\s*(#{1,6}|[-*+]|>|\d+[.)])\s*$/.test(l))
     .map((l) => stripMarkdownLine(l))
     .filter(Boolean);
   const title = opts.title?.trim();

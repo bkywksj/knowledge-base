@@ -410,7 +410,7 @@ export function MobileNotes() {
                 )}
               </MGroup>
               {isRoot && folders.length === 0 && (
-                <button type="button" className="m-t-meta mt-2 flex items-center gap-1" onClick={() => setPrompt({ kind: "new-folder", parentId: null })}>
+                <button type="button" className="m-t-meta mt-1 flex min-h-[44px] items-center gap-1" onClick={() => setPrompt({ kind: "new-folder", parentId: null })}>
                   <FolderPlus size={14} /> 还没有文件夹，点这里新建
                 </button>
               )}

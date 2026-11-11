@@ -411,6 +411,11 @@
 .m-mindmap .ant-btn span { font-size: 12px !important; }
 
 /* 编辑页「更多 → 演示」：复用 PC 的 SlideshowView。退出按钮放大到 44；「← / → 翻页 · Esc 退出」是键盘提示，手机上没意义 */
+/* 全屏层画在状态栏底下（edge-to-edge）：顶部让出状态栏，否则标题和关闭按钮压在时间 / 信号图标上（真机实测） */
+.m-slideshow [aria-label="幻灯片演示"] {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
 .m-slideshow [aria-label="幻灯片演示"] > div:first-child { padding: 6px 8px 6px 16px !important; font-size: 13px !important; }
 .m-slideshow [aria-label="幻灯片演示"] > div:first-child > span:nth-of-type(2) { display: none; }
 .m-slideshow button[aria-label="退出演示"] {
@@ -443,6 +448,8 @@
 
 /* 手机白板「历史版本」：复用 PC 的 SnapshotDrawer（mobile 模式加 rootClassName），次要字换手机令牌、按钮热区 44 */
 .m-wb-history .ant-typography-secondary { color: var(--m-ink3) !important; }
+/* 抽屉铺满整屏、画在状态栏底下：标题栏让出状态栏 */
+.m-wb-history .ant-drawer-header { padding-top: calc(env(safe-area-inset-top, 0px) + 12px) !important; }
 .m-wb-history .ant-drawer-header .ant-btn,
 .m-wb-history .ant-drawer-body > div > div:first-child .ant-btn { min-height: 44px; }
 .m-wb-history .ant-drawer-close {
@@ -454,6 +461,13 @@
   justify-content: center;
 }
 .m-wb-history .ant-list-item { min-height: 56px; }
+
+/* Excalidraw 默认自己是全屏应用，用 --sat（= env(safe-area-inset-top)）把工具条再往下让一个状态栏；
+   我们的白板页 / 弹窗 / 历史抽屉外层已经让过了，再让一次工具条就离顶栏一大截，
+   且右侧竖排按钮（素材库 / 锁 / 抓手）按没让算，压到工具条最右的按钮上（真机实测）。PC 上它本来就是 0 */
+.kb-wb-canvas .excalidraw,
+.m-wb-modal .excalidraw,
+.m-wb-history .excalidraw { --sat: 0px; }
 
 /* 笔记里的内嵌白板编辑弹窗：手机上铺满整屏（WhiteboardEditModal 的 isMobile 分支加 wrapClassName） */
 .m-wb-modal .ant-modal {
@@ -565,6 +579,7 @@
 .m-pin-section .ant-btn-sm { height: 44px; padding: 0 16px; }
 /* 同一块的 antd 配色（绿标签 / 次要文字 / 危险按钮）在浅色手机主题下对比度不到 4.5，换成手机令牌 */
 .m-pin-section .ant-tag-green { color: var(--m-ok) !important; background: var(--m-ok-soft) !important; border-color: transparent !important; }
+.m-pin-section .ant-tag { font-size: 12px !important; } /* antd 小标签 11px，低于手机最小字号 12 */
 .m-pin-section .ant-typography-secondary { color: var(--m-ink3) !important; }
 .m-pin-section .ant-btn-dangerous { color: var(--m-bad) !important; border-color: var(--m-bad) !important; }
 /* 复用 PC 组件里的主按钮：PC 是渐变底（themes.css 那条规则，浅端配白字对比度偏低），手机统一实色主色按钮；选择器要比它更具体 */
