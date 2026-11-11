@@ -12,6 +12,8 @@ const AUTO_CHECK_KEY = "update.auto_check";
 const INSTALL_TIMING_KEY = "update.install_timing";
 /** app_config 键：弹窗里点了「下次启动时安装」的那个版本号（只对这一版生效，不改上面的设置） */
 const INSTALL_ONCE_KEY = "update.install_next_launch_version";
+/** app_config 键：关掉「已下载好」提示条时的版本号；同一版本不再出现，出了新版本再提示 */
+const BANNER_DISMISSED_KEY = "update.banner_dismissed_version";
 
 /**
  * - prompt：下好后提示，用户点「立即重启」才装
@@ -93,6 +95,8 @@ export function useUpdateChecker(options: Options = {}) {
   const [autoCheck, setAutoCheck] = useState(true);
   const [installTiming, setInstallTimingState] = useState<InstallTiming>("prompt");
   const [installOnceVersion, setInstallOnceVersion] = useState<string | null>(null);
+  // 读到配置前先当作「已关掉」，免得启动瞬间闪一下提示条
+  const [bannerDismissedVersion, setBannerDismissedVersion] = useState<string | null | undefined>(undefined);
   // 「下次启动时安装」每次启动只尝试一次，装失败就停在已就绪，别反复拉起安装器
   const launchInstallTried = useRef(false);
 
@@ -178,6 +182,10 @@ export function useUpdateChecker(options: Options = {}) {
     void readAutoCheck().then(setAutoCheck);
     void readInstallTiming().then(setInstallTimingState);
     configApi.get(INSTALL_ONCE_KEY).then((v) => setInstallOnceVersion(v || null)).catch(() => {});
+    configApi
+      .get(BANNER_DISMISSED_KEY)
+      .then((v) => setBannerDismissedVersion(v || null))
+      .catch(() => setBannerDismissedVersion(null));
   }, []);
 
   /** 设置页开关：持久化后更新状态；从关到开时立刻检查一次，不用等下个周期。 */
@@ -202,6 +210,20 @@ export function useUpdateChecker(options: Options = {}) {
     await configApi.set(INSTALL_ONCE_KEY, snap.version);
     setInstallOnceVersion(snap.version);
   }, [snap.version]);
+
+  /** 关掉「已下载好」提示条：只对当前版本，出了更新的版本还会再提示 */
+  const dismissReadyBanner = useCallback(() => {
+    if (!snap.version) return;
+    setBannerDismissedVersion(snap.version);
+    configApi.set(BANNER_DISMISSED_KEY, snap.version).catch(() => {});
+  }, [snap.version]);
+
+  // 提示条：已就绪、没选「下次启动时安装」（那样不需要提醒）、这个版本没被关掉过
+  const showReadyBanner =
+    snap.phase === "ready" &&
+    !installOnNextLaunch &&
+    bannerDismissedVersion !== undefined &&
+    bannerDismissedVersion !== snap.version;
 
   const openModal = useCallback(() => {
     setModalOpen(true);
@@ -250,6 +272,8 @@ export function useUpdateChecker(options: Options = {}) {
     setInstallTiming,
     installOnNextLaunch,
     installCurrentOnNextLaunch,
+    showReadyBanner,
+    dismissReadyBanner,
     openModal,
     closeModal,
     checkManually,

@@ -38,6 +38,7 @@ import { targetFromFolderParam } from "@/lib/newNoteTarget";
 import { UpdateBadge } from "@/components/ui/UpdateBadge";
 import { BrandLogo } from "@/components/ui/BrandLogo";
 import { UpdateModal } from "@/components/ui/UpdateModal";
+import { UpdateReadyStrip } from "@/components/ui/UpdateReadyStrip";
 import { AttachmentPreviewModal } from "@/components/preview/AttachmentPreviewModal";
 import { AiImportRequestHost } from "@/components/ai/AiImportRequestHost";
 import { useUpdater } from "@/components/updater/UpdaterProvider";
@@ -451,6 +452,10 @@ export function AppLayout() {
       unlisteners.push(fn)
     );
 
+    // 托盘「更新状态」项：已就绪时点它直接重启安装，其它状态（暂停 / 失败）打开更新弹窗
+    listen("tray:open-update", () => openModal()).then((fn) => unlisteners.push(fn));
+    listen("tray:install-update", () => void installUpdate()).then((fn) => unlisteners.push(fn));
+
     // 托盘 CheckMenuItem 切换"窗口置顶"后回传：skipEmit 避免再回流到 Rust
     listen<boolean>("rust:always-on-top-changed", (e) => {
       useAppStore.getState().setAlwaysOnTop(e.payload, { skipEmit: true });
@@ -473,6 +478,7 @@ export function AppLayout() {
   const updatePhase = updater?.phase ?? "idle";
   const updateProgress = updater?.progress ?? 0;
   const openModal = updater?.openModal ?? (() => {});
+  const installUpdate = updater?.installAndRelaunch ?? (async () => {});
   const checkManually =
     updater?.checkManually ??
     (async (): Promise<{ hasUpdate: boolean; error?: string }> => ({ hasUpdate: false }));
@@ -870,6 +876,9 @@ export function AppLayout() {
           focusModeRaw &&
           focusModeKeepTabs &&
           isNoteWorkspacePath(location.pathname) && <TabBar variant="row" />}
+        {/* 更新已下载好的轻提示：放在 Content 外面单独一行 —— 编辑器页是 absolute 铺满 Content 的，
+            放里面会被盖住。专注模式 / pop-out 不打扰 */}
+        {!focusMode && <UpdateReadyStrip />}
         <Content
           // v4「纸张」：右 / 下各留 8px、圆角 12、淡投影（样式见 global.css .kb-sheet）；
           // 专注模式与 pop-out 窗口铺满，不做纸张

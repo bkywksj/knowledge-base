@@ -1,3 +1,6 @@
+use std::sync::{Arc, Mutex};
+
+use serde::Deserialize;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -6,6 +9,71 @@ use tauri::{
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::services::sync_scheduler;
+use crate::services::updater_download::{self, Phase};
+
+/// 托盘「更新状态」项的 id；平时不在菜单里，有更新时插到「检查更新…」上方
+const UPDATE_ITEM_ID: &str = "update-status";
+const CHECK_UPDATE_ID: &str = "check-update";
+
+/// `updater://state` 载荷里托盘用得到的几个字段
+#[derive(Deserialize)]
+struct UpdaterBrief {
+    phase: String,
+    version: Option<String>,
+    downloaded: u64,
+    total: u64,
+}
+
+/// 托盘「更新状态」项的文字和能否点击；`None` = 没有更新，这一项不出现。
+fn update_tray_label(phase: &str, version: Option<&str>, downloaded: u64, total: u64) -> Option<(String, bool)> {
+    let percent = if total > 0 { format!(" {}%", (downloaded.min(total) * 100 / total)) } else { String::new() };
+    match phase {
+        // 下载中只是告知进度，点了也没什么可做的
+        "downloading" => Some((format!("正在下载更新{percent}"), false)),
+        "verifying" => Some(("正在校验更新包…".into(), false)),
+        "paused" => Some((format!("更新下载已暂停{percent}，继续…"), true)),
+        "ready" => Some((format!("重启更新到 {}", version.unwrap_or("新版本")), true)),
+        "error" => Some(("更新下载失败，查看…".into(), true)),
+        _ => None,
+    }
+}
+
+/// 让托盘「更新状态」项跟着 Rust 侧的更新状态走：只在文字 / 可点状态真的变了时才动菜单。
+fn sync_update_item(app: &tauri::AppHandle, menu: Menu<tauri::Wry>, item: MenuItem<tauri::Wry>) {
+    let shown: Arc<Mutex<Option<(String, bool)>>> = Arc::new(Mutex::new(None));
+    let handle = app.clone();
+    app.listen(updater_download::STATE_EVENT, move |event| {
+        let Ok(brief) = serde_json::from_str::<UpdaterBrief>(event.payload()) else { return };
+        let next = update_tray_label(&brief.phase, brief.version.as_deref(), brief.downloaded, brief.total);
+        {
+            let mut guard = shown.lock().unwrap_or_else(|e| e.into_inner());
+            if *guard == next {
+                return;
+            }
+            *guard = next.clone();
+        }
+        let (menu, item) = (menu.clone(), item.clone());
+        // ⚠️ macOS：托盘菜单的写操作必须在主线程（同上面置顶勾选的处理）
+        let _ = handle.run_on_main_thread(move || {
+            let in_menu = menu.get(UPDATE_ITEM_ID).is_some();
+            match next {
+                Some((text, enabled)) => {
+                    let _ = item.set_text(text);
+                    let _ = item.set_enabled(enabled);
+                    if !in_menu {
+                        let items = menu.items().unwrap_or_default();
+                        let pos = items.iter().position(|i| i.id() == CHECK_UPDATE_ID).unwrap_or(items.len());
+                        let _ = menu.insert(&item, pos);
+                    }
+                }
+                None if in_menu => {
+                    let _ = menu.remove(&item);
+                }
+                None => {}
+            }
+        });
+    });
+}
 
 /// 初始化系统托盘
 pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -40,7 +108,9 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         autostart_enabled,
         None::<&str>,
     )?;
-    let check_update = MenuItem::with_id(app, "check-update", "检查更新…", true, None::<&str>)?;
+    let check_update = MenuItem::with_id(app, CHECK_UPDATE_ID, "检查更新…", true, None::<&str>)?;
+    // 更新状态项：先建好不放进菜单，由 sync_update_item 按更新状态插入 / 移除
+    let update_item = MenuItem::with_id(app, UPDATE_ITEM_ID, "", false, None::<&str>)?;
     let sep3 = PredefinedMenuItem::separator(app)?;
 
     // 窗口 & 退出
@@ -73,6 +143,8 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             &force_quit,
         ],
     )?;
+
+    sync_update_item(app.handle(), menu.clone(), update_item);
 
     // clone 给事件闭包使用（内部是 Arc，开销极小）
     let always_on_top_ref = always_on_top.clone();
@@ -167,9 +239,20 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     let _ = autostart_ref.set_checked(!checked);
                 }
             }
-            "check-update" => {
+            CHECK_UPDATE_ID => {
                 bring_main_to_front(app);
                 let _ = app.emit("tray:check-update", ());
+            }
+            UPDATE_ITEM_ID => {
+                bring_main_to_front(app);
+                // 已就绪直接装：交给前端走「先刷设置到磁盘 → 安装 → 重启」，和弹窗里的「立即重启」同一条路；
+                // 其它状态（暂停 / 失败）打开更新弹窗
+                let event = if updater_download::snapshot(app).phase == Phase::Ready {
+                    "tray:install-update"
+                } else {
+                    "tray:open-update"
+                };
+                let _ = app.emit(event, ());
             }
             "show" => {
                 bring_main_to_front(app);
@@ -266,4 +349,27 @@ fn add_dev_badge(icon: &tauri::image::Image<'_>) -> tauri::image::Image<'static>
 /// 把主窗口从最小化/隐藏中恢复并聚焦（含显示器纠偏，见 crate::window_memory）
 fn bring_main_to_front(app: &tauri::AppHandle) {
     crate::window_memory::show_main(app, "托盘菜单");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::update_tray_label;
+
+    #[test]
+    fn update_item_follows_phase() {
+        assert_eq!(update_tray_label("idle", None, 0, 0), None);
+        assert_eq!(update_tray_label("available", Some("3.1.0"), 0, 0), None);
+        assert_eq!(
+            update_tray_label("downloading", Some("3.1.0"), 27, 100),
+            Some(("正在下载更新 27%".into(), false))
+        );
+        // 服务器没给总长度时不显示百分比
+        assert_eq!(update_tray_label("downloading", None, 5, 0), Some(("正在下载更新".into(), false)));
+        assert_eq!(
+            update_tray_label("paused", Some("3.1.0"), 50, 200),
+            Some(("更新下载已暂停 25%，继续…".into(), true))
+        );
+        assert_eq!(update_tray_label("ready", Some("3.1.0"), 1, 1), Some(("重启更新到 3.1.0".into(), true)));
+        assert_eq!(update_tray_label("error", Some("3.1.0"), 0, 0), Some(("更新下载失败，查看…".into(), true)));
+    }
 }
