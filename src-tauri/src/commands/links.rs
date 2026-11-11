@@ -20,6 +20,13 @@ pub fn get_backlinks(state: State<'_, AppState>, note_id: i64) -> Result<Vec<Not
     LinkService::get_backlinks(&state.db, note_id).map_err(|e| e.to_string())
 }
 
+/// 批量取一组笔记的入链数，返回 [[笔记id, 入链数], ...]（没有入链的不返回）。
+/// 手机端笔记列表每行显示「↔ 链入 N」，一页一次 IPC。
+#[tauri::command(async)]
+pub fn get_backlink_counts(state: State<'_, AppState>, note_ids: Vec<i64>) -> Result<Vec<(i64, i64)>, String> {
+    LinkService::get_backlink_counts(&state.db, note_ids).map_err(|e| e.to_string())
+}
+
 /// 当前笔记的链接全貌：出链（我引用了谁）+ 入链（谁引用了我）+ 断链。
 ///
 /// 编辑器底部状态条一次取齐三类，不为一条状态条打三次 IPC。

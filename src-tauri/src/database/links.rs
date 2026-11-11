@@ -210,6 +210,35 @@ impl super::Database {
         Ok(links)
     }
 
+    /// 批量取一组笔记各自的入链数（手机端笔记列表每行的「↔ 链入 N」用，一次查完一页）。
+    ///
+    /// 过滤口径与 `get_backlinks` 完全一致（来源笔记未删除、非隐藏、非临时），
+    /// 保证列表里的数字和点进编辑器看到的「链入 N」一样。
+    /// 返回 (target_id, 入链数)，没有入链的笔记不在结果里；ids 为空直接返回空。
+    pub fn get_backlink_counts(&self, ids: &[i64]) -> Result<Vec<(i64, i64)>, AppError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!(
+            "SELECT nl.target_id, COUNT(*)
+             FROM note_links nl
+             JOIN notes n ON n.id = nl.source_id
+             WHERE nl.target_id IN ({placeholders})
+               AND n.is_deleted = 0 AND n.is_hidden = 0 AND n.is_scratch = 0
+             GROUP BY nl.target_id"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(ids.iter()), |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     /// 取当前笔记的链接全貌：出链 + 入链 + 断链。
     ///
     /// 编辑器底部状态条一次调用拿齐，不为一条状态条打三次 IPC。
@@ -665,6 +694,26 @@ mod tests {
         let backlinks = db.get_backlinks(b.id).unwrap();
         assert_eq!(backlinks.len(), 1);
         assert_eq!(backlinks[0].source_id, a.id);
+    }
+
+    #[test]
+    fn backlink_counts_match_backlinks_and_skip_hidden_sources() {
+        let db = mem_db();
+        let mk = |t: &str| {
+            db.create_note(&NoteInput { title: t.into(), content: "x".into(), folder_id: None })
+                .unwrap()
+        };
+        let (a, b, c, target, lonely) = (mk("A"), mk("B"), mk("C"), mk("T"), mk("L"));
+        db.rebuild_note_links_from_content(a.id, "[[T]]").unwrap();
+        db.rebuild_note_links_from_content(b.id, "[[T]]").unwrap();
+        db.rebuild_note_links_from_content(c.id, "[[T]]").unwrap();
+        // C 设为隐藏：和 get_backlinks 一样不计入
+        db.set_note_hidden(c.id, true).unwrap();
+
+        let counts = db.get_backlink_counts(&[target.id, lonely.id]).unwrap();
+        assert_eq!(counts, vec![(target.id, 2)]);
+        assert_eq!(counts[0].1 as usize, db.get_backlinks(target.id).unwrap().len());
+        assert!(db.get_backlink_counts(&[]).unwrap().is_empty());
     }
 
     #[test]

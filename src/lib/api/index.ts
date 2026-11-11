@@ -715,6 +715,9 @@ export const linkApi = {
     invoke<void>("sync_note_links", { sourceId, targetIds }),
   getBacklinks: (noteId: number) =>
     invoke<NoteLink[]>("get_backlinks", { noteId }),
+  /** 批量入链数（手机端笔记列表每行「↔ 链入 N」）：返回 [笔记id, 入链数][]，没有入链的不返回 */
+  getBacklinkCounts: (noteIds: number[]) =>
+    invoke<Array<[number, number]>>("get_backlink_counts", { noteIds }),
   /** 出链 + 入链 + 断链一次取回（编辑器底部链接状态条用，避免打三次 IPC） */
   getLinkSummary: (noteId: number) =>
     invoke<NoteLinkSummary>("get_note_link_summary", { noteId }),

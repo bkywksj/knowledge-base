@@ -1419,6 +1419,7 @@ pub fn run() {
             // 链接模块
             commands::links::sync_note_links,
             commands::links::get_backlinks,
+            commands::links::get_backlink_counts,
             commands::links::get_note_link_summary,
             commands::links::rebuild_note_links,
             commands::links::search_link_targets,

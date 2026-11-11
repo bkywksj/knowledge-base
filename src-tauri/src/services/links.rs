@@ -13,6 +13,12 @@ impl LinkService {
         db.get_backlinks(note_id)
     }
 
+    /// 批量入链数（手机端笔记列表「链入 N」）。一页最多几十条，超过 500 截断防 SQL 变量过多
+    pub fn get_backlink_counts(db: &Database, note_ids: Vec<i64>) -> Result<Vec<(i64, i64)>, AppError> {
+        let ids: Vec<i64> = note_ids.into_iter().take(500).collect();
+        db.get_backlink_counts(&ids)
+    }
+
     /// 当前笔记的链接全貌（出链 + 入链 + 断链），编辑器底部状态条用
     pub fn get_link_summary(db: &Database, note_id: i64) -> Result<NoteLinkSummary, AppError> {
         db.get_note_link_summary(note_id)
