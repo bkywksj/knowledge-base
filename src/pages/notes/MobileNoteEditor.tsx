@@ -579,7 +579,7 @@ export function MobileNoteEditor() {
         </button>
       </header>
 
-      <main className="m-px flex-1 overflow-y-auto pb-16">
+      <main className="m-gutter flex-1 overflow-y-auto pb-16">
         <input
           value={title}
           readOnly={readOnly || readingMode}

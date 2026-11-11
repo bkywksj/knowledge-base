@@ -314,7 +314,7 @@ export function MobileAi() {
       />
 
       {searchOpen && (
-        <div className="m-px mt-2">
+        <div className="m-gutter mt-2">
           <div className="flex h-11 items-center gap-2 rounded-[var(--m-r-l)] px-3" style={{ background: "var(--m-surface)" }}>
             <Search size={18} className="shrink-0" style={{ color: "var(--m-ink3)" }} />
             <input
@@ -331,7 +331,7 @@ export function MobileAi() {
       )}
 
       {/* 模型胶囊：点一下设为默认 */}
-      <div className="m-px m-hscroll mt-3 flex items-center gap-2 pb-1">
+      <div className="m-gutter m-hscroll mt-3 flex items-center gap-2 pb-1">
         {models.length === 0 ? (
           <span className="m-t-meta shrink-0">请到 设置 → 模型服务 添加，或点右边 + 新建</span>
         ) : (
@@ -355,7 +355,7 @@ export function MobileAi() {
       </div>
 
       {/* 快捷入口 */}
-      <div className="m-px mt-3">
+      <div className="m-gutter mt-3">
         <MGroup className="grid grid-cols-4 px-1 py-2">
           {QUICK_ENTRIES.map((q) => (
             <button key={q.key} type="button" className="m-kk" onClick={() => void createNew(q.state)}>
@@ -367,7 +367,7 @@ export function MobileAi() {
       </div>
 
       {/* 对话历史 */}
-      <div className="m-px mt-6">
+      <div className="m-gutter mt-6">
         <MSectionHeader
           className="mb-2 px-1"
           title={manageMode && selectedIds.length > 0 ? `已选 ${selectedIds.length}` : "对话历史"}
@@ -407,7 +407,7 @@ export function MobileAi() {
       {/* 多选模式底部操作条（悬在 Tab 之上） */}
       {manageMode && (
         <div
-          className="m-px fixed inset-x-0 z-30 flex items-center gap-3 py-2"
+          className="m-gutter fixed inset-x-0 z-30 flex items-center gap-3 py-2"
           style={{ bottom: "calc(56px + env(safe-area-inset-bottom, 0px))", background: "var(--m-surface)", borderTop: "0.5px solid var(--m-hair)" }}
         >
           <button

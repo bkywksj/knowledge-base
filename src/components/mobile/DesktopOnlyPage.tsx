@@ -24,7 +24,7 @@ export function DesktopOnlyPage({
   return (
     <div className="mx-auto flex min-h-full w-full max-w-[860px] flex-col">
       <MNavBar onBack={() => navigate(-1)} title={title} />
-      <div className="m-px flex flex-1 flex-col items-center pt-16 text-center">
+      <div className="m-gutter flex flex-1 flex-col items-center pt-16 text-center">
         <span className="flex h-16 w-16 items-center justify-center rounded-[var(--m-r-xl)]" style={{ background: "var(--m-accent-soft2)", color: "var(--m-accent-ink)" }}>
           {icon ?? <Monitor size={30} />}
         </span>

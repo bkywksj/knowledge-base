@@ -346,13 +346,13 @@ export function MobileMe() {
   return (
     <div className="mx-auto w-full max-w-[860px] pb-24">
       <MPageHeader title="我的知识库" />
-      <div className="m-px m-t-meta mt-1">
+      <div className="m-gutter m-t-meta mt-1">
         {stats ? `${stats.total_notes} 篇笔记 · ${stats.total_words.toLocaleString()} 字 · ${stats.total_links} 条双链 · ${stats.total_tags} 个标签` : "　"}
       </div>
-      {stats && stats.today_updated > 0 && <div className="m-px m-t-cap mt-0.5">今天更新了 {stats.today_updated} 篇</div>}
+      {stats && stats.today_updated > 0 && <div className="m-gutter m-t-cap mt-0.5">今天更新了 {stats.today_updated} 篇</div>}
 
       {/* 同步卡 */}
-      <div className="m-px mt-4">
+      <div className="m-gutter mt-4">
         <MGroup className="flex items-center gap-3 px-4 py-3">
           <button type="button" className="flex min-h-[44px] min-w-0 flex-1 items-center gap-3 text-left" onClick={() => navigate("/sync")}>
             <span className="flex w-6 shrink-0 justify-center" style={{ color: backend ? "var(--m-ok)" : "var(--m-ink3)" }}>
@@ -391,7 +391,7 @@ export function MobileMe() {
       </div>
 
       {/* 全部功能 */}
-      <div className="m-px mt-6">
+      <div className="m-gutter mt-6">
         <MSectionHeader className="mb-2 px-1" title="全部功能" action={<span className="m-t-cap">长按可放到底部 Tab</span>} />
         <MGroup className="grid grid-cols-3 px-1 py-2">
           {features.map((it) => (
@@ -413,7 +413,7 @@ export function MobileMe() {
       </div>
 
       {/* 设置 */}
-      <div className="m-px mt-6">
+      <div className="m-gutter mt-6">
         <MSectionHeader className="mb-2 px-1" title="设置" />
         <MGroup>
           <MRow icon={<Palette size={20} style={iconStyle} />} chevron right={currentTheme?.label} onClick={() => setThemeOpen(true)}>

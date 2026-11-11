@@ -140,8 +140,8 @@ export function MobileHidden() {
 
       {gate === "open" && (
         <>
-          <div className="m-px m-t-cap mt-1">隐藏的笔记不出现在笔记列表、搜索和 AI 检索里</div>
-          <div className="m-px mt-4">
+          <div className="m-gutter m-t-cap mt-1">隐藏的笔记不出现在笔记列表、搜索和 AI 检索里</div>
+          <div className="m-gutter mt-4">
             {loading && items.length === 0 ? (
               <div className="m-t-meta py-10 text-center">加载中…</div>
             ) : items.length === 0 ? (
@@ -174,7 +174,7 @@ export function MobileHidden() {
             )}
           </div>
 
-          <div className="m-px m-pin-section mt-8">
+          <div className="m-gutter m-pin-section mt-8">
             <MSectionHeader className="mb-2 px-1" title="PIN 设置" />
             <HiddenPinSection />
           </div>

@@ -76,7 +76,7 @@ export function ActionSheet({ open, title, subtitle, headerIcon, grid, items, on
         <div className="m-sheet-grabber" />
 
         {title && (
-          <div className="m-px flex items-center gap-3 pt-1 pb-3">
+          <div className="m-gutter flex items-center gap-3 pt-1 pb-3">
             {headerIcon && (
               <span
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--m-r-l)]"
@@ -103,7 +103,7 @@ export function ActionSheet({ open, title, subtitle, headerIcon, grid, items, on
           </div>
         )}
 
-        <div className="m-px">
+        <div className="m-gutter">
           {normal.length > 0 && (
             <div className={grid && grid.length > 0 ? "m-group mt-3" : "m-group"}>
               {normal.map((it) => (

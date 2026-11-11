@@ -132,7 +132,7 @@ export function TaskCreateSheet({
       >
         <div className="m-sheet-grabber" />
 
-        <div className="m-px">
+        <div className="m-gutter">
           <input
             ref={inputRef}
             value={title}
@@ -148,7 +148,7 @@ export function TaskCreateSheet({
         </div>
 
         {/* 截止：单选胶囊 */}
-        <div className="m-px m-hscroll mt-4 flex items-center gap-2">
+        <div className="m-gutter m-hscroll mt-4 flex items-center gap-2">
           <span className="m-t-cap w-[3.2em] shrink-0">截止</span>
           {DUE_PRESETS.map((p) => (
             <button
@@ -169,7 +169,7 @@ export function TaskCreateSheet({
         </div>
 
         {/* 优先级：单选胶囊 */}
-        <div className="m-px mt-3 flex items-center gap-2">
+        <div className="m-gutter mt-3 flex items-center gap-2">
           <span className="m-t-cap w-[3.2em] shrink-0">优先级</span>
           {PRIORITIES.map((p) => (
             <button
@@ -185,9 +185,9 @@ export function TaskCreateSheet({
           ))}
         </div>
 
-        <div className="m-px m-t-cap mt-4">分类 / 提醒 / 重复 / 子任务可在建完后进详情页设置</div>
+        <div className="m-gutter m-t-cap mt-4">分类 / 提醒 / 重复 / 子任务可在建完后进详情页设置</div>
 
-        <div className="m-px mt-2 flex items-center justify-end gap-3">
+        <div className="m-gutter mt-2 flex items-center justify-end gap-3">
           <button type="button" className="m-tapx shrink-0 text-[15px] font-semibold" style={{ color: "var(--m-ink2)" }} onClick={onClose}>
             取消
           </button>

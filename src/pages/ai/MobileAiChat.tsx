@@ -448,7 +448,7 @@ export function MobileAiChat() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col"
+      className="m-root fixed inset-0 z-50 flex flex-col"
       style={{ background: "var(--m-page)", color: "var(--m-ink)", paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: keyboardInset }}
     >
       <div className="shrink-0">
@@ -518,7 +518,7 @@ export function MobileAiChat() {
       </main>
 
       {/* 输入区 */}
-      <footer className="m-px shrink-0 pt-2" style={{ paddingBottom: keyboardInset ? 8 : "calc(8px + env(safe-area-inset-bottom, 0px))" }}>
+      <footer className="m-gutter shrink-0 pt-2" style={{ paddingBottom: keyboardInset ? 8 : "calc(8px + env(safe-area-inset-bottom, 0px))" }}>
         {editingFrom && (
           <div className="mb-2 flex items-center gap-2 rounded-[var(--m-r-m)] px-3 py-2" style={{ background: "var(--m-warn-soft)", color: "var(--m-warn)" }}>
             <Pencil size={14} className="shrink-0" />
@@ -706,7 +706,7 @@ function AskBubble({ msg, editing, onMenu }: { msg: AiMessage; editing: boolean;
         {...lp}
         className="max-w-[82%] min-w-0 select-none whitespace-pre-wrap rounded-[12px_12px_4px_12px] px-3.5 py-2.5 text-[15px] leading-relaxed"
         style={{
-          background: "var(--m-btn)",
+          background: "var(--m-grad)",
           color: "var(--m-on-accent)",
           overflowWrap: "anywhere",
           opacity: editing ? 0.6 : 1,

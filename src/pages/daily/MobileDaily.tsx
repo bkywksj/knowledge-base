@@ -234,7 +234,7 @@ export function MobileDaily() {
       />
 
       {/* 日历：周条 / 整月 */}
-      <div className="m-px mt-3 select-none" style={{ touchAction: "pan-y" }} onPointerDown={onCalDown} onPointerUp={onCalUp} onPointerCancel={() => (drag.current = null)}>
+      <div className="m-gutter mt-3 select-none" style={{ touchAction: "pan-y" }} onPointerDown={onCalDown} onPointerUp={onCalUp} onPointerCancel={() => (drag.current = null)}>
         <MGroup className="px-2 pt-2">
           <div className="grid grid-cols-7 text-center">
             {WEEK_HEAD.map((w) => (
@@ -263,7 +263,7 @@ export function MobileDaily() {
       </div>
 
       {/* 当天卡片 */}
-      <div className="m-px mt-5">
+      <div className="m-gutter mt-5">
         <MGroup className="px-4 pt-3 pb-4">
           <div className="flex items-center gap-2">
             <span className="m-t-title">
@@ -335,7 +335,7 @@ export function MobileDaily() {
       </div>
 
       {/* 本月列表 */}
-      <div className="m-px mt-6">
+      <div className="m-gutter mt-6">
         <MSectionHeader className="mb-2 px-1" title={`${headMonth} 月`} count={`${monthList.length} 篇`} />
         <MGroup>
           {monthList.length === 0 ? (

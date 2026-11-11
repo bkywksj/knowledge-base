@@ -134,7 +134,7 @@ export function MobileTags() {
       />
 
       {/* 标签云 */}
-      <div className="m-px mt-2">
+      <div className="m-gutter mt-2">
         <MSectionHeader className="mb-2 px-1" title="标签云" action={<span className="m-t-cap">按使用频率</span>} />
         <MGroup className="p-3">
           {loading ? (
@@ -164,7 +164,7 @@ export function MobileTags() {
 
       {/* 标签列表 */}
       {sorted.length > 0 && (
-        <div className="m-px mt-6">
+        <div className="m-gutter mt-6">
           <MSectionHeader className="mb-2 px-1" title="全部" count={`${sorted.length} 个标签`} />
           <MGroup>
             {sorted.map((t, i) => (

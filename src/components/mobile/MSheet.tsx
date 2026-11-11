@@ -42,11 +42,11 @@ export function MSheet({
       <div className="m-sheet-backdrop" onClick={onClose} />
       <div className="m-sheet">
         <div className="m-sheet-grabber" />
-        <div className="m-px pt-1 pb-3">
+        <div className="m-gutter pt-1 pb-3">
           <div className="m-t-sec">{title}</div>
           {caption != null && <div className="m-t-cap mt-1">{caption}</div>}
         </div>
-        <div className="m-px">
+        <div className="m-gutter">
           {children}
           {footer === undefined ? (
             <div className="m-group mt-3">

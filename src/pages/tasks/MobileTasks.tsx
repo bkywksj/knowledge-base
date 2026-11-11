@@ -239,7 +239,7 @@ export function MobileTasks() {
           </button>
         }
       />
-      <div className="m-px m-t-meta mt-1">
+      <div className="m-gutter m-t-meta mt-1">
         {isOpenFilter ? (
           <>
             {openCount} 条未完成 · <span style={{ color: "var(--m-bad)" }}>{urgentCount} 条紧急</span>
@@ -250,7 +250,7 @@ export function MobileTasks() {
       </div>
 
       {searchOpen && (
-        <div className="m-px mt-3">
+        <div className="m-gutter mt-3">
           <input
             autoFocus
             value={keyword}
@@ -263,7 +263,7 @@ export function MobileTasks() {
       )}
 
       {isOpenFilter && (
-        <div className="m-px m-hscroll mt-3 flex gap-2">
+        <div className="m-gutter m-hscroll mt-3 flex gap-2">
           {(Object.keys(GROUP_LABEL) as Group[]).map((g) => {
             const n = g === "all" ? openCount : groups[g].length;
             return (
@@ -278,7 +278,7 @@ export function MobileTasks() {
         </div>
       )}
 
-      <div className="m-px">
+      <div className="m-gutter">
         {loading && tasks.length === 0 ? (
           <MGroup className="mt-5 py-8 text-center">
             <span className="m-t-meta">加载中…</span>
@@ -347,8 +347,8 @@ export function MobileTasks() {
           <div className="m-sheet-backdrop" onClick={() => setFilterOpen(false)} />
           <div className="m-sheet">
             <div className="m-sheet-grabber" />
-            <div className="m-px m-t-sec pt-1 pb-3">筛选</div>
-            <div className="m-px">
+            <div className="m-gutter m-t-sec pt-1 pb-3">筛选</div>
+            <div className="m-gutter">
               <MGroup>
                 {FILTER_MENU.map((f) => (
                   <FilterRow key={f.key} label={f.label} active={!categoryParam && filter === f.key} onClick={() => pickFilter({ filter: f.key })} />

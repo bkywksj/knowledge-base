@@ -115,7 +115,7 @@ export function MobileAbout() {
     <div className="mx-auto w-full max-w-[860px] pb-12">
       <MNavBar onBack={() => navigate(-1)} title="关于" />
 
-      <div className="m-px mt-4 flex flex-col items-center text-center">
+      <div className="m-gutter mt-4 flex flex-col items-center text-center">
         <BrandLogo size={64} />
         <div className="mt-3 text-[20px] font-bold" style={{ color: "var(--m-ink)" }}>
           Knowledge Base
@@ -124,7 +124,7 @@ export function MobileAbout() {
         {info && <span className="m-tag m-num mt-2" style={{ background: "var(--m-accent-soft2)", color: "var(--m-accent-ink)" }}>v{info.appVersion}</span>}
       </div>
 
-      <div className="m-px mt-6">
+      <div className="m-gutter mt-6">
         <MGroup>
           <MRow icon={<RefreshCw size={20} style={iconStyle} />} chevron right="在「我的」里" onClick={() => navigate("/settings")}>
             检查更新

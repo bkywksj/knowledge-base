@@ -223,7 +223,7 @@ export function QuickCreatePanel({ defaultFolderId = null, onDone, replaceOnNavi
 
   return (
     <>
-      <div className="m-px flex items-baseline pt-1">
+      <div className="m-gutter flex items-baseline pt-1">
         <span className="m-t-sec">新建</span>
         <button type="button" className="m-tapx m-t-cap ml-auto flex min-w-0 items-center gap-1" onClick={() => setPickFolder(true)}>
           <FolderIcon size={14} className="shrink-0" />
@@ -232,12 +232,12 @@ export function QuickCreatePanel({ defaultFolderId = null, onDone, replaceOnNavi
         </button>
       </div>
 
-      <div className="m-px mt-4">
+      <div className="m-gutter mt-4">
         <button
           type="button"
           onClick={() => void createBlank()}
           className="flex w-full items-center gap-3.5 rounded-[var(--m-r-xl)] p-4 text-left active:opacity-85"
-          style={{ background: "var(--m-btn)", color: "var(--m-on-accent)" }}
+          style={{ background: "var(--m-grad)", color: "var(--m-on-accent)" }}
         >
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--m-r-l)]" style={{ background: "rgba(255,255,255,.18)" }}>
             <FilePlus2 size={22} />
@@ -267,7 +267,7 @@ export function QuickCreatePanel({ defaultFolderId = null, onDone, replaceOnNavi
         </MGroup>
       </div>
 
-      <div className="m-px mt-3">
+      <div className="m-gutter mt-3">
         <MGroup>
           {rows.map((r) => (
             <button key={r.key} type="button" className="m-row m-row-icon" onClick={r.onClick}>
@@ -299,8 +299,8 @@ export function QuickCreatePanel({ defaultFolderId = null, onDone, replaceOnNavi
           <div className="m-sheet-backdrop" onClick={() => setTemplates(null)} />
           <div className="m-sheet">
             <div className="m-sheet-grabber" />
-            <div className="m-px m-t-sec pt-1 pb-3">从模板新建</div>
-            <div className="m-px">
+            <div className="m-gutter m-t-sec pt-1 pb-3">从模板新建</div>
+            <div className="m-gutter">
               <MGroup>
                 {templates.map((t) => (
                   <button key={t.id} type="button" className="m-row block py-3 text-left" onClick={() => void fromTemplate(t)}>

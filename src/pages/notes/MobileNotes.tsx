@@ -345,7 +345,7 @@ export function MobileNotes() {
         }
       />
 
-      <div className="m-px mt-3">
+      <div className="m-gutter mt-3">
         <div className="flex rounded-[var(--m-r-l)] p-[3px]" style={{ background: "var(--m-well)" }} role="tablist">
           {(["folders", "tags"] as const).map((t) => (
             <button
@@ -368,7 +368,7 @@ export function MobileNotes() {
       ) : (
         <>
           {/* 面包屑：可横滑，点任意一级跳回 */}
-          <div className="m-px m-hscroll mt-3 flex items-center gap-1 whitespace-nowrap text-[14px]">
+          <div className="m-gutter m-hscroll mt-3 flex items-center gap-1 whitespace-nowrap text-[14px]">
             <button type="button" className="m-tapx" style={{ color: isRoot ? "var(--m-ink)" : "var(--m-ink3)", fontWeight: isRoot ? 700 : 400 }} onClick={() => goFolder(null)}>
               全部
             </button>
@@ -394,7 +394,7 @@ export function MobileNotes() {
 
           {/* 文件夹 */}
           {(subfolders.length > 0 || isRoot) && (
-            <div className="m-px mt-3">
+            <div className="m-gutter mt-3">
               <MGroup>
                 {subfolders.map((f) => (
                   <FolderRow key={f.id} folder={f} onOpen={() => goFolder(f.id)} onMenu={() => setSheetFolder(f)} />
@@ -419,7 +419,7 @@ export function MobileNotes() {
 
           {/* 笔记 */}
           <MSectionHeader
-            className="m-px mt-6 mb-2"
+            className="m-gutter mt-6 mb-2"
             title={isRoot ? "全部笔记" : "笔记"}
             count={`${total} 篇`}
             action={
@@ -429,7 +429,7 @@ export function MobileNotes() {
               </button>
             }
           />
-          <div className="m-px">
+          <div className="m-gutter">
             {loading && notes.length === 0 ? (
               <MGroup className="py-8 text-center">
                 <span className="m-t-meta">加载中…</span>
@@ -622,7 +622,7 @@ function NoteRow({ note, onOpen, onMenu }: { note: Note; onOpen: () => void; onM
 // ─── 标签页签：列出标签 + 笔记数，点击搜索该标签；完整管理去标签页 ───
 function TagList({ tags, onOpen, onManage }: { tags: Tag[]; onOpen: (t: Tag) => void; onManage: () => void }) {
   return (
-    <div className="m-px mt-3">
+    <div className="m-gutter mt-3">
       {tags.length === 0 ? (
         <MGroup className="py-8 text-center">
           <span className="m-t-meta">还没有标签</span>

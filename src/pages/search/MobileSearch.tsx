@@ -193,7 +193,7 @@ export function MobileSearch() {
   return (
     <div className="mx-auto w-full max-w-[860px] pb-24">
       {/* 搜索框 + 取消 */}
-      <div className="m-px flex items-center gap-3 pt-2">
+      <div className="m-gutter flex items-center gap-3 pt-2">
         <div className="flex h-11 min-w-0 flex-1 items-center gap-2 rounded-[var(--m-r-l)] px-3" style={{ background: "var(--m-surface)" }}>
           <SearchIcon size={18} style={{ color: "var(--m-ink3)" }} className="shrink-0" />
           <input
@@ -218,7 +218,7 @@ export function MobileSearch() {
       </div>
 
       {/* 范围 + 筛选胶囊 */}
-      <div className="m-px m-hscroll mt-3 flex items-center gap-2 pb-1">
+      <div className="m-gutter m-hscroll mt-3 flex items-center gap-2 pb-1">
         {q && (
           <>
             <ScopeChip on={scope === "all"} onClick={() => setScope("all")}>全部</ScopeChip>
@@ -245,7 +245,7 @@ export function MobileSearch() {
         </button>
       </div>
       {hasFilter && (
-        <div className="m-px m-t-cap mt-1.5 flex items-center gap-2">
+        <div className="m-gutter m-t-cap mt-1.5 flex items-center gap-2">
           <span>筛选只作用于笔记</span>
           <button type="button" className="m-tapx font-semibold" style={{ color: "var(--m-accent-ink)" }} onClick={clearFilters}>
             清除筛选
@@ -253,7 +253,7 @@ export function MobileSearch() {
         </div>
       )}
 
-      <div className="m-px mt-4">
+      <div className="m-gutter mt-4">
         {!q ? (
           recentSearches.length > 0 ? (
             <>

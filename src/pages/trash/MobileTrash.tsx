@@ -177,7 +177,7 @@ export function MobileTrash() {
       </div>
 
       {/* 提示横幅 */}
-      <div className="m-px shrink-0">
+      <div className="m-gutter shrink-0">
         <div className="flex items-start gap-2 rounded-[var(--m-r-l)] px-3 py-2.5" style={{ background: "var(--m-warn-soft)", color: "var(--m-warn)" }}>
           <Info size={16} className="mt-0.5 shrink-0" />
           <p className="text-[13px] leading-relaxed">
@@ -187,7 +187,7 @@ export function MobileTrash() {
       </div>
 
       {/* 列表 */}
-      <main className="m-px flex-1 overflow-y-auto pt-2 pb-6">
+      <main className="m-gutter flex-1 overflow-y-auto pt-2 pb-6">
         {loading && items.length === 0 ? (
           <div className="m-t-meta py-8 text-center">加载中…</div>
         ) : items.length === 0 ? (
@@ -226,7 +226,7 @@ export function MobileTrash() {
       {/* 底部操作栏 */}
       {items.length > 0 && (
         <footer
-          className="m-px flex shrink-0 gap-3 pt-3"
+          className="m-gutter flex shrink-0 gap-3 pt-3"
           style={{ background: "var(--m-surface)", borderTop: "0.5px solid var(--m-hair)", paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))" }}
         >
           <button type="button" onClick={handleRestoreAll} disabled={busy} className="m-btn flex-1 gap-1.5" style={{ background: "var(--m-well)", color: "var(--m-ink)" }}>

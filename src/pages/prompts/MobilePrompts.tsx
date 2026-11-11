@@ -62,7 +62,7 @@ export function MobilePrompts() {
   return (
     <div className="mx-auto w-full max-w-[860px] pb-12">
       <MNavBar onBack={() => navigate(-1)} title="提示词" subtitle={loading ? undefined : `${list.length} 条 · 已启用 ${enabledCount} 条`} />
-      <div className="m-px m-t-cap mt-1">新建和编辑请到桌面端「提示词」页；手机上可查看和启用 / 停用</div>
+      <div className="m-gutter m-t-cap mt-1">新建和编辑请到桌面端「提示词」页；手机上可查看和启用 / 停用</div>
 
       {loading && list.length === 0 ? (
         <div className="m-t-meta py-10 text-center">加载中…</div>
@@ -74,7 +74,7 @@ export function MobilePrompts() {
       ) : (
         (["builtin", "custom"] as const).map((g) =>
           groups[g].length > 0 ? (
-            <div key={g} className="m-px mt-5">
+            <div key={g} className="m-gutter mt-5">
               <MSectionHeader className="mb-2 px-1" title={g === "builtin" ? "内置" : "自定义"} count={groups[g].length} />
               <MGroup>
                 {groups[g].map((p, i) => (

@@ -398,7 +398,7 @@ export function MobileSync() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col"
+      className="m-root fixed inset-0 z-50 flex flex-col"
       style={{ background: "var(--m-page)", color: "var(--m-ink)", paddingTop: "env(safe-area-inset-top, 0px)" }}
     >
       <div className="shrink-0">
@@ -419,7 +419,7 @@ export function MobileSync() {
       </div>
 
       {/* 信息横幅 */}
-      <div className="m-px shrink-0">
+      <div className="m-gutter shrink-0">
         <div className="flex items-start gap-2 rounded-[var(--m-r-l)] px-3 py-2.5" style={{ background: "var(--m-info-soft)", color: "var(--m-info)" }}>
           <CloudUpload size={16} className="mt-0.5 shrink-0" />
           <p className="text-[13px] leading-relaxed">
@@ -429,7 +429,7 @@ export function MobileSync() {
       </div>
 
       {/* 列表 */}
-      <main className="m-px flex-1 overflow-y-auto pt-3 pb-6">
+      <main className="m-gutter flex-1 overflow-y-auto pt-3 pb-6">
         {loading ? (
           <div className="m-t-meta py-8 text-center">加载中…</div>
         ) : backends.length === 0 ? (

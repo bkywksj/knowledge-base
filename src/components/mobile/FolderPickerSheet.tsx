@@ -82,8 +82,8 @@ export function FolderPickerSheet({ open, title, folders, currentId, movingFolde
       <div className="m-sheet-backdrop" onClick={onClose} />
       <div className="m-sheet">
         <div className="m-sheet-grabber" />
-        <div className="m-px m-t-sec pt-1 pb-3">{title}</div>
-        <div className="m-px">
+        <div className="m-gutter m-t-sec pt-1 pb-3">{title}</div>
+        <div className="m-gutter">
           <div className="m-group">
             {row("root", 0, <Inbox size={20} />, rootLabel, null)}
             {items.map(({ folder, depth }) => row(String(folder.id), depth, <FolderIcon size={20} />, folder.name, folder.id, folder.color))}

@@ -42,6 +42,10 @@
   --m-btn-mix: 14%;
   --m-btn: #6448D6;
   --m-btn: color-mix(in oklab, var(--kb-primary), var(--m-btn-deepen) var(--m-btn-mix));
+  /* 主按钮 / FAB / 我发出的气泡 / 新建大卡：深渐变（原型「深渐变主按钮」，淡紫下为 #7A5FE2 → #6448D6 → #5B3FD0）。
+     以 --m-btn 为中段往浅、往深各推一点，9 套主题自动跟随；浅端仍压得住白字（≥ 4.5） */
+  --m-grad: linear-gradient(135deg, #7A5FE2 0%, #6448D6 55%, #5B3FD0 100%);
+  --m-grad: linear-gradient(135deg, color-mix(in oklab, var(--m-btn), #ffffff 10%) 0%, var(--m-btn) 55%, color-mix(in oklab, var(--m-btn), #000000 8%) 100%);
 
   /* ── 语义色（亮色主题值；暗色见下方覆盖） ── */
   --m-ok: #24704F;
@@ -66,7 +70,10 @@
   --m-r-sheet: 16px;
 
   /* ── 浮起卡片（只有继续编辑 / 日记当天 / AI 回复这类用）；按钮、控件一律无阴影 ── */
-  --m-shadow-float: var(--kb-shadow-md, 0 1px 2px rgba(80, 60, 160, 0.05), 0 10px 28px -12px rgba(80, 60, 160, 0.22));
+  /* 浮起卡阴影：原型 --sh-float 原值（原来先取 PC 的 --kb-shadow-md，PC 有这个变量就轮不到原型值） */
+  --m-shadow-float: 0 1px 2px rgba(80, 60, 160, 0.05), 0 10px 28px -12px rgba(80, 60, 160, 0.22);
+  /* 跟主题：主色压深 40% 后取同样的透明度（淡紫下≈原型的 rgba(80,60,160)） */
+  --m-shadow-float: 0 1px 2px color-mix(in srgb, color-mix(in srgb, var(--kb-primary), #000 40%) 5%, transparent), 0 10px 28px -12px color-mix(in srgb, color-mix(in srgb, var(--kb-primary), #000 40%) 22%, transparent);
 
   --m-page-px: 16px;
 }
@@ -88,6 +95,8 @@
   --m-warn-soft: rgba(231, 190, 106, 0.14);
   --m-info: #98BBF8;
   --m-info-soft: rgba(134, 174, 245, 0.14);
+  /* 紫调阴影压在深色底上发灰，暗色换黑色系 */
+  --m-shadow-float: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
 }
 [data-theme="dark-amber"] {
   --m-btn-mix: 10%;
@@ -104,7 +113,11 @@
 
 /* ═══════════════════ 容器：一个容器只用一种手段 ═══════════════════ */
 .m-page { background: var(--m-page); color: var(--m-ink); }
-.m-px { padding-left: var(--m-page-px); padding-right: var(--m-page-px); }
+/* 手机页面默认行高 1.5（同原型）：antd App 外层给的是 1.615（21/13），往下继承后列表每行都比原型高一截。
+   .m-root = 不在 MobileLayout 里的独立路由页（任务详情 / AI 对话 / 同步）的根 */
+.m-page, .m-root { line-height: 1.5; }
+/* 页边距：原名 m-px，和 Tailwind 工具类 m-px（margin: 1px）撞名，所有用到的容器四周多出 1px 外边距 → 改名 */
+.m-gutter { padding-left: var(--m-page-px); padding-right: var(--m-page-px); }
 /* 分组面板只靠白底和页面底色区分 */
 .m-group { background: var(--m-surface); border-radius: var(--m-r-xl); overflow: hidden; }
 /* 浮起卡只靠阴影 */
@@ -209,7 +222,7 @@
   color: var(--m-ink2);
 }
 .m-icon-btn:active { background: var(--m-accent-soft); }
-.m-icon-btn.is-primary { background: var(--m-btn); color: var(--m-on-accent); }
+.m-icon-btn.is-primary { background: var(--m-grad); color: var(--m-on-accent); }
 
 /* 主按钮：无阴影 */
 .m-btn {
@@ -220,7 +233,7 @@
   height: 44px;
   padding: 0 20px;
   border-radius: var(--m-r-l);
-  background: var(--m-btn);
+  background: var(--m-grad);
   color: var(--m-on-accent);
   font-size: 15px;
   font-weight: 700;
@@ -327,7 +340,7 @@
   width: 56px;
   height: 56px;
   border-radius: 14px;
-  background: var(--m-btn);
+  background: var(--m-grad);
   color: var(--m-on-accent);
 }
 .m-fab:active { transform: scale(0.95); }
@@ -582,7 +595,7 @@
 .m-pin-section .ant-tag { font-size: 12px !important; } /* antd 小标签 11px，低于手机最小字号 12 */
 .m-pin-section .ant-typography-secondary { color: var(--m-ink3) !important; }
 .m-pin-section .ant-btn-dangerous { color: var(--m-bad) !important; border-color: var(--m-bad) !important; }
-/* 复用 PC 组件里的主按钮：PC 是渐变底（themes.css 那条规则，浅端配白字对比度偏低），手机统一实色主色按钮；选择器要比它更具体 */
+/* 复用 PC 组件里的主按钮：PC 渐变浅端（#B3A3F6）配白字对比度偏低（themes.css 那条规则），手机换成更深的 --m-grad；选择器要比它更具体 */
 [data-theme] .m-pin-section .ant-btn-primary:not(:disabled):not(.ant-btn-dangerous):not(.ant-btn-background-ghost),
 [data-theme] .m-wb-modal .ant-btn-primary:not(:disabled):not(.ant-btn-dangerous):not(.ant-btn-background-ghost),
-[data-theme] .m-wb-history .ant-btn-primary:not(:disabled):not(.ant-btn-dangerous):not(.ant-btn-background-ghost) { background: var(--m-btn) !important; color: var(--m-on-accent) !important; box-shadow: none !important; }
+[data-theme] .m-wb-history .ant-btn-primary:not(:disabled):not(.ant-btn-dangerous):not(.ant-btn-background-ghost) { background: var(--m-grad) !important; color: var(--m-on-accent) !important; box-shadow: none !important; }

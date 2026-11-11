@@ -342,7 +342,7 @@ export function MobileTaskDetail() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col"
+      className="m-root fixed inset-0 z-50 flex flex-col"
       style={{ background: "var(--m-page)", color: "var(--m-ink)", paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: keyboardInset }}
     >
       <div className="shrink-0" style={{ background: "var(--m-page)" }}>
@@ -358,7 +358,7 @@ export function MobileTaskDetail() {
         />
       </div>
 
-      <main className="m-px flex-1 overflow-y-auto pt-2 pb-6">
+      <main className="m-gutter flex-1 overflow-y-auto pt-2 pb-6">
         {/* 标题 + 备注 + 附件 */}
         <MGroup className="px-4 py-4">
           <div className="flex items-start gap-3">
@@ -500,7 +500,7 @@ export function MobileTaskDetail() {
 
       {/* 底部操作栏 */}
       <footer
-        className="m-px flex shrink-0 gap-3 pt-3"
+        className="m-gutter flex shrink-0 gap-3 pt-3"
         style={{
           background: "var(--m-surface)",
           borderTop: "0.5px solid var(--m-hair)",

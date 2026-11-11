@@ -174,7 +174,7 @@ export function MobileCards() {
       </div>
 
       {/* 进度条 */}
-      <div className="m-px shrink-0 pb-2">
+      <div className="m-gutter shrink-0 pb-2">
         <div className="m-t-cap mb-1.5 flex items-center justify-between">
           <span className="m-num">
             {completed} / {total}
@@ -187,7 +187,7 @@ export function MobileCards() {
       </div>
 
       {/* 主体 */}
-      <main className="m-px flex min-h-0 flex-1 flex-col py-3">
+      <main className="m-gutter flex min-h-0 flex-1 flex-col py-3">
         {loading ? (
           <div className="m-t-meta flex flex-1 items-center justify-center">加载中…</div>
         ) : !current ? (

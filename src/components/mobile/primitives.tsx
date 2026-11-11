@@ -129,7 +129,7 @@ export function MPageHeader({
   titleSuffix?: ReactNode;
 }) {
   return (
-    <div className="m-px flex items-end pt-2">
+    <div className="m-gutter flex items-end pt-2">
       <div className="min-w-0">
         {subtitle != null && <div className="m-t-meta">{subtitle}</div>}
         <div className="flex items-center gap-1.5">
