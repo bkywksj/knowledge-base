@@ -3344,6 +3344,7 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "reqwest 0.12.28",
+ "reqwest 0.13.2",
  "rmcp",
  "rusqlite",
  "rusty-s3",
@@ -3353,7 +3354,6 @@ dependencies = [
  "sha2 0.10.9",
  "tauri",
  "tauri-build",
- "tauri-kit",
  "tauri-plugin-autostart",
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-dialog",
@@ -6335,20 +6335,6 @@ dependencies = [
  "url",
  "uuid",
  "walkdir",
-]
-
-[[package]]
-name = "tauri-kit"
-version = "0.2.0"
-dependencies = [
- "log",
- "reqwest 0.12.28",
- "reqwest 0.13.2",
- "serde",
- "serde_json",
- "tauri",
- "tokio",
- "windows-sys 0.59.0",
 ]
 
 [[package]]

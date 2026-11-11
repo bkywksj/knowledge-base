@@ -9,30 +9,23 @@ use std::time::{Duration, Instant};
 
 use tauri::{window::Monitor, AppHandle, Manager, PhysicalPosition, PhysicalSize, WindowEvent};
 
-use super::logic::{big_enough, centered_rel, default_rect, find_target, layout_key, legacy_usable, minimized_around_topology, place_in, plan, same_screen, should_record, signature, Memory, MonitorKey, Placement, Plan};
+use super::logic::{big_enough, centered_rel, find_target, layout_key, legacy_usable, minimized_around_topology, place_in, plan, same_screen, should_record, signature, Memory, MonitorKey, Placement, Plan};
 
-// 主窗口挂了子 webview 后 get_webview_window 会静默返回 None，这类应用开 `child-webviews` 按窗口查找
-#[cfg(feature = "child-webviews")]
-type MainWindow = tauri::Window;
-#[cfg(not(feature = "child-webviews"))]
+// 主窗口只有一个 webview，按 webview 窗口查找即可（以后主窗口里挂子 webview 的话，
+// get_webview_window 会静默返回 None，要改成 get_window 按窗口查找）
 type MainWindow = tauri::WebviewWindow;
 
-#[cfg(feature = "child-webviews")]
-fn lookup(app: &AppHandle, label: &str) -> Option<MainWindow> {
-    app.get_window(label)
-}
-#[cfg(not(feature = "child-webviews"))]
 fn lookup(app: &AppHandle, label: &str) -> Option<MainWindow> {
     app.get_webview_window(label)
 }
 
-// 开发版单独一份：很多应用的开发版和正式版共用 identifier，也就共用目录，
+// 开发版单独一份：开发版和正式版可能共用 identifier，也就共用目录，
 // 不分开的话开着开发版拖窗口，正式版记住的位置就被冲掉了。
 #[cfg(debug_assertions)]
 const STORE_FILENAME: &str = "window-memory-dev.json";
 #[cfg(not(debug_assertions))]
 const STORE_FILENAME: &str = "window-memory.json";
-// 各应用旧版的单条记录文件，新记录为空时拿来打底。旧版同样按构建分了文件。
+// 旧版的单条记录文件，新记录为空时拿来打底。旧版同样按构建分了文件。
 #[cfg(debug_assertions)]
 const LEGACY_FILENAME: &str = "main-window-placement-dev.json";
 #[cfg(not(debug_assertions))]
@@ -420,8 +413,8 @@ fn resync_webview_scale(win: &MainWindow) {
     for_each_webview(win, move |webview| apply_webview_scale(&app, webview, scale));
 }
 
-/// 🔴 这里按 COM 虚表直接调用，不依赖 webview2-com：它的版本跟着各应用的 wry 走，
-/// 库里依赖固定版本的话类型对不上，编译不过。COM 接口的 ID 和方法顺序是固定不变的 ABI。
+/// 🔴 这里按 COM 虚表直接调用，不依赖 webview2-com：它的版本跟着 wry 走，
+/// 这里再固定一个版本的话类型对不上，编译不过。COM 接口的 ID 和方法顺序是固定不变的 ABI。
 /// 槽位按 ICoreWebView2Controller3 数：IUnknown 0..=2，Controller 3..=25，Controller2 26..=27，
 /// Controller3 从 28 开始（get_RasterizationScale 28、put 29、put_ShouldDetectMonitorScaleChanges 31）。
 #[cfg(windows)]
@@ -465,14 +458,7 @@ fn apply_webview_scale(app: &AppHandle, webview: tauri::webview::PlatformWebview
     }
 }
 
-#[cfg(all(windows, feature = "child-webviews"))]
-fn for_each_webview(win: &MainWindow, f: impl Fn(tauri::webview::PlatformWebview) + Clone + Send + 'static) {
-    for webview in win.webviews() {
-        let _ = webview.with_webview(f.clone());
-    }
-}
-
-#[cfg(all(windows, not(feature = "child-webviews")))]
+#[cfg(windows)]
 fn for_each_webview(win: &MainWindow, f: impl Fn(tauri::webview::PlatformWebview) + Clone + Send + 'static) {
     let _ = win.with_webview(f);
 }
@@ -634,28 +620,6 @@ pub fn show_main(app: &AppHandle, source: &str) {
     let _ = win.unminimize();
     let _ = win.show();
     let _ = win.set_focus();
-}
-
-/// 把主窗口还原成配置里的默认大小，在当前屏的工作区里居中，返回实际应用的逻辑尺寸。
-pub fn reset_to_default(app: &AppHandle) -> Result<(u32, u32), String> {
-    let win = main_window(app).ok_or("主窗口不存在")?;
-    // 全屏 / 最大化时系统接管窗口尺寸，设了也不生效
-    if win.is_fullscreen().unwrap_or(false) {
-        let _ = win.set_fullscreen(false);
-    }
-    if win.is_maximized().unwrap_or(false) {
-        let _ = win.unmaximize();
-    }
-    let label = win.label().to_string();
-    let config = app.config().app.windows.iter().find(|c| c.label == label).ok_or("找不到主窗口配置")?;
-    let monitor = win.current_monitor().ok().flatten().or_else(|| win.primary_monitor().ok().flatten()).ok_or("未检测到可用显示器")?;
-    let area = monitor.work_area();
-    let scale = monitor.scale_factor();
-    let (x, y, w, h) = default_rect((area.position.x, area.position.y, area.size.width, area.size.height), scale, config.width, config.height);
-    place_window(&win, x, y, w, h, false);
-    capture(&win, "还原默认大小", true);
-    note(app, format!("[winpos] 还原默认大小：({x},{y}) {w}x{h}"));
-    Ok(((w as f64 / scale).round() as u32, (h as f64 / scale).round() as u32))
 }
 
 /// 主窗口的窗口事件（`on_window_event` 里、按 label 过滤之后调用）。

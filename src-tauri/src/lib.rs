@@ -14,6 +14,8 @@ mod services;
 mod state;
 #[cfg(desktop)]
 mod tray;
+#[cfg(desktop)]
+mod window_memory;
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -398,7 +400,7 @@ fn start_md_deliver_watcher(handle: tauri::AppHandle, app_data_dir: PathBuf) {
                 .and_then(|m| m.modified())
                 .unwrap_or(last_mtime);
             // mtime 变化即视为"有人想唤起这个窗口"——把主窗前置（含显示器纠偏）
-            tauri_kit::window_memory::show_main(&handle, "投递 md");
+            crate::window_memory::show_main(&handle, "投递 md");
         }
     });
 }
@@ -578,8 +580,8 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             // 第二次启动：把已有主窗口唤到前台（被最小化 / 缩到托盘时也能拉回来），
             // 而不是无声无息地退出——否则用户双击图标"没反应"，会以为程序坏了。
-            // 顺带把窗口纠回用户上次所在的显示器（见 tauri_kit::window_memory）。
-            tauri_kit::window_memory::show_main(app, "双开唤回");
+            // 顺带把窗口纠回用户上次所在的显示器（见 crate::window_memory）。
+            crate::window_memory::show_main(app, "双开唤回");
         }));
     }
 
@@ -668,15 +670,15 @@ pub fn run() {
                 commands::window::rescue_after_restore(&window);
                 commands::window::fit_into_work_area(&window, true);
 
-                // 位置记忆：按显示器组合分别记（tauri-kit）。旧版记录的文件名和库默认的不同，读出来给它打底。
+                // 位置记忆：按显示器组合分别记（见 window_memory）。旧版记录的文件名和新的不同，读出来给它打底。
                 let legacy_placement = app.handle().path().app_config_dir().ok().and_then(|dir| {
                     let name = if cfg!(debug_assertions) { ".window-monitor-dev.json" } else { ".window-monitor.json" };
                     std::fs::read_to_string(dir.join(name)).ok()
                 });
-                tauri_kit::window_memory::init(
+                crate::window_memory::init(
                     app.handle(),
                     true,
-                    tauri_kit::window_memory::Options { legacy: legacy_placement, ..Default::default() },
+                    crate::window_memory::Options { legacy: legacy_placement, ..Default::default() },
                 );
 
                 // 记录存的是物理尺寸：上次退出时若缩放不对，这里按逻辑尺寸基准拉回来，再夹进工作区。
@@ -700,7 +702,7 @@ pub fn run() {
 
                 let _ = window.show();
                 // 首次显示后补记一次所在屏（没有历史记录时，这就是第一条）
-                tauri_kit::window_memory::capture_now(app.handle(), "启动显示后");
+                crate::window_memory::capture_now(app.handle(), "启动显示后");
             }
 
             // framework 默认 app_data_dir：单实例锁 + 指针文件 + 迁移 marker 永远在这里。
@@ -1687,7 +1689,7 @@ pub fn run() {
                 // （只处理 Moved / Resized / ScaleFactorChanged）
                 {
                     use tauri::Manager;
-                    tauri_kit::window_memory::on_window_event(window.app_handle(), event);
+                    crate::window_memory::on_window_event(window.app_handle(), event);
                 }
                 // on_window_event 给的是 `&Window`，而几何工具函数统一收 `&WebviewWindow`
                 // （与 fit_into_work_area 同口径），这里按 label 取一次。
@@ -1758,7 +1760,7 @@ pub fn run() {
                         for p in &paths {
                             let _ = handle.emit("open-md-file", p.clone());
                         }
-                        tauri_kit::window_memory::show_main(handle, "macOS 打开文件");
+                        crate::window_memory::show_main(handle, "macOS 打开文件");
                     }
                 }
                 // macOS：点 Dock 图标 → 唤回主窗口。
@@ -1767,7 +1769,7 @@ pub fn run() {
                 // 不看 has_visible_windows：别的子窗口开着时它也是 true，但用户点 Dock 要的是主窗口。
                 #[cfg(target_os = "macos")]
                 if let tauri::RunEvent::Reopen { .. } = &event {
-                    tauri_kit::window_memory::show_main(handle, "Dock 图标");
+                    crate::window_memory::show_main(handle, "Dock 图标");
                 }
                 #[cfg(not(target_os = "macos"))]
                 let _ = (handle, event);

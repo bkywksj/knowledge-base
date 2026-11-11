@@ -628,7 +628,7 @@ pub fn reset_window_size(app: tauri::AppHandle) -> Result<(), String> {
         fit_into_work_area(&window, true);
 
         // 3. 立刻记下新几何：不记的话用户点完直接关窗，下次启动又回到旧尺寸
-        tauri_kit::window_memory::capture_now(&app, "恢复默认大小");
+        crate::window_memory::capture_now(&app, "恢复默认大小");
         Ok(())
     }
     #[cfg(not(desktop))]
@@ -640,10 +640,10 @@ pub fn reset_window_size(app: tauri::AppHandle) -> Result<(), String> {
 
 /// 唤回主窗口（推送弹窗「打开主窗」等子窗口用）。
 ///
-/// 与托盘 / 双开 / 快捷键走同一个入口 `tauri_kit::window_memory::show_main`：
+/// 与托盘 / 双开 / 快捷键走同一个入口 `crate::window_memory::show_main`：
 /// 还原 + 显示 + 聚焦，并把主窗口纠回用户上次所在的显示器。仅桌面端注册。
 #[cfg(desktop)]
 #[tauri::command]
 pub fn show_main_window(app: tauri::AppHandle) {
-    tauri_kit::window_memory::show_main(&app, "子窗口唤回");
+    crate::window_memory::show_main(&app, "子窗口唤回");
 }

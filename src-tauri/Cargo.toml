@@ -3,7 +3,6 @@
 # 主 package（knowledge_base）仍然是 root member，原有 cargo build 行为不变。
 # kb-mcp 完全独立、不依赖主包，避免被 cdylib + tauri 牵扯，编译出独立 binary。
 [workspace]
-exclude = ["vendor/tauri-kit"]
 # kb-core: 共享 lib，KbDb + KbServer + 27 个工具实现，主应用和 kb-mcp 都依赖它
 # mcp: stdio MCP server binary，依赖 kb-core
 members = ["kb-core", "mcp"]
@@ -48,7 +47,9 @@ chrono = { version = "0.4", features = ["serde"] }
 tauri-plugin-process = "2"
 # reqwest：移动端 NDK 不带 OpenSSL，统一用 rustls-tls（桌面端也能用，行为一致；
 # 系统证书池靠 rustls-native-certs 加载，避免迁移成本）
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "rustls-tls-native-roots"] }
+# socks：没开时 reqwest 照样读 ALL_PROXY=socks5://…，却把它当 HTTP 代理建隧道，必报 unsupported scheme socks5，
+# 用户设了这个环境变量后所有外网请求都会失败（代理开着也一样）。socks 用 hyper-util 自带的实现，不引入新 crate。
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "rustls-tls-native-roots", "socks"] }
 # 系统代理（Windows 注册表 / macOS 网络设置）：reqwest 0.12.2x 起读系统代理改由 hyper-util 的
 # client-proxy-system 实现，上面 default-features = false 把它连带关掉了 → Windows 和 Mac 都只认
 # HTTP_PROXY 等环境变量，Clash「设为系统代理」对本应用无效（2026-10 排查 WebDAV 问题时发现）。
@@ -66,7 +67,7 @@ ai-profile = { version = "0.1.7", features = ["chat", "client"] }
 # 实测不写这条也能编过（reqwest→hyper-util 会间接启用 net），但那是**隐式**的：
 # 哪天 reqwest 换掉或改了 feature 结构，就会突然报 "lookup_host not found"，
 # 而这种报错很难联想到是 feature 缺失。用到什么就显式声明什么。
-tokio = { version = "1", features = ["sync", "fs", "io-util", "rt", "rt-multi-thread", "net"] }
+tokio = { version = "1", features = ["sync", "fs", "io-util", "rt", "rt-multi-thread", "net", "time"] }
 # S3 协议 backend（T-024b / T-M026）：改用 rusty-s3（纯 Rust SigV4 签名库，零 HTTP/TLS 依赖），
 # 由上面的 reqwest（rustls，移动端已验证可用）执行签名后的请求 → 桌面/移动端统一，彻底摆脱
 # rust-s3 0.34 硬拉 hyper-tls→native-tls→openssl 导致 Android NDK 编不过的问题。
@@ -142,10 +143,10 @@ tauri-plugin-global-shortcut = "2"
 # 不只是"体验好"——多实例下两份进程各持一份内存设置，任一方改设置都会
 # 用自己那份全量覆写 settings.json，把对方的改动抹掉（用户反馈"重启后编号设置没了"）。
 tauri-plugin-single-instance = "2"
-# 自有应用共用的通用能力（私有库），源码内置在 vendor/tauri-kit，版本见其中的 .source-rev；
-# 升级用 tauri-kit 仓库的 tools/vendor-into.sh 重新内置，不要直接改副本。
-# net：给 reqwest 0.12 / 0.13 打开 socks（用户设了 ALL_PROXY=socks5://… 时外网请求和检查更新不再全部失败），见 vendor/tauri-kit 的 net 模块
-tauri-kit = { path = "vendor/tauri-kit", features = ["window-memory", "net"] }
+# 只为给 tauri-plugin-updater 用的那份 reqwest 0.13 打开 socks（原因同上面 reqwest 0.12 的说明），
+# 不然设了 ALL_PROXY=socks5://… 的用户检查更新必失败。Cargo 会把 feature 合并到依赖树里同版本的 reqwest 上，
+# TLS 仍由 updater 自己选。
+reqwest013 = { package = "reqwest", version = "0.13", default-features = false, features = ["socks"] }
 # PDFium fallback（pdf-extract 对中文 CMap 不支持，运行时动态加载 pdfium.dll 兜底）
 # 移动端 NDK 加载动态库受沙盒限制，暂不支持，待 T-M012 决策
 pdfium-render = "0.8"
@@ -195,6 +196,8 @@ windows-sys = { version = "0.59", features = [
     # SetWindowSubclass / DefSubclassProc：给主窗口挂消息过滤器拦掉 SC_KEYMENU
     # （Alt 触发系统菜单模态循环 → 无边框窗口白屏卡死，见 services/win_msg_guard.rs）
     "Win32_UI_Shell",
+    # GetDpiForWindow：窗口位置记忆判断换屏前后的缩放（见 window_memory）
+    "Win32_UI_HiDpi",
 ] }
 
 # ─── Android 专属 ────────────────────────────────

@@ -188,14 +188,6 @@ pub fn centered_rel(mon: &MonitorKey, w: u32, h: u32) -> (i32, i32) {
     ((mon.w as i32 - w as i32).max(0) / 2, (mon.h as i32 - h as i32).max(0) / 2)
 }
 
-/// 在工作区里居中摆放默认尺寸（逻辑像素）的矩形，返回 (x, y, 宽, 高)，均为物理像素。装不下就压到工作区大小。
-pub fn default_rect(area: (i32, i32, u32, u32), scale: f64, w: f64, h: f64) -> (i32, i32, u32, u32) {
-    let (ax, ay, aw, ah) = area;
-    let pw = ((w * scale).round() as u32).min(aw);
-    let ph = ((h * scale).round() as u32).min(ah);
-    (ax + ((aw - pw) / 2) as i32, ay + ((ah - ph) / 2) as i32, pw, ph)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,12 +372,6 @@ mod tests {
         assert_eq!(place_in(&m, 100, 50, 1440, 900), (-1820, 50));
         assert_eq!(place_in(&m, 5000, 5000, 1440, 900), (-1920 + 480 + EDGE_SLACK, 180 + EDGE_SLACK));
         assert_eq!(place_in(&m, 100, 100, 3000, 2000), (-1920, 0));
-    }
-
-    #[test]
-    fn default_rect_centers_in_work_area_and_shrinks_to_fit() {
-        assert_eq!(default_rect((-3840, -170, 3840, 2100), 2.0, 1440.0, 900.0), (-3360, -20, 2880, 1800));
-        assert_eq!(default_rect((0, 0, 1366, 728), 1.0, 1440.0, 900.0), (0, 0, 1366, 728));
     }
 
     #[test]
