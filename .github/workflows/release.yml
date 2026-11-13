@@ -140,9 +140,15 @@ jobs:
             file \
             patchelf
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      # 钉死 Rust 版本，不跟 stable：Rust 1.100.0 的 cargo 换了 build 目录布局
+      # （build/<包名>/<hash>/out），tauri-build 2.5.6 仍按旧布局从 OUT_DIR 往上退 3 级找 target 目录，
+      # 退到 target/release/build/ 后撞上 kb-mcp 包自己的构建目录，复制 sidecar 时
+      # remove_file 报「Is a directory」，三个平台全挂（v3.3.0 首次构建实录）。
+      # tauri-build 修好新布局后再放开。
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.99.1
           targets: ${{ matrix.target }}
 
       - name: Rust cache
