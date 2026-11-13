@@ -7170,6 +7170,7 @@ body.sidebar-resizing .kb-panel-resizer {
 #settings-editor .ant-card-head-title > span > svg:first-child,
 #settings-export .ant-card-head-title > span > svg:first-child,
 #settings-sync .ant-card-head-title > span > svg:first-child,
+#settings-config-backup .ant-card-head-title > span > svg:first-child,
 #settings-snapshots .ant-card-head-title > span > svg:first-child,
 #settings-community .ant-card-head-title > span > svg:first-child {
   color: var(--ant-color-info) !important;

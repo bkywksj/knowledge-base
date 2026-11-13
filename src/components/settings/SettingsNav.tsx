@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Input } from "antd";
 import {
+  ArchiveRestore,
   Bell,
   Bot,
   Boxes,
@@ -54,6 +55,7 @@ export const SETTINGS_SECTIONS: { id: string; label: string; icon: LucideIcon; k
   { id: "settings-templates", label: "模板管理", icon: LayoutTemplate, keywords: "笔记模板" },
   { id: "settings-data-dir", label: "数据目录", icon: HardDrive, keywords: "存储位置 迁移 路径" },
   { id: "settings-sync", label: "同步备份", icon: CloudCog, keywords: "WebDAV 坚果云 S3 R2 ZIP 快照 多端" },
+  { id: "settings-config-backup", label: "配置备份", icon: ArchiveRestore, keywords: "设置 导出 导入 恢复 换机 重装 kbconfig" },
   { id: "settings-mcp", label: "MCP 服务器", icon: Server, keywords: "Claude Cursor 端口 工具 白名单" },
   { id: "settings-ocr", label: "本地 OCR", icon: ScanText, keywords: "识别 图片 扫描件 文字" },
   { id: "settings-snapshots", label: "历史版本", icon: History, keywords: "快照 版本 清理" },

@@ -81,6 +81,7 @@ import { WebClipJinaKeySetting } from "@/components/settings/WebClipJinaKeySetti
 import { TiptapEditor } from "@/components/editor";
 import { ShareConfigModal } from "@/components/config-share/ShareConfigModal";
 import { ImportConfigModal } from "@/components/config-share/ImportConfigModal";
+import { SettingsBackupSection } from "@/components/settings/SettingsBackupSection";
 import { exportAiModel, type Envelope } from "@/lib/configShare";
 import {
   getOpenMdPreference,
@@ -3086,6 +3087,8 @@ function DesktopSettingsPage() {
       <div id="settings-sync">
         <SyncTabs />
       </div>
+
+      <SettingsBackupSection />
 
       {/* MCP 服务器：接入 Claude Desktop / Cursor / Cherry Studio */}
       <MCPServerSection />
