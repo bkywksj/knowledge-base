@@ -2164,6 +2164,58 @@ function collectPersistPayload(state: AppStore): Record<string, unknown> {
 }
 
 /**
+ * 持久化字段里**只对本机 / 本库有意义**的那些：设置备份导出时跳过，导入时也不认。
+ *
+ * 用排除表而不是白名单：将来新增的持久化字段默认就能进备份，不会悄悄漏掉；
+ * 只有确实绑定本机的才需要来这里登记。
+ * - 面板宽度、界面缩放：跟屏幕尺寸 / DPI 走，换台显示器照搬过去往往不合适
+ * - 最近搜索、文件夹 / 标题折叠状态：绑定本库的数据，换个库是一堆失效 id
+ * - 背景图：存的是本机绝对路径，别的机器上没有这个文件
+ */
+const DEVICE_LOCAL_PERSIST_KEYS = new Set<string>([
+  "sidePanelWidth",
+  "uiScale",
+  "uiScaleUserSet",
+  "recentSearches",
+  "notesCollapsedFolderKeys",
+  "notesUncategorizedExpanded",
+  "notesFoldersInitialCollapseDone",
+  "notesHeadingFolded",
+  "customBgImage",
+]);
+
+/** 可以带去别的设备的界面 / 编辑器偏好（设置备份用） */
+export function collectPortablePrefs(): Record<string, unknown> {
+  const payload = collectPersistPayload(useAppStore.getState());
+  return Object.fromEntries(
+    Object.entries(payload).filter(([k]) => !DEVICE_LOCAL_PERSIST_KEYS.has(k)),
+  );
+}
+
+/**
+ * 把备份里的偏好写进 settings store，再整体重新加载一遍，返回实际写入的键数。
+ *
+ * 写盘后走 `loadThemeFromStore` 而不是直接 setState：它对每个字段都有类型 / 取值校验和
+ * 旧主题 id 归一，备份文件来自别的版本时也不会把坏值塞进 zustand。
+ * 重新加载期间先关掉写盘放行，免得读到一半的状态被 subscribe 拿去回写。
+ */
+export async function applyImportedPrefs(prefs: Record<string, unknown>): Promise<number> {
+  const known = collectPersistPayload(useAppStore.getState());
+  const entries = Object.entries(prefs).filter(
+    ([k, v]) => k in known && !DEVICE_LOCAL_PERSIST_KEYS.has(k) && v !== undefined,
+  );
+  if (entries.length === 0) return 0;
+  const store = await Store.load(STORE_FILE);
+  for (const [k, v] of entries) {
+    await store.set(k, v);
+  }
+  await store.save();
+  _settingsHydrated = false;
+  await loadThemeFromStore();
+  return entries.length;
+}
+
+/**
  * 持久化字段的等值判断。
  *
  * 标量按值比；数组 / 普通对象按**内容**比（不是引用）—— 保持与旧实现一致的口径：

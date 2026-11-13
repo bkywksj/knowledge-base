@@ -172,6 +172,9 @@ export function ImportConfigModal({
         lines.push(`✓ 模型服务 ${summary.aiModels} 个`);
       if (summary.asrConfig) lines.push("✓ 语音识别配置");
       if (summary.featureToggles) lines.push("✓ 功能开关");
+      // 粘贴的是设置备份文件内容时才会有这两项
+      if (summary.uiPrefs > 0) lines.push(`✓ 界面偏好 ${summary.uiPrefs} 项`);
+      if (summary.appConfig > 0) lines.push(`✓ 应用设置 ${summary.appConfig} 项`);
       // 导入成功但要提醒的（如 Anthropic 协议的配置），不能混进 errors 里当失败
       if (summary.warnings.length > 0) {
         message.warning({ content: summary.warnings.join("\n"), duration: 8 });

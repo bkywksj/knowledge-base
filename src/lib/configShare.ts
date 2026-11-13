@@ -19,6 +19,7 @@
 
 import { syncV1Api, aiModelApi, configApi, asrApi } from "@/lib/api";
 import { encryptWithPin, decryptWithPin } from "@/lib/configCrypto";
+import { useAppStore, applyImportedPrefs } from "@/store";
 import type {
   SyncBackend,
   SyncBackendInput,
@@ -127,9 +128,65 @@ export interface FeatureTogglesData {
 
 export interface BundleData {
   webdavBackends?: WebDavBackendData[];
+  /** 通用同步源（local / webdav / s3），设置备份文件用 */
+  syncBackends?: SyncBackendData[];
   aiModels?: AiModelData[];
   asrConfig?: AsrConfig;
   featureToggles?: FeatureTogglesData;
+  /** 界面 / 编辑器偏好（settings store 里可移植的那部分），设置备份文件用 */
+  uiPrefs?: Record<string, unknown>;
+  /** app_config 里的行为类设置，导入时只认 {@link isPortableConfigKey} 放行的键 */
+  appConfig?: Record<string, string>;
+}
+
+// ──────────────────────────────────────────────────────────
+// 设置备份：app_config 可导出键
+// ──────────────────────────────────────────────────────────
+
+/**
+ * 可以带去别的设备的 app_config 键。
+ *
+ * 🔴 导入端也拿它过滤：备份文件是用户从外面选进来的，不能让它写任意键 ——
+ * app_config 里还存着启动锁 / 隐藏笔记 PIN 的哈希、同步时间戳、加密后的备份密码这类
+ * 写坏了会锁死或误同步的东西。
+ *
+ * 不在名单里的（及原因）：
+ * - 默认文件夹 / 默认标签 / 日记默认模板 / 文件夹自动导入：存的是本库 id 或本机路径
+ * - 启动锁、隐藏笔记 PIN、回收站自动清理：带校验状态或生效时间，必须走各自的服务写
+ * - MCP HTTP 端口 / token、更新版本标记、速记草稿、同步时间戳：本机运行状态
+ */
+const PORTABLE_CONFIG_KEYS = new Set<string>([
+  "all_day_reminder_time",
+  "start_minimized",
+  "window.close_action",
+  "update.auto_check",
+  "update.install_timing",
+  "reminder_sound_enabled",
+  "reminder_sound_normal",
+  "reminder_sound_urgent",
+  "reminder_sound_volume",
+  "reminder_sound_repeat",
+  "task_recognize_mode",
+  "enabled_views",
+  "mobile_dashboard_items",
+  "mobile_tab_keys",
+  "ai_writable",
+  "mcp_tool_whitelist",
+  "mcp_external_writable",
+]);
+
+/** 按前缀放行的键：全局快捷键是 `shortcut.<id>`，id 随功能增加 */
+const PORTABLE_CONFIG_PREFIXES = ["shortcut."];
+
+/** 属于密钥的 app_config 键：只在用户勾了「包含密钥」时导出 */
+export const SECRET_CONFIG_KEYS = new Set<string>(["web_clip_jina_key"]);
+
+export function isPortableConfigKey(key: string): boolean {
+  return (
+    PORTABLE_CONFIG_KEYS.has(key) ||
+    SECRET_CONFIG_KEYS.has(key) ||
+    PORTABLE_CONFIG_PREFIXES.some((p) => key.startsWith(p))
+  );
 }
 
 export type Envelope =
@@ -402,18 +459,39 @@ export interface ImportSummary {
   aiModels: number;
   asrConfig: boolean;
   featureToggles: boolean;
+  /** 写入的界面 / 编辑器偏好项数 */
+  uiPrefs: number;
+  /** 写入的 app_config 行为设置项数 */
+  appConfig: number;
+  /** 因本机已有同名项而跳过的（形如「模型服务：DeepSeek」） */
+  skipped: string[];
   errors: string[];
   /** 导入成功但需要提醒的（如 Anthropic 协议的配置） */
   warnings: string[];
 }
 
+export interface ApplyOptions {
+  /**
+   * 本机已有同名的模型服务 / 同步源时跳过不建。
+   * 设置备份恢复要开：同一份备份导两次不该冒出两套重复配置。
+   * 扫码 / 粘贴分享不开：保持原行为，用户分享一条就是想加一条。
+   */
+  skipExistingNames?: boolean;
+}
+
 /** 把 envelope 真正写到后端。返回成功统计 + 失败原因列表 */
-export async function applyEnvelope(env: Envelope): Promise<ImportSummary> {
+export async function applyEnvelope(
+  env: Envelope,
+  opts: ApplyOptions = {},
+): Promise<ImportSummary> {
   const summary: ImportSummary = {
     syncBackends: 0,
     aiModels: 0,
     asrConfig: false,
     featureToggles: false,
+    uiPrefs: 0,
+    appConfig: 0,
+    skipped: [],
     errors: [],
     warnings: [],
   };
@@ -515,56 +593,102 @@ export async function applyEnvelope(env: Envelope): Promise<ImportSummary> {
       break;
 
     case "bundle":
-      // 递归调用每个子配置
-      if (env.data.webdavBackends) {
-        for (const b of env.data.webdavBackends) {
-          const sub = await applyEnvelope({
-            kbConfig: ENVELOPE_VERSION,
-            kind: "webdav-backend",
-            exportedAt: new Date().toISOString(),
-            data: b,
-          });
-          summary.syncBackends += sub.syncBackends;
-          summary.errors.push(...sub.errors);
-        }
-      }
-      if (env.data.aiModels) {
-        for (const m of env.data.aiModels) {
-          const sub = await applyEnvelope({
-            kbConfig: ENVELOPE_VERSION,
-            kind: "ai-model",
-            exportedAt: new Date().toISOString(),
-            data: m,
-          });
-          summary.aiModels += sub.aiModels;
-          summary.errors.push(...sub.errors);
-          summary.warnings.push(...sub.warnings);
-        }
-      }
-      if (env.data.asrConfig) {
-        const sub = await applyEnvelope({
-          kbConfig: ENVELOPE_VERSION,
-          kind: "asr-config",
-          exportedAt: new Date().toISOString(),
-          data: env.data.asrConfig,
-        });
-        summary.asrConfig = sub.asrConfig;
-        summary.errors.push(...sub.errors);
-      }
-      if (env.data.featureToggles) {
-        const sub = await applyEnvelope({
-          kbConfig: ENVELOPE_VERSION,
-          kind: "feature-toggles",
-          exportedAt: new Date().toISOString(),
-          data: env.data.featureToggles,
-        });
-        summary.featureToggles = sub.featureToggles;
-        summary.errors.push(...sub.errors);
-      }
+      await applyBundle(env.data, opts, summary);
       break;
   }
 
   return summary;
+}
+
+/** 合并子 envelope 的导入结果 */
+function mergeSummary(into: ImportSummary, sub: ImportSummary) {
+  into.syncBackends += sub.syncBackends;
+  into.aiModels += sub.aiModels;
+  into.asrConfig ||= sub.asrConfig;
+  into.featureToggles ||= sub.featureToggles;
+  into.uiPrefs += sub.uiPrefs;
+  into.appConfig += sub.appConfig;
+  into.skipped.push(...sub.skipped);
+  into.errors.push(...sub.errors);
+  into.warnings.push(...sub.warnings);
+}
+
+/** 完整配置包：逐项递归成单条 envelope 复用上面的写入逻辑 */
+async function applyBundle(data: BundleData, opts: ApplyOptions, summary: ImportSummary) {
+  const sub = (kind: Exclude<ConfigKind, "bundle">, d: unknown) =>
+    applyEnvelope({
+      kbConfig: ENVELOPE_VERSION,
+      kind,
+      exportedAt: new Date().toISOString(),
+      data: d,
+    } as Envelope);
+
+  // 同名跳过：先各取一次现有名字，导入过程中新建的也记进去（同一份包里有重名时只建第一个）
+  let backendNames: Set<string> | null = null;
+  let modelNames: Set<string> | null = null;
+  if (opts.skipExistingNames) {
+    try {
+      backendNames = new Set((await syncV1Api.listBackends()).map((b) => b.name));
+      modelNames = new Set((await aiModelApi.list()).map((m) => m.name));
+    } catch (e) {
+      summary.errors.push(`读取现有配置失败，未导入同步源和模型服务：${e}`);
+      backendNames = null;
+      modelNames = null;
+      data = { ...data, webdavBackends: undefined, syncBackends: undefined, aiModels: undefined };
+    }
+  }
+
+  const backends: { kind: "webdav-backend" | "sync-backend"; name: string; data: WebDavBackendData | SyncBackendData }[] = [
+    ...(data.webdavBackends ?? []).map((b) => ({ kind: "webdav-backend" as const, name: b.name, data: b })),
+    ...(data.syncBackends ?? []).map((b) => ({ kind: "sync-backend" as const, name: b.name, data: b })),
+  ];
+  for (const b of backends) {
+    if (backendNames?.has(b.name)) {
+      summary.skipped.push(`同步源：${b.name}`);
+      continue;
+    }
+    mergeSummary(summary, await sub(b.kind, b.data));
+    backendNames?.add(b.name);
+  }
+  for (const m of data.aiModels ?? []) {
+    if (modelNames?.has(m.name)) {
+      summary.skipped.push(`模型服务：${m.name}`);
+      continue;
+    }
+    mergeSummary(summary, await sub("ai-model", m));
+    modelNames?.add(m.name);
+  }
+  if (data.asrConfig) {
+    mergeSummary(summary, await sub("asr-config", data.asrConfig));
+  }
+  if (data.featureToggles) {
+    mergeSummary(summary, await sub("feature-toggles", data.featureToggles));
+  }
+
+  if (data.appConfig) {
+    let wrote = 0;
+    for (const [key, value] of Object.entries(data.appConfig)) {
+      if (!isPortableConfigKey(key) || typeof value !== "string") continue;
+      try {
+        await configApi.set(key, value);
+        wrote += 1;
+      } catch (e) {
+        summary.errors.push(`设置项 ${key} 写入失败：${e}`);
+      }
+    }
+    summary.appConfig += wrote;
+    // 功能模块开关在内存里有一份，重新读一次界面才跟着变
+    if (wrote > 0 && "enabled_views" in data.appConfig) {
+      await useAppStore.getState().loadEnabledViews().catch(() => {});
+    }
+  }
+  if (data.uiPrefs && typeof data.uiPrefs === "object") {
+    try {
+      summary.uiPrefs += await applyImportedPrefs(data.uiPrefs);
+    } catch (e) {
+      summary.errors.push(`界面偏好写入失败：${e}`);
+    }
+  }
 }
 
 /** envelope kind → 给用户看的中文标签 */
