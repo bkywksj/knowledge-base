@@ -1637,12 +1637,19 @@ export function TiptapEditor({
           const { href: _ignored, target: _t, rel: _r, ...rest } =
             HTMLAttributes as Record<string, unknown>;
           void _ignored; void _t; void _r;
+          // 邮件 / 电话链接要 Ctrl+单击才拉起系统程序（见下方点击拦截），悬停给出提示
+          const hint = /^mailto:/i.test(realHref)
+            ? "Ctrl+单击发送邮件"
+            : /^tel:/i.test(realHref)
+              ? "Ctrl+单击拨打电话"
+              : null;
           return [
             "span",
             mergeAttributes(this.options.HTMLAttributes, rest, {
               "data-href": realHref,
               role: "link",
               tabindex: "0",
+              ...(hint ? { title: hint } : {}),
             }),
             0,
           ];
@@ -2277,7 +2284,8 @@ export function TiptapEditor({
 
   // 拦截编辑器内链接点击 → 分发给系统对应程序：
   //   file:// / 本地绝对路径 → openPath（系统默认程序打开 PDF/DOC/视频等）
-  //   http(s) / mailto      → openUrl（系统默认浏览器/邮箱）
+  //   http(s)               → openUrl（系统默认浏览器）
+  //   mailto / tel          → 仅 Ctrl/⌘+单击时 openUrl（防误触弹邮件客户端）
   //
   // SafeLink 把 link mark 渲染成 <span data-href="..." role="link"> 而非 <a>，
   // 完全避开 Tauri WebView 对 anchor 的 navigation 旁路（tauri-apps/tauri#2791）。
@@ -2294,6 +2302,11 @@ export function TiptapEditor({
       const href =
         linkEl.getAttribute("data-href") || linkEl.getAttribute("href") || "";
       if (!href || href.startsWith("#") || href === "javascript:void(0)") return;
+
+      // 邮件 / 电话链接：笔记里的邮箱常被自动识别成链接，单击就弹出邮件客户端太容易误触。
+      // 改成 Ctrl/⌘+单击才打开；普通单击不拦截，交给编辑器正常放光标、选中文字。
+      const isContactLink = /^(mailto|tel):/i.test(href);
+      if (isContactLink && !(ev.ctrlKey || ev.metaKey)) return;
 
       ev.preventDefault();
       ev.stopPropagation();
