@@ -877,6 +877,23 @@ pub fn run() {
             };
             log::info!("数据库初始化完成: {}", db_path_str);
 
+            // 发现文件：把本次解析出的库路径和 sidecar 路径写到框架目录的 kb-mcp.json，
+            // 外部客户端里不带 --db-path 的 kb-mcp、以及智码的「知识库助手」都靠它定位。
+            // 每次启动都重写，用户迁移数据目录（需要重启）后自然跟上。写失败不影响启动。
+            #[cfg(desktop)]
+            {
+                let d = kb_core::discovery::Discovery {
+                    version: kb_core::discovery::DISCOVERY_VERSION,
+                    db_path: db_path_str.clone(),
+                    sidecar_path: commands::mcp::locate_sidecar_binary()
+                        .map(|p| p.to_string_lossy().into_owned()),
+                    app_version: app.package_info().version.to_string(),
+                };
+                if let Err(e) = kb_core::discovery::write(&framework_app_data_dir, &d) {
+                    log::warn!("写 MCP 发现文件失败（外部 AI 客户端可能定位不到知识库）: {e}");
+                }
+            }
+
             // 资产目录均基于 data_dir_root（service 内部仍叫 app_data_dir，语义是"数据根"）。
             // 这三类素材目录属「可降级」初始化：创建失败只记 error 不中断启动——应用主体
             // （笔记 / 搜索 / 数据库）仍可用，仅对应的图片 / 附件 / PDF 功能在用到时各自报错。
@@ -1244,6 +1261,8 @@ pub fn run() {
             commands::mcp::mcp_get_setup_doc,
             commands::mcp::mcp_get_ai_writable,
             commands::mcp::mcp_set_ai_writable,
+            commands::mcp::mcp_get_external_writable,
+            commands::mcp::mcp_set_external_writable,
             // MCP HTTP 服务（桌面端专属：移动端不开监听端口）
             #[cfg(desktop)]
             commands::mcp::get_mcp_http_config,

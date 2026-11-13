@@ -101,10 +101,29 @@ export function MCPServerSection() {
   const [docLoading, setDocLoading] = useState(false);
   const aiWritable = useAppStore((s) => s.aiWritable);
   const setAiWritable = useAppStore((s) => s.setAiWritable);
+  // 外部 AI 客户端（kb-mcp sidecar）写权限总闸；null = 还没读到
+  const [externalWritable, setExternalWritable] = useState<boolean | null>(null);
 
   useEffect(() => {
     void load();
+    invoke<boolean>("mcp_get_external_writable")
+      .then(setExternalWritable)
+      .catch(() => setExternalWritable(null));
   }, []);
+
+  async function toggleExternalWritable(v: boolean) {
+    try {
+      await invoke("mcp_set_external_writable", { enabled: v });
+      setExternalWritable(v);
+      message.success(
+        v
+          ? "已允许外部 AI 修改知识库（客户端配置需带 --writable），重连 MCP 后生效"
+          : "已收回外部 AI 的写权限，重连 MCP 后生效",
+      );
+    } catch (e) {
+      message.error(`切换失败：${e}`);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -391,6 +410,32 @@ export function MCPServerSection() {
                 : "关闭后，AI 调用任何写工具都会被后端拦截并返回友好错误，相当于安全只读模式。"
             }
           />
+
+          {/* ─── 外部 AI 客户端 · 写权限总闸 ─────────────── */}
+          {externalWritable !== null && (
+            <Alert
+              type={externalWritable ? "warning" : "info"}
+              showIcon
+              className="mb-4"
+              message={
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <span>
+                    <Text strong>允许外部 AI 修改</Text>
+                    <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                      （Claude Code、智码「知识库助手」等经 kb-mcp 接入的客户端）
+                    </Text>
+                  </span>
+                  <Switch
+                    checked={externalWritable}
+                    onChange={toggleExternalWritable}
+                    checkedChildren="可写"
+                    unCheckedChildren="只读"
+                  />
+                </div>
+              }
+              description="关掉后，即使客户端配置带了 --writable 也只能读。外部客户端重连 MCP 或新开会话后生效。"
+            />
+          )}
 
           {/* ─── 状态行 ─────────────────────────────── */}
           <div className="mb-4 flex items-center gap-4 flex-wrap">

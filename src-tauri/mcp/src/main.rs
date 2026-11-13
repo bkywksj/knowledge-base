@@ -1,7 +1,8 @@
 //! kb-mcp · Knowledge Base MCP Server + CLI (stdio binary)
 //!
 //! 两种用法：
-//! 1. **MCP server**（默认，无子命令）：`kb-mcp --db-path X [--writable]`
+//! 1. **MCP server**（默认，无子命令）：`kb-mcp [--db-path X] [--writable]`
+//!    （不传 `--db-path` 时读主应用写的发现文件 `kb-mcp.json` 定库，见 kb_core::discovery）
 //!    → 委托给 kb_core::KbServer 跑 stdio JSON-RPC，供 Claude Desktop / Cursor 等连。
 //! 2. **CLI 查询**（#6，子命令）：`kb-mcp --db-path X search "关键词"` 等
 //!    → 直接打印 JSON 到 stdout，省去走 MCP 协议的 token，命令行/脚本可直接用。
@@ -9,11 +10,11 @@
 //! 业务（KbDb / KbServer / 27 工具 / SQL）全部在 kb-core crate，
 //! 主应用 (knowledge_base) 也通过同一份 kb-core 跑 in-memory MCP server。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use kb_core::{CliQuery, KbDb, KbServer};
+use kb_core::{discovery, CliQuery, KbDb, KbServer};
 use rmcp::{transport::stdio, ServiceExt};
 
 #[derive(Debug, Parser)]
@@ -23,10 +24,11 @@ use rmcp::{transport::stdio, ServiceExt};
     about = "Knowledge Base MCP Server + CLI - 把本地知识库以 MCP 协议 / 命令行暴露给 LLM 客户端"
 )]
 struct Cli {
-    /// 知识库 SQLite 文件路径（必填）。通常是主应用的 app.db。
+    /// 知识库 SQLite 文件路径。通常是主应用的 app.db。
     /// 例：Windows 下 C:\Users\<name>\AppData\Roaming\com.agilefr.kb\app.db
+    /// 不传时读主应用写的发现文件 kb-mcp.json 取当前库路径（推荐：用户迁移数据目录后不用改客户端配置）。
     #[arg(long, env = "KB_MCP_DB_PATH")]
-    db_path: PathBuf,
+    db_path: Option<PathBuf>,
 
     /// 启用写工具（create_note / update_note / add_tag_to_note 等）。
     /// 默认关闭 = 完全只读，更安全；显式打开后 LLM 可创建/修改你的笔记。
@@ -74,20 +76,43 @@ enum Command {
     },
 }
 
+/// 定库：显式 `--db-path` 优先；没给就读主应用写的发现文件。
+/// 发现文件位置可用 `KB_MCP_DISCOVERY` 覆盖（测试 / 非标准安装用），否则按本构建的 dev/prod 取默认目录。
+fn resolve_db_path(explicit: Option<&Path>) -> Result<PathBuf> {
+    if let Some(p) = explicit {
+        return Ok(p.to_path_buf());
+    }
+    let file = match std::env::var_os("KB_MCP_DISCOVERY") {
+        Some(p) => PathBuf::from(p),
+        None => discovery::default_app_data_dir(cfg!(debug_assertions))
+            .context("定位不到知识库数据目录，请用 --db-path 指定数据库")?
+            .join(discovery::DISCOVERY_FILE),
+    };
+    if !file.exists() {
+        anyhow::bail!(
+            "没传 --db-path，也找不到发现文件 {}。请先打开一次知识库（新版本启动时会写这个文件），\
+             或用 --db-path 指定数据库",
+            file.display()
+        );
+    }
+    Ok(PathBuf::from(discovery::read(&file)?.db_path))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // clap 自己处理 --help / --version（写 stdout 后 exit），先解析再打日志
     let cli = Cli::parse();
 
-    if !cli.db_path.exists() {
-        anyhow::bail!("db 文件不存在: {}", cli.db_path.display());
+    let db_path = resolve_db_path(cli.db_path.as_deref())?;
+    if !db_path.exists() {
+        anyhow::bail!("db 文件不存在: {}", db_path.display());
     }
 
     // ── CLI 查询模式（子命令，非 Serve）：只读查询 → 打印 JSON → 退出 ──
     if let Some(cmd) = cli.command.as_ref() {
         if !matches!(cmd, Command::Serve) {
             // CLI 一律只读打开（查询不改库）；直调工具方法不经 router，不受白名单影响
-            let db = KbDb::open(&cli.db_path, /* writable */ false)?;
+            let db = KbDb::open(&db_path, /* writable */ false)?;
             let server = KbServer::new(db, /* writable */ false);
             let query = match cmd {
                 Command::Search { query, limit } => CliQuery::Search {
@@ -117,26 +142,33 @@ async fn main() -> Result<()> {
     }
 
     // ── MCP server 模式（默认 / Serve 子命令）──
+    // 写权限 = 客户端配置带 --writable 且用户没在知识库设置里关掉「允许外部 AI 修改」。
+    // 先只读打开查一次总闸：关了就全程只读打开，内核层面拦住写入，而不只是工具层拒绝。
+    let writable = cli.writable && {
+        let probe = KbDb::open(&db_path, false)?;
+        let allowed = probe.read_config(discovery::EXTERNAL_WRITABLE_KEY).as_deref() != Some("0");
+        if !allowed {
+            eprintln!("[kb-mcp] 知识库设置里关闭了外部 AI 写权限，忽略 --writable，按只读运行");
+        }
+        allowed
+    };
+
     // 关键：日志走 stderr，stdout 是 JSON-RPC 通道，绝对不能污染
     eprintln!(
         "[kb-mcp] starting v{}, db = {}, mode = {}",
         env!("CARGO_PKG_VERSION"),
-        cli.db_path.display(),
-        if cli.writable {
-            "READ-WRITE"
-        } else {
-            "READ-ONLY"
-        }
+        db_path.display(),
+        if writable { "READ-WRITE" } else { "READ-ONLY" }
     );
 
-    let db = KbDb::open(&cli.db_path, cli.writable)?;
+    let db = KbDb::open(&db_path, writable)?;
     // 工具白名单（#5）：从主应用 app_config 读「保留哪些工具」，裁剪掉其余的省 token。
     // 主应用设置页改白名单后，外部客户端重连本 sidecar 即生效（无需改 Claude Desktop 配置）。
     let keep = db.read_tool_whitelist();
     if let Some(ref k) = keep {
         eprintln!("[kb-mcp] tool whitelist active: keep {} tools (+ping)", k.len());
     }
-    let server = KbServer::new_filtered(db, cli.writable, keep);
+    let server = KbServer::new_filtered(db, writable, keep);
 
     // serve(stdio()) 接管 stdin/stdout，按 JSON-RPC 帧收发
     let service = server

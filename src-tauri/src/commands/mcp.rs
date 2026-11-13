@@ -309,7 +309,7 @@ fn build_settings_snippet(sidecar: &str, db: &str, writable: bool) -> String {
 
 /// 找 kb-mcp binary：优先主 exe 同目录（externalBin 打包后位置 = cargo workspace target/<profile>/）
 /// dev 期主 exe 与 sidecar 都在 target/debug/，安装后 externalBin 也在主 exe 旁边
-fn locate_sidecar_binary() -> Option<PathBuf> {
+pub(crate) fn locate_sidecar_binary() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
 
@@ -451,6 +451,33 @@ pub fn mcp_set_ai_writable(
     state
         .db
         .set_config(AI_WRITABLE_KEY, if enabled { "1" } else { "0" })
+        .map_err(|e| e.to_string())
+}
+
+// ─── 外部 AI 客户端（kb-mcp sidecar）写权限总闸 ─────────────────
+
+/// 读「允许外部 AI 修改」。缺失视为允许（兼容旧版：升级前外部客户端只看 --writable）
+#[tauri::command]
+pub fn mcp_get_external_writable(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    let v = state
+        .db
+        .get_config(kb_core::discovery::EXTERNAL_WRITABLE_KEY)
+        .map_err(|e| e.to_string())?;
+    Ok(v.as_deref() != Some("0"))
+}
+
+/// 设置「允许外部 AI 修改」。sidecar 启动时读一次，所以外部客户端要重连 MCP（或新开会话）才生效
+#[tauri::command]
+pub fn mcp_set_external_writable(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    state
+        .db
+        .set_config(
+            kb_core::discovery::EXTERNAL_WRITABLE_KEY,
+            if enabled { "1" } else { "0" },
+        )
         .map_err(|e| e.to_string())
 }
 

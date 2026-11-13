@@ -32,6 +32,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+pub mod discovery;
 pub mod plain_text;
 
 use anyhow::{Context, Result};
@@ -107,6 +108,17 @@ impl KbDb {
         } else {
             Some(set)
         }
+    }
+
+    /// 读 app_config 里的单个配置值。缺失 / 读失败返回 `None`，由调用方决定默认值。
+    pub fn read_config(&self, key: &str) -> Option<String> {
+        let conn = self.conn.lock().ok()?;
+        conn.query_row(
+            "SELECT value FROM app_config WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
+        .ok()
     }
 }
 
@@ -647,7 +659,8 @@ impl KbServer {
         if !self.writable {
             return Err(McpError::invalid_params(
                 "kb-mcp 当前是只读模式，无法写入。\
-                 启动时加 --writable 开关后再调用写工具。"
+                 原因是客户端配置没加 --writable，或用户在知识库「设置 → MCP 服务器」\
+                 关掉了「允许外部 AI 修改」。请告诉用户，不要重试。"
                     .to_string(),
                 None,
             ));
@@ -1544,7 +1557,7 @@ impl ServerHandler for KbServer {
                  create_folder / rename_folder / move_folder / reorder_folders / \
                  create_note_from_template / restore_note_from_trash（{}）。\
                  默认过滤回收站、隐藏、加密笔记，保护隐私。",
-                if self.writable { "已启用" } else { "当前禁用，启动加 --writable 开启" }
+                if self.writable { "已启用" } else { "当前禁用：客户端配置未加 --writable，或知识库设置里关闭了外部 AI 写权限" }
             ))
     }
 }
