@@ -145,10 +145,12 @@ jobs:
       # 退到 target/release/build/ 后撞上 kb-mcp 包自己的构建目录，复制 sidecar 时
       # remove_file 报「Is a directory」，三个平台全挂（v3.3.0 首次构建实录）。
       # tauri-build 修好新布局后再放开。
+      # 显式版本装的是 minimal 工具链、不带 rustfmt；keepawake → apple-sys 这类 bindgen 依赖要靠它排版，缺了 macOS 编译失败（智码 v6.5.6 实录），故补装。
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.99.1
+          components: rustfmt
           targets: ${{ matrix.target }}
 
       - name: Rust cache
