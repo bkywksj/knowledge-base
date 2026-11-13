@@ -247,6 +247,8 @@ import {
 } from "@/store/attachmentPreview";
 import { EditorToolbar } from "./EditorToolbar";
 import { TableBubbleMenu } from "./TableBubbleMenu";
+import { MakeCardDialog } from "./MakeCardDialog";
+import { useFeatureEnabled } from "@/hooks/useFeatureEnabled";
 import { AiWriteMenu } from "./AiWriteMenu";
 import { alignSnapshotPlugins } from "./alignSnapshotPlugins";
 import {
@@ -957,6 +959,9 @@ export function TiptapEditor({
   // SlashCommand 媒体项需要函数式取最新 noteId 才能在切笔记后正确插入。
   const noteIdRef = useRef(noteId);
   noteIdRef.current = noteId;
+  // 选中文字「转为闪卡」：非 null 时弹建卡框（正面预填）；闪卡模块关闭时不给浮条按钮
+  const cardsEnabled = useFeatureEnabled("cards");
+  const [makeCardFront, setMakeCardFront] = useState<string | null>(null);
   // 阅读态同样用 ref：WikiLinkDecoration 在编辑器实例创建时一次性配置，
   // 靠函数式取值才能让"阅读态单击即跳转"的判断拿到实时 readingMode。
   const readingModeRef = useRef(readingMode);
@@ -2612,7 +2617,7 @@ export function TiptapEditor({
           {/* 「问 AI 这段」与续写/总结/改写等：钉在 EditorToolbar 正下方的次级 sticky bar。
               位置完全静态，跟豆包/划词翻译这类系统级浮窗物理错开（它们贴选区，咱贴顶部）。
               选区状态控制可见性，无选区时 max-height:0 折叠，有选区时滑下来。 */}
-          <AiWriteMenu editor={editor} onAskAi={onAskAi} />
+          <AiWriteMenu editor={editor} onAskAi={onAskAi} onMakeCard={cardsEnabled ? setMakeCardFront : undefined} />
         </>
       )}
       {/* 查找替换浮条（Ctrl+F / Ctrl+H 触发；Esc 关闭）。
@@ -2631,6 +2636,7 @@ export function TiptapEditor({
       <ImageLightbox containerRef={wrapperRef} />
       {/* 表格浮动菜单：光标在 table 内时在表格上方显示加列/加行/删列/删行/合并/拆分/删表 */}
       <TableBubbleMenu editor={editor} />
+      <MakeCardDialog front={makeCardFront} noteId={noteId} onClose={() => setMakeCardFront(null)} />
       {/* 斜杠菜单"嵌入网络视频"项的 URL 输入弹窗。
           确认走 closeEmbedSlash(url)，取消走 closeEmbedSlash(null)；
           实际解析与节点插入由 slashCommandItems 内的 command 完成。 */}

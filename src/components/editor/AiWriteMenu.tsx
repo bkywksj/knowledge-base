@@ -36,6 +36,8 @@ interface AiWriteMenuProps {
    * 等工具按钮重叠。点击时携带选中纯文本作为参数；调用方负责打开抽屉 / 预填问题。
    */
   onAskAi?: (selectedText: string) => void;
+  /** 选中文字「转为闪卡」；不传（闪卡模块关闭）时浮条里不显示该按钮 */
+  onMakeCard?: (selectedText: string) => void;
 }
 
 // Lucide 图标名 → React 元素工厂，保持和管理页"图标名"字段一致
@@ -193,7 +195,7 @@ function parseResultWithPlaceholders(
  */
 const FAKE_SELECTION_KEY = new PluginKey<DecorationSet>("ai-write-fake-selection");
 
-export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
+export function AiWriteMenu({ editor, onAskAi, onMakeCard }: AiWriteMenuProps) {
   const { token } = antdTheme.useToken();
   // 设置里关闭"AI 问答"模块时，整个浮动菜单不挂载（不监听选区，零开销）
   const aiEnabled = useFeatureEnabled("ai");
@@ -728,7 +730,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
             border: `1px solid ${token.colorBorderSecondary}`,
           }}
         >
-          <SelectionFormatButtons editor={editor} />
+          <SelectionFormatButtons editor={editor} onMakeCard={onMakeCard} />
         </div>
       </div>
     );
@@ -745,7 +747,7 @@ export function AiWriteMenu({ editor, onAskAi }: AiWriteMenuProps) {
         border: `1px solid ${token.colorBorderSecondary}`,
       }}
     >
-      <SelectionFormatButtons editor={editor} />
+      <SelectionFormatButtons editor={editor} onMakeCard={onMakeCard} />
       {divider}
       {/* leading：问 AI 这段（蓝色 CTA） */}
       {onAskAi && (

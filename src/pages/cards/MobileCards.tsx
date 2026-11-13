@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { BarChart3, Sparkles } from "lucide-react";
+import { BarChart3, Plus, Sparkles } from "lucide-react";
 import { message } from "antd";
 import {
   fsrs,
@@ -15,6 +15,7 @@ import { cardApi } from "@/lib/api";
 import type { Card, CardStats } from "@/types";
 import { MNavBar, MRow } from "@/components/mobile/primitives";
 import { MSheet } from "@/components/mobile/MSheet";
+import { CardCreateSheet } from "@/components/mobile/CardCreateSheet";
 
 /**
  * 移动端闪卡复习页（v4 样式，交互同原版）
@@ -26,7 +27,9 @@ import { MSheet } from "@/components/mobile/MSheet";
  * - 顶部进度条 + 待复习数量 + 估算时间；全部复习完显示"今日已复习 X 张"
  * - 顶栏「统计」：今日到期 / 学习中 / 复习中 / 新卡 / 总数（cardApi.stats）+ 本次已复习
  *
- * 不做：卡片新建（桌面端有）、deck / 笔记反链显示、滑动跳过、长按标记
+ * - 顶栏「＋」：新建闪卡（CardCreateSheet）；笔记编辑器里选中文字也能转成闪卡
+ *
+ * 不做：deck / 笔记反链显示、滑动跳过、长按标记
  */
 
 type GradeRating = Rating.Again | Rating.Hard | Rating.Good | Rating.Easy;
@@ -145,6 +148,7 @@ export function MobileCards() {
   const progressPct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
   const [statsOpen, setStatsOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   const [stats, setStats] = useState<CardStats | null>(null);
 
   function openStats() {
@@ -166,9 +170,14 @@ export function MobileCards() {
           title="闪卡复习"
           subtitle={`FSRS · 待复习 ${queue.length} 张`}
           actions={
-            <button type="button" aria-label="统计" className="m-icon-btn" onClick={openStats}>
-              <BarChart3 size={20} />
-            </button>
+            <>
+              <button type="button" aria-label="新建闪卡" className="m-icon-btn" onClick={() => setCreateOpen(true)}>
+                <Plus size={22} />
+              </button>
+              <button type="button" aria-label="统计" className="m-icon-btn" onClick={openStats}>
+                <BarChart3 size={20} />
+              </button>
+            </>
           }
         />
       </div>
@@ -191,7 +200,7 @@ export function MobileCards() {
         {loading ? (
           <div className="m-t-meta flex flex-1 items-center justify-center">加载中…</div>
         ) : !current ? (
-          <DoneState completed={completed} onAgain={load} />
+          <DoneState completed={completed} onAgain={load} onCreate={() => setCreateOpen(true)} />
         ) : (
           <>
             {/* 卡片 */}
@@ -229,6 +238,9 @@ export function MobileCards() {
           </>
         )}
       </main>
+
+      {/* 新建后若当前队列已空就重新拉一次，新卡立即可复习；正在复习时不打断队列 */}
+      <CardCreateSheet open={createOpen} onClose={() => setCreateOpen(false)} onCreated={() => !current && void load()} />
 
       <MSheet open={statsOpen} title="复习统计" caption="FSRS 按记忆曲线安排每张卡的下次复习时间" onClose={() => setStatsOpen(false)}>
         <div className="m-group">
@@ -297,17 +309,22 @@ function RateButton({
   );
 }
 
-function DoneState({ completed, onAgain }: { completed: number; onAgain: () => void }) {
+function DoneState({ completed, onAgain, onCreate }: { completed: number; onAgain: () => void; onCreate: () => void }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
       <Sparkles size={44} style={{ color: "var(--m-accent)" }} />
       <div className="text-[20px] font-bold" style={{ color: "var(--m-ink)" }}>
         {completed > 0 ? `今日已复习 ${completed} 张 🎉` : "今天没有待复习的闪卡"}
       </div>
-      <div className="m-t-meta">{completed > 0 ? "明天见，FSRS 会自动安排下一轮" : "去笔记里把段落转成卡片吧"}</div>
-      <button type="button" onClick={onAgain} className="m-btn mt-4" style={{ background: "var(--m-accent-soft2)", color: "var(--m-accent-ink)" }}>
-        重新加载
-      </button>
+      <div className="m-t-meta">{completed > 0 ? "明天见，FSRS 会自动安排下一轮" : "点右上角「＋」新建，或在笔记里选中文字转成闪卡"}</div>
+      <div className="mt-4 flex items-center gap-3">
+        <button type="button" onClick={onCreate} className="m-btn">
+          新建闪卡
+        </button>
+        <button type="button" onClick={onAgain} className="m-btn" style={{ background: "var(--m-accent-soft2)", color: "var(--m-accent-ink)" }}>
+          重新加载
+        </button>
+      </div>
     </div>
   );
 }

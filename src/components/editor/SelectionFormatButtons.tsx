@@ -1,6 +1,6 @@
 /**
  * 选中文字后浮条里的格式按钮：加粗 / 斜体 / 下划线 / 删除线 / 高亮 / 行内代码，
- * 后面跟复制 / 剪切。
+ * 后面跟复制 / 剪切，闪卡模块开着时再跟一个「转为闪卡」。
  *
  * 放在 AI 划词浮条最前面，跟 AI 提示词共用一条：选中文字后最常做的就是改格式，
  * 不用再回到顶部工具栏去找。AI 功能关掉时浮条只剩这一组。
@@ -19,6 +19,7 @@ import {
   Scissors,
   Highlighter,
   Italic,
+  Layers,
   Strikethrough,
   Underline as UnderlineIcon,
 } from "lucide-react";
@@ -69,7 +70,14 @@ const ITEMS: FormatItem[] = [
   },
 ];
 
-export function SelectionFormatButtons({ editor }: { editor: Editor }) {
+export function SelectionFormatButtons({
+  editor,
+  onMakeCard,
+}: {
+  editor: Editor;
+  /** 选中文字转为闪卡（正面 = 选中的纯文本）；不传则不显示按钮 */
+  onMakeCard?: (text: string) => void;
+}) {
   const { token } = antdTheme.useToken();
   // 复制后图标短暂变对勾，不弹 toast（浮条就在手边，弹窗反而挡视线）
   const [copied, setCopied] = useState(false);
@@ -177,6 +185,32 @@ export function SelectionFormatButtons({ editor }: { editor: Editor }) {
             onClick={() => runClipboard("cut")}
           >
             <Scissors size={13} />
+          </button>
+        </Tooltip>
+      )}
+      {onMakeCard && (
+        <Tooltip title="转为闪卡" mouseEnterDelay={0.3}>
+          <button
+            type="button"
+            aria-label="转为闪卡"
+            className="flex items-center justify-center rounded hover:bg-black/5 transition-colors"
+            style={{
+              width: 24,
+              height: 24,
+              flexShrink: 0,
+              border: "none",
+              cursor: "pointer",
+              background: "transparent",
+              color: token.colorText,
+            }}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              const { from, to } = editor.state.selection;
+              const text = editor.state.doc.textBetween(from, to, "\n").trim();
+              if (text) onMakeCard(text);
+            }}
+          >
+            <Layers size={13} />
           </button>
         </Tooltip>
       )}

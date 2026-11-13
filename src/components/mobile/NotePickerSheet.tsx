@@ -67,7 +67,15 @@ export function NotePickerSheet({
 
   const isPicked = (id: number) => picked.some((p) => p.id === id);
   function toggle(n: PickedNote) {
-    setPicked((list) => (list.some((p) => p.id === n.id) ? list.filter((p) => p.id !== n.id) : list.length >= max ? list : [...list, n]));
+    setPicked((list) =>
+      list.some((p) => p.id === n.id)
+        ? list.filter((p) => p.id !== n.id)
+        : max === 1
+          ? [n] // 单选：直接换成新点的那篇，不必先取消旧的
+          : list.length >= max
+            ? list
+            : [...list, n],
+    );
   }
 
   const rows: PickedNote[] = q.trim() ? results.map((r) => ({ id: r.id, title: r.title || "未命名笔记" })) : picked;
