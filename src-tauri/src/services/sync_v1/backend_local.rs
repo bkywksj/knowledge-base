@@ -224,6 +224,10 @@ mod tests {
             projects: vec![],
             tasks: vec![],
             task_categories: vec![],
+            cards: vec![],
+            card_review_logs: vec![],
+            prompts: vec![],
+            note_templates: vec![],
         };
         backend.write_manifest(&m).unwrap();
         let got = backend.read_manifest().unwrap().expect("应能读回 manifest");

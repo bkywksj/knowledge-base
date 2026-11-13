@@ -378,6 +378,25 @@ pub fn compute_local_manifest(
         Vec::new()
     });
 
+    // v72：闪卡 / 复习记录 / 提示词 / 笔记模板
+    use super::content_sync as cs;
+    let cards = cs::build_card_entries(db).unwrap_or_else(|e| {
+        log::warn!("[manifest] 读取 cards 失败 ({}), 留空", e);
+        Vec::new()
+    });
+    let card_review_logs = cs::build_card_log_entries(db).unwrap_or_else(|e| {
+        log::warn!("[manifest] 读取 card_review_logs 失败 ({}), 留空", e);
+        Vec::new()
+    });
+    let prompts = cs::build_prompt_entries(db).unwrap_or_else(|e| {
+        log::warn!("[manifest] 读取 prompt_templates 失败 ({}), 留空", e);
+        Vec::new()
+    });
+    let note_templates = cs::build_note_template_entries(db).unwrap_or_else(|e| {
+        log::warn!("[manifest] 读取 note_templates 失败 ({}), 留空", e);
+        Vec::new()
+    });
+
     Ok(SyncManifestV1 {
         manifest_version: SyncManifestV1::VERSION,
         app_version: app_version.to_string(),
@@ -390,6 +409,10 @@ pub fn compute_local_manifest(
         projects,
         tasks,
         task_categories,
+        cards,
+        card_review_logs,
+        prompts,
+        note_templates,
     })
 }
 
@@ -581,6 +604,11 @@ pub struct ManifestDiff {
     /// 任务分类（无 tombstone；按 content_hash 不同判别）
     pub task_categories_to_push: Vec<TaskCategoryManifestEntry>,
     pub task_categories_to_pull: Vec<TaskCategoryManifestEntry>,
+    // ─── v72：闪卡 / 复习记录 / 提示词 / 笔记模板（只记要拉的；推送靠 merge_manifests 整份写）───
+    pub cards_to_pull: Vec<crate::models::CardManifestEntry>,
+    pub card_logs_to_pull: Vec<crate::models::CardReviewLogManifestEntry>,
+    pub prompts_to_pull: Vec<crate::models::PromptManifestEntry>,
+    pub note_templates_to_pull: Vec<crate::models::NoteTemplateManifestEntry>,
 }
 
 #[derive(Debug)]
@@ -700,6 +728,10 @@ pub fn merge_manifests(local: &SyncManifestV1, remote: &SyncManifestV1) -> SyncM
         projects,
         tasks,
         task_categories,
+        cards: super::content_sync::merge_cards(&local.cards, &remote.cards),
+        card_review_logs: super::content_sync::merge_card_logs(&local.card_review_logs, &remote.card_review_logs),
+        prompts: super::content_sync::merge_prompts(&local.prompts, &remote.prompts),
+        note_templates: super::content_sync::merge_note_templates(&local.note_templates, &remote.note_templates),
     }
 }
 
@@ -911,6 +943,12 @@ pub fn diff_manifests(local: &SyncManifestV1, remote: &SyncManifestV1) -> Manife
     diff_tasks(&local.tasks, &remote.tasks, &mut diff);
     diff_task_categories(&local.task_categories, &remote.task_categories, &mut diff);
 
+    use super::content_sync as cs;
+    diff.cards_to_pull = cs::diff_cards(&local.cards, &remote.cards);
+    diff.card_logs_to_pull = cs::diff_card_logs(&local.card_review_logs, &remote.card_review_logs);
+    diff.prompts_to_pull = cs::diff_prompts(&local.prompts, &remote.prompts);
+    diff.note_templates_to_pull = cs::diff_note_templates(&local.note_templates, &remote.note_templates);
+
     diff
 }
 
@@ -1076,6 +1114,10 @@ mod tests {
             projects: vec![],
             tasks: vec![],
             task_categories: vec![],
+            cards: vec![],
+            card_review_logs: vec![],
+            prompts: vec![],
+            note_templates: vec![],
         }
     }
 
@@ -1621,6 +1663,10 @@ mod tests {
             projects: vec![],
             tasks: vec![],
             task_categories: vec![],
+            cards: vec![],
+            card_review_logs: vec![],
+            prompts: vec![],
+            note_templates: vec![],
         };
         let json = serde_json::to_string(&m).unwrap();
         assert!(!json.contains("hashAlgo"), "None 时不应输出该字段; got = {}", json);
@@ -2371,6 +2417,10 @@ mod folder_move_tests {
             projects: vec![],
             tasks: vec![],
             task_categories: vec![],
+            cards: vec![],
+            card_review_logs: vec![],
+            prompts: vec![],
+            note_templates: vec![],
         }
     }
 

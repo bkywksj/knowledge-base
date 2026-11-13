@@ -790,6 +790,13 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
     apply_pulled_projects(db, &diff.projects_to_pull, &mut result);
     apply_pulled_tasks(db, &diff.tasks_to_pull, &mut result);
 
+    // v72：卡片在笔记之后（note_uuid 要能解析）、复习记录之前（记录要挂到卡片上）
+    use super::content_sync as cs;
+    cs::apply_pulled_cards(db, &diff.cards_to_pull, &mut result);
+    cs::apply_pulled_card_logs(db, &diff.card_logs_to_pull, &mut result);
+    cs::apply_pulled_prompts(db, &diff.prompts_to_pull, &mut result);
+    cs::apply_pulled_note_templates(db, &diff.note_templates_to_pull, &mut result);
+
     db.touch_sync_backend_pull(backend_id)?;
 
     let _ = emitter.emit(

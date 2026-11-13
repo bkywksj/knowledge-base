@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 71;
+pub const SCHEMA_VERSION: i32 = 72;
 
 /// `ai_models.max_context` 的历史默认值。v51 把旧默认 32000 统一抬到它，此后新建也默认填它 ——
 /// 所以存量里的 128000 分不清是用户填的还是默认值，v62 一律当作「未设置」。
@@ -111,6 +111,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             68 => migrate_v68_to_v69(conn)?,
             69 => migrate_v69_to_v70(conn)?,
             70 => migrate_v70_to_v71(conn)?,
+            71 => migrate_v71_to_v72(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2593,6 +2594,138 @@ fn migrate_v67_to_v68(conn: &Connection) -> Result<(), AppError> {
     }
 
     set_version(conn, 68)?;
+    Ok(())
+}
+
+/// 在 SQL 里生成 UUID v4 字符串。给触发器用：所有 INSERT 路径（含以后新加的）都能自动拿到
+/// stable_uuid，不用每个 DAO 都记得写这一列（笔记 v64 之前就因为 MCP 漏写出过永不同步的行）。
+const SQL_UUID_V4: &str = "lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || \
+     substr(lower(hex(randomblob(2))), 2) || '-' || substr('89ab', 1 + (abs(random()) % 4), 1) || \
+     substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6)))";
+
+/// 迁移 v0→v1 预置的四个笔记模板。它们在每台设备上各插一份，
+/// stable_id 用 `preset:<名称>` 固定下来，同步后才不会每端各多出一套。
+const PRESET_NOTE_TEMPLATES: [&str; 4] = ["会议记录", "读书笔记", "周报", "项目文档"];
+
+/// v71 -> v72：闪卡 / 复习记录 / 提示词 / 笔记模板加入多端同步。
+///
+/// - 四张表加 `stable_uuid`（跨端识别），回填存量，INSERT 触发器给新行自动填
+/// - 内置提示词 = `builtin:<code>`、预置笔记模板 = `preset:<名称>`：各端各自插入的同一份内置数据能对上
+/// - `note_templates` 补 `updated_at`（多端谁新用谁），存量回填为 created_at
+/// - 提示词 / 笔记模板是物理删除，靠 DELETE 触发器把删除记进 `sync_tombstones`，同步时传给其他端；
+///   闪卡本来就是软删（is_deleted），不需要
+fn migrate_v71_to_v72(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v71 -> v72 (闪卡 / 提示词 / 笔记模板加入多端同步)");
+
+    for table in ["cards", "card_review_logs", "prompt_templates", "note_templates"] {
+        let cols = list_columns(conn, table)?;
+        if !cols.iter().any(|c| c == "stable_uuid") {
+            conn.execute_batch(&format!("ALTER TABLE {} ADD COLUMN stable_uuid TEXT;", table))?;
+        }
+    }
+    let cols = list_columns(conn, "note_templates")?;
+    if !cols.iter().any(|c| c == "updated_at") {
+        // ADD COLUMN 不允许非常量默认值，所以不带 DEFAULT，靠回填 + 触发器 + DAO 维护
+        conn.execute_batch("ALTER TABLE note_templates ADD COLUMN updated_at TEXT;")?;
+    }
+
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE prompt_templates SET stable_uuid = 'builtin:' || builtin_code
+         WHERE stable_uuid IS NULL AND builtin_code IS NOT NULL",
+        [],
+    )?;
+    for name in PRESET_NOTE_TEMPLATES {
+        let stable = format!("preset:{}", name);
+        tx.execute(
+            "UPDATE note_templates SET stable_uuid = ?1
+             WHERE id = (SELECT MIN(id) FROM note_templates WHERE name = ?2 AND stable_uuid IS NULL)
+               AND NOT EXISTS (SELECT 1 FROM note_templates WHERE stable_uuid = ?1)",
+            rusqlite::params![stable, name],
+        )?;
+    }
+    tx.execute(
+        "UPDATE note_templates SET updated_at = created_at WHERE updated_at IS NULL",
+        [],
+    )?;
+    let mut filled = 0usize;
+    for table in ["cards", "card_review_logs", "prompt_templates", "note_templates"] {
+        let ids: Vec<i64> = {
+            let mut stmt =
+                tx.prepare(&format!("SELECT id FROM {} WHERE stable_uuid IS NULL", table))?;
+            let rows = stmt.query_map([], |r| r.get::<_, i64>(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        for id in ids {
+            tx.execute(
+                &format!("UPDATE {} SET stable_uuid = ?1 WHERE id = ?2", table),
+                rusqlite::params![uuid::Uuid::new_v4().to_string(), id],
+            )?;
+            filled += 1;
+        }
+    }
+    tx.commit()?;
+    log::info!("[v72] 回填 {} 行 stable_uuid", filled);
+
+    conn.execute_batch(&format!(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_cards_stable_uuid
+            ON cards(stable_uuid) WHERE stable_uuid IS NOT NULL;
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_card_logs_stable_uuid
+            ON card_review_logs(stable_uuid) WHERE stable_uuid IS NOT NULL;
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_prompt_templates_stable_uuid
+            ON prompt_templates(stable_uuid) WHERE stable_uuid IS NOT NULL;
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_note_templates_stable_uuid
+            ON note_templates(stable_uuid) WHERE stable_uuid IS NOT NULL;
+
+         CREATE TRIGGER IF NOT EXISTS cards_fill_stable_uuid
+         AFTER INSERT ON cards WHEN NEW.stable_uuid IS NULL
+         BEGIN
+             UPDATE cards SET stable_uuid = {uuid} WHERE id = NEW.id;
+         END;
+         CREATE TRIGGER IF NOT EXISTS card_logs_fill_stable_uuid
+         AFTER INSERT ON card_review_logs WHEN NEW.stable_uuid IS NULL
+         BEGIN
+             UPDATE card_review_logs SET stable_uuid = {uuid} WHERE id = NEW.id;
+         END;
+         CREATE TRIGGER IF NOT EXISTS prompt_templates_fill_stable_uuid
+         AFTER INSERT ON prompt_templates WHEN NEW.stable_uuid IS NULL
+         BEGIN
+             UPDATE prompt_templates SET stable_uuid = CASE
+                 WHEN NEW.builtin_code IS NOT NULL THEN 'builtin:' || NEW.builtin_code
+                 ELSE {uuid} END
+             WHERE id = NEW.id;
+         END;
+         CREATE TRIGGER IF NOT EXISTS note_templates_fill_sync_cols
+         AFTER INSERT ON note_templates WHEN NEW.stable_uuid IS NULL OR NEW.updated_at IS NULL
+         BEGIN
+             UPDATE note_templates SET
+                 stable_uuid = COALESCE(NEW.stable_uuid, {uuid}),
+                 updated_at = COALESCE(NEW.updated_at, NEW.created_at)
+             WHERE id = NEW.id;
+         END;
+
+         CREATE TABLE IF NOT EXISTS sync_tombstones (
+             kind        TEXT NOT NULL,
+             stable_uuid TEXT NOT NULL,
+             deleted_at  TEXT NOT NULL,
+             PRIMARY KEY (kind, stable_uuid)
+         );
+         CREATE TRIGGER IF NOT EXISTS prompt_templates_tombstone
+         AFTER DELETE ON prompt_templates WHEN OLD.stable_uuid IS NOT NULL
+         BEGIN
+             INSERT OR REPLACE INTO sync_tombstones (kind, stable_uuid, deleted_at)
+             VALUES ('prompt', OLD.stable_uuid, datetime('now', 'localtime'));
+         END;
+         CREATE TRIGGER IF NOT EXISTS note_templates_tombstone
+         AFTER DELETE ON note_templates WHEN OLD.stable_uuid IS NOT NULL
+         BEGIN
+             INSERT OR REPLACE INTO sync_tombstones (kind, stable_uuid, deleted_at)
+             VALUES ('note_template', OLD.stable_uuid, datetime('now', 'localtime'));
+         END;",
+        uuid = SQL_UUID_V4
+    ))?;
+
+    set_version(conn, 72)?;
     Ok(())
 }
 

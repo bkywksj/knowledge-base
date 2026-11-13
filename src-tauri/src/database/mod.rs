@@ -24,6 +24,7 @@ pub mod search;
 pub mod snapshots;
 pub mod sync;
 pub mod sync_v1;
+pub mod sync_content;
 pub mod tags;
 pub mod projects;
 pub mod task_attachments;

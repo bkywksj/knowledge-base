@@ -131,6 +131,10 @@ pub fn push<R: Runtime, E: Emitter<R>>(
         projects: vec![],
         tasks: vec![],
         task_categories: vec![],
+        cards: vec![],
+        card_review_logs: vec![],
+        prompts: vec![],
+        note_templates: vec![],
     });
 
     let diff = manifest::diff_manifests(&local, &remote);
@@ -528,6 +532,10 @@ pub fn push<R: Runtime, E: Emitter<R>>(
         projects: vec![],
         tasks: vec![],
         task_categories: vec![],
+        cards: vec![],
+        card_review_logs: vec![],
+        prompts: vec![],
+        note_templates: vec![],
     };
 
     // Critical 修复：写 manifest 用的本地视图 —— 剔除本轮上传失败的笔记 / 附件。
@@ -764,6 +772,10 @@ mod tests {
             projects: vec![],
             tasks: vec![],
             task_categories: vec![],
+            cards: vec![],
+            card_review_logs: vec![],
+            prompts: vec![],
+            note_templates: vec![],
         }
     }
 

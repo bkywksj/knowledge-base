@@ -75,7 +75,8 @@ impl Database {
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
         let affected = conn.execute(
-            "UPDATE note_templates SET name = ?1, description = ?2, content = ?3 WHERE id = ?4",
+            "UPDATE note_templates SET name = ?1, description = ?2, content = ?3, \
+             updated_at = datetime('now', 'localtime') WHERE id = ?4",
             rusqlite::params![input.name, input.description, input.content, id],
         )?;
         if affected == 0 {

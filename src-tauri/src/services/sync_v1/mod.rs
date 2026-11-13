@@ -15,6 +15,7 @@ pub mod attachment_scan;
 pub mod backend;
 pub mod backend_local;
 pub mod conflicts;
+pub mod content_sync;
 pub mod lock;
 // S3 backend（T-M026 起桌面/移动端统一可用）：改用 rusty-s3 纯签名 + 全局 reqwest 执行，
 // 不再依赖 rust-s3 的 openssl，Android 也能编译。

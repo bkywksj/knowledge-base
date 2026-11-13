@@ -2269,7 +2269,23 @@ pub struct SyncManifestV1 {
     /// 空 Vec 不序列化保兼容。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub task_categories: Vec<TaskCategoryManifestEntry>,
+    /// v72：闪卡。空 Vec 不序列化保兼容；旧客户端读到也忽略。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cards: Vec<CardManifestEntry>,
+    /// v72：闪卡复习记录（只带最近 [`CARD_LOG_RETENTION_DAYS`] 天）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub card_review_logs: Vec<CardReviewLogManifestEntry>,
+    /// v72：AI 提示词模板。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prompts: Vec<PromptManifestEntry>,
+    /// v72：笔记模板。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub note_templates: Vec<NoteTemplateManifestEntry>,
 }
+
+/// 复习记录在 manifest 里保留的天数。manifest 每次同步都整份读写，
+/// 记录只增不减，全量带上会让它越来越大；更早的记录只留在各自本机。
+pub const CARD_LOG_RETENTION_DAYS: i64 = 365;
 
 impl SyncManifestV1 {
     pub const VERSION: u32 = 1;
@@ -2392,6 +2408,88 @@ pub struct TaskCategoryManifestEntry {
     /// 旧版本客户端不认识这个字段会直接忽略（serde default），只是看到的是平铺列表
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_stable_id: Option<String>,
+}
+
+/// v72：闪卡跨端同步条目（正反面 + FSRS 调度状态）。
+///
+/// 整条按 `updated_at` 新者赢；但调度字段单独按 `last_review` 晚者取（见 manifest::adopt_newer_schedule），
+/// 否则「电脑上改了正面、手机上随后复习了一次」会让其中一边的改动丢掉。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardManifestEntry {
+    pub stable_id: String,
+    pub content_hash: String,
+    pub updated_at: String,
+    pub front: String,
+    pub back: String,
+    pub deck: String,
+    /// 关联笔记的 stable_uuid；本端找不到这篇笔记时落 NULL
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note_uuid: Option<String>,
+    pub due: String,
+    pub stability: f64,
+    pub difficulty: f64,
+    pub elapsed_days: i64,
+    pub scheduled_days: i64,
+    pub reps: i64,
+    pub lapses: i64,
+    pub state: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_review: Option<String>,
+    #[serde(default)]
+    pub tombstone: bool,
+}
+
+/// v72：闪卡复习记录。只增不改，按 stable_id 取并集；卡片在本端不存在时跳过。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardReviewLogManifestEntry {
+    pub stable_id: String,
+    pub card_uuid: String,
+    pub rating: i64,
+    pub state: i64,
+    pub due: String,
+    pub stability: f64,
+    pub difficulty: f64,
+    pub elapsed_days: i64,
+    pub last_elapsed_days: i64,
+    pub scheduled_days: i64,
+    pub review: String,
+}
+
+/// v72：AI 提示词模板。内置模板的 stable_id 固定为 `builtin:<code>`，各端天然对得上。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptManifestEntry {
+    pub stable_id: String,
+    pub content_hash: String,
+    pub updated_at: String,
+    pub title: String,
+    pub description: String,
+    pub prompt: String,
+    pub output_mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builtin_code: Option<String>,
+    pub sort_order: i32,
+    pub enabled: bool,
+    #[serde(default)]
+    pub tombstone: bool,
+}
+
+/// v72：笔记模板。预置的四个模板 stable_id 固定为 `preset:<名称>`，避免同步后每端各多出一套。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteTemplateManifestEntry {
+    pub stable_id: String,
+    pub content_hash: String,
+    pub updated_at: String,
+    pub name: String,
+    pub description: String,
+    pub content: String,
+    #[serde(default)]
+    pub tombstone: bool,
 }
 
 /// 推送结果

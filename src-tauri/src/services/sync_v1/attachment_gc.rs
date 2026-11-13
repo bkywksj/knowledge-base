@@ -242,6 +242,10 @@ mod tests {
             projects: vec![],
             tasks: vec![],
             task_categories: vec![],
+            cards: vec![],
+            card_review_logs: vec![],
+            prompts: vec![],
+            note_templates: vec![],
         };
         backend.write_manifest(&manifest).unwrap();
 
@@ -312,6 +316,10 @@ mod tests {
             projects: vec![],
             tasks: vec![],
             task_categories: vec![],
+            cards: vec![],
+            card_review_logs: vec![],
+            prompts: vec![],
+            note_templates: vec![],
         };
         backend.write_manifest(&manifest_empty).unwrap();
         let db = Database::init(":memory:").unwrap();
