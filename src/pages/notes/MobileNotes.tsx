@@ -461,7 +461,7 @@ export function MobileNotes() {
           </div>
 
           {/* 文件夹 */}
-          {(subfolders.length > 0 || isRoot) && (
+          {!isUncategorized && (
             <div className="m-gutter mt-3">
               <MGroup>
                 {subfolders.map((f) => (
@@ -476,12 +476,15 @@ export function MobileNotes() {
                     <ChevronRight size={16} style={{ color: "var(--m-ink4)" }} />
                   </button>
                 )}
-              </MGroup>
-              {isRoot && folders.length === 0 && (
-                <button type="button" className="m-t-meta mt-1 flex min-h-[44px] items-center gap-1" onClick={() => setPrompt({ kind: "new-folder", parentId: null })}>
-                  <FolderPlus size={14} /> 还没有文件夹，点这里新建
+                {/* 常驻入口：旧版只在一个文件夹都没有时给提示链接，建完第一个就没处再建一级文件夹了（用户反馈）。
+                    根目录建一级文件夹，进了某个文件夹则建它的子文件夹 */}
+                <button type="button" className="m-row m-row-icon" style={{ color: "var(--m-accent-ink)" }} onClick={() => setPrompt({ kind: "new-folder", parentId: folderId })}>
+                  <span className="flex w-6 shrink-0 justify-center">
+                    <FolderPlus size={21} />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[15px]">{isRoot ? "新建文件夹" : "新建子文件夹"}</span>
                 </button>
-              )}
+              </MGroup>
             </div>
           )}
 

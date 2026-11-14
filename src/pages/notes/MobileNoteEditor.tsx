@@ -1,6 +1,9 @@
 import { lazy, Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   Bold,
   ChevronLeft,
   CirclePlus,
@@ -736,6 +739,17 @@ export function MobileNoteEditor() {
           </FmtBtn>
           <FmtBtn label="高亮" active={editor.isActive("highlight")} onClick={() => editor.chain().focus().toggleHighlight().run()}>
             <Highlighter size={20} />
+          </FmtBtn>
+          {/* 对齐：一个按钮轮换 左 → 居中 → 右（格式条放不下三个），图标显示当前对齐方式；PC 工具栏同一套 TextAlign */}
+          <FmtBtn
+            label={editor.isActive({ textAlign: "center" }) ? "右对齐" : editor.isActive({ textAlign: "right" }) ? "左对齐" : "居中"}
+            active={editor.isActive({ textAlign: "center" }) || editor.isActive({ textAlign: "right" })}
+            onClick={() => {
+              const next = editor.isActive({ textAlign: "center" }) ? "right" : editor.isActive({ textAlign: "right" }) ? "left" : "center";
+              editor.chain().focus().setTextAlign(next).run();
+            }}
+          >
+            {editor.isActive({ textAlign: "center" }) ? <AlignCenter size={20} /> : editor.isActive({ textAlign: "right" }) ? <AlignRight size={20} /> : <AlignLeft size={20} />}
           </FmtBtn>
           <FmtBtn label="插入图片" onClick={() => imageInputRef.current?.click()}>
             <ImageIcon size={20} />
