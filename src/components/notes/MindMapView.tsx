@@ -166,9 +166,10 @@ export function MindMapView({
     void mm.renderData();
   }, [paletteKey]);
 
-  // 全屏切换时 markmap 容器尺寸变了——延一帧 fit 重新撑满，避免内容偏在角落
+  // 全屏切换时容器尺寸变了——延一帧 fit 重新撑满，避免内容偏在角落。
+  // 不能以 mmRef 判空提前返回：编辑模式下 markmap 实例已销毁，那样导图编辑器永远不会重新适应（实测全屏后偏到一边）
   useEffect(() => {
-    if (!open || !mmRef.current) return;
+    if (!open) return;
     const raf = requestAnimationFrame(() => {
       void mmRef.current?.fit();
       editorRef.current?.fit();
