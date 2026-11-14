@@ -41,13 +41,19 @@ const HOST_LEASE_WAIT: Duration = Duration::from_secs(30);
 /// 局域网同步运行时状态（放在 AppState 里）
 pub struct LanSyncState {
     server: Mutex<Option<RunningLanServer>>,
+    /// mDNS 广播（和服务同生命周期；广播失败不影响服务，这里就是 None）
+    advertiser: Mutex<Option<crate::services::lan_discovery::Advertiser>>,
     /// 中转库目录的写租约：服务端和电脑端同步共用这一把
     pub lease: VaultLease,
 }
 
 impl Default for LanSyncState {
     fn default() -> Self {
-        Self { server: Mutex::new(None), lease: VaultLease::new(Duration::from_secs(LEASE_TTL_SECS)) }
+        Self {
+            server: Mutex::new(None),
+            advertiser: Mutex::new(None),
+            lease: VaultLease::new(Duration::from_secs(LEASE_TTL_SECS)),
+        }
     }
 }
 
@@ -145,21 +151,32 @@ impl LanSyncState {
         self.stop().await;
         let vault = vault_root(data_dir);
         ensure_host_backend(db, &vault)?;
+        let identity = ensure_identity(db)?;
+        let fingerprint = cert_fingerprint(&identity.cert_der);
         let params = lan_server::StartParams {
             vault_root: vault,
             // 监听所有网卡：手机从局域网连进来。首次监听 Windows 会弹防火墙询问，需用户允许
             bind: ([0, 0, 0, 0], port(db)).into(),
             token: ensure_token(db)?,
             device_name: device_name(),
-            identity: ensure_identity(db)?,
+            identity,
             lease: self.lease.clone(),
         };
         let running = lan_server::start(params).await?;
+        let bound_port = running.addr.port();
         *self.server.lock().await = Some(running);
+
+        // 广播本机，手机换 IP 后按指纹找回来；失败只记日志（服务照常可用，换 IP 后重新扫码即可）
+        match crate::services::lan_discovery::advertise(&device_name(), &fingerprint, bound_port) {
+            Ok(a) => *self.advertiser.lock().await = Some(a),
+            Err(e) => log::warn!("[lan-sync] mDNS 广播失败（不影响同步）: {e}"),
+        }
         Ok(())
     }
 
     pub async fn stop(&self) {
+        // 先停广播再停服务：别让手机找到一个已经关掉的地址
+        self.advertiser.lock().await.take();
         if let Some(s) = self.server.lock().await.take() {
             s.stop();
         }
@@ -219,20 +236,43 @@ pub fn reset_token(db: &Database) -> Result<(), AppError> {
     Ok(())
 }
 
-/// 本机局域网 IPv4。用「UDP connect 到公网地址」拿出口网卡地址：不真的发包，
-/// 断网时也能拿到局域网地址（只要有默认路由）；拿不到就空，界面提示用户手动查
+/// 本机所有可用于局域网的 IPv4（配对二维码里带上，手机挨个试）。
+/// 多网卡 / VPN 时不止一个：默认路由那块网卡排第一（最可能和手机同网），其余私网地址随后
 pub fn lan_ipv4_hosts() -> Vec<String> {
-    let sock = match std::net::UdpSocket::bind("0.0.0.0:0") {
-        Ok(s) => s,
-        Err(_) => return vec![],
-    };
-    if sock.connect("223.5.5.5:53").is_err() {
-        return vec![];
+    let all: Vec<std::net::Ipv4Addr> = if_addrs::get_if_addrs()
+        .map(|ifs| {
+            ifs.into_iter()
+                .filter_map(|i| match i.ip() {
+                    std::net::IpAddr::V4(v4) => Some(v4),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    order_hosts(default_route_ipv4(), all)
+}
+
+/// 出口网卡地址：UDP connect 到公网地址只选路、不真的发包，断网时只要有默认路由也能拿到
+fn default_route_ipv4() -> Option<std::net::Ipv4Addr> {
+    let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("223.5.5.5:53").ok()?;
+    match sock.local_addr().ok()?.ip() {
+        std::net::IpAddr::V4(v4) => Some(v4),
+        _ => None,
     }
-    match sock.local_addr() {
-        Ok(a) if !a.ip().is_loopback() && !a.ip().is_unspecified() => vec![a.ip().to_string()],
-        _ => vec![],
+}
+
+/// 过滤并排序：只留私网地址（10/8、172.16/12、192.168/16），去掉回环 / 169.254 自动地址；
+/// 默认路由地址排第一，其余按地址排序去重
+fn order_hosts(default: Option<std::net::Ipv4Addr>, all: Vec<std::net::Ipv4Addr>) -> Vec<String> {
+    let mut v: Vec<std::net::Ipv4Addr> = all.into_iter().filter(|ip| ip.is_private()).collect();
+    v.sort();
+    v.dedup();
+    if let Some(d) = default.filter(|d| d.is_private()) {
+        v.retain(|ip| *ip != d);
+        v.insert(0, d);
     }
+    v.into_iter().map(|ip| ip.to_string()).collect()
 }
 
 /// 电脑同步「本机中转」源时持有的租约；Drop 自动释放
@@ -275,6 +315,27 @@ mod tests {
 
     fn db() -> Database {
         Database::init(":memory:").unwrap()
+    }
+
+    #[test]
+    fn hosts_keep_private_lan_only_with_default_route_first() {
+        let ip = |s: &str| s.parse::<std::net::Ipv4Addr>().unwrap();
+        let all = vec![
+            ip("127.0.0.1"),
+            ip("169.254.3.4"),
+            ip("192.168.1.23"),
+            ip("10.8.0.2"),
+            ip("8.8.8.8"),
+            ip("172.20.1.5"),
+            ip("192.168.1.23"),
+        ];
+        assert_eq!(
+            order_hosts(Some(ip("192.168.1.23")), all.clone()),
+            vec!["192.168.1.23", "10.8.0.2", "172.20.1.5"]
+        );
+        // 默认路由不是私网地址（比如直接拨号拿到公网 IP）就不放进来
+        assert_eq!(order_hosts(Some(ip("8.8.8.8")), all), vec!["10.8.0.2", "172.20.1.5", "192.168.1.23"]);
+        assert!(order_hosts(None, vec![ip("127.0.0.1")]).is_empty());
     }
 
     #[test]

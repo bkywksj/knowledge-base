@@ -35,8 +35,14 @@
   - 二维码内容 = `{t:"kb-lan", v:1, name, hosts, port, fp, token}`
   - 单测 +4（身份 / 令牌稳定、中转源重建、二维码字段、租约只对中转源生效）；界面用假数据在浏览器挂载验收
   - **未在真机上开过服务**：开启会监听 0.0.0.0，Windows 会弹防火墙询问，留给用户自己试
-  - 已知限制：本机地址只取出口网卡的一个 IPv4（有 VPN / 多网卡时可能不对），第 3 步 mDNS 解决
-- [ ] 第 3 步：mDNS 自动发现（电脑换 IP 后手机仍能找到）
+- [x] 第 3 步：mDNS 自动发现 + 多网卡地址
+  - `services/lan_discovery.rs`：服务开着时广播 `_kb-lan._tcp`，TXT 带完整证书指纹，实例名 = 设备名 + 指纹前 8 位；
+    地址交给 mdns-sd 按网卡自动填；`discover(指纹, 超时)` 供第 4 步手机端用
+  - 广播失败不影响同步服务（只是换 IP 后要重新扫码），只记日志；关服务时先停广播
+  - 二维码里的地址改为本机全部私网 IPv4（if-addrs），默认路由那块网卡排第一，去掉回环 / 169.254
+  - 单测 +3；真实组播收发测试默认 `#[ignore]`（会监听 UDP 5353，Windows 可能弹防火墙），
+    手动跑：`cargo test --manifest-path src-tauri/Cargo.toml --lib lan_discovery -- --ignored`
 - [ ] 第 4 步：手机端「局域网」同步方式 + 扫码（需真机）；同步流程开始 / 结束时 begin / end 租约；
-      手机同步完通知电脑立即合并
+      手机同步完通知电脑立即合并；连不上二维码里的地址时调 `lan_discovery::discover` 按指纹找
+      （mdns-sd 要挪到全平台依赖；Android 收组播需先申请 WifiManager.MulticastLock）
 - [ ] 第 5 步：真机联调、防火墙提示、电脑睡眠 / 换网的提示文案

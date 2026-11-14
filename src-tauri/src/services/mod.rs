@@ -67,6 +67,9 @@ pub mod lan_server;
 // 局域网同步电脑端编排：开关 / 配对 / 本机中转同步源 / 租约。仅桌面端
 #[cfg(desktop)]
 pub mod lan_sync;
+// 局域网同步 mDNS 广播 / 查找（换 IP 后按证书指纹找回电脑）。仅桌面端
+#[cfg(desktop)]
+pub mod lan_discovery;
 pub mod note;
 pub mod note_excerpt;
 #[cfg(desktop)]

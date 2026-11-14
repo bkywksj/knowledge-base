@@ -186,6 +186,10 @@ rcgen = { version = "0.13", default-features = false, features = ["ring", "pem",
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1.20", default-features = false, features = ["server", "http1", "tokio", "service"] }
+# 局域网同步：mDNS 广播本机服务（电脑换 IP 后手机按证书指纹仍能找到）；纯 Rust、不依赖异步运行时
+mdns-sd = "0.21"
+# 列出本机所有局域网 IPv4 给配对二维码（多网卡 / VPN 时不只一个）；与 mdns-sd 内部同版本，不重复编译
+if-addrs = "0.15"
 # Excel / ODS 解析（calamine 在 Android target 编译失败，先桌面端独享；
 # 移动端按 T-M013 改单文件导入流程后再决策）
 calamine = "0.28"
