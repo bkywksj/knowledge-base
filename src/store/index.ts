@@ -238,6 +238,8 @@ export const EDITOR_LAYOUT_DEFAULTS = {
   headingNumberSkipManual: true,
   /** 列表 / 大纲的层级引线 */
   guideLine: false,
+  /** 表格单元格内容垂直居中（默认顶端对齐） */
+  tableVCenter: false,
 };
 
 /**
@@ -448,6 +450,8 @@ interface AppStore {
   editorHeadingNumberSkipManual: boolean;
   /** 列表 / 大纲层级引线（持久化） */
   editorGuideLine: boolean;
+  /** 表格单元格内容垂直居中（持久化，纯显示层不写进 .md） */
+  editorTableVCenter: boolean;
   /**
    * 编辑器「高亮」快捷键（accelerator 字符串，如 "CommandOrControl+Shift+H"，持久化）。
    *
@@ -756,6 +760,8 @@ interface AppStore {
   setEditorHeadingNumberSkipManual: (on: boolean) => void;
   /** 切换列表 / 大纲层级引线 */
   setEditorGuideLine: (on: boolean) => void;
+  /** 切换表格内容垂直居中 */
+  setEditorTableVCenter: (on: boolean) => void;
   /** 设置编辑器高亮快捷键（accelerator 字符串；传空串 = 禁用高亮快捷键） */
   setEditorHighlightShortcut: (accel: string) => void;
   /** 设置全局界面缩放（自动 clamp 到 [UI_SCALE_MIN, UI_SCALE_MAX]，标记用户已手动设置） */
@@ -978,6 +984,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   editorHeadingNumberStartLevel: EDITOR_LAYOUT_DEFAULTS.headingNumberStartLevel,
   editorHeadingNumberSkipManual: EDITOR_LAYOUT_DEFAULTS.headingNumberSkipManual,
   editorGuideLine: EDITOR_LAYOUT_DEFAULTS.guideLine,
+  editorTableVCenter: EDITOR_LAYOUT_DEFAULTS.tableVCenter,
   editorHighlightShortcut: EDITOR_HIGHLIGHT_SHORTCUT_DEFAULT,
   uiScale: UI_SCALE_DEFAULT,
   uiScaleUserSet: false,
@@ -1343,6 +1350,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       editorHeadingNumberStartLevel: EDITOR_LAYOUT_DEFAULTS.headingNumberStartLevel,
       editorHeadingNumberSkipManual: EDITOR_LAYOUT_DEFAULTS.headingNumberSkipManual,
       editorGuideLine: EDITOR_LAYOUT_DEFAULTS.guideLine,
+      editorTableVCenter: EDITOR_LAYOUT_DEFAULTS.tableVCenter,
     }),
   setEditorReadingWidth: (w) => {
     const n = Math.round(Number(w) || 0);
@@ -1366,6 +1374,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setEditorHeadingNumberSkipManual: (on) =>
     set({ editorHeadingNumberSkipManual: !!on }),
   setEditorGuideLine: (on) => set({ editorGuideLine: !!on }),
+  setEditorTableVCenter: (on) => set({ editorTableVCenter: !!on }),
   setEditorHighlightShortcut: (accel) =>
     set({ editorHighlightShortcut: typeof accel === "string" ? accel.trim() : "" }),
   setUiScale: (scale) => {
@@ -1640,6 +1649,7 @@ export function applyEditorLayout(state: {
   editorFirstLineIndent: boolean;
   editorHeadingNumber: boolean;
   editorGuideLine: boolean;
+  editorTableVCenter: boolean;
 }) {
   const root = document.documentElement;
   if (state.editorReadingWidth > 0) {
@@ -1655,6 +1665,7 @@ export function applyEditorLayout(state: {
     state.editorHeadingNumber ? "1" : "0",
   );
   root.setAttribute("data-editor-guide-line", state.editorGuideLine ? "1" : "0");
+  root.setAttribute("data-editor-table-vcenter", state.editorTableVCenter ? "1" : "0");
 }
 
 /**
@@ -1918,6 +1929,10 @@ export async function loadThemeFromStore() {
     if (typeof egl === "boolean") {
       useAppStore.getState().setEditorGuideLine(egl);
     }
+    const etv = await store.get<boolean>("editorTableVCenter");
+    if (typeof etv === "boolean") {
+      useAppStore.getState().setEditorTableVCenter(etv);
+    }
     const ehn = await store.get<boolean>("editorHeadingNumber");
     if (typeof ehn === "boolean") {
       useAppStore.getState().setEditorHeadingNumber(ehn);
@@ -2131,6 +2146,7 @@ function collectPersistPayload(state: AppStore): Record<string, unknown> {
     editorHeadingNumberStartLevel: state.editorHeadingNumberStartLevel,
     editorHeadingNumberSkipManual: state.editorHeadingNumberSkipManual,
     editorGuideLine: state.editorGuideLine,
+    editorTableVCenter: state.editorTableVCenter,
     editorHighlightShortcut: state.editorHighlightShortcut,
     uiScale: state.uiScale,
     uiScaleUserSet: state.uiScaleUserSet,
@@ -2349,7 +2365,7 @@ useAppStore.subscribe((state) => {
 // 编辑器版面偏好变化时实时同步到 :root（变量 + data 属性），无需刷新
 let _prevLayoutKey = "";
 useAppStore.subscribe((state) => {
-  const key = `${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}|${state.editorHeadingNumber}|${state.editorGuideLine}`;
+  const key = `${state.editorReadingWidth}|${state.editorPaper}|${state.editorRuleLines}|${state.editorFirstLineIndent}|${state.editorHeadingNumber}|${state.editorGuideLine}|${state.editorTableVCenter}`;
   if (key !== _prevLayoutKey) {
     _prevLayoutKey = key;
     applyEditorLayout(state);

@@ -490,6 +490,8 @@ function DesktopSettingsPage() {
     (s) => s.editorHeadingNumberSkipManual,
   );
   const editorGuideLine = useAppStore((s) => s.editorGuideLine);
+  const editorTableVCenter = useAppStore((s) => s.editorTableVCenter);
+  const setEditorTableVCenter = useAppStore((s) => s.setEditorTableVCenter);
   const setEditorHeadingNumberFormat = useAppStore(
     (s) => s.setEditorHeadingNumberFormat,
   );
@@ -2434,6 +2436,19 @@ function DesktopSettingsPage() {
             </Text>
           </div>
           <Switch checked={editorGuideLine} onChange={setEditorGuideLine} />
+        </div>
+
+        <div
+          className="flex items-center justify-between py-1 mt-2"
+          style={{ borderTop: "1px solid var(--ant-color-border-secondary, #f0f0f0)", paddingTop: 12 }}
+        >
+          <div>
+            <div>表格内容垂直居中</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              单元格文字上下居中（默认顶端对齐）；只影响显示，不改笔记内容
+            </Text>
+          </div>
+          <Switch checked={editorTableVCenter} onChange={setEditorTableVCenter} />
         </div>
 
         <div

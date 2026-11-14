@@ -1501,6 +1501,12 @@ body,
   min-width: 60px;
 }
 
+/* 设置 → 编辑器「表格内容垂直居中」：纯显示偏好，不写进 .md（Markdown 表格存不下单元格垂直对齐） */
+:root[data-editor-table-vcenter="1"] .tiptap table td,
+:root[data-editor-table-vcenter="1"] .tiptap table th {
+  vertical-align: middle;
+}
+
 .tiptap table th {
   /* 与 .code-block-toolbar 同源（亮色 2% 文本叠加），统一表头/代码块工具栏视觉调性。
      fallback：macOS Safari/WKWebView 早期版本对 color-mix 透明叠加渲染异常时会
