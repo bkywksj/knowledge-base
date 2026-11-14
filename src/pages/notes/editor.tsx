@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense, type ReactNode } from "react";
-import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams, useLocation } from "react-router-dom";
 
 /** 历史版本抽屉：不点开就不加载（大多数编辑会话根本用不到） */
 const NoteSnapshotDrawer = lazy(
@@ -722,6 +722,7 @@ function applyEditorScrollAnchor(
 function DesktopNoteEditorPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   // 搜索结果点进笔记时携带的关键词（?q=）：传给编辑器自动定位首个命中
   const [searchParams] = useSearchParams();
   const initialSearch = (searchParams.get("q") ?? "").trim() || undefined;
@@ -766,6 +767,8 @@ function DesktopNoteEditorPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   /** 思维导图视图：在编辑器右侧以 flex 分栏方式渲染（不是浮层） */
   const [mindMapOpen, setMindMapOpen] = useState(false);
+  /** 本次打开导图是否直接进编辑模式（「新建思维导图」跳过来时为 true） */
+  const [mindMapEditDefault, setMindMapEditDefault] = useState(false);
   /** 幻灯片演示模式：fixed 全屏覆盖，按 `<hr>` 分页 */
   const [slideshowOpen, setSlideshowOpen] = useState(false);
   /** 思维导图分栏宽度（像素，持久化到 localStorage 跨笔记记忆） */
@@ -938,6 +941,20 @@ function DesktopNoteEditorPage() {
   const [pdfPreviewMaximized, setPdfPreviewMaximized] = useState(false);
 
   const noteId = Number(id);
+
+  // 「新建思维导图」跳过来：直接打开导图并进编辑模式；用完把路由 state 清掉，
+  // 否则在历史里前进后退回到这篇会再次自动弹出。其它入口打开的笔记导图默认只读
+  useEffect(() => {
+    const st = location.state as { openMindMap?: string } | null;
+    if (st?.openMindMap === "edit") {
+      setMindMapEditDefault(true);
+      setMindMapOpen(true);
+      navigate(location.pathname + location.search, { replace: true, state: null });
+    } else {
+      setMindMapEditDefault(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noteId]);
 
   // 切到不同笔记时重置阅读模式为全局默认（避免上一篇手动切换的状态残留到下一篇）
   useEffect(() => {
@@ -2424,7 +2441,7 @@ function DesktopNoteEditorPage() {
             />
           </Tooltip>
           <span className="kb-vsep" />
-          <Tooltip title="思维导图（只读视图）">
+          <Tooltip title="思维导图">
             <Button type="text" className="kb-ib" icon={<Network size={16} />} onClick={() => setMindMapOpen(true)} />
           </Tooltip>
           <Tooltip title="幻灯片演示（用 --- 分页）">
@@ -2956,6 +2973,10 @@ function DesktopNoteEditorPage() {
               title={title}
               noteId={Number.isFinite(noteId) ? noteId : null}
               variant="embed"
+              // 导图里的改动按正常编辑处理：写进编辑器 + 标脏，由自动保存落盘
+              onMarkdownChange={readingMode || sourceMode ? undefined : handleContentChange}
+              onTitleChange={readingMode || sourceMode ? undefined : handleTitleChange}
+              defaultEditing={mindMapEditDefault}
             />
           </Suspense>
         </div>

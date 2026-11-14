@@ -10,6 +10,7 @@ import {
   FolderOpen,
   PenTool,
   Globe,
+  Network,
 } from "lucide-react";
 
 import { FileTypeIcon } from "./FileTypeIcon";
@@ -22,6 +23,7 @@ import { useAppStore } from "@/store";
 import type { ScannedFile } from "@/types";
 import {
   createBlankAndOpen,
+  createMindMapAndOpen,
   createWhiteboardAndOpen,
   importExcelFlow,
   importPdfsFlow,
@@ -127,6 +129,12 @@ export function NewNoteButton({
       label: "新建白板",
       icon: <PenTool size={14} />,
       onClick: () => createWhiteboardAndOpen(folderId, navigate),
+    },
+    {
+      key: "mindmap",
+      label: "新建思维导图",
+      icon: <Network size={14} />,
+      onClick: () => createMindMapAndOpen(folderId, navigate),
     },
     { type: "divider" },
     {

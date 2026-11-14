@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Space, Tooltip, App as AntdApp, theme as antdTheme } from "antd";
 import {
   ZoomIn,
@@ -8,12 +8,16 @@ import {
   Download,
   ExternalLink,
   X,
+  PencilLine,
+  Keyboard,
 } from "lucide-react";
 import { Transformer } from "markmap-lib";
 import { Markmap, deriveOptions } from "markmap-view";
 import { save } from "@tauri-apps/plugin-dialog";
 import { toPng } from "html-to-image";
 import { noteApi, systemApi } from "@/lib/api";
+import { MindMapEditor, type MindMapEditorHandle } from "@/components/mindmap/MindMapEditor";
+import { parseMindMap } from "@/components/mindmap/tree";
 
 interface Props {
   /** 是否显示——父级控制；隐藏时不挂载 svg、销毁 markmap 实例 */
@@ -31,10 +35,23 @@ interface Props {
    * - `standalone`：弹窗内独占整个窗口，不显示"关闭"和"新窗口打开"
    */
   variant?: "embed" | "standalone";
+  /**
+   * 传了才允许在导图里编辑：改动以 Markdown 交回（父组件负责写进编辑器 + 保存）。
+   * popout 窗口不传，保持只读。
+   */
+  onMarkdownChange?: (markdown: string) => void;
+  /** 改中心主题 = 改笔记标题 */
+  onTitleChange?: (title: string) => void;
+  /** 打开时直接进入编辑模式（「新建思维导图」用） */
+  defaultEditing?: boolean;
 }
 
+const SHORTCUT_HELP =
+  "Tab 加子节点 · Enter 加同级 · Delete 删除 · F2/双击 改文字 · 方向键 移动选中 · " +
+  "Alt+↑↓ 调顺序 · Alt+←→ 调层级 · 空格 折叠 · Ctrl+Z/Y 撤销重做 · 滚轮缩放 · 拖空白处平移";
+
 /**
- * 思维导图视图（只读 markmap 渲染）
+ * 思维导图视图：默认只读 markmap 渲染；纯大纲笔记可切到编辑模式（自研 MindMapEditor）
  *
  * 设计要点：
  * - **真分屏**（embed 模式）：编辑器和导图是 sibling，共享主区宽度，互不覆盖
@@ -53,9 +70,29 @@ export function MindMapView({
   title,
   noteId,
   variant = "embed",
+  onMarkdownChange,
+  onTitleChange,
+  defaultEditing = false,
 }: Props) {
   const { token } = antdTheme.useToken();
   const { message } = AntdApp.useApp();
+  const editorRef = useRef<MindMapEditorHandle | null>(null);
+  /** 只有纯大纲笔记能编辑（段落 / 表格等写回会丢），否则编辑按钮置灰并说明原因 */
+  const editability = useMemo(() => {
+    const r = parseMindMap(markdown, title);
+    return { editable: r.editable, reason: r.reason };
+  }, [markdown, title]);
+  const canEdit = !!onMarkdownChange;
+  const [editing, setEditing] = useState(defaultEditing && canEdit);
+  const editMode = editing && canEdit && editability.editable;
+
+  // 编辑中途在正文里加了段落等内容 → 退回只读并说明，不让导图把它们写丢
+  useEffect(() => {
+    if (editing && !editability.editable) {
+      setEditing(false);
+      message.info("正文里有了不是大纲的内容，导图已切回只读");
+    }
+  }, [editing, editability.editable, message]);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const mmRef = useRef<Markmap | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -68,9 +105,9 @@ export function MindMapView({
   /** 全屏模式（standalone 永远视作非全屏；它本来就独占窗口） */
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // open 切到 true 时初始化；切到 false 时销毁 markmap 实例（svg 由父级 unmount）
+  // open 切到 true 时初始化；切到 false 或进入编辑模式时销毁 markmap 实例（svg 随之卸载）
   useEffect(() => {
-    if (!open) {
+    if (!open || editMode) {
       if (mmRef.current) {
         mmRef.current.destroy();
         mmRef.current = null;
@@ -100,7 +137,7 @@ export function MindMapView({
     });
 
     return () => cancelAnimationFrame(raf);
-  }, [open, markdown, title]);
+  }, [open, markdown, title, editMode]);
 
   // 切主题后重新着色（只重绘，不 fit，保留用户当前的缩放 / 平移）
   useEffect(() => {
@@ -115,6 +152,7 @@ export function MindMapView({
     if (!open || !mmRef.current) return;
     const raf = requestAnimationFrame(() => {
       void mmRef.current?.fit();
+      editorRef.current?.fit();
     });
     return () => cancelAnimationFrame(raf);
   }, [isFullscreen, open]);
@@ -133,11 +171,13 @@ export function MindMapView({
   }, [isFullscreen, variant]);
 
   function handleZoom(factor: number) {
-    void mmRef.current?.rescale(factor);
+    if (editMode) editorRef.current?.zoomBy(factor);
+    else void mmRef.current?.rescale(factor);
   }
 
   function handleFit() {
-    void mmRef.current?.fit();
+    if (editMode) editorRef.current?.fit();
+    else void mmRef.current?.fit();
   }
 
   async function handleExportSvg() {
@@ -253,6 +293,32 @@ export function MindMapView({
           🧠 {title || "未命名"}
         </span>
         <Space size={2}>
+          {canEdit && (
+            <Tooltip
+              title={
+                editMode
+                  ? "退出编辑（回到只读视图）"
+                  : editability.editable
+                    ? "在导图里直接编辑（改动写回笔记正文）"
+                    : editability.reason
+              }
+            >
+              <Button
+                size="small"
+                type={editMode ? "primary" : "text"}
+                icon={<PencilLine size={13} />}
+                disabled={!editability.editable}
+                onClick={() => setEditing((v) => !v)}
+              >
+                <span style={{ fontSize: 12 }}>{editMode ? "编辑中" : "编辑"}</span>
+              </Button>
+            </Tooltip>
+          )}
+          {editMode && (
+            <Tooltip title={SHORTCUT_HELP} placement="bottomRight">
+              <Button size="small" type="text" icon={<Keyboard size={13} />} />
+            </Tooltip>
+          )}
           <Tooltip title="放大">
             <Button
               size="small"
@@ -277,14 +343,16 @@ export function MindMapView({
               onClick={handleFit}
             />
           </Tooltip>
-          <Tooltip title="导出 SVG（矢量）">
-            <Button
-              size="small"
-              type="text"
-              icon={<Download size={13} />}
-              onClick={() => void handleExportSvg()}
-            />
-          </Tooltip>
+          {!editMode && (
+            <Tooltip title="导出 SVG（矢量）">
+              <Button
+                size="small"
+                type="text"
+                icon={<Download size={13} />}
+                onClick={() => void handleExportSvg()}
+              />
+            </Tooltip>
+          )}
           <Tooltip title="导出 PNG（位图）">
             <Button
               size="small"
@@ -343,6 +411,18 @@ export function MindMapView({
           background: token.colorBgContainer,
         }}
       >
+        {editMode && onMarkdownChange ? (
+          <MindMapEditor
+            // 切笔记时整个重建：防抖中没写回的改动在卸载时交给上一篇，不会串到下一篇
+            key={noteId ?? "draft"}
+            ref={editorRef}
+            markdown={markdown}
+            title={title}
+            onChange={onMarkdownChange}
+            onTitleChange={onTitleChange}
+            palette={branchPalette}
+          />
+        ) : (
         <svg
           ref={svgRef}
           style={
@@ -363,6 +443,7 @@ export function MindMapView({
             } as React.CSSProperties
           }
         />
+        )}
       </div>
     </div>
   );

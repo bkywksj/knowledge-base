@@ -145,6 +145,24 @@ export async function createWhiteboardAndOpen(
   }
 }
 
+/**
+ * 新建思维导图：本质是一篇普通笔记（正文 = 嵌套列表），跳到编辑页时带上
+ * `openMindMap: "edit"`，编辑页据此直接打开导图分栏并进入编辑模式。
+ * 中心主题 = 标题，先给一个占位标题，用户在导图里双击中心主题就能改。
+ */
+export async function createMindMapAndOpen(
+  folderId: number | null,
+  navigate: NavigateFunction,
+): Promise<void> {
+  try {
+    const note = await noteApi.create({ title: "新思维导图", content: "", folder_id: folderId });
+    useAppStore.getState().bumpNotesRefresh();
+    navigate(`/notes/${note.id}`, { state: { openMindMap: "edit" } });
+  } catch (e) {
+    message.error(`新建思维导图失败: ${e}`);
+  }
+}
+
 /** 在文件夹树里按 id 找名字（深度优先） */
 function findFolderName(
   folders: { id: number; name: string; children?: typeof folders }[],
