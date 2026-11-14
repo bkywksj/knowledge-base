@@ -1713,6 +1713,20 @@ export interface PromptTemplateInput {
 
 export type SyncBackendKind = "local" | "webdav" | "s3";
 
+/** 局域网同步（手机 ↔ 本机）状态，对应 Rust `services::lan_sync::LanSyncStatus` */
+export interface LanSyncStatus {
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  /** 本机局域网地址，手机连这些 */
+  hosts: string[];
+  deviceName: string;
+  /** 证书指纹（可与手机上显示的核对） */
+  fingerprint: string | null;
+  /** 「本机中转」同步源 id */
+  backendId: number | null;
+}
+
 export interface SyncBackend {
   id: number;
   kind: SyncBackendKind;

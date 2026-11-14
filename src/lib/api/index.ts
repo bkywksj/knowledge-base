@@ -6,6 +6,7 @@ import {
 } from "@tauri-apps/plugin-autostart";
 import type {
   AiImportOutcome,
+  LanSyncStatus,
   Card,
   CreateCardInput,
   ReviewCardInput,
@@ -1478,6 +1479,17 @@ export const syncApi = {
  *
  * 与 syncApi（V0 ZIP 备份）并存；用户可同时配置两套
  */
+/** 局域网同步（手机 ↔ 本机，仅桌面端） */
+export const lanSyncApi = {
+  status: () => invoke<LanSyncStatus>("lan_sync_status"),
+  enable: (port: number) => invoke<LanSyncStatus>("lan_sync_enable", { port }),
+  disable: () => invoke<LanSyncStatus>("lan_sync_disable"),
+  /** 配对二维码内容（含令牌，只用来渲染二维码，别打日志） */
+  pairingPayload: () => invoke<string>("lan_sync_pairing_payload"),
+  /** 重新生成配对码：已配对设备全部失效 */
+  resetPairing: () => invoke<LanSyncStatus>("lan_sync_reset_pairing"),
+};
+
 export const syncV1Api = {
   listBackends: () => invoke<SyncBackend[]>("sync_v1_list_backends"),
   getBackend: (id: number) =>

@@ -5,7 +5,7 @@
 //! - 鉴权：每个请求带 Bearer 令牌（配对时拿到）
 //! - 写操作要先 [`LanBackend::begin_session`] 拿库级租约，结束后 [`LanBackend::end_session`]；
 //!   电脑端同一时刻只允许一方写，避免两边交错写 manifest 互相覆盖
-// 第 2 步（设置界面 + 扫码配对）接入前，本模块只被单测调用；接入后去掉这行
+// 手机端「局域网」同步方式（第 4 步）接入前，本模块只被单测调用；接入后去掉这行
 #![allow(dead_code)]
 
 use std::sync::{Arc, Mutex};

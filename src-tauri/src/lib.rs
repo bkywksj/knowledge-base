@@ -1157,6 +1157,30 @@ pub fn run() {
                 });
             }
 
+            // 局域网同步：上次开着的话启动时自动拉起（同 MCP HTTP）
+            #[cfg(desktop)]
+            {
+                let app_handle_lan = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let Some(state) = app_handle_lan.try_state::<AppState>() else {
+                        return;
+                    };
+                    let enabled = state
+                        .db
+                        .get_config(crate::services::lan_sync::KEY_ENABLED)
+                        .ok()
+                        .flatten()
+                        .as_deref()
+                        == Some("1");
+                    if !enabled {
+                        return;
+                    }
+                    if let Err(e) = state.lan_sync.start(&state.db, &state.data_dir).await {
+                        log::warn!("[lan-sync] 自动启动失败: {e}");
+                    }
+                });
+            }
+
             // 文件夹自动导入：盯住用户指定目录，新落地的 .md 自动进库
             // （浏览器剪藏插件把网页存成 Markdown 后不用再手动导入）。
             // 默认关闭，循环里读 app_config 判断，没开启就空转。
@@ -1274,6 +1298,17 @@ pub fn run() {
             commands::mcp::start_mcp_http,
             #[cfg(desktop)]
             commands::mcp::stop_mcp_http,
+            // 局域网同步（桌面端专属：手机只做客户端）
+            #[cfg(desktop)]
+            commands::lan_sync::lan_sync_status,
+            #[cfg(desktop)]
+            commands::lan_sync::lan_sync_enable,
+            #[cfg(desktop)]
+            commands::lan_sync::lan_sync_disable,
+            #[cfg(desktop)]
+            commands::lan_sync::lan_sync_pairing_payload,
+            #[cfg(desktop)]
+            commands::lan_sync::lan_sync_reset_pairing,
             // 系统模块
             commands::system::greet,
             commands::system::get_system_info,

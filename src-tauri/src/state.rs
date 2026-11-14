@@ -54,6 +54,9 @@ pub struct AppState {
     /// 默认不启动；用户在设置页开启后才监听端口。仅桌面端。
     #[cfg(desktop)]
     pub mcp_http: Arc<crate::services::mcp_http::McpHttpState>,
+    /// 局域网同步（手机 ↔ 本机）运行态。默认不启动；用户在设置页开启后才监听端口。仅桌面端
+    #[cfg(desktop)]
+    pub lan_sync: Arc<crate::services::lan_sync::LanSyncState>,
     /// 单实例守护锁文件句柄（保持存活以维持独占锁，进程退出时自动释放）
     _lock_file: Option<File>,
 }
@@ -149,6 +152,8 @@ impl AppState {
             mcp_external: Arc::new(crate::services::mcp_client::McpClientManager::new()),
             #[cfg(desktop)]
             mcp_http: Arc::new(crate::services::mcp_http::McpHttpState::default()),
+            #[cfg(desktop)]
+            lan_sync: Arc::new(crate::services::lan_sync::LanSyncState::default()),
             _lock_file: lock_file,
         }
     }

@@ -9,9 +9,10 @@
  * 推荐用户首选 V1。V0 仅保留为"周期性完整快照"用途。两者数据存储互不冲突。
  */
 import { Card, Tabs, Typography, Tag, theme as antdTheme } from "antd";
-import { CloudCog, Archive } from "lucide-react";
+import { CloudCog, Archive, Wifi } from "lucide-react";
 import { SyncSection } from "./SyncSection";
 import { SyncV1Section } from "./SyncV1Section";
+import { LanSyncSection } from "./LanSyncSection";
 
 const { Text } = Typography;
 
@@ -78,6 +79,16 @@ export function SyncTabs() {
               </span>
             ),
             children: <SyncSection />,
+          },
+          {
+            key: "lan",
+            label: (
+              <span className="flex items-center gap-1.5">
+                <Wifi size={14} />
+                局域网同步
+              </span>
+            ),
+            children: <LanSyncSection />,
           },
         ]}
       />

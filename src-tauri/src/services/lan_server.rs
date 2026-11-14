@@ -6,8 +6,6 @@
 //! - 写操作必须持有库级租约（[`VaultLease`]）：手机同步和电脑自己往同一目录同步不会交错写 manifest
 //!
 //! axum::serve 不带 TLS，这里自己 accept → tokio-rustls 握手 → hyper 跑 axum Router。
-// 第 2 步（设置界面 + 扫码配对）接入前，本模块只被单测调用；接入后去掉这行
-#![allow(dead_code)]
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

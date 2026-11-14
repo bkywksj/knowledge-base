@@ -64,6 +64,9 @@ pub mod mcp_http;
 // 局域网同步服务端：把本机局域网库目录按同步接口暴露给手机。仅桌面端（手机只做客户端）
 #[cfg(desktop)]
 pub mod lan_server;
+// 局域网同步电脑端编排：开关 / 配对 / 本机中转同步源 / 租约。仅桌面端
+#[cfg(desktop)]
+pub mod lan_sync;
 pub mod note;
 pub mod note_excerpt;
 #[cfg(desktop)]
