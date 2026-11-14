@@ -30,6 +30,7 @@ import {
 } from "./tree";
 import { DEFAULT_LAYOUT, hitDropTarget, layoutMindMap, type LayoutOptions, type PlacedNode, type Size } from "./layout";
 import { renderInline } from "./inline";
+import { toPng } from "html-to-image";
 import { ContextMenuOverlay, type ContextMenuEntry } from "@/components/ui/ContextMenuOverlay";
 import {
   ArrowDown,
@@ -59,6 +60,8 @@ import {
 export interface MindMapEditorHandle {
   zoomBy: (factor: number) => void;
   fit: () => void;
+  /** 导出整张图为 PNG（dataURL），不受当前缩放 / 平移 / 窗口大小影响 */
+  exportPng: (background: string) => Promise<string>;
 }
 
 interface Props {
@@ -270,7 +273,37 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
     });
   }, []);
 
-  useImperativeHandle(ref, () => ({ zoomBy: (f) => zoomAt(f), fit }), [zoomAt, fit]);
+  // ─── 导出整张图 ───────────────────────────
+  const layerRef = useRef<HTMLDivElement | null>(null);
+  /** 导出中：隐藏选中框 / 折叠按钮，截出来的图干净 */
+  const [exporting, setExporting] = useState(false);
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+
+  const exportPng = useCallback(async (background: string) => {
+    const layer = layerRef.current;
+    if (!layer) throw new Error("导图还没渲染好");
+    setExporting(true);
+    // 等一帧让「隐藏选中框」生效再截
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    try {
+      const { minX, minY, maxX, maxY } = layoutRef.current.bounds;
+      const pad = 32;
+      // 截的是画布层的克隆：用 style 覆盖掉当前的平移 / 缩放，按 1 倍把整张图摆进 [0,w]×[0,h]，
+      // 不动界面上的真实 DOM，用户看到的视图不跳
+      return await toPng(layer, {
+        width: Math.ceil(maxX - minX + pad * 2),
+        height: Math.ceil(maxY - minY + pad * 2),
+        pixelRatio: 2,
+        backgroundColor: background,
+        style: { transform: `translate(${pad - minX}px, ${pad - minY}px)`, left: "0", top: "0" },
+      });
+    } finally {
+      setExporting(false);
+    }
+  }, []);
+
+  useImperativeHandle(ref, () => ({ zoomBy: (f) => zoomAt(f), fit, exportPng }), [zoomAt, fit, exportPng]);
 
   // 键盘移动选中后，选中节点跑出可视区就平移过去
   useEffect(() => {
@@ -698,6 +731,7 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
       }}
     >
       <div
+        ref={layerRef}
         style={{
           position: "absolute",
           left: 0,
@@ -775,7 +809,7 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
                 color: isRoot ? token.colorTextLightSolid : token.colorText,
                 background: isRoot ? token.colorPrimary : p.depth === 1 ? token.colorBgContainer : "transparent",
                 border: p.depth === 1 ? `2px solid ${color}` : "2px solid transparent",
-                boxShadow: selected ? `0 0 0 2px ${token.colorBgContainer}, 0 0 0 4px ${token.colorPrimary}` : undefined,
+                boxShadow: selected && !exporting ? `0 0 0 2px ${token.colorBgContainer}, 0 0 0 4px ${token.colorPrimary}` : undefined,
                 // 拖动中：被拖的子树变淡；「放进去」的目标节点画虚线框
                 opacity: drag?.exclude.has(p.id) ? 0.35 : 1,
                 outline: drag?.target?.id === p.id && drag.target.position === "inside" ? `2px dashed ${token.colorPrimary}` : undefined,
@@ -810,7 +844,7 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
                 </>
               )}
 
-              {hasKids && !isRoot && (isCollapsed || selected) && (
+              {hasKids && !isRoot && !exporting && (isCollapsed || selected) && (
                 <button
                   type="button"
                   title={isCollapsed ? `展开（${n.children.length}）` : "折叠"}

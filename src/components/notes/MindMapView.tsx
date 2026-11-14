@@ -235,12 +235,16 @@ export function MindMapView({
         filters: [{ name: "PNG 图像", extensions: ["png"] }],
       });
       if (!targetPath) return;
+      // 编辑模式导出整张图（与当前缩放 / 平移无关）；只读视图沿用截容器
       // 2x 像素密度，在 4K/Retina 上看着锐利
-      const dataUrl = await toPng(wrapper, {
-        pixelRatio: 2,
-        backgroundColor: token.colorBgContainer,
-        cacheBust: true,
-      });
+      const dataUrl =
+        editMode && editorRef.current
+          ? await editorRef.current.exportPng(token.colorBgContainer)
+          : await toPng(wrapper, {
+              pixelRatio: 2,
+              backgroundColor: token.colorBgContainer,
+              cacheBust: true,
+            });
       // 去掉 "data:image/png;base64," 前缀，只留 base64
       const base64 = dataUrl.split(",")[1] ?? "";
       if (!base64) throw new Error("toPng 返回空数据");
