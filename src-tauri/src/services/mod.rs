@@ -61,6 +61,9 @@ pub mod mcp_client;
 // （移动端没有"被别的进程连"的场景，也不该在手机上开监听端口）
 #[cfg(desktop)]
 pub mod mcp_http;
+// 局域网同步服务端：把本机局域网库目录按同步接口暴露给手机。仅桌面端（手机只做客户端）
+#[cfg(desktop)]
+pub mod lan_server;
 pub mod note;
 pub mod note_excerpt;
 #[cfg(desktop)]
