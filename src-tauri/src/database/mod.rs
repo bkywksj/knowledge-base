@@ -154,6 +154,31 @@ mod notes_written_on_tests {
         let cell = trend.iter().find(|d| d.date == today).unwrap();
         assert_eq!(cell.note_count, day.notes.len() + day.hidden_count);
     }
+
+    /// 首页「笔记总数」与笔记列表同口径：日记 / 隐藏 / 临时笔记不计入
+    #[test]
+    fn dashboard_total_notes_matches_note_list() {
+        let db = Database::init(":memory:").unwrap();
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        // 新用户只点过「今日日记」：首页不应显示 1
+        db.get_or_create_daily(&today).unwrap();
+        assert_eq!(db.get_dashboard_stats().unwrap().total_notes, 0);
+
+        let mk = |t: &str| {
+            db.create_note(&NoteInput { title: t.into(), content: "x".into(), folder_id: None })
+                .unwrap()
+                .id
+        };
+        let (_normal, hidden, scratch) = (mk("普通"), mk("隐藏"), mk("临时"));
+        {
+            let c = db.conn_lock().unwrap();
+            c.execute("UPDATE notes SET is_hidden = 1 WHERE id = ?1", [hidden]).unwrap();
+            c.execute("UPDATE notes SET is_scratch = 1 WHERE id = ?1", [scratch]).unwrap();
+        }
+        let stats = db.get_dashboard_stats().unwrap();
+        assert_eq!(stats.total_notes, 1);
+        assert_eq!(stats.today_updated, 1);
+    }
 }
 
 fn file_backed(db_path: &str) -> Option<String> {
@@ -371,6 +396,8 @@ impl Database {
         // 注：total_words / last_written_at 排除「导入」笔记（source_file_path IS NOT NULL），
         // 导入的 PDF/手册等不算用户的「写作」，否则 25 万字的导入会灌爆写作活力。
         // 日记（is_daily=1）属于手写，正常计入。
+        // total_notes / today_updated 与笔记列表（notes.rs list_notes）同口径：排除隐藏 / 临时 / 日记，
+        // 否则只点过「今日日记」的新用户首页显示「笔记总数 1」而列表里一篇都没有（用户反馈）。
         let (total_notes, today_updated, total_words, last_written_at): (
             usize,
             usize,
@@ -378,8 +405,9 @@ impl Database {
             Option<String>,
         ) = conn.query_row(
             "SELECT
-                COUNT(*) FILTER (WHERE is_deleted = 0),
-                COUNT(*) FILTER (WHERE is_deleted = 0 AND substr(updated_at, 1, 10) = ?1),
+                COUNT(*) FILTER (WHERE is_deleted = 0 AND is_hidden = 0 AND is_scratch = 0 AND is_daily = 0),
+                COUNT(*) FILTER (WHERE is_deleted = 0 AND is_hidden = 0 AND is_scratch = 0 AND is_daily = 0
+                                 AND substr(updated_at, 1, 10) = ?1),
                 COALESCE(SUM(word_count) FILTER (WHERE is_deleted = 0 AND source_file_path IS NULL), 0),
                 MAX(updated_at) FILTER (WHERE is_deleted = 0 AND source_file_path IS NULL)
              FROM notes",
