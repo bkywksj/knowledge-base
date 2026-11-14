@@ -160,6 +160,30 @@ export function layoutMindMap(
 }
 
 /**
+ * 拖放命中：指针（画布坐标）落在哪个节点上、放在它的前 / 后 / 里面。
+ * - 节点上沿 1/4 → before，下沿 1/4 → after，中间 → inside（成为子节点）
+ * - 中心主题只能 inside；被拖的节点及其子孙不参与命中（exclude 由调用方给）
+ * - 不在任何节点上 → null（松手即取消）
+ */
+export function hitDropTarget(
+  nodes: PlacedNode[],
+  x: number,
+  y: number,
+  exclude: ReadonlySet<string>,
+): { id: string; position: "before" | "after" | "inside" } | null {
+  // 节点不重叠，命中至多一个；四周放宽几像素，贴边松手也算
+  const slop = 4;
+  for (const p of nodes) {
+    if (exclude.has(p.id)) continue;
+    if (x < p.x - slop || x > p.x + p.w + slop || y < p.y - slop || y > p.y + p.h + slop) continue;
+    if (p.depth === 0) return { id: p.id, position: "inside" };
+    const rel = (y - p.y) / p.h;
+    return { id: p.id, position: rel < 0.25 ? "before" : rel > 0.75 ? "after" : "inside" };
+  }
+  return null;
+}
+
+/**
  * 一级分支分左右：按顺序往右边放，直到右边累计高度达到总高的一半，其余放左边。
  * 保持原顺序（不做最优装箱），这样和大纲里的顺序一致、用户好对应。
  * 只有 1 个分支时放右边。

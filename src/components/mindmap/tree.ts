@@ -368,6 +368,55 @@ export function outdent(root: MindNode, id: string): EditResult | null {
   };
 }
 
+/** 拖放位置：插到目标前 / 后（同级），或成为目标的最后一个子节点 */
+export type DropPosition = "before" | "after" | "inside";
+
+/** targetId 是否在 id 的子树里（含自身）：拖到自己或子孙下面会成环 */
+export function isInSubtree(root: MindNode, id: string, targetId: string): boolean {
+  const loc = locate(root, id);
+  if (!loc) return false;
+  return !!locate(loc.node, targetId);
+}
+
+/**
+ * 拖放移动节点（连同子树）。中心主题拖不动；不能放进自己的子树；
+ * 中心主题只接受 inside（它没有同级）。形态按新父节点重算（见 adaptKind）。
+ */
+export function moveNode(root: MindNode, id: string, targetId: string, position: DropPosition): EditResult | null {
+  if (id === targetId) return null;
+  const loc = locate(root, id);
+  const target = locate(root, targetId);
+  if (!loc || !loc.parent || !target) return null;
+  if (isInSubtree(root, id, targetId)) return null;
+  if (!target.parent && position !== "inside") return null;
+
+  const newParentId = position === "inside" ? targetId : target.parent!.id;
+  // 放回原位（同父、紧挨着自己的前后）不算一次编辑，免得撤销栈里多一步空操作
+  if (newParentId === loc.parent.id && position !== "inside") {
+    const sibs = loc.parent.children;
+    const tIdx = sibs.findIndex((c) => c.id === targetId);
+    if ((position === "before" && tIdx === loc.index + 1) || (position === "after" && tIdx === loc.index - 1)) {
+      return null;
+    }
+  }
+
+  // 先摘掉，再按目标重新定位（摘掉后同级下标会变，所以用 id 找）
+  const detached = updateNode(root, loc.parent.id, (p) => ({ ...p, children: p.children.filter((c) => c.id !== id) }));
+  const parentNow = locate(detached, newParentId)!.node;
+  const moved = adaptKind(loc.node, parentNow);
+  const next = updateNode(detached, newParentId, (p) => {
+    const children = [...p.children];
+    if (position === "inside") {
+      children.push(moved);
+    } else {
+      const at = children.findIndex((c) => c.id === targetId);
+      children.splice(position === "before" ? at : at + 1, 0, moved);
+    }
+    return { ...p, children };
+  });
+  return { root: next, selectId: id };
+}
+
 /** 任务项勾选切换；非任务项不动 */
 export function toggleTask(root: MindNode, id: string): MindNode {
   return updateNode(root, id, (n) =>

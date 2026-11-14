@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { layoutMindMap, type PlacedNode } from "./layout";
+import { hitDropTarget, layoutMindMap, type PlacedNode } from "./layout";
 import { parseMindMap, type MindNode } from "./tree";
 
 const SIZE = { w: 100, h: 30 };
@@ -84,5 +84,22 @@ describe("layoutMindMap", () => {
     const m = byText(root, r.nodes);
     expect(m.get("子")!.x).toBe(m.get("很宽")!.x + 300 + 40);
     expect(m.get("子")!.w).toBe(80); // FALLBACK
+  });
+});
+
+describe("hitDropTarget", () => {
+  const nodes: PlacedNode[] = [
+    { id: "root", x: -50, y: -15, w: 100, h: 30, side: "center", depth: 0, branch: -1 },
+    { id: "a", x: 90, y: -50, w: 100, h: 40, side: "right", depth: 1, branch: 0 },
+  ];
+  it("上沿 1/4 前插、下沿 1/4 后插、中间当子节点", () => {
+    expect(hitDropTarget(nodes, 120, -48, new Set())).toEqual({ id: "a", position: "before" });
+    expect(hitDropTarget(nodes, 120, -30, new Set())).toEqual({ id: "a", position: "inside" });
+    expect(hitDropTarget(nodes, 120, -12, new Set())).toEqual({ id: "a", position: "after" });
+  });
+  it("中心主题只能放进去；排除的节点不命中；空白处返回 null", () => {
+    expect(hitDropTarget(nodes, 0, -14, new Set())).toEqual({ id: "root", position: "inside" });
+    expect(hitDropTarget(nodes, 120, -30, new Set(["a"]))).toBeNull();
+    expect(hitDropTarget(nodes, 500, 500, new Set())).toBeNull();
   });
 });

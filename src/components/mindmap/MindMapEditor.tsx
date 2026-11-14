@@ -23,11 +23,26 @@ import {
   serializeMindMap,
   setText,
   toggleTask,
+  moveNode,
+  type DropPosition,
   type EditResult,
   type MindNode,
 } from "./tree";
-import { DEFAULT_LAYOUT, layoutMindMap, type PlacedNode, type Size } from "./layout";
+import { DEFAULT_LAYOUT, hitDropTarget, layoutMindMap, type LayoutOptions, type PlacedNode, type Size } from "./layout";
 import { renderInline } from "./inline";
+import { ContextMenuOverlay, type ContextMenuEntry } from "@/components/ui/ContextMenuOverlay";
+import {
+  ArrowDown,
+  ArrowUp,
+  CornerDownRight,
+  FoldVertical,
+  IndentDecrease,
+  IndentIncrease,
+  PencilLine,
+  Plus,
+  Trash2,
+  UnfoldVertical,
+} from "lucide-react";
 
 /**
  * 可编辑思维导图（自研，见 docs/tasks/mindmap-editor-tasks.md）。
@@ -55,7 +70,12 @@ interface Props {
   onTitleChange?: (title: string) => void;
   /** 分支配色（按一级分支轮换） */
   palette: string[];
+  /** "both" = 一级分支左右分布；"right" = 全部向右 */
+  layoutMode?: LayoutOptions["mode"];
 }
+
+/** 拖动阈值（屏幕像素）：小于它算点击，不算拖 */
+const DRAG_THRESHOLD = 4;
 
 interface Snapshot {
   root: MindNode;
@@ -69,7 +89,7 @@ const EMIT_DELAY = 300;
 const HISTORY_LIMIT = 100;
 
 export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function MindMapEditor(
-  { markdown, title, onChange, onTitleChange, palette },
+  { markdown, title, onChange, onTitleChange, palette, layoutMode = "both" },
   ref,
 ) {
   const { token } = antdTheme.useToken();
@@ -175,8 +195,8 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
   // ─── 布局与测量 ─────────────────────────────
 
   const layout = useMemo(
-    () => layoutMindMap(root, (id) => sizes.get(id), collapsed, DEFAULT_LAYOUT),
-    [root, sizes, collapsed],
+    () => layoutMindMap(root, (id) => sizes.get(id), collapsed, { ...DEFAULT_LAYOUT, mode: layoutMode }),
+    [root, sizes, collapsed, layoutMode],
   );
   const placedById = useMemo(() => new Map(layout.nodes.map((p) => [p.id, p])), [layout]);
 
@@ -228,6 +248,15 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
       cancelAnimationFrame(raf2);
     };
   }, [sizes]);
+
+  // 切换布局（左右 / 向右）后整张图形状变了，重新适应一次窗口
+  const prevLayoutMode = useRef(layoutMode);
+  useEffect(() => {
+    if (prevLayoutMode.current === layoutMode) return;
+    prevLayoutMode.current = layoutMode;
+    const raf = requestAnimationFrame(() => fitRef.current());
+    return () => cancelAnimationFrame(raf);
+  }, [layoutMode]);
 
   const zoomAt = useCallback((factor: number, cx?: number, cy?: number) => {
     const el = containerRef.current;
@@ -434,24 +463,186 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
 
   const panRef = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
 
+  // ─── 拖动节点 ─────────────────────────────
+  // 按下节点先记一个「候选」，移动超过阈值才真正进入拖动，否则仍是普通点击 / 双击
+  const pendingDrag = useRef<{ id: string; sx: number; sy: number } | null>(null);
+  type DragState = {
+    id: string;
+    x: number;
+    y: number;
+    target: { id: string; position: DropPosition } | null;
+    /** 被拖节点及其子孙：不能当落点（会成环） */
+    exclude: Set<string>;
+  } | null;
+  const [drag, setDragState] = useState<DragState>(null);
+  /**
+   * 拖动状态的同步副本，事件处理一律读它：鼠标甩得快时，移动事件的状态更新还没渲染，
+   * 松开事件就到了，闭包里的 drag 还是旧值（null），这次放下会被丢掉（实测复现）
+   */
+  const dragRef = useRef<DragState>(null);
+  function setDrag(v: DragState) {
+    dragRef.current = v;
+    setDragState(v);
+  }
+
+  /** 屏幕坐标 → 画布坐标（布局坐标系） */
+  function toCanvas(clientX: number, clientY: number) {
+    const rect = containerRef.current!.getBoundingClientRect();
+    return { x: (clientX - rect.left - view.x) / view.scale, y: (clientY - rect.top - view.y) / view.scale };
+  }
+
+  function subtreeIds(id: string): Set<string> {
+    const out = new Set<string>();
+    const loc = locate(rootRef.current, id);
+    const walk = (n: MindNode) => {
+      out.add(n.id);
+      n.children.forEach(walk);
+    };
+    if (loc) walk(loc.node);
+    return out;
+  }
+
+  /**
+   * 捕获指针，拖到画布外也能收到移动 / 松开。指针已结束或是合成事件时浏览器会抛 NotFoundError，
+   * 捕获不到只影响「拖出窗口外」这一种情况，不影响拖动本身，所以吞掉
+   */
+  function capturePointer(e: ReactPointerEvent<HTMLDivElement>) {
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* 见上 */
+    }
+  }
+
   function onPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
+    // 右键菜单是 portal 到 body 的，但 React 事件仍会冒泡到这里：不拦的话点菜单项会被当成
+    // 「空白处按下开始平移」并捕获指针，随后的 click 被转给画布，菜单项点了没反应（实测）
+    if (!e.currentTarget.contains(e.target as Node)) return;
     containerRef.current?.focus();
     if (e.button !== 0) return;
-    // 只有点在空白处才平移；点在节点上由节点自己处理选中
-    if ((e.target as HTMLElement).closest("[data-mm-node]")) return;
+    // 点在节点上：节点自己处理选中，并登记拖动候选；捕获指针，拖出节点范围也收得到移动事件
+    if ((e.target as HTMLElement).closest("[data-mm-node]")) {
+      if (pendingDrag.current) capturePointer(e);
+      return;
+    }
     if (editing) commitEdit();
     panRef.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
-    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+    capturePointer(e);
   }
 
   function onPointerMove(e: ReactPointerEvent<HTMLDivElement>) {
     const p = panRef.current;
-    if (!p) return;
-    setView((v) => ({ ...v, x: p.vx + e.clientX - p.x, y: p.vy + e.clientY - p.y }));
+    if (p) {
+      setView((v) => ({ ...v, x: p.vx + e.clientX - p.x, y: p.vy + e.clientY - p.y }));
+      return;
+    }
+    const pd = pendingDrag.current;
+    if (!pd) return;
+    const cur = dragRef.current;
+    if (!cur && Math.hypot(e.clientX - pd.sx, e.clientY - pd.sy) < DRAG_THRESHOLD) return;
+    const { x, y } = toCanvas(e.clientX, e.clientY);
+    const exclude = cur?.exclude ?? subtreeIds(pd.id);
+    setDrag({ id: pd.id, x, y, exclude, target: hitDropTarget(layout.nodes, x, y, exclude) });
   }
 
   function onPointerUp() {
     panRef.current = null;
+    pendingDrag.current = null;
+    const cur = dragRef.current;
+    if (!cur) return;
+    const t = cur.target;
+    setDrag(null);
+    if (!t) return;
+    const r = moveNode(rootRef.current, cur.id, t.id, t.position);
+    if (!r) return;
+    // 放进折叠着的节点里：展开它，让刚拖进去的节点看得见
+    if (t.position === "inside") {
+      setCollapsed((s) => {
+        if (!s.has(t.id)) return s;
+        const n = new Set(s);
+        n.delete(t.id);
+        return n;
+      });
+    }
+    run(r);
+  }
+
+  // ─── 右键菜单 ─────────────────────────────
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number; ts: number } | null>(null);
+
+  function menuItems(id: string): ContextMenuEntry[] {
+    const loc = locate(root, id);
+    if (!loc) return [];
+    const isRoot = !loc.parent;
+    const hasKids = loc.node.children.length > 0;
+    const sibs = loc.parent?.children ?? [];
+    const act = (fn: () => void) => () => {
+      setMenu(null);
+      containerRef.current?.focus();
+      fn();
+    };
+    const items: ContextMenuEntry[] = [
+      { key: "child", icon: <Plus size={14} />, label: "加子节点", hint: "Tab", onClick: act(() => run(addChild(root, id), true)) },
+    ];
+    if (!isRoot) {
+      items.push({ key: "sibling", icon: <CornerDownRight size={14} />, label: "加同级节点", hint: "Enter", onClick: act(() => run(addSibling(root, id), true)) });
+    }
+    if (!isRoot || onTitleChange) {
+      items.push({ key: "edit", icon: <PencilLine size={14} />, label: "改文字", hint: "F2", onClick: act(() => startEdit(id)) });
+    }
+    if (!isRoot) {
+      items.push(
+        { type: "divider" },
+        { key: "up", icon: <ArrowUp size={14} />, label: "上移", hint: "Alt+↑", disabled: loc.index === 0, onClick: act(() => run(moveAmongSiblings(root, id, -1))) },
+        { key: "down", icon: <ArrowDown size={14} />, label: "下移", hint: "Alt+↓", disabled: loc.index === sibs.length - 1, onClick: act(() => run(moveAmongSiblings(root, id, 1))) },
+        {
+          key: "indent",
+          icon: <IndentIncrease size={14} />,
+          label: "降一级",
+          hint: "变成上一个同级的子节点",
+          disabled: loc.index === 0,
+          onClick: act(() => {
+            const r = indent(root, id);
+            if (r) revealAncestors(r.root, r.selectId);
+            run(r);
+          }),
+        },
+        {
+          key: "outdent",
+          icon: <IndentDecrease size={14} />,
+          label: "升一级",
+          disabled: !loc.parent?.kind || loc.parent.kind.type === "root",
+          onClick: act(() => run(outdent(root, id))),
+        },
+      );
+    }
+    if (hasKids && !isRoot) {
+      const isCollapsed = collapsed.has(id);
+      items.push(
+        { type: "divider" },
+        {
+          key: "collapse",
+          icon: isCollapsed ? <UnfoldVertical size={14} /> : <FoldVertical size={14} />,
+          label: isCollapsed ? `展开（${loc.node.children.length}）` : "折叠",
+          hint: "空格",
+          onClick: act(() => toggleCollapse(id)),
+        },
+      );
+    }
+    if (!isRoot) {
+      items.push(
+        { type: "divider" },
+        {
+          key: "delete",
+          icon: <Trash2 size={14} />,
+          label: hasKids ? "删除（含子节点）" : "删除",
+          hint: "Delete",
+          danger: true,
+          onClick: act(() => run(removeNode(root, id))),
+        },
+      );
+    }
+    return items;
   }
 
   // wheel 要非 passive 才能 preventDefault（React 的 onWheel 是 passive）
@@ -501,7 +692,7 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
         inset: 0,
         overflow: "hidden",
         outline: "none",
-        cursor: panRef.current ? "grabbing" : "default",
+        cursor: panRef.current || drag ? "grabbing" : "default",
         background: token.colorBgContainer,
         userSelect: "none",
       }}
@@ -554,8 +745,17 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
                 if (e.button !== 0) return;
                 if (editing && editing.id !== p.id) commitEdit();
                 setSelectedId(p.id);
+                // 中心主题拖不动；正在改文字的节点里按下是在输入框里选字
+                if (!isRoot && !isEditing) pendingDrag.current = { id: p.id, sx: e.clientX, sy: e.clientY };
               }}
               onDoubleClick={() => startEdit(p.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (editing) commitEdit();
+                setSelectedId(p.id);
+                setMenu({ id: p.id, x: e.clientX, y: e.clientY, ts: Date.now() });
+              }}
               style={{
                 position: "absolute",
                 left: p.x,
@@ -576,7 +776,11 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
                 background: isRoot ? token.colorPrimary : p.depth === 1 ? token.colorBgContainer : "transparent",
                 border: p.depth === 1 ? `2px solid ${color}` : "2px solid transparent",
                 boxShadow: selected ? `0 0 0 2px ${token.colorBgContainer}, 0 0 0 4px ${token.colorPrimary}` : undefined,
-                cursor: "default",
+                // 拖动中：被拖的子树变淡；「放进去」的目标节点画虚线框
+                opacity: drag?.exclude.has(p.id) ? 0.35 : 1,
+                outline: drag?.target?.id === p.id && drag.target.position === "inside" ? `2px dashed ${token.colorPrimary}` : undefined,
+                outlineOffset: 3,
+                cursor: drag ? "grabbing" : "default",
               }}
             >
               {isEditing ? (
@@ -635,7 +839,63 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
             </div>
           );
         })}
+
+        {/* 拖动反馈：插到前 / 后时在目标上下画一道线；跟手的半透明幽灵节点 */}
+        {drag?.target && drag.target.position !== "inside" && (() => {
+          const t = placedById.get(drag.target.id);
+          if (!t) return null;
+          return (
+            <div
+              style={{
+                position: "absolute",
+                left: t.x,
+                top: drag.target.position === "before" ? t.y - 6 : t.y + t.h + 3,
+                width: t.w,
+                height: 3,
+                borderRadius: 2,
+                background: token.colorPrimary,
+                pointerEvents: "none",
+              }}
+            />
+          );
+        })()}
+        {drag && (
+          <div
+            style={{
+              position: "absolute",
+              left: drag.x + 10,
+              top: drag.y + 10,
+              padding: "3px 10px",
+              borderRadius: 6,
+              background: token.colorPrimaryBg,
+              border: `1px solid ${token.colorPrimary}`,
+              color: token.colorText,
+              fontSize: 13,
+              whiteSpace: "nowrap",
+              opacity: 0.9,
+              pointerEvents: "none",
+            }}
+          >
+            {nodesById.get(drag.id)?.text || "（空）"}
+          </div>
+        )}
       </div>
+
+      {menu && (
+        <ContextMenuOverlay
+          key={menu.ts}
+          open
+          x={menu.x}
+          y={menu.y}
+          items={menuItems(menu.id)}
+          // 导图全屏时面板是 zIndex 1100 的 fixed 层，菜单默认 1050 会被盖住
+          zIndex={1200}
+          onClose={() => {
+            setMenu(null);
+            containerRef.current?.focus();
+          }}
+        />
+      )}
     </div>
   );
 });

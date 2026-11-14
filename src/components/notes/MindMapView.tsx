@@ -10,6 +10,8 @@ import {
   X,
   PencilLine,
   Keyboard,
+  Columns2,
+  ArrowRightToLine,
 } from "lucide-react";
 import { Transformer } from "markmap-lib";
 import { Markmap, deriveOptions } from "markmap-view";
@@ -50,7 +52,11 @@ interface Props {
 
 const SHORTCUT_HELP =
   "Tab 加子节点 · Enter 加同级 · Delete 删除 · F2/双击 改文字 · 方向键 移动选中 · " +
-  "Alt+↑↓ 调顺序 · Alt+←→ 调层级 · 空格 折叠 · Ctrl+Z/Y 撤销重做 · 滚轮缩放 · 拖空白处平移";
+  "Alt+↑↓ 调顺序 · Alt+←→ 调层级 · 空格 折叠 · Ctrl+Z/Y 撤销重做 · " +
+  "拖动节点 调位置（放上沿/下沿=插到前/后，放中间=变成子节点）· 右键 更多操作 · 滚轮缩放 · 拖空白处平移";
+
+/** 编辑模式的布局偏好（左右分布 / 全部向右），跨笔记记住 */
+const LAYOUT_KEY = "kb.mindmap.layoutMode";
 
 /**
  * 思维导图视图：默认只读 markmap 渲染；纯大纲笔记可切到编辑模式（自研 MindMapEditor）
@@ -80,6 +86,14 @@ export function MindMapView({
   const { token } = antdTheme.useToken();
   const { message } = AntdApp.useApp();
   const editorRef = useRef<MindMapEditorHandle | null>(null);
+  const [layoutMode, setLayoutMode] = useState<"both" | "right">(() =>
+    localStorage.getItem(LAYOUT_KEY) === "right" ? "right" : "both",
+  );
+  function toggleLayout() {
+    const next = layoutMode === "both" ? "right" : "both";
+    setLayoutMode(next);
+    localStorage.setItem(LAYOUT_KEY, next);
+  }
   /** 只有纯大纲笔记能编辑（段落 / 表格等写回会丢），否则编辑按钮置灰并说明原因 */
   const editability = useMemo(() => {
     const r = parseMindMap(markdown, title);
@@ -318,6 +332,16 @@ export function MindMapView({
             </Tooltip>
           )}
           {editMode && (
+            <Tooltip title={layoutMode === "both" ? "布局：左右分布（点击改为全部向右）" : "布局：全部向右（点击改为左右分布）"}>
+              <Button
+                size="small"
+                type="text"
+                icon={layoutMode === "both" ? <Columns2 size={13} /> : <ArrowRightToLine size={13} />}
+                onClick={toggleLayout}
+              />
+            </Tooltip>
+          )}
+          {editMode && (
             <Tooltip title={SHORTCUT_HELP} placement="bottomRight">
               <Button size="small" type="text" icon={<Keyboard size={13} />} />
             </Tooltip>
@@ -424,6 +448,7 @@ export function MindMapView({
             onChange={onMarkdownChange}
             onTitleChange={onTitleChange}
             palette={branchPalette}
+            layoutMode={layoutMode}
           />
         ) : (
         <svg

@@ -55,6 +55,8 @@ interface Props {
   onClick?: (key: string, e: React.MouseEvent) => void;
   /** 关闭回调（点空白 / Esc）；一般直传 ctx.close */
   onClose: () => void;
+  /** 层级，默认 1050（与 antd 弹层同级）；宿主本身是更高层的浮层（如全屏导图 1100）时要传更大的值，否则菜单被盖住 */
+  zIndex?: number;
 }
 
 /**
@@ -79,6 +81,7 @@ export function ContextMenuOverlay({
   items,
   onClick,
   onClose,
+  zIndex = 1050,
 }: Props) {
   const { token } = antdTheme.useToken();
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -172,7 +175,7 @@ export function ContextMenuOverlay({
         position: "fixed",
         left: finalLeft,
         top: finalTop,
-        zIndex: 1050,
+        zIndex,
         background: token.colorBgElevated,
         border: `1px solid ${token.colorBorderSecondary}`,
         borderRadius: 8,

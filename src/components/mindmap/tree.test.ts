@@ -4,6 +4,7 @@ import {
   addSibling,
   indent,
   locate,
+  moveNode,
   moveAmongSiblings,
   outdent,
   parseMindMap,
@@ -186,5 +187,57 @@ describe("编辑操作", () => {
     const { root } = parseMindMap("- [ ] 待办\n- 普通\n", "c");
     const next = toggleTask(toggleTask(root, root.children[0].id), root.children[1].id);
     expect(serializeMindMap(next)).toBe("- [x] 待办\n- 普通\n");
+  });
+});
+
+describe("moveNode · 拖放", () => {
+  const base = () => parseMindMap("- A\n  - A1\n- B\n- C\n", "中心").root;
+  const idOf = (root: MindNode, text: string) => {
+    const stack = [root];
+    while (stack.length) {
+      const n = stack.pop()!;
+      if (n.text === text) return n.id;
+      stack.push(...n.children);
+    }
+    throw new Error(`没有节点 ${text}`);
+  };
+
+  it("放进另一个节点 = 成为它的最后一个子节点", () => {
+    const root = base();
+    const r = moveNode(root, idOf(root, "C"), idOf(root, "A"), "inside")!;
+    expect(serializeMindMap(r.root)).toBe("- A\n  - A1\n  - C\n- B\n");
+    expect(locate(r.root, r.selectId)!.node.text).toBe("C");
+  });
+
+  it("放到目标前 / 后：可跨层级", () => {
+    const root = base();
+    expect(serializeMindMap(moveNode(root, idOf(root, "C"), idOf(root, "A"), "before")!.root)).toBe(
+      "- C\n- A\n  - A1\n- B\n",
+    );
+    expect(serializeMindMap(moveNode(root, idOf(root, "A1"), idOf(root, "B"), "after")!.root)).toBe(
+      "- A\n- B\n- A1\n- C\n",
+    );
+  });
+
+  it("拖到自己 / 自己的子孙、拖中心主题、在中心主题前后放都无效", () => {
+    const root = base();
+    expect(moveNode(root, idOf(root, "A"), idOf(root, "A"), "inside")).toBeNull();
+    expect(moveNode(root, idOf(root, "A"), idOf(root, "A1"), "inside")).toBeNull();
+    expect(moveNode(root, root.id, idOf(root, "B"), "inside")).toBeNull();
+    expect(moveNode(root, idOf(root, "B"), root.id, "before")).toBeNull();
+  });
+
+  it("放回原位（紧挨着自己）不算编辑", () => {
+    const root = base();
+    expect(moveNode(root, idOf(root, "B"), idOf(root, "C"), "before")).toBeNull();
+    expect(moveNode(root, idOf(root, "B"), idOf(root, "A"), "after")).toBeNull();
+  });
+
+  it("标题拖进列表项下变成列表项；拖到中心主题下保持标题", () => {
+    const { root } = parseMindMap("- x\n\n# H\n\n## H2\n", "c");
+    const r = moveNode(root, idOf(root, "H2"), root.id, "inside")!;
+    expect(serializeMindMap(r.root)).toBe("- x\n\n# H\n\n# H2\n");
+    const r2 = moveNode(root, idOf(root, "H"), idOf(root, "x"), "inside")!;
+    expect(serializeMindMap(r2.root)).toBe("- x\n  - H\n    - H2\n");
   });
 });
