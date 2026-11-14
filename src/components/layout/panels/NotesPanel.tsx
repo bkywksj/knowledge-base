@@ -48,6 +48,8 @@ import {
   ArrowDown,
   ArrowUpToLine,
   ArrowDownToLine,
+  ArrowDownAZ,
+  FolderInput,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { DataNode } from "antd/es/tree";
@@ -310,6 +312,25 @@ function getChildIds(folders: Folder[], parentId: number | null): number[] {
   walk(folders);
   return result;
 }
+
+/** 按 id 在文件夹树中找节点 */
+function findFolderNode(folders: Folder[], id: number): Folder | null {
+  for (const f of folders) {
+    if (f.id === id) return f;
+    const hit = findFolderNode(f.children, id);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+type FolderSortMode = "name-asc" | "name-desc" | "updated" | "created";
+
+const FOLDER_SORT_OPTIONS: { mode: FolderSortMode; label: string }[] = [
+  { mode: "name-asc", label: "按名称 A → Z" },
+  { mode: "name-desc", label: "按名称 Z → A" },
+  { mode: "updated", label: "按最近更新" },
+  { mode: "created", label: "按最近创建" },
+];
 
 /** 在文件夹树中按 id 查找父节点 id（根节点返回 null；未找到返回 null） */
 function findFolderParentId(folders: Folder[], id: number): number | null {
@@ -591,6 +612,10 @@ export function NotesPanel() {
   const [moveModalIds, setMoveModalIds] = useState<number[]>([]);
   // TreeSelect 选中值：数字=目标文件夹 id；ROOT_FOLDER_VALUE 哨兵=移到根（未分类）
   const [moveTargetValue, setMoveTargetValue] = useState<number | null>(null);
+  // 文件夹「移动到…」：右键菜单打开，与笔记移动共用 moveTargetValue（两个弹窗不会同时开）
+  const [folderMoveTarget, setFolderMoveTarget] = useState<{ id: number; name: string } | null>(null);
+  // 文件夹右键「排序子文件夹…」的目标（菜单不支持二级，弹小窗选方式）
+  const [folderSortTarget, setFolderSortTarget] = useState<{ id: number; name: string } | null>(null);
 
   const [contextMenu, setContextMenu] = useState<{
     key: string;
@@ -1775,6 +1800,45 @@ export function NotesPanel() {
     }
   }
 
+  /**
+   * 把某层文件夹按规则排一次序（parentId=null 为根层），结果写回 sort_order，之后仍可手动拖。
+   * 名称在前端用 localeCompare("zh") 排（拼音序，SQLite 按码点排中文是乱的）；时间交给后端算子树最新笔记。
+   */
+  async function sortFolderChildren(parentId: number | null, mode: FolderSortMode) {
+    try {
+      if (mode === "name-asc" || mode === "name-desc") {
+        const list = parentId === null ? folders : findFolderNode(folders, parentId)?.children ?? [];
+        const sorted = [...list].sort((a, b) => a.name.localeCompare(b.name, "zh", { numeric: true }));
+        if (mode === "name-desc") sorted.reverse();
+        await folderApi.reorder(sorted.map((f) => f.id));
+      } else {
+        await folderApi.sortChildrenByTime(parentId, mode);
+      }
+      loadFolders();
+      useAppStore.getState().bumpFoldersRefresh();
+      message.success("已排序，之后仍可拖动调整");
+    } catch (e) {
+      message.error(String(e));
+    }
+  }
+
+  /** 提交「移动到…」（文件夹）：后端会拦住移到自身 / 子孙；移过去后排在目标层最后 */
+  async function submitFolderMove() {
+    if (!folderMoveTarget || moveTargetValue === null) return;
+    const target = moveTargetValue === ROOT_FOLDER_VALUE ? null : moveTargetValue;
+    try {
+      await folderApi.move(folderMoveTarget.id, target);
+      const siblings = getChildIds(folders, target).filter((id) => id !== folderMoveTarget.id);
+      await folderApi.reorder([...siblings, folderMoveTarget.id]);
+      setFolderMoveTarget(null);
+      loadFolders();
+      useAppStore.getState().bumpFoldersRefresh();
+      message.success(`已移动「${folderMoveTarget.name}」`);
+    } catch (e) {
+      message.error(String(e));
+    }
+  }
+
   /** 四个同级排序菜单项；已在顶 / 底的方向置灰 */
   function siblingMoveEntries(
     bounds: { canUp: boolean; canDown: boolean },
@@ -2158,6 +2222,26 @@ export function NotesPanel() {
       ...siblingMoveEntries(folderMoveBounds(folderId), (dir) =>
         moveFolderAmongSiblings(folderId, dir),
       ),
+      {
+        key: "sort-children",
+        icon: <ArrowDownAZ size={14} />,
+        label: "排序子文件夹…",
+        disabled: (findFolderNode(folders, folderId)?.children.length ?? 0) < 2,
+        onClick: () => {
+          setFolderSortTarget({ id: folderId, name });
+          close();
+        },
+      },
+      {
+        key: "move-folder",
+        icon: <FolderInput size={14} />,
+        label: "移动到…",
+        onClick: () => {
+          setMoveTargetValue(null);
+          setFolderMoveTarget({ id: folderId, name });
+          close();
+        },
+      },
       { type: "divider" },
       {
         key: "rename",
@@ -2682,6 +2766,25 @@ export function NotesPanel() {
     return data;
   }, [folders]);
 
+  // 文件夹「移动到…」的目标树：自己和自己的子孙置灰（后端也会拦，这里先不让选）
+  const folderMoveTreeData = useMemo(() => {
+    if (!folderMoveTarget) return [];
+    type MoveNode = { value: number; title: string; disabled?: boolean; children?: MoveNode[] };
+    const toNode = (f: Folder, banned: boolean): MoveNode => {
+      const off = banned || f.id === folderMoveTarget.id;
+      return {
+        value: f.id,
+        title: f.name,
+        disabled: off,
+        children: f.children.length ? f.children.map((c) => toNode(c, off)) : undefined,
+      };
+    };
+    return [
+      { value: ROOT_FOLDER_VALUE, title: "根目录" },
+      ...folders.map((f) => toNode(f, false)),
+    ] as MoveNode[];
+  }, [folders, folderMoveTarget]);
+
   /** 打开「移动到…」弹窗，快照当前多选的笔记 id */
   function openMoveModal() {
     const ids = Array.from(selectedNoteKeys)
@@ -3127,6 +3230,25 @@ export function NotesPanel() {
               文件夹
             </span>
             <span className="flex items-center gap-0.5">
+              {/* 一级文件夹排序；子文件夹在右键菜单「排序子文件夹…」 */}
+              <span onClick={(e) => e.stopPropagation()}>
+                <Dropdown
+                  trigger={["click"]}
+                  disabled={folders.length < 2}
+                  menu={{
+                    items: FOLDER_SORT_OPTIONS.map((o) => ({ key: o.mode, label: o.label })),
+                    onClick: ({ key }) => void sortFolderChildren(null, key as FolderSortMode),
+                  }}
+                >
+                  <Button
+                    type="text"
+                    size="small"
+                    title="排序文件夹"
+                    icon={<ArrowDownAZ size={14} />}
+                    style={{ width: 24, height: 24, padding: 0 }}
+                  />
+                </Dropdown>
+              </span>
               <Button
                 type="text"
                 size="small"
@@ -3476,6 +3598,56 @@ export function NotesPanel() {
           treeNodeFilterProp="title"
           popupMatchSelectWidth={false}
         />
+      </Modal>
+
+      {/* 文件夹右键「移动到…」：用户反馈只知道拖，没找到入口 */}
+      <Modal
+        title={`移动文件夹「${folderMoveTarget?.name ?? ""}」到…`}
+        open={folderMoveTarget !== null}
+        onOk={() => void submitFolderMove()}
+        onCancel={() => setFolderMoveTarget(null)}
+        okText="移动"
+        cancelText="取消"
+        okButtonProps={{ disabled: moveTargetValue === null }}
+        destroyOnClose
+      >
+        <TreeSelect
+          style={{ width: "100%" }}
+          value={moveTargetValue ?? undefined}
+          onChange={(v) => setMoveTargetValue(v as number)}
+          treeData={folderMoveTreeData}
+          placeholder="选择目标位置"
+          treeDefaultExpandAll
+          showSearch
+          treeNodeFilterProp="title"
+          popupMatchSelectWidth={false}
+        />
+      </Modal>
+
+      {/* 文件夹右键「排序子文件夹…」：一次性按规则排，结果写回顺序，之后仍可拖 */}
+      <Modal
+        title={`排序「${folderSortTarget?.name ?? ""}」的子文件夹`}
+        open={folderSortTarget !== null}
+        onCancel={() => setFolderSortTarget(null)}
+        footer={null}
+        width={320}
+        destroyOnClose
+      >
+        <div className="flex flex-col gap-2">
+          {FOLDER_SORT_OPTIONS.map((o) => (
+            <Button
+              key={o.mode}
+              block
+              onClick={() => {
+                const target = folderSortTarget;
+                setFolderSortTarget(null);
+                if (target) void sortFolderChildren(target.id, o.mode);
+              }}
+            >
+              {o.label}
+            </Button>
+          ))}
+        </div>
       </Modal>
 
       {/* 「临时文件」列表：以临时方式打开的外部 .md（不进笔记树） */}

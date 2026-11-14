@@ -657,6 +657,9 @@ export const folderApi = {
     invoke<void>("move_folder", { id, newParentId }),
   reorder: (orderedIds: number[]) =>
     invoke<void>("reorder_folders", { orderedIds }),
+  /** 按时间给某层文件夹排一次序（结果写回 sort_order，之后仍可手动拖）；parentId=null 为根层 */
+  sortChildrenByTime: (parentId: number | null, mode: "updated" | "created") =>
+    invoke<number[]>("sort_child_folders", { parentId, mode }),
   /** T-006: 按 "工作/周报" 这样的路径字符串递归确保存在，返回最深一级 folder id */
   ensurePath: (path: string) =>
     invoke<number | null>("ensure_folder_path", { path }),

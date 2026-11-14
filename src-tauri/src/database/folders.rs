@@ -306,6 +306,53 @@ impl Database {
         Ok(())
     }
 
+    /// 把某父节点下的直接子文件夹按时间排一次，结果写回 sort_order（之后仍可手动拖）。
+    ///
+    /// - `by_updated = true`：按子树内（含子孙文件夹）最近一篇未删笔记的 updated_at 降序；
+    ///   没有笔记的文件夹排最后
+    /// - `by_updated = false`：按文件夹 created_at 降序
+    ///
+    /// 同值按名称兜底，保证结果稳定。返回排好的 id 列表。
+    /// 按名称排序不在这里做：SQLite 按码点排中文不是拼音序，前端用 localeCompare("zh") 排完调 reorder。
+    pub fn sort_child_folders_by_time(
+        &self,
+        parent_id: Option<i64>,
+        by_updated: bool,
+    ) -> Result<Vec<i64>, AppError> {
+        let order = if by_updated {
+            "t.last_updated IS NULL, t.last_updated DESC, f.name"
+        } else {
+            "f.created_at DESC, f.id DESC"
+        };
+        // `parent_id IS ?1`：SQLite 的 IS 对 NULL 也成立，根层与子层共用一条语句
+        let sql = format!(
+            "WITH RECURSIVE sub(root, id) AS (
+                 SELECT id, id FROM folders WHERE parent_id IS ?1
+                 UNION ALL
+                 SELECT sub.root, f.id FROM folders f JOIN sub ON f.parent_id = sub.id
+             )
+             SELECT f.id FROM folders f
+             LEFT JOIN (
+                 SELECT sub.root AS root, MAX(n.updated_at) AS last_updated
+                 FROM sub JOIN notes n ON n.folder_id = sub.id AND n.is_deleted = 0
+                 GROUP BY sub.root
+             ) t ON t.root = f.id
+             WHERE f.parent_id IS ?1
+             ORDER BY {order}"
+        );
+        let ids: Vec<i64> = {
+            let conn = self
+                .conn
+                .lock()
+                .map_err(|e| AppError::Custom(e.to_string()))?;
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params![parent_id], |row| row.get(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        self.set_folder_sort_orders(&ids)?;
+        Ok(ids)
+    }
+
     /// 修改文件夹父节点（拖拽移动）
     /// new_parent_id == None 表示移到根节点
     pub fn move_folder(&self, id: i64, new_parent_id: Option<i64>) -> Result<(), AppError> {
@@ -805,4 +852,60 @@ fn build_folder_tree(rows: &[FolderRow]) -> Vec<Folder> {
     }
 
     build_children(rows, None)
+}
+
+#[cfg(test)]
+mod sort_child_folders_tests {
+    use super::*;
+    use crate::models::NoteInput;
+
+    fn note_at(db: &Database, folder_id: i64, updated_at: &str) {
+        let id = db
+            .create_note(&NoteInput { title: "n".into(), content: "x".into(), folder_id: Some(folder_id) })
+            .unwrap()
+            .id;
+        db.conn_lock()
+            .unwrap()
+            .execute("UPDATE notes SET updated_at = ?1 WHERE id = ?2", params![updated_at, id])
+            .unwrap();
+    }
+
+    fn set_created(db: &Database, id: i64, created_at: &str) {
+        db.conn_lock()
+            .unwrap()
+            .execute("UPDATE folders SET created_at = ?1 WHERE id = ?2", params![created_at, id])
+            .unwrap();
+    }
+
+    /// 最近更新：看子树里最新的笔记（含子孙文件夹），空文件夹排最后；结果写回 sort_order
+    #[test]
+    fn by_updated_uses_subtree_and_puts_empty_last() {
+        let db = Database::init(":memory:").unwrap();
+        let a = db.create_folder("A", None).unwrap().id;
+        let b = db.create_folder("B", None).unwrap().id;
+        let empty = db.create_folder("空", None).unwrap().id;
+        let b_child = db.create_folder("B子", Some(b)).unwrap().id;
+        note_at(&db, a, "2026-01-02 10:00:00");
+        note_at(&db, b_child, "2026-03-01 10:00:00");
+
+        let ids = db.sort_child_folders_by_time(None, true).unwrap();
+        assert_eq!(ids, vec![b, a, empty]);
+        let tree = db.list_folders_tree().unwrap();
+        let roots: Vec<i64> = tree.iter().map(|f| f.id).collect();
+        assert_eq!(roots, vec![b, a, empty], "sort_order 应已写回");
+    }
+
+    /// 最近创建：只排指定父节点的直接子文件夹，不动别的层
+    #[test]
+    fn by_created_only_touches_direct_children() {
+        let db = Database::init(":memory:").unwrap();
+        let p = db.create_folder("父", None).unwrap().id;
+        let old = db.create_folder("旧", Some(p)).unwrap().id;
+        let new = db.create_folder("新", Some(p)).unwrap().id;
+        set_created(&db, old, "2025-01-01 00:00:00");
+        set_created(&db, new, "2026-01-01 00:00:00");
+
+        assert_eq!(db.sort_child_folders_by_time(Some(p), false).unwrap(), vec![new, old]);
+        assert_eq!(db.sort_child_folders_by_time(None, false).unwrap(), vec![p]);
+    }
 }

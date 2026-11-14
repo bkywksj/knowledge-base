@@ -134,6 +134,17 @@ pub fn reorder_folders(
     FolderService::reorder(&state.db, &ordered_ids).map_err(|e| e.to_string())
 }
 
+/// 按时间给某层文件夹排一次序（`mode`: "updated" 最近更新 / "created" 最近创建），
+/// 结果写回 sort_order，之后仍可手动拖。`parent_id = null` 表示根层。
+#[tauri::command]
+pub fn sort_child_folders(
+    state: tauri::State<'_, AppState>,
+    parent_id: Option<i64>,
+    mode: String,
+) -> Result<Vec<i64>, String> {
+    FolderService::sort_children_by_time(&state.db, parent_id, &mode).map_err(|e| e.to_string())
+}
+
 /// 设置文件夹颜色
 ///
 /// `color` 传 `null` 或空串 = 清除（恢复默认主题色）。

@@ -102,6 +102,20 @@ impl FolderService {
         db.set_folder_sort_orders(ordered_ids)
     }
 
+    /// 按时间给某父节点下的直接子文件夹排一次序（`mode`: "updated" / "created"），返回排好的 id
+    pub fn sort_children_by_time(
+        db: &Database,
+        parent_id: Option<i64>,
+        mode: &str,
+    ) -> Result<Vec<i64>, AppError> {
+        let by_updated = match mode {
+            "updated" => true,
+            "created" => false,
+            other => return Err(AppError::InvalidInput(format!("未知的排序方式: {other}"))),
+        };
+        db.sort_child_folders_by_time(parent_id, by_updated)
+    }
+
     /// 获取文件夹树
     pub fn list_tree(db: &Database) -> Result<Vec<Folder>, AppError> {
         db.list_folders_tree()
