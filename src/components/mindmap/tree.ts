@@ -46,6 +46,12 @@ const ITEM_RE = /^(\s*)([-*+]|\d+[.)])\s+(?:\[([ xX])\]\s+)?(.*)$/;
 /** 空列表项（`-` 后面直接换行）：tiptap 会序列化出这种行 */
 const EMPTY_ITEM_RE = /^(\s*)([-*+]|\d+[.)])\s*$/;
 
+/**
+ * 「看起来是空行」的 HTML：编辑器要求文档末尾留一个可继续打字的空段落，序列化成 `<p></p>`；
+ * 手动空行也可能是 `<br>` / `&nbsp;`。这些不算正文内容，否则在编辑器里改过一个字导图就进不了编辑
+ */
+const BLANK_HTML_RE = /^\s*(?:<p>\s*(?:<br\s*\/?>|&nbsp;)?\s*<\/p>|<br\s*\/?>|&nbsp;)\s*$/i;
+
 /** 列表项相对标题的「深度键」：标题 1–6，列表项从 10 起按缩进递增，保证列表永远挂在标题下面 */
 const ITEM_KEY_BASE = 10;
 
@@ -71,7 +77,7 @@ export function parseMindMap(markdown: string, title: string): ParseResult {
 
   const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
   for (const line of lines) {
-    if (!line.trim()) continue;
+    if (!line.trim() || BLANK_HTML_RE.test(line)) continue;
 
     let node: MindNode | null = null;
     let key = 0;

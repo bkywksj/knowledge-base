@@ -44,6 +44,8 @@ interface Props {
   onTitleChange?: (title: string) => void;
   /** 打开时直接进入编辑模式（「新建思维导图」用） */
   defaultEditing?: boolean;
+  /** 父页面暂时不允许编辑的原因（阅读 / 源码模式）；有值时编辑按钮置灰并提示 */
+  editBlockedReason?: string;
 }
 
 const SHORTCUT_HELP =
@@ -73,6 +75,7 @@ export function MindMapView({
   onMarkdownChange,
   onTitleChange,
   defaultEditing = false,
+  editBlockedReason,
 }: Props) {
   const { token } = antdTheme.useToken();
   const { message } = AntdApp.useApp();
@@ -84,7 +87,9 @@ export function MindMapView({
   }, [markdown, title]);
   const canEdit = !!onMarkdownChange;
   const [editing, setEditing] = useState(defaultEditing && canEdit);
-  const editMode = editing && canEdit && editability.editable;
+  const editMode = editing && canEdit && editability.editable && !editBlockedReason;
+  /** 编辑按钮置灰的原因：页面模式优先（切一下就能编辑），其次是内容不是纯大纲 */
+  const editDisabledReason = editBlockedReason ?? (editability.editable ? undefined : editability.reason);
 
   // 编辑中途在正文里加了段落等内容 → 退回只读并说明，不让导图把它们写丢
   useEffect(() => {
@@ -298,16 +303,14 @@ export function MindMapView({
               title={
                 editMode
                   ? "退出编辑（回到只读视图）"
-                  : editability.editable
-                    ? "在导图里直接编辑（改动写回笔记正文）"
-                    : editability.reason
+                  : editDisabledReason ?? "在导图里直接编辑（改动写回笔记正文）"
               }
             >
               <Button
                 size="small"
                 type={editMode ? "primary" : "text"}
                 icon={<PencilLine size={13} />}
-                disabled={!editability.editable}
+                disabled={!editMode && !!editDisabledReason}
                 onClick={() => setEditing((v) => !v)}
               >
                 <span style={{ fontSize: 12 }}>{editMode ? "编辑中" : "编辑"}</span>

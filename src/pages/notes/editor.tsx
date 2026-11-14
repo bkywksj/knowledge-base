@@ -942,23 +942,25 @@ function DesktopNoteEditorPage() {
 
   const noteId = Number(id);
 
+  // 切到不同笔记时重置阅读模式为全局默认（避免上一篇手动切换的状态残留到下一篇）
+  useEffect(() => {
+    setReadingMode(defaultViewMode === "read");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noteId]);
+
   // 「新建思维导图」跳过来：直接打开导图并进编辑模式；用完把路由 state 清掉，
-  // 否则在历史里前进后退回到这篇会再次自动弹出。其它入口打开的笔记导图默认只读
+  // 否则在历史里前进后退回到这篇会再次自动弹出。其它入口打开的笔记导图默认只读。
+  // 必须排在上面「重置阅读模式」之后：默认视图是「阅读」时也要切回编辑，否则导图写不进去
   useEffect(() => {
     const st = location.state as { openMindMap?: string } | null;
     if (st?.openMindMap === "edit") {
+      setReadingMode(false);
       setMindMapEditDefault(true);
       setMindMapOpen(true);
       navigate(location.pathname + location.search, { replace: true, state: null });
     } else {
       setMindMapEditDefault(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [noteId]);
-
-  // 切到不同笔记时重置阅读模式为全局默认（避免上一篇手动切换的状态残留到下一篇）
-  useEffect(() => {
-    setReadingMode(defaultViewMode === "read");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteId]);
 
@@ -2974,8 +2976,16 @@ function DesktopNoteEditorPage() {
               noteId={Number.isFinite(noteId) ? noteId : null}
               variant="embed"
               // 导图里的改动按正常编辑处理：写进编辑器 + 标脏，由自动保存落盘
-              onMarkdownChange={readingMode || sourceMode ? undefined : handleContentChange}
-              onTitleChange={readingMode || sourceMode ? undefined : handleTitleChange}
+              onMarkdownChange={handleContentChange}
+              onTitleChange={handleTitleChange}
+              // 阅读 / 源码模式下不让导图改正文（和编辑器本身一致），按钮置灰并说明，而不是直接藏掉
+              editBlockedReason={
+                readingMode
+                  ? "阅读模式下不能编辑，先切到「编辑」"
+                  : sourceMode
+                    ? "源码模式下不能在导图里编辑，先切回「编辑」"
+                    : undefined
+              }
               defaultEditing={mindMapEditDefault}
             />
           </Suspense>

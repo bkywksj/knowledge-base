@@ -63,6 +63,19 @@ describe("parseMindMap · 可编辑判定", () => {
     expect(parseMindMap("# a\n\n- b\n", "c").editable).toBe(true);
   });
 
+  it("编辑器补在末尾的空段落 <p></p> 等空白 HTML 不算正文（实测：编辑器里改一个字就会带上它）", () => {
+    // 原样取自编辑器保存的真实内容
+    const md = "- 分支一\n  - 子项 A\n- 分支二！\n\n<p></p>";
+    const r = parseMindMap(md, "c");
+    expect(r.editable).toBe(true);
+    expect(shape(r.root)).toEqual(["c", ["分支一", ["子项 A"]], ["分支二！"]]);
+    for (const blank of ["<p><br></p>", "<br/>", "&nbsp;", "<P> </P>"]) {
+      expect(parseMindMap(`- a\n\n${blank}\n`, "c").editable, blank).toBe(true);
+    }
+    // 有内容的段落仍然只读
+    expect(parseMindMap("- a\n\n<p>正文</p>\n", "c").editable).toBe(false);
+  });
+
   it("出现段落 / 表格 / 代码块就只读，并给出原因", () => {
     for (const md of ["# a\n\n一段正文\n", "| a | b |\n|---|---|\n", "```js\nx\n```\n", "> 引用\n"]) {
       const r = parseMindMap(md, "c");
