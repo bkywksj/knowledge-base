@@ -23,8 +23,12 @@ class MainActivity : TauriActivity() {
    *
    * 这里在原生层给内容区补上导航栏的留白（横屏时导航栏在侧边，左右一起补），
    * 网页不再延伸到导航栏底下，所有页面一次生效。状态栏仍交给前端的
-   * env(safe-area-inset-top) 处理，那边一直是好的。键盘（IME）也不在这里管，
-   * 前端 useKeyboardInset 自己处理。
+   * env(safe-area-inset-top) 处理，那边一直是好的。
+   *
+   * 🔴 键盘（IME）也必须在这里让：targetSdk 35+ 开了 edge-to-edge 后 adjustResize 不再缩 WebView，
+   * visualViewport 也不变，前端 useKeyboardInset 恒为 0 —— 待办新建面板、编辑器格式条全被键盘盖住，
+   * 正文也滚不上来（用户反馈截图）。这里底部留白取「导航栏 / 键盘」较大者，键盘弹出时 WebView 真实变矮，
+   * 所有 fixed 底部面板自动贴在键盘上方；前端 hook 此时自然算出 0，不会重复垫高。
    *
    * 🔴 留白加在 Activity 根内容视图（android.R.id.content）上，不是 webView.parent：
    * 本回调触发时 WebView 还没挂到父容器上，parent 为 null —— 旧写法在这里直接 return，
@@ -39,11 +43,15 @@ class MainActivity : TauriActivity() {
     content.setBackgroundColor(Color.WHITE)
     ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
       val nav = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-      view.setPadding(nav.left, 0, nav.right, nav.bottom)
+      // 键盘高度从屏幕底边量起、已含导航栏，取较大者而不是相加
+      val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+      view.setPadding(nav.left, 0, nav.right, maxOf(nav.bottom, ime.bottom))
       // 导航栏已经由这里让开了，往下传给 WebView 时把这部分清零：否则手势导航下
-      // WebView 仍报 env(safe-area-inset-bottom)=16，前端 Tab 栏再垫一次，底部空出两份（真机实测）
+      // WebView 仍报 env(safe-area-inset-bottom)=16，前端 Tab 栏再垫一次，底部空出两份（真机实测）。
+      // 键盘同理清零：新版 WebView 会按 IME inset 再缩一次可视视口，前端会重复垫高
       WindowInsetsCompat.Builder(insets)
         .setInsets(WindowInsetsCompat.Type.navigationBars(), Insets.NONE)
+        .setInsets(WindowInsetsCompat.Type.ime(), Insets.NONE)
         .build()
     }
     ViewCompat.requestApplyInsets(content)
