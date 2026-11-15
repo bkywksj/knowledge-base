@@ -77,6 +77,14 @@ fn attachment_path(hash: &str) -> Result<String, AppError> {
     Ok(format!("/attachment/{hash}"))
 }
 
+/// 电脑端正在同步时的报错（409）；申请租约时据此判断要不要等
+const BUSY_MSG: &str = "电脑端正在同步，请稍后再试";
+
+/// 申请租约遇到电脑端正在同步时最多等多久。手机「一键同步」是先推后拉：推完释放租约后
+/// 电脑会立刻拿租约合并手机的改动，紧接着的拉取正好撞上，等几秒就轮到手机
+const BUSY_WAIT: Duration = Duration::from_secs(60);
+const BUSY_RETRY_INTERVAL: Duration = Duration::from_secs(1);
+
 pub struct LanBackend {
     /// 候选地址，形如 `https://192.168.1.8:47321`；第一次请求时挑能连上的
     candidates: Vec<String>,
@@ -85,6 +93,8 @@ pub struct LanBackend {
     token: String,
     client: reqwest::Client,
     lease: Mutex<Option<String>>,
+    /// 见 [`BUSY_WAIT`]；测试里改短
+    busy_wait: Duration,
 }
 
 impl LanBackend {
@@ -129,7 +139,13 @@ impl LanBackend {
             token: token.to_string(),
             client,
             lease: Mutex::new(None),
+            busy_wait: BUSY_WAIT,
         })
+    }
+
+    #[cfg(test)]
+    pub fn set_busy_wait(&mut self, d: Duration) {
+        self.busy_wait = d;
     }
 
     /// 选一个能连上的地址并记住。只试一个候选时不探测，直接用（省一次往返）
@@ -198,7 +214,7 @@ impl LanBackend {
             s if s.is_success() => Ok(Some(resp)),
             StatusCode::NOT_FOUND if allow_404 => Ok(None),
             StatusCode::UNAUTHORIZED => Err(AppError::Custom("配对已失效，请在电脑端重新配对".into())),
-            StatusCode::CONFLICT => Err(AppError::Custom("电脑端正在同步，请稍后再试".into())),
+            StatusCode::CONFLICT => Err(AppError::Custom(BUSY_MSG.into())),
             StatusCode::LOCKED => Err(AppError::Custom("同步会话已过期，请重新同步".into())),
             s => {
                 let text = resp.text().await.unwrap_or_default();
@@ -216,14 +232,24 @@ impl LanBackend {
         }
     }
 
-    /// 向电脑端申请库级租约（一般不用手动调，见 [`Self::ensure_lease`]）。电脑端或别的设备正在同步时返回错误
+    /// 向电脑端申请库级租约（一般不用手动调，见 [`Self::ensure_lease`]）。
+    /// 电脑端或别的设备正在同步时每秒重试，等满 [`BUSY_WAIT`] 仍拿不到才返回错误。
+    /// 在同步线程里调用（同步流程本身就是阻塞的），sleep 不会卡界面
     pub fn begin_session(&self) -> Result<(), AppError> {
         // 已持有就不再申请：重复申请会被电脑端当成别人在同步而拒绝
         if self.lease.lock().map_err(|e| AppError::Custom(e.to_string()))?.is_some() {
             return Ok(());
         }
-        let resp = block_on(self.send(Method::POST, "/lease", None, None, false))?
-            .ok_or_else(|| AppError::Custom("申请同步会话失败".into()))?;
+        let deadline = std::time::Instant::now() + self.busy_wait;
+        let resp = loop {
+            match block_on(self.send(Method::POST, "/lease", None, None, false)) {
+                Err(AppError::Custom(m)) if m == BUSY_MSG && std::time::Instant::now() < deadline => {
+                    std::thread::sleep(BUSY_RETRY_INTERVAL);
+                }
+                r => break r?,
+            }
+        }
+        .ok_or_else(|| AppError::Custom("申请同步会话失败".into()))?;
         let lease: LeaseResponse = block_on(resp.json())
             .map_err(|e| AppError::Custom(format!("同步会话响应解析失败: {e}")))?;
         *self.lease.lock().map_err(|e| AppError::Custom(e.to_string()))? = Some(lease.lease_id);

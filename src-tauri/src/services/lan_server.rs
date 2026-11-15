@@ -480,8 +480,11 @@ mod tests {
         Fixture { _rt: rt, server, root, token, fingerprint, lease, wrote_calls }
     }
 
+    /// 不等待的客户端：租约被占时立即报错，测互斥用
     fn client(f: &Fixture) -> LanBackend {
-        LanBackend::new(&format!("https://{}", f.server.addr), &f.token, &f.fingerprint).unwrap()
+        let mut c = LanBackend::new(&format!("https://{}", f.server.addr), &f.token, &f.fingerprint).unwrap();
+        c.set_busy_wait(Duration::ZERO);
+        c
     }
 
     fn manifest() -> SyncManifestV1 {
@@ -595,6 +598,27 @@ mod tests {
         assert!(f.lease.try_acquire("desktop").is_none());
         c.end_session();
         assert!(f.lease.try_acquire("desktop").is_some());
+    }
+
+    /// 真机复现：手机一键同步推完后电脑立刻拿租约合并，紧接着的拉取撞上 409。
+    /// 默认客户端应等电脑合并完再继续，而不是直接报「电脑端正在同步」
+    #[test]
+    fn begin_session_waits_for_desktop_merge() {
+        let f = fixture();
+        let mut c = client(&f);
+        c.set_busy_wait(Duration::from_secs(10));
+        let desktop = f.lease.try_acquire("desktop").unwrap();
+        let lease = f.lease.clone();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(1500));
+            lease.release(&desktop);
+        });
+        let t = std::time::Instant::now();
+        c.begin_session().unwrap();
+        assert!(t.elapsed() >= Duration::from_millis(1000), "应等电脑释放后才拿到");
+        releaser.join().unwrap();
+        assert!(f.lease.try_acquire("desktop").is_none(), "手机已持有租约");
+        c.end_session();
     }
 
     #[test]
