@@ -28,6 +28,8 @@ pub const KEY_TOKEN: &str = "lan_sync.token";
 pub const KEY_CERT: &str = "lan_sync.cert_der";
 pub const KEY_KEY: &str = "lan_sync.key_der";
 pub const KEY_BACKEND_ID: &str = "lan_sync.backend_id";
+/// 最近一次收到手机改动的时间（本地时间）。中转源自己每 5 分钟也会同步，不能拿它的时间当「手机同步时间」
+pub const KEY_LAST_CLIENT_SYNC: &str = "lan_sync.last_client_sync";
 
 /// 默认端口：避开常见开发端口；被占用时用户可在设置里改
 pub const DEFAULT_PORT: u16 = 47321;
@@ -71,6 +73,10 @@ pub struct LanSyncStatus {
     pub fingerprint: Option<String>,
     /// 「本机中转」同步源 id
     pub backend_id: Option<i64>,
+    /// 最近一次收到手机改动的时间；从没同步过为 None
+    pub last_client_sync: Option<String>,
+    /// 「本机中转」源最近一次同步失败的错误（合并手机改动失败时用户在这里能看到）
+    pub host_last_error: Option<String>,
 }
 
 fn get(db: &Database, key: &str) -> String {
@@ -198,6 +204,9 @@ impl LanSyncState {
             .ok()
             .filter(|d| !d.is_empty())
             .map(|d| cert_fingerprint(&d));
+        let host_last_error = host_backend_id(db)
+            .and_then(|id| db.get_sync_backend(id).ok().flatten())
+            .and_then(|b| b.last_error);
         LanSyncStatus {
             enabled: get(db, KEY_ENABLED) == "1",
             running,
@@ -206,6 +215,8 @@ impl LanSyncState {
             device_name: device_name(),
             fingerprint,
             backend_id: host_backend_id(db),
+            last_client_sync: Some(get(db, KEY_LAST_CLIENT_SYNC)).filter(|s| !s.is_empty()),
+            host_last_error,
         }
     }
 }
@@ -216,6 +227,10 @@ pub fn merge_trigger(app: tauri::AppHandle) -> std::sync::Arc<dyn Fn() + Send + 
     std::sync::Arc::new(move || {
         use tauri::Manager;
         let Some(state) = app.try_state::<crate::state::AppState>() else { return };
+        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        if let Err(e) = state.db.set_config(KEY_LAST_CLIENT_SYNC, &now) {
+            log::warn!("[lan-sync] 记录手机同步时间失败: {e}");
+        }
         if let Some(id) = host_backend_id(&state.db) {
             if state.sync_v1_gate.is_busy(id) {
                 return;
@@ -384,6 +399,22 @@ mod tests {
         db.delete_sync_backend(id).unwrap();
         let id2 = ensure_host_backend(&db, &vault).unwrap();
         assert_ne!(id, id2);
+    }
+
+    #[test]
+    fn status_reports_last_phone_sync_and_merge_error() {
+        let db = db();
+        let state = LanSyncState::default();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let s = rt.block_on(state.status(&db));
+        assert!(s.last_client_sync.is_none() && s.host_last_error.is_none());
+
+        let id = ensure_host_backend(&db, &std::env::temp_dir().join("kb-lan-vault-test3")).unwrap();
+        db.set_config(KEY_LAST_CLIENT_SYNC, "2026-11-15 11:21:31").unwrap();
+        db.set_sync_backend_error(id, Some("pull 失败: 磁盘满")).unwrap();
+        let s = rt.block_on(state.status(&db));
+        assert_eq!(s.last_client_sync.as_deref(), Some("2026-11-15 11:21:31"));
+        assert_eq!(s.host_last_error.as_deref(), Some("pull 失败: 磁盘满"));
     }
 
     #[test]

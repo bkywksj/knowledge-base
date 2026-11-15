@@ -15,6 +15,7 @@ import { ReloadOutlined } from "@ant-design/icons";
 import QRCode from "qrcode";
 import { lanSyncApi } from "@/lib/api";
 import type { LanSyncStatus } from "@/types";
+import { relativeTime } from "@/lib/utils";
 
 const { Text, Paragraph } = Typography;
 
@@ -129,7 +130,7 @@ export function LanSyncSection() {
           type="warning"
           showIcon
           className="mt-2"
-          message="已开启但服务没在运行（多半是端口被占用），换个端口再打开试试"
+          title="已开启但服务没在运行（多半是端口被占用），换个端口再打开试试"
         />
       )}
 
@@ -190,18 +191,46 @@ export function LanSyncSection() {
             </div>
           </div>
 
+          <div className="mt-3" style={{ fontSize: 13 }}>
+            <Text type="secondary">最近一次收到手机的改动：</Text>
+            {status.lastClientSync ? relativeTime(status.lastClientSync) : <Text type="secondary">还没有</Text>}
+          </div>
+          {status.hostLastError && (
+            <Alert
+              type="error"
+              showIcon
+              className="mt-2"
+              title="把手机的改动合并到本机时出错"
+              description={status.hostLastError}
+            />
+          )}
+
           <Alert
             type="info"
             showIcon
             className="mt-3"
-            message="手机端的扫码配对还在开发中，下个版本提供"
+            title="手机上怎么连"
+            description={
+              <ol className="my-1 pl-4" style={{ fontSize: 12, lineHeight: 1.8 }}>
+                <li>手机和这台电脑连同一个 Wi-Fi。</li>
+                <li>手机知识库：我的 → 云端同步 → 右上角「+」→ 类型选「局域网」→ 扫描上面的二维码 → 保存。</li>
+                <li>之后在手机上点「一键同步」；手机的改动会立即合并进这台电脑。</li>
+              </ol>
+            }
+          />
+          <Alert
+            type="warning"
+            showIcon
+            className="mt-2"
+            title="连不上时先看这几项"
             description={
               <ul className="my-1 pl-4" style={{ fontSize: 12, lineHeight: 1.8 }}>
+                <li>Windows 首次开启会弹防火墙询问，要允许「专用网络」；点过「取消」的话去 Windows 防火墙里放行知识库。</li>
+                <li>电脑睡眠或关掉知识库时手机连不上；电脑换了 Wi-Fi 后地址会变，在手机上重新扫一次码。</li>
+                <li>二维码等同于这台电脑的访问凭据，不要截图发给别人；泄露了就点「重新生成配对码」。</li>
                 <li>
-                  电脑上的笔记会通过同步源「局域网同步（本机中转）」每 5 分钟同步进中转库，也可以在「多端实时同步」里手动同步它。
+                  电脑上的笔记由同步源「局域网同步（本机中转）」每 5 分钟同步进中转库，也可以在「多端实时同步」里手动同步它。
                 </li>
-                <li>Windows 首次开启时会弹出防火墙询问，请允许「专用网络」访问，否则手机连不上。</li>
-                <li>二维码等同于这台电脑的访问凭据，不要截图发给别人。</li>
               </ul>
             }
           />

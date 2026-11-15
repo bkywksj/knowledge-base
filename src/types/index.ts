@@ -1725,6 +1725,10 @@ export interface LanSyncStatus {
   fingerprint: string | null;
   /** 「本机中转」同步源 id */
   backendId: number | null;
+  /** 最近一次收到手机改动的时间（本地时间 YYYY-MM-DD HH:MM:SS） */
+  lastClientSync: string | null;
+  /** 「本机中转」源最近一次同步失败的错误 */
+  hostLastError: string | null;
 }
 
 export interface SyncBackend {
