@@ -1711,7 +1711,7 @@ export interface PromptTemplateInput {
 
 // ─── T-024 同步 V1 ─────────────────────────────
 
-export type SyncBackendKind = "local" | "webdav" | "s3";
+export type SyncBackendKind = "local" | "webdav" | "s3" | "lan";
 
 /** 局域网同步（手机 ↔ 本机）状态，对应 Rust `services::lan_sync::LanSyncStatus` */
 export interface LanSyncStatus {

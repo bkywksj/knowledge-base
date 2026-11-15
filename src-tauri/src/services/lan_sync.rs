@@ -146,8 +146,14 @@ fn ensure_host_backend(db: &Database, vault: &Path) -> Result<i64, AppError> {
 }
 
 impl LanSyncState {
-    /// 按库里的配置起服务（已在跑就先停）。开关 / 自动启动 / 重置令牌后都走这里
-    pub async fn start(&self, db: &Database, data_dir: &Path) -> Result<(), AppError> {
+    /// 按库里的配置起服务（已在跑就先停）。开关 / 自动启动 / 重置令牌后都走这里。
+    /// `on_client_wrote`：手机同步写过数据并归还租约后调用，一般传 [`merge_trigger`]
+    pub async fn start(
+        &self,
+        db: &Database,
+        data_dir: &Path,
+        on_client_wrote: Option<std::sync::Arc<dyn Fn() + Send + Sync>>,
+    ) -> Result<(), AppError> {
         self.stop().await;
         let vault = vault_root(data_dir);
         ensure_host_backend(db, &vault)?;
@@ -161,6 +167,7 @@ impl LanSyncState {
             device_name: device_name(),
             identity,
             lease: self.lease.clone(),
+            on_client_wrote,
         };
         let running = lan_server::start(params).await?;
         let bound_port = running.addr.port();
@@ -178,7 +185,7 @@ impl LanSyncState {
         // 先停广播再停服务：别让手机找到一个已经关掉的地址
         self.advertiser.lock().await.take();
         if let Some(s) = self.server.lock().await.take() {
-            s.stop();
+            s.shutdown().await;
         }
     }
 
@@ -201,6 +208,22 @@ impl LanSyncState {
             backend_id: host_backend_id(db),
         }
     }
+}
+
+/// 手机同步完的回调：立即在后台同步一次「本机中转」源，把手机的改动合并进电脑的库
+/// （不等 5 分钟的定时同步）。电脑正在同步这个源时 trigger 自己会跳过
+pub fn merge_trigger(app: tauri::AppHandle) -> std::sync::Arc<dyn Fn() + Send + Sync> {
+    std::sync::Arc::new(move || {
+        use tauri::Manager;
+        let Some(state) = app.try_state::<crate::state::AppState>() else { return };
+        if let Some(id) = host_backend_id(&state.db) {
+            if state.sync_v1_gate.is_busy(id) {
+                return;
+            }
+            log::info!("[lan-sync] 手机同步完成，合并到本机（同步源 #{id}）");
+            crate::services::sync_v1_scheduler::trigger_background_sync(&app, id);
+        }
+    })
 }
 
 /// 配对二维码内容（手机扫码后保存）。含令牌 —— 只在界面上显示给用户扫，不写日志

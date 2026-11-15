@@ -15,13 +15,21 @@ pub async fn lan_sync_status(state: State<'_, AppState>) -> Result<LanSyncStatus
 /// 开启：保存端口和开关后起服务（并确保「本机中转」同步源存在）。
 /// 先落库再启动：启动失败（端口被占）用户改过的端口也留住
 #[tauri::command]
-pub async fn lan_sync_enable(state: State<'_, AppState>, port: u16) -> Result<LanSyncStatus, String> {
+pub async fn lan_sync_enable(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    port: u16,
+) -> Result<LanSyncStatus, String> {
     if port < 1024 {
         return Err("端口请用 1024 以上".into());
     }
     state.db.set_config(lan_sync::KEY_PORT, &port.to_string()).map_err(|e| e.to_string())?;
     state.db.set_config(lan_sync::KEY_ENABLED, "1").map_err(|e| e.to_string())?;
-    state.lan_sync.start(&state.db, &state.data_dir).await.map_err(|e| e.to_string())?;
+    state
+        .lan_sync
+        .start(&state.db, &state.data_dir, Some(lan_sync::merge_trigger(app)))
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(state.lan_sync.status(&state.db).await)
 }
 
@@ -41,10 +49,17 @@ pub fn lan_sync_pairing_payload(state: State<'_, AppState>) -> Result<String, St
 
 /// 重新生成配对码：已配对的设备全部失效、需重新扫码。服务在跑就按新令牌重启
 #[tauri::command]
-pub async fn lan_sync_reset_pairing(state: State<'_, AppState>) -> Result<LanSyncStatus, String> {
+pub async fn lan_sync_reset_pairing(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<LanSyncStatus, String> {
     lan_sync::reset_token(&state.db).map_err(|e| e.to_string())?;
     if state.lan_sync.status(&state.db).await.running {
-        state.lan_sync.start(&state.db, &state.data_dir).await.map_err(|e| e.to_string())?;
+        state
+            .lan_sync
+            .start(&state.db, &state.data_dir, Some(lan_sync::merge_trigger(app)))
+            .await
+            .map_err(|e| e.to_string())?;
     }
     Ok(state.lan_sync.status(&state.db).await)
 }

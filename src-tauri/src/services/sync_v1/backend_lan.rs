@@ -3,10 +3,10 @@
 //! - 证书：电脑端是自签证书，不走 CA 校验；只认配对时拿到的证书指纹（sha256），
 //!   指纹对不上直接断开 —— 局域网里被人冒充成「电脑」也拿不到数据
 //! - 鉴权：每个请求带 Bearer 令牌（配对时拿到）
-//! - 写操作要先 [`LanBackend::begin_session`] 拿库级租约，结束后 [`LanBackend::end_session`]；
-//!   电脑端同一时刻只允许一方写，避免两边交错写 manifest 互相覆盖
-// 手机端「局域网」同步方式（第 4 步）接入前，本模块只被单测调用；接入后去掉这行
-#![allow(dead_code)]
+//! - 库级租约自动管理：第一次读 manifest 或写入时申请，后端对象释放（一次同步结束）时归还；
+//!   电脑端同一时刻只允许一方写，避免两边交错写 manifest 互相覆盖。读 manifest 时就拿是因为
+//!   push 是「读 → 合并 → 写」，读完再拿租约的话中间电脑写入的内容会被覆盖
+//! - 地址：配对二维码里带本机所有局域网地址，第一次请求时逐个试连，记住能连上的那个
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -78,14 +78,32 @@ fn attachment_path(hash: &str) -> Result<String, AppError> {
 }
 
 pub struct LanBackend {
-    /// 形如 `https://192.168.1.8:47321`
-    base_url: String,
+    /// 候选地址，形如 `https://192.168.1.8:47321`；第一次请求时挑能连上的
+    candidates: Vec<String>,
+    /// 已选中的地址
+    base_url: Mutex<Option<String>>,
     token: String,
     client: reqwest::Client,
     lease: Mutex<Option<String>>,
 }
 
 impl LanBackend {
+    /// `hosts`：配对二维码里的地址（IP 或 IP:端口都行，没写端口用 `port`）
+    pub fn with_hosts(hosts: &[String], port: u16, token: &str, fingerprint: &str) -> Result<Self, AppError> {
+        let candidates: Vec<String> = hosts
+            .iter()
+            .map(|h| h.trim())
+            .filter(|h| !h.is_empty())
+            .map(|h| if h.contains(':') { format!("https://{h}") } else { format!("https://{h}:{port}") })
+            .collect();
+        if candidates.is_empty() {
+            return Err(AppError::InvalidInput("配对信息里没有电脑地址，请在电脑端重新生成二维码后再扫".into()));
+        }
+        let mut b = Self::new(&candidates[0], token, fingerprint)?;
+        b.candidates = candidates;
+        Ok(b)
+    }
+
     pub fn new(base_url: &str, token: &str, fingerprint: &str) -> Result<Self, AppError> {
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let tls = rustls::ClientConfig::builder_with_provider(provider.clone())
@@ -106,15 +124,51 @@ impl LanBackend {
             .build()
             .map_err(|e| AppError::Custom(format!("局域网客户端初始化失败: {e}")))?;
         Ok(Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
+            candidates: vec![base_url.trim_end_matches('/').to_string()],
+            base_url: Mutex::new(None),
             token: token.to_string(),
             client,
             lease: Mutex::new(None),
         })
     }
 
-    fn url(&self, path: &str) -> String {
-        format!("{}{}{}", self.base_url, API_PREFIX, path)
+    /// 选一个能连上的地址并记住。只试一个候选时不探测，直接用（省一次往返）
+    async fn base(&self) -> Result<String, AppError> {
+        if let Some(b) = self.base_url.lock().map_err(|e| AppError::Custom(e.to_string()))?.clone() {
+            return Ok(b);
+        }
+        let chosen = if self.candidates.len() == 1 {
+            self.candidates[0].clone()
+        } else {
+            let mut ok = None;
+            for c in &self.candidates {
+                let probe = self
+                    .client
+                    .get(format!("{c}{API_PREFIX}/ping"))
+                    .bearer_auth(&self.token)
+                    .timeout(Duration::from_secs(3))
+                    .send()
+                    .await;
+                // 任何 HTTP 响应（哪怕 401）都说明这个地址上确实是那台电脑（证书指纹已校验过）
+                if probe.is_ok() {
+                    ok = Some(c.clone());
+                    break;
+                }
+            }
+            ok.ok_or_else(|| {
+                AppError::Custom(format!(
+                    "连不上电脑端（试了 {}）：确认电脑开着知识库并已开启局域网同步、两台设备在同一个 Wi-Fi",
+                    self.candidates.join("、")
+                ))
+            })?
+        };
+        *self.base_url.lock().map_err(|e| AppError::Custom(e.to_string()))? = Some(chosen.clone());
+        Ok(chosen)
+    }
+
+    /// 还没拿租约就申请一个（见模块注释）
+    fn ensure_lease(&self) -> Result<(), AppError> {
+        self.begin_session()
     }
 
     /// 发请求并把常见状态码翻成用户看得懂的错误；`allow_404` 时 404 返回 Ok(None)
@@ -126,7 +180,8 @@ impl LanBackend {
         body: Option<Vec<u8>>,
         allow_404: bool,
     ) -> Result<Option<reqwest::Response>, AppError> {
-        let mut req = self.client.request(method, self.url(path)).bearer_auth(&self.token);
+        let url = format!("{}{}{}", self.base().await?, API_PREFIX, path);
+        let mut req = self.client.request(method, url).bearer_auth(&self.token);
         if let Some((k, v)) = query {
             req = req.query(&[(k, v)]);
         }
@@ -161,8 +216,12 @@ impl LanBackend {
         }
     }
 
-    /// 开始一次写同步：向电脑端申请库级租约。电脑端或别的设备正在同步时返回错误
+    /// 向电脑端申请库级租约（一般不用手动调，见 [`Self::ensure_lease`]）。电脑端或别的设备正在同步时返回错误
     pub fn begin_session(&self) -> Result<(), AppError> {
+        // 已持有就不再申请：重复申请会被电脑端当成别人在同步而拒绝
+        if self.lease.lock().map_err(|e| AppError::Custom(e.to_string()))?.is_some() {
+            return Ok(());
+        }
         let resp = block_on(self.send(Method::POST, "/lease", None, None, false))?
             .ok_or_else(|| AppError::Custom("申请同步会话失败".into()))?;
         let lease: LeaseResponse = block_on(resp.json())
@@ -185,7 +244,8 @@ impl LanBackend {
         }
     }
 
-    /// 电脑端信息（配对后确认连对了机器）
+    /// 电脑端信息（配对后确认连对了机器）。界面目前用 test_connection，这个只在测试里核对设备名
+    #[cfg(test)]
     pub fn server_info(&self) -> Result<super::lan_protocol::ServerInfo, AppError> {
         let resp = block_on(self.send(Method::GET, "/info", None, None, false))?
             .ok_or_else(|| AppError::Custom("读取电脑端信息失败".into()))?;
@@ -203,6 +263,7 @@ impl SyncBackendImpl for LanBackend {
     }
 
     fn read_manifest(&self) -> Result<Option<SyncManifestV1>, AppError> {
+        self.ensure_lease()?;
         match block_on(self.get_bytes("/manifest", None))? {
             None => Ok(None),
             Some(b) => serde_json::from_slice(&b)
@@ -212,12 +273,14 @@ impl SyncBackendImpl for LanBackend {
     }
 
     fn write_manifest(&self, manifest: &SyncManifestV1) -> Result<(), AppError> {
+        self.ensure_lease()?;
         let body = serde_json::to_vec_pretty(manifest)
             .map_err(|e| AppError::Custom(format!("manifest 序列化失败: {e}")))?;
         block_on(self.send(Method::PUT, "/manifest", None, Some(body), false)).map(|_| ())
     }
 
     fn put_note(&self, path: &str, content: &str) -> Result<(), AppError> {
+        self.ensure_lease()?;
         block_on(self.send(Method::PUT, "/note", Some(("path", path)), Some(content.as_bytes().to_vec()), false))
             .map(|_| ())
     }
@@ -232,11 +295,13 @@ impl SyncBackendImpl for LanBackend {
     }
 
     fn delete_note(&self, path: &str) -> Result<(), AppError> {
+        self.ensure_lease()?;
         block_on(self.send(Method::DELETE, "/note", Some(("path", path)), None, true)).map(|_| ())
     }
 
     fn put_attachment(&self, hash: &str, bytes: &[u8]) -> Result<(), AppError> {
         let path = attachment_path(hash)?;
+        self.ensure_lease()?;
         block_on(self.send(Method::PUT, &path, None, Some(bytes.to_vec()), false)).map(|_| ())
     }
 
@@ -259,5 +324,12 @@ impl SyncBackendImpl for LanBackend {
         serde_json::from_slice(&b)
             .map(Some)
             .map_err(|e| AppError::Custom(format!("文件列表解析失败: {e}")))
+    }
+}
+
+/// 一次同步结束（后端对象被释放）时归还租约，电脑端随即把手机的改动合并进自己的库
+impl Drop for LanBackend {
+    fn drop(&mut self) {
+        self.end_session();
     }
 }

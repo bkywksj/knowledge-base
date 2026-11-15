@@ -2052,6 +2052,8 @@ pub enum SyncBackendKind {
     Local,
     Webdav,
     S3,
+    /// 局域网直连电脑（手机端扫电脑的配对二维码添加），见 services::sync_v1::backend_lan
+    Lan,
 }
 
 /// 同步后端配置（DB 行）

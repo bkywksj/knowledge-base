@@ -300,7 +300,7 @@ export function ImportConfigModal({
               ? `名称：${parsed.data.name} · URL：${parsed.data.config.url}`
               : parsed.kind === "sync-backend"
                 ? `名称：${parsed.data.name} · 类型：${
-                    { local: "本地路径", webdav: "WebDAV", s3: "S3 兼容" }[
+                    { local: "本地路径", webdav: "WebDAV", s3: "S3 兼容", lan: "局域网" }[
                       parsed.data.kind
                     ]
                   }`

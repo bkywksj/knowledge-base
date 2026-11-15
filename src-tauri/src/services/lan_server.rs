@@ -48,6 +48,8 @@ struct LeaseSlot {
     id: String,
     holder: String,
     expires: Instant,
+    /// 持有期间写过东西：归还时据此决定要不要让电脑端立即合并
+    wrote: bool,
 }
 
 impl VaultLease {
@@ -66,30 +68,40 @@ impl VaultLease {
             }
         }
         let id = uuid::Uuid::new_v4().simple().to_string();
-        *g = Some(LeaseSlot { id: id.clone(), holder: holder.to_string(), expires: now + self.ttl });
+        *g = Some(LeaseSlot { id: id.clone(), holder: holder.to_string(), expires: now + self.ttl, wrote: false });
         Some(id)
     }
 
     /// 校验租约是否有效，有效则顺带续期
     pub fn check_and_touch(&self, id: &str) -> bool {
+        self.touch(id, false)
+    }
+
+    /// 写操作用：校验 + 续期 + 记一笔「写过」
+    pub fn check_and_touch_write(&self, id: &str) -> bool {
+        self.touch(id, true)
+    }
+
+    fn touch(&self, id: &str, write: bool) -> bool {
         let Ok(mut g) = self.inner.lock() else { return false };
         let now = Instant::now();
         match g.as_mut() {
             Some(s) if s.id == id && s.expires > now => {
                 s.expires = now + self.ttl;
+                s.wrote |= write;
                 true
             }
             _ => false,
         }
     }
 
-    /// 释放租约（id 不匹配时不动，防止误放别人的）
-    pub fn release(&self, id: &str) {
-        if let Ok(mut g) = self.inner.lock() {
-            if g.as_ref().is_some_and(|s| s.id == id) {
-                *g = None;
-            }
+    /// 释放租约（id 不匹配时不动，防止误放别人的）。返回持有期间是否写过
+    pub fn release(&self, id: &str) -> bool {
+        let Ok(mut g) = self.inner.lock() else { return false };
+        if g.as_ref().is_some_and(|s| s.id == id) {
+            return g.take().is_some_and(|s| s.wrote);
         }
+        false
     }
 }
 
@@ -116,17 +128,30 @@ pub struct StartParams {
     pub device_name: String,
     pub identity: LanIdentity,
     pub lease: VaultLease,
+    /// 手机写过数据并归还租约后调用：电脑端据此立即把中转库合并进自己的库
+    pub on_client_wrote: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
-/// 运行中的服务；drop 不会停服，要显式 [`stop`](Self::stop)
+/// 运行中的服务；drop 不会停服，要显式 [`shutdown`](Self::shutdown)
 pub struct RunningLanServer {
     pub addr: SocketAddr,
     cancel: CancellationToken,
+    /// 监听循环任务：它退出时监听端口才真正释放
+    task: tokio::task::JoinHandle<()>,
 }
 
 impl RunningLanServer {
+    /// 只发停机信号就返回（测试夹具的 Drop 用）。要在同一端口马上重启请用 [`shutdown`](Self::shutdown)
+    #[cfg(test)]
     pub fn stop(&self) {
         self.cancel.cancel();
+    }
+
+    /// 停机并等监听端口真正释放。重新生成配对码等「停了马上在同一端口重启」的场景必须用它：
+    /// 只发信号的话旧监听还没放掉，新的 bind 报端口被占用（真机实测）
+    pub async fn shutdown(self) {
+        self.cancel.cancel();
+        let _ = self.task.await;
     }
 }
 
@@ -135,6 +160,7 @@ struct AppCtx {
     token: String,
     device_name: String,
     lease: VaultLease,
+    on_client_wrote: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 type Ctx = State<Arc<AppCtx>>;
@@ -162,6 +188,7 @@ pub async fn start(params: StartParams) -> Result<RunningLanServer, AppError> {
         token: params.token,
         device_name: params.device_name,
         lease: params.lease,
+        on_client_wrote: params.on_client_wrote,
     });
     let app = router(ctx);
 
@@ -172,7 +199,7 @@ pub async fn start(params: StartParams) -> Result<RunningLanServer, AppError> {
     let cancel = CancellationToken::new();
     let cancel_task = cancel.clone();
 
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         loop {
             let (tcp, peer) = tokio::select! {
                 _ = cancel_task.cancelled() => break,
@@ -208,7 +235,7 @@ pub async fn start(params: StartParams) -> Result<RunningLanServer, AppError> {
     });
 
     log::info!("[lan-sync] 已启动 https://{addr}");
-    Ok(RunningLanServer { addr, cancel })
+    Ok(RunningLanServer { addr, cancel, task })
 }
 
 fn router(ctx: Arc<AppCtx>) -> Router {
@@ -247,11 +274,14 @@ fn auth(ctx: &AppCtx, headers: &HeaderMap) -> Result<(), Response> {
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .is_some_and(|t| token_eq(t, &ctx.token));
-    if ok {
-        Ok(())
-    } else {
-        Err(err(StatusCode::UNAUTHORIZED, "unauthorized"))
+    if !ok {
+        return Err(err(StatusCode::UNAUTHORIZED, "unauthorized"));
     }
+    // 带着租约的请求（含读）都续期：拉取大量附件时全是读，不续的话中途过期，后面的写就被拒了
+    if let Some(id) = headers.get(LEASE_HEADER).and_then(|v| v.to_str().ok()) {
+        ctx.lease.check_and_touch(id);
+    }
+    Ok(())
 }
 
 /// 写操作：鉴权 + 必须带有效租约
@@ -260,7 +290,7 @@ fn auth_write(ctx: &AppCtx, headers: &HeaderMap) -> Result<(), Response> {
     let ok = headers
         .get(LEASE_HEADER)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|id| ctx.lease.check_and_touch(id));
+        .is_some_and(|id| ctx.lease.check_and_touch_write(id));
     if ok {
         Ok(())
     } else {
@@ -312,7 +342,11 @@ async fn lease_acquire(State(ctx): Ctx, headers: HeaderMap) -> HResult {
 
 async fn lease_release(State(ctx): Ctx, headers: HeaderMap, Path(id): Path<String>) -> HResult {
     auth(&ctx, &headers)?;
-    ctx.lease.release(&id);
+    if ctx.lease.release(&id) {
+        if let Some(cb) = &ctx.on_client_wrote {
+            cb();
+        }
+    }
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -409,6 +443,7 @@ mod tests {
         token: String,
         fingerprint: String,
         lease: VaultLease,
+        wrote_calls: Arc<std::sync::atomic::AtomicUsize>,
     }
 
     impl Drop for Fixture {
@@ -425,6 +460,7 @@ mod tests {
         let fingerprint = cert_fingerprint(&identity.cert_der);
         let token = crate::services::mcp_http::generate_token();
         let lease = VaultLease::new(Duration::from_secs(LEASE_TTL_SECS));
+        let wrote_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let server = rt
             .block_on(start(StartParams {
                 vault_root: root.join("vault"),
@@ -433,9 +469,15 @@ mod tests {
                 device_name: "测试电脑".into(),
                 identity,
                 lease: lease.clone(),
+                on_client_wrote: Some(Arc::new({
+                    let n = wrote_calls.clone();
+                    move || {
+                        n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                })),
             }))
             .unwrap();
-        Fixture { _rt: rt, server, root, token, fingerprint, lease }
+        Fixture { _rt: rt, server, root, token, fingerprint, lease, wrote_calls }
     }
 
     fn client(f: &Fixture) -> LanBackend {
@@ -494,13 +536,49 @@ mod tests {
     }
 
     #[test]
-    fn writes_need_lease() {
+    fn lease_is_automatic_and_exclusive() {
+        let f = fixture();
+        let a = client(&f);
+        // 第一次写自动申请租约
+        a.put_note("notes/a.md", "x").unwrap();
+        // 另一台设备这时写不进来
+        let b = client(&f);
+        let e = b.put_note("notes/b.md", "y").unwrap_err().to_string();
+        assert!(e.contains("电脑端正在同步"), "{e}");
+        // 读不需要租约
+        assert_eq!(b.get_note("notes/a.md").unwrap().as_deref(), Some("x"));
+        assert_eq!(f.wrote_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        // a 用完释放（Drop 归还）：写过 → 通知电脑合并一次；之后 b 能写
+        drop(a);
+        assert_eq!(f.wrote_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        b.put_note("notes/b.md", "y").unwrap();
+    }
+
+    #[test]
+    fn read_only_session_does_not_trigger_merge() {
         let f = fixture();
         let c = client(&f);
-        let e = c.put_note("notes/a.md", "x").unwrap_err().to_string();
-        assert!(e.contains("同步会话已过期"), "{e}");
-        // 读不需要租约
-        assert!(c.get_note("notes/a.md").unwrap().is_none());
+        assert!(c.read_manifest().unwrap().is_none()); // 读 manifest 也拿租约（push 先读后写）
+        assert!(f.lease.try_acquire("desktop").is_none());
+        drop(c);
+        assert_eq!(f.wrote_calls.load(std::sync::atomic::Ordering::SeqCst), 0, "只读不触发合并");
+        assert!(f.lease.try_acquire("desktop").is_some());
+    }
+
+    #[test]
+    fn picks_reachable_host_from_candidates() {
+        let f = fixture();
+        let port = f.server.addr.port();
+        // 第一个地址连不上（保留地址，不会有人应答），应退到第二个
+        let c = LanBackend::with_hosts(
+            &["192.0.2.1".into(), "127.0.0.1".into()],
+            port,
+            &f.token,
+            &f.fingerprint,
+        )
+        .unwrap();
+        c.test_connection().unwrap();
+        assert!(LanBackend::with_hosts(&[], port, &f.token, &f.fingerprint).is_err());
     }
 
     #[test]
@@ -548,6 +626,28 @@ mod tests {
     }
 
     #[test]
+    fn restart_on_same_port_after_shutdown() {
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+        let root = std::env::temp_dir().join(format!("kb-lan-restart-{}", uuid::Uuid::new_v4().simple()));
+        let params = |bind: SocketAddr| StartParams {
+            vault_root: root.clone(),
+            bind,
+            token: "t".into(),
+            device_name: "x".into(),
+            identity: generate_identity().unwrap(),
+            lease: VaultLease::new(Duration::from_secs(5)),
+            on_client_wrote: None,
+        };
+        let first = rt.block_on(start(params("127.0.0.1:0".parse().unwrap()))).unwrap();
+        let addr = first.addr;
+        rt.block_on(first.shutdown());
+        // 停完立刻在同一端口再起：重新生成配对码就是这么做的
+        let second = rt.block_on(start(params(addr))).expect("同一端口应能马上重启");
+        rt.block_on(second.shutdown());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn lease_expires_without_renewal() {
         let lease = VaultLease::new(Duration::from_millis(50));
         let a = lease.try_acquire("phone").unwrap();
@@ -556,7 +656,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(80));
         assert!(!lease.check_and_touch(&a), "过期后不能再续");
         assert!(lease.try_acquire("desktop").is_some(), "过期后别人能拿到");
-        lease.release(&a); // 旧 id 释放不动新租约
+        assert!(!lease.release(&a), "旧 id 释放不动新租约");
         assert!(lease.try_acquire("x").is_none());
     }
 }

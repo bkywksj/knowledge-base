@@ -102,12 +102,14 @@ const KIND_LABEL: Record<SyncBackendKind, string> = {
   local: "本地路径 / 同步盘",
   webdav: "WebDAV",
   s3: "S3 兼容（阿里云 OSS / 腾讯云 COS / R2 / MinIO）",
+  lan: "局域网（直连电脑）",
 };
 
 const KIND_TAG_COLOR: Record<SyncBackendKind, string> = {
   local: "green",
   webdav: "blue",
   s3: "geekblue",
+  lan: "purple",
 };
 
 function buildConfigJson(s: BackendFormState): string {
@@ -129,6 +131,9 @@ function buildConfigJson(s: BackendFormState): string {
         secretKey: s.secretKey,
         prefix: s.prefix || "",
       });
+    case "lan":
+      // 局域网同步源只在手机端扫码配对时创建，电脑端不提供编辑（编辑按钮已禁用）
+      throw new Error("局域网同步源请在手机端扫码配对");
   }
 }
 
@@ -158,6 +163,8 @@ function parseConfigJson(
           secretKey: get("secretKey"),
           prefix: get("prefix"),
         };
+      case "lan":
+        return {};
     }
   } catch {
     return {};
@@ -725,11 +732,11 @@ export function SyncV1Section() {
                       onClick={() => setShareEnv(exportSyncBackend(b))}
                     />
                   </Tooltip>
-                  <Tooltip title="编辑">
+                  <Tooltip title={b.kind === "lan" ? "局域网同步源请在手机端重新扫码配对" : "编辑"}>
                     <Button
                       size="small"
                       icon={<Pencil size={13} />}
-                      disabled={busy}
+                      disabled={busy || b.kind === "lan"}
                       onClick={() => openEditModal(b)}
                     />
                   </Tooltip>

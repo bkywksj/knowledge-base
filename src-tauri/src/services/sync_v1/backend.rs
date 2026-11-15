@@ -36,6 +36,13 @@ pub enum BackendAuth {
         secret_key: String,
         prefix: String,
     },
+    /// 局域网直连电脑：配对二维码里的地址列表 / 端口 / 证书指纹 / 令牌
+    Lan {
+        hosts: Vec<String>,
+        port: u16,
+        fingerprint: String,
+        token: String,
+    },
 }
 
 /// Manifest 在远端的标准位置（所有 backend 共用此约定）
@@ -201,6 +208,20 @@ pub fn parse_auth(
             secret_key: get_str("secretKey")?,
             prefix: get_str_or("prefix", ""),
         }),
+        K::Lan => Ok(BackendAuth::Lan {
+            hosts: v
+                .get("hosts")
+                .and_then(|x| x.as_array())
+                .map(|a| a.iter().filter_map(|h| h.as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+            port: v
+                .get("port")
+                .and_then(|x| x.as_u64())
+                .and_then(|p| u16::try_from(p).ok())
+                .ok_or_else(|| AppError::InvalidInput("config_json 缺字段: port".into()))?,
+            fingerprint: get_str("fp")?,
+            token: get_str("token")?,
+        }),
     }
 }
 
@@ -233,6 +254,9 @@ pub fn create_backend(auth: BackendAuth) -> Result<Box<dyn SyncBackendImpl>, App
             &secret_key,
             &prefix,
         )?)),
+        BackendAuth::Lan { hosts, port, fingerprint, token } => Ok(Box::new(
+            super::backend_lan::LanBackend::with_hosts(&hosts, port, &token, &fingerprint)?,
+        )),
     }
 }
 

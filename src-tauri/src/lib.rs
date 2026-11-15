@@ -1175,7 +1175,8 @@ pub fn run() {
                     if !enabled {
                         return;
                     }
-                    if let Err(e) = state.lan_sync.start(&state.db, &state.data_dir).await {
+                    let merge = crate::services::lan_sync::merge_trigger(app_handle_lan.clone());
+                    if let Err(e) = state.lan_sync.start(&state.db, &state.data_dir, Some(merge)).await {
                         log::warn!("[lan-sync] 自动启动失败: {e}");
                     }
                 });

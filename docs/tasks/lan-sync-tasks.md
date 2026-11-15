@@ -42,7 +42,18 @@
   - 二维码里的地址改为本机全部私网 IPv4（if-addrs），默认路由那块网卡排第一，去掉回环 / 169.254
   - 单测 +3；真实组播收发测试默认 `#[ignore]`（会监听 UDP 5353，Windows 可能弹防火墙），
     手动跑：`cargo test --manifest-path src-tauri/Cargo.toml --lib lan_discovery -- --ignored`
-- [ ] 第 4 步：手机端「局域网」同步方式 + 扫码（需真机）；同步流程开始 / 结束时 begin / end 租约；
-      手机同步完通知电脑立即合并；连不上二维码里的地址时调 `lan_discovery::discover` 按指纹找
-      （mdns-sd 要挪到全平台依赖；Android 收组播需先申请 WifiManager.MulticastLock）
+- [x] 第 4 步：手机端「局域网」同步方式（2026-11-15 真机联调通过）
+  - 新同步源类型 `lan`（config：hosts / port / fp / token，token 与 WebDAV 密码一样加密存）
+  - `LanBackend::with_hosts`：二维码里的地址第一次请求时逐个试连（3 秒超时），记住能连上的
+  - 租约自动管理：第一次读 manifest / 写入时申请，后端对象 Drop（一次同步结束）时归还；
+    服务端对带有效租约的任何请求都续期，只对写操作记「写过」
+  - 手机写过数据并归还租约 → 电脑端 `merge_trigger` 立即后台同步「本机中转」源（不等 5 分钟）
+  - 手机同步页：类型加「局域网」，扫码配对（`components/mobile/QrScanner.tsx`，复用 html5-qrcode）；
+    编辑只改名称，换电脑 / 重新配对再扫一次；电脑端同步设置里 lan 源只显示、禁用编辑
+  - 真机结果（小米 15 Ultra ↔ 本机调试版）：测试连接 92ms；手机推 5 篇 + 2 条删除、拉 52 篇 + 6 附件、无冲突；
+    电脑在手机归还租约同一秒自动合并，两边都是 46 篇
+  - 联调修掉：重新生成配对码时服务重启报端口被占用（停机只发信号没等监听释放）→ `RunningLanServer::shutdown`
+    等监听任务退出，加回归测试
+  - 未做：手机端连不上二维码地址时用 mDNS 找电脑（Android 要 MulticastLock，`lan_discovery::discover` 已备好）；
+    真实扫码由用户亲手验证（自动化没法拿手机对准屏幕，这次是把配对码直接交给手机创建的同步源）
 - [ ] 第 5 步：真机联调、防火墙提示、电脑睡眠 / 换网的提示文案

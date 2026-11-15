@@ -15,6 +15,7 @@ fn parse_kind(s: &str) -> SyncBackendKind {
         "local" => SyncBackendKind::Local,
         "webdav" => SyncBackendKind::Webdav,
         "s3" => SyncBackendKind::S3,
+        "lan" => SyncBackendKind::Lan,
         // git 已下线（曾在原型阶段保留）；老数据兜底为 Local，让用户在 UI 上重选
         _ => SyncBackendKind::Local,
     }
@@ -25,6 +26,7 @@ fn kind_to_str(k: SyncBackendKind) -> &'static str {
         SyncBackendKind::Local => "local",
         SyncBackendKind::Webdav => "webdav",
         SyncBackendKind::S3 => "s3",
+        SyncBackendKind::Lan => "lan",
     }
 }
 
@@ -45,6 +47,8 @@ fn secret_fields(kind: &str) -> &'static [&'static str] {
     match kind {
         "webdav" => &["password"],
         "s3" => &["secretKey"],
+        // 配对令牌 = 访问那台电脑的凭据，和密码一样加密存
+        "lan" => &["token"],
         _ => &[],
     }
 }

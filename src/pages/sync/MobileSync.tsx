@@ -31,9 +31,10 @@ import type {
 } from "@/types";
 import { relativeTime } from "@/lib/utils";
 import { MNavBar } from "@/components/mobile/primitives";
+import { QrScanner } from "@/components/mobile/QrScanner";
 
 /**
- * 移动端云端同步管理（v4 样式，交互同原版；支持 WebDAV 与 S3）
+ * 移动端云端同步管理（v4 样式，交互同原版；支持 WebDAV、S3 与局域网直连电脑）
  *
  * 路由 /sync —— 移动端独立路由（不在 LayoutSwitch 子路由下）
  *
@@ -94,6 +95,31 @@ interface BackendForm {
   prefix: string;
 }
 
+/**
+ * 局域网同步配对码（电脑端「设置 → 数据同步与备份 → 局域网同步」的二维码内容，
+ * 对应 Rust `services::lan_sync::PairingPayload`）
+ */
+interface LanPairing {
+  t: "kb-lan";
+  v: number;
+  name: string;
+  hosts: string[];
+  port: number;
+  fp: string;
+  token: string;
+}
+
+/** 解析配对码；不是局域网配对码 / 缺字段返回 null */
+function parseLanPairing(text: string): LanPairing | null {
+  try {
+    const p = JSON.parse(text.trim()) as Partial<LanPairing>;
+    if (p.t !== "kb-lan" || !Array.isArray(p.hosts) || !p.port || !p.fp || !p.token) return null;
+    return p as LanPairing;
+  } catch {
+    return null;
+  }
+}
+
 /** S3 后端 configJson 结构（与桌面 SyncV1Section + 后端 parse_auth 对齐） */
 interface S3Config {
   endpoint?: string;
@@ -114,6 +140,9 @@ export function MobileSync() {
   const [editingId, setEditingId] = useState<number | null>(null);
   // 当前编辑的后端类型（WebDAV / S3），决定表单显示哪组字段
   const [formKind, setFormKind] = useState<SyncBackendKind>("webdav");
+  /** 局域网：本次扫到 / 粘贴的配对码（编辑时为 null = 沿用原配对） */
+  const [lanPair, setLanPair] = useState<LanPairing | null>(null);
+  const [lanScanning, setLanScanning] = useState(false);
   const [form] = Form.useForm<BackendForm>();
   // 配置分享 / 导入
   const [shareEnv, setShareEnv] = useState<Envelope | null>(null);
@@ -168,6 +197,8 @@ export function MobileSync() {
   function openAdd() {
     setEditingId(null);
     setFormKind("webdav");
+    setLanPair(null);
+    setLanScanning(false);
     form.resetFields();
     form.setFieldsValue({
       name: "WebDAV",
@@ -188,7 +219,12 @@ export function MobileSync() {
     const kind = (b.kind as SyncBackendKind) ?? "webdav";
     setEditingId(b.id);
     setFormKind(kind);
-    if (kind === "s3") {
+    setLanPair(null);
+    setLanScanning(false);
+    if (kind === "lan") {
+      // 编辑只改名称；要换电脑 / 重新配对就再扫一次码
+      form.setFieldsValue({ name: b.name });
+    } else if (kind === "s3") {
       let cfg: S3Config = {};
       try {
         cfg = JSON.parse(b.configJson) as S3Config;
@@ -225,7 +261,21 @@ export function MobileSync() {
     try {
       const values = await form.validateFields();
       let input;
-      if (formKind === "s3") {
+      if (formKind === "lan") {
+        let cfg: Record<string, unknown>;
+        if (lanPair) {
+          cfg = { hosts: lanPair.hosts, port: lanPair.port, fp: lanPair.fp, token: lanPair.token };
+        } else if (editingId !== null) {
+          // 没重新扫码：沿用原配对。令牌字段不传 = 后端保留原值（同 WebDAV 密码留空）
+          const old = backends.find((b) => b.id === editingId);
+          const parsed = old ? (JSON.parse(old.configJson) as Record<string, unknown>) : {};
+          cfg = { hosts: parsed.hosts, port: parsed.port, fp: parsed.fp };
+        } else {
+          message.warning("请先扫描电脑上的配对二维码");
+          return;
+        }
+        input = { kind: "lan" as const, name: values.name.trim(), configJson: JSON.stringify(cfg) };
+      } else if (formKind === "s3") {
         // 编辑时 secretKey 留空 = 保留原密钥（后端按 configJson 缺失字段处理）
         const cfg: S3Config = {
           endpoint: values.endpoint.trim(),
@@ -423,7 +473,7 @@ export function MobileSync() {
         <div className="flex items-start gap-2 rounded-[var(--m-r-l)] px-3 py-2.5" style={{ background: "var(--m-info-soft)", color: "var(--m-info)" }}>
           <CloudUpload size={16} className="mt-0.5 shrink-0" />
           <p className="text-[13px] leading-relaxed">
-            移动端手动同步，建议每次记录后「一键同步」。支持 WebDAV 与 S3（AWS / 阿里云 OSS / 腾讯云 COS / R2 / MinIO）。
+            移动端手动同步，建议每次记录后「一键同步」。支持 WebDAV、S3（AWS / 阿里云 OSS / 腾讯云 COS / R2 / MinIO），以及在家里直连电脑的局域网同步。
           </p>
         </div>
       </div>
@@ -465,7 +515,9 @@ export function MobileSync() {
           editingId === null
             ? formKind === "s3"
               ? "添加 S3 同步"
-              : "添加 WebDAV 同步"
+              : formKind === "lan"
+                ? "添加局域网同步"
+                : "添加 WebDAV 同步"
             : "编辑同步"
         }
         open={editorOpen}
@@ -482,10 +534,14 @@ export function MobileSync() {
               <Segmented
                 block
                 value={formKind}
-                onChange={(v) => setFormKind(v as SyncBackendKind)}
+                onChange={(v) => {
+                  setFormKind(v as SyncBackendKind);
+                  setLanScanning(false);
+                }}
                 options={[
                   { label: "WebDAV", value: "webdav" },
-                  { label: "S3 / 对象存储", value: "s3" },
+                  { label: "S3", value: "s3" },
+                  { label: "局域网", value: "lan" },
                 ]}
               />
             </Form.Item>
@@ -496,10 +552,52 @@ export function MobileSync() {
             label="名称"
             rules={[{ required: true, message: "请输入名称" }]}
           >
-            <Input placeholder={formKind === "s3" ? "如：R2 / MinIO / 阿里云" : "如：坚果云 / Nextcloud"} />
+            <Input
+              placeholder={
+                formKind === "s3" ? "如：R2 / MinIO / 阿里云" : formKind === "lan" ? "如：家里的电脑" : "如：坚果云 / Nextcloud"
+              }
+            />
           </Form.Item>
 
-          {formKind === "s3" ? (
+          {formKind === "lan" ? (
+            <div>
+              <div className="mb-2" style={{ fontSize: 13, color: "var(--m-ink3)", lineHeight: 1.7 }}>
+                在电脑上打开「设置 → 数据同步与备份 → 局域网同步」，开启后扫描显示的二维码。两台设备要连同一个 Wi-Fi。
+              </div>
+              {lanScanning ? (
+                <QrScanner
+                  onResult={(text) => {
+                    setLanScanning(false);
+                    const p = parseLanPairing(text);
+                    if (!p) {
+                      message.error("这不是知识库的局域网配对码");
+                      return;
+                    }
+                    setLanPair(p);
+                    if (!form.getFieldValue("name") || form.getFieldValue("name") === "WebDAV") {
+                      form.setFieldsValue({ name: p.name });
+                    }
+                  }}
+                  onError={() => setLanScanning(false)}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="m-row"
+                  style={{ justifyContent: "center", color: "var(--m-accent-ink)", borderRadius: 10, border: "1px dashed var(--m-hair)" }}
+                  onClick={() => setLanScanning(true)}
+                >
+                  {lanPair || editingId !== null ? "重新扫码配对" : "扫描电脑上的配对二维码"}
+                </button>
+              )}
+              {lanPair && (
+                <div className="mt-2" style={{ fontSize: 13, lineHeight: 1.8 }}>
+                  已识别：<b>{lanPair.name}</b>
+                  <div style={{ color: "var(--m-ink3)" }}>地址：{lanPair.hosts.map((h) => `${h}:${lanPair.port}`).join("、")}</div>
+                </div>
+              )}
+            </div>
+          ) : formKind === "s3" ? (
             <>
               <Form.Item
                 name="endpoint"
