@@ -402,6 +402,8 @@ export function getAntdComponents(mode: ThemeMode) {
       trackPadding: 3,
     },
     Checkbox: { borderRadiusSM: 4 },
+    // 带说明的提示默认 16px/24px 内边距 + 24px 大图标，设置页里几行说明撑得很高；收紧到和普通卡片内容一个量级
+    Alert: { withDescriptionPadding: "10px 14px", withDescriptionIconSize: 16 },
     Dropdown: { borderRadiusLG: 11, borderRadiusSM: 6, paddingBlock: 6 },
     Menu: {
       itemBorderRadius: 6,

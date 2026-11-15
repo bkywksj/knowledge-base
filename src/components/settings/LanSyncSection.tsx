@@ -208,10 +208,10 @@ export function LanSyncSection() {
           <Alert
             type="info"
             showIcon
-            className="mt-3"
+            className="mt-4"
             title="手机上怎么连"
             description={
-              <ol className="my-1 pl-4" style={{ fontSize: 12, lineHeight: 1.8 }}>
+              <ol className="m-0 pl-4">
                 <li>手机和这台电脑连同一个 Wi-Fi。</li>
                 <li>手机知识库：我的 → 云端同步 → 右上角「+」→ 类型选「局域网」→ 扫描上面的二维码 → 保存。</li>
                 <li>之后在手机上点「一键同步」；手机的改动会立即合并进这台电脑。</li>
@@ -221,10 +221,10 @@ export function LanSyncSection() {
           <Alert
             type="warning"
             showIcon
-            className="mt-2"
+            className="mt-3"
             title="连不上时先看这几项"
             description={
-              <ul className="my-1 pl-4" style={{ fontSize: 12, lineHeight: 1.8 }}>
+              <ul className="m-0 pl-4">
                 <li>Windows 首次开启会弹防火墙询问，要允许「专用网络」；点过「取消」的话去 Windows 防火墙里放行知识库。</li>
                 <li>电脑睡眠或关掉知识库时手机连不上；电脑换了 Wi-Fi 后地址会变，在手机上重新扫一次码。</li>
                 <li>二维码等同于这台电脑的访问凭据，不要截图发给别人；泄露了就点「重新生成配对码」。</li>

@@ -675,3 +675,7 @@
 [data-theme] .m-pin-section .ant-btn-primary:not(:disabled):not(.ant-btn-dangerous):not(.ant-btn-background-ghost),
 [data-theme] .m-wb-modal .ant-btn-primary:not(:disabled):not(.ant-btn-dangerous):not(.ant-btn-background-ghost),
 [data-theme] .m-wb-history .ant-btn-primary:not(:disabled):not(.ant-btn-dangerous):not(.ant-btn-background-ghost) { background: var(--m-grad) !important; color: var(--m-on-accent) !important; box-shadow: none !important; }
+
+/* 全局提示（message.success 等）：antd 默认贴视口顶 8px，手机页面从状态栏底下开始画，提示会压在状态栏上。
+   往下让一个状态栏；桌面端 safe-area-inset-top 为 0，位置不变 */
+.ant-message { top: calc(env(safe-area-inset-top, 0px) + 8px) !important; }
