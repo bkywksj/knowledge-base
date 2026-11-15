@@ -83,7 +83,8 @@ export type ActiveView =
   | "push"
   | "about"
   | "trash"
-  | "hidden";
+  | "hidden"
+  | "settings";
 
 /** SidePanel 宽度范围（px），避免用户拖到极端值 */
 export const SIDE_PANEL_MIN_WIDTH = 200;

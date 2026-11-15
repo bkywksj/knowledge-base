@@ -3288,6 +3288,14 @@ body.sidebar-resizing .kb-tb-left {
   gap: 1px;
   padding: 4px 0 10px;
   background: transparent;
+  /* 入口固定 46px 不压缩：窗口压到最矮（minHeight 640）时 15 个入口放不下，最底下的「关于 / 设置」会被裁掉。
+     放不下就允许上下滚，滚动条隐藏；够高时不产生滚动，布局不变 */
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+.activity-bar::-webkit-scrollbar {
+  display: none;
 }
 .activity-item {
   width: 52px;

@@ -59,8 +59,8 @@ import { ActionSheet, type ActionSheetItem } from "@/components/mobile/ActionShe
  * - 设置分组：外观与主题（手机上可切 9 套主题）/ 模型服务 / 功能模块与底部 Tab / 隐私 / 数据 / 关于与更新
  */
 
-/** 不进「全部功能」的视图：首页有自己的 Tab；关于在设置分组里 */
-const EXCLUDED_VIEWS: ActiveView[] = ["home", "about"];
+/** 不进「全部功能」的视图：首页有自己的 Tab；关于在设置分组里；「我的」页本身就是设置入口 */
+const EXCLUDED_VIEWS: ActiveView[] = ["home", "about", "settings"];
 /** 格子上的名字：大多用活动栏短名；「隐藏」单独两个字意思不清，用全名 */
 const CELL_LABEL: Partial<Record<ActiveView, string>> = { hidden: "隐藏笔记" };
 

@@ -2,7 +2,6 @@ import { cloneElement, Fragment, isValidElement, startTransition, useEffect, use
 import { useLocation, useNavigate } from "react-router-dom";
 import { Tooltip, Badge, theme as antdTheme, message } from "antd";
 import { hiddenPinApi } from "@/lib/api";
-import { isNoActivityPath } from "@/lib/noteWorkspaceRoute";
 import { HiddenPinUnlockModal } from "@/components/hidden/HiddenPinUnlockModal";
 import {
   RailBell,
@@ -14,6 +13,7 @@ import {
   RailGraph,
   RailHome,
   RailInfo,
+  RailSettings,
   RailLock,
   RailNote,
   RailSearch,
@@ -107,6 +107,8 @@ export const BOTTOM_ITEMS: ActivityItem[] = [
   { view: "hidden", route: "/hidden", label: "隐藏笔记", short: "隐藏", icon: <RailEyeOff /> },
   { view: "trash", route: "/trash", label: "回收站", icon: <RailTrash />, core: true },
   { view: "about", route: "/about", label: "关于", icon: <RailInfo />, core: true },
+  // 设置放最底部（桌面应用的通行位置，用户找设置会先看左下角；标题栏的设置按钮保留）
+  { view: "settings", route: "/settings", label: "设置", icon: <RailSettings />, core: true },
 ];
 
 /** 路由 → ActiveView 的反查映射（用于根据 URL 推导高亮态） */
@@ -127,6 +129,7 @@ const ROUTE_TO_VIEW: Array<[string, ActiveView]> = [
   ["/hidden", "hidden"],
   ["/trash", "trash"],
   ["/about", "about"],
+  ["/settings", "settings"],
   ["/", "home"], // 放最后：以 startsWith 匹配时 "/" 会错匹所有路径
 ];
 
@@ -169,12 +172,10 @@ export function ActivityBar() {
     refreshTaskStats();
   }, [refreshTaskStats]);
 
-  // 以 URL 为准反推当前高亮（避免 store.activeView 与 URL 漂移时 UI 不一致）
+  // 以 URL 为准反推当前高亮（避免 store.activeView 与 URL 漂移时 UI 不一致）。
+  // 设置页以前不在活动栏里、特意一项都不高亮；现在左下角有「设置」，按路由正常高亮它
   const highlightView: ActiveView | null = useMemo(
-    () =>
-      isNoActivityPath(location.pathname)
-        ? null
-        : (deriveActiveViewFromPath(location.pathname) ?? activeView),
+    () => deriveActiveViewFromPath(location.pathname) ?? activeView,
     [location.pathname, activeView],
   );
 
@@ -196,7 +197,7 @@ export function ActivityBar() {
   function handleClick(item: ActivityItem) {
     // VS Code 行为：点当前已高亮的图标 = 翻转 SidePanel 可见性
     // 注意：必须用 URL 真相判断"是否在该视图"，而非 highlightView。
-    // highlightView 在无匹配路由时（如 /settings）会回退到 store.activeView，
+    // highlightView 在无匹配路由时（如 /quick-create 这类不在活动栏的页面）会回退到 store.activeView，
     // 此时点 ActivityBar 项会被误判成"点当前视图 → 仅折叠面板"，导致无法跳转。
     const onThisView = deriveActiveViewFromPath(location.pathname) === item.view;
     if (onThisView) {
