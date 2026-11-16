@@ -3335,7 +3335,7 @@ dependencies = [
 
 [[package]]
 name = "knowledge_base"
-version = "3.3.0"
+version = "3.4.0"
 dependencies = [
  "aes-gcm",
  "ai-profile",
