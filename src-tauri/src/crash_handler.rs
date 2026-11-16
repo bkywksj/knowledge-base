@@ -162,6 +162,125 @@ pub fn show_startup_notice(title: &str, body: &str) {
     let _ = title;
 }
 
+/// 同 [`show_startup_notice`]，但多一个「打开链接」的选择：用户选了就用系统默认浏览器打开 `url`。
+///
+/// 用于"装新版就能好"的场景（如数据库版本高于应用）：用户回退了系统 / 装回旧版时
+/// 手边往往没有新安装包，点一下直达下载页比手抄网址快得多（用户反馈）。
+///
+/// - `link_label`：确认按钮的文字（macOS / Linux 可自定义按钮文字；Windows 的 MessageBoxW
+///   只有「是 / 否」，由调用方在正文里写清楚点哪个）。
+/// - 正文里调用方应同时写上网址：按钮打不开浏览器时用户还能抄 / 复制。
+/// - 三端都**只用系统自带能力**（MessageBoxW / osascript / zenity·kdialog），不依赖 tauri 插件：
+///   这里处于 setup 阶段、event loop 还没跑起来，插件的对话框要等主线程循环才会弹出，
+///   而调用方紧接着就 `exit(1)` 了。
+pub fn show_startup_notice_with_link(title: &str, body: &str, link_label: &str, url: &str) {
+    NOTICE_SHOWN.store(true, Ordering::SeqCst);
+    eprintln!("
+===== 知识库 无法启动 =====
+{body}
+===========================");
+    if cfg!(test) {
+        return;
+    }
+    if ask_open_link(title, body, link_label) {
+        open_url(url);
+    }
+}
+
+/// 弹「打开链接 / 关闭」二选一框，返回用户是否选了打开。
+#[cfg(windows)]
+fn ask_open_link(title: &str, body: &str, _link_label: &str) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, IDYES, MB_ICONWARNING, MB_SETFOREGROUND, MB_SYSTEMMODAL, MB_YESNO,
+    };
+
+    let w_title = to_wide(title);
+    let w_body = to_wide(body);
+    // SAFETY: 两个宽字符串均以 NUL 结尾且存活到调用结束；hwnd 传 null 表示无父窗口。
+    let ret = unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            w_body.as_ptr(),
+            w_title.as_ptr(),
+            MB_YESNO | MB_ICONWARNING | MB_SYSTEMMODAL | MB_SETFOREGROUND,
+        )
+    };
+    ret == IDYES
+}
+
+/// macOS：osascript 的 `display dialog` 是系统自带的，按钮文字可自定义。
+/// 用户点了哪个按钮从 stdout 的 `button returned:…` 读出来。
+#[cfg(target_os = "macos")]
+fn ask_open_link(title: &str, body: &str, link_label: &str) -> bool {
+    let script = format!(
+        "display dialog \"{}\" with title \"{}\" buttons {{\"关闭\", \"{}\"}} \
+         default button 2 with icon caution",
+        applescript_escape(body),
+        applescript_escape(title),
+        applescript_escape(link_label),
+    );
+    match std::process::Command::new("osascript").arg("-e").arg(&script).output() {
+        Ok(out) => {
+            out.status.success() && String::from_utf8_lossy(&out.stdout).contains(link_label)
+        }
+        Err(_) => false,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn applescript_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Linux：没有统一的原生对话框，依次试 zenity（GNOME 系）和 kdialog（KDE 系），
+/// 两个都没装就只剩上面那行 stderr —— 至少不比之前差。
+/// 二者都是「确认按钮退出码 0」。
+#[cfg(all(unix, not(target_os = "macos")))]
+fn ask_open_link(title: &str, body: &str, link_label: &str) -> bool {
+    use std::process::Command;
+    // --no-markup：正文里有路径，可能带 `&` `<` 之类，别被当成 Pango 标记吃掉
+    let zenity = Command::new("zenity")
+        .args(["--question", "--no-markup", "--title", title, "--text", body])
+        .args(["--ok-label", link_label, "--cancel-label", "关闭"])
+        .status();
+    if let Ok(status) = zenity {
+        return status.success();
+    }
+    let kdialog = Command::new("kdialog")
+        .args(["--title", title, "--yes-label", link_label, "--no-label", "关闭"])
+        .args(["--warningyesno", body])
+        .status();
+    matches!(kdialog, Ok(status) if status.success())
+}
+
+/// 用系统默认浏览器打开网址。打不开不报错：正文里已经写了网址，用户可以自己复制。
+#[cfg(windows)]
+fn open_url(url: &str) {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let w_op = to_wide("open");
+    let w_url = to_wide(url);
+    // SAFETY: 宽字符串均以 NUL 结尾且存活到调用结束；其余指针参数按文档允许为 null。
+    unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            w_op.as_ptr(),
+            w_url.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn open_url(url: &str) {
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    // 不等子进程：调用方马上就要 exit(1)，浏览器由系统接管，不随本进程退出
+    let _ = std::process::Command::new(opener).arg(url).spawn();
+}
+
 /// 组装崩溃报告文本。
 fn build_report(info: &std::panic::PanicHookInfo<'_>) -> String {
     // panic payload 文本（&str / String 两种常见形态）

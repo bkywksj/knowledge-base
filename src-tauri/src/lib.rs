@@ -821,16 +821,34 @@ pub fn run() {
                     // 绝不动用户数据）两端一致，缺的只是那个原生提示框——移动端要弹什么、
                     // 用什么弹（notification？启动页？）是待定的产品决策。
                     #[cfg(desktop)]
-                    if matches!(e, crate::error::AppError::SchemaTooNew { .. }) {
-                        crash_handler::show_startup_notice(
+                    if let crate::error::AppError::SchemaTooNew { db, app } = e {
+                        // 常见于用户还原系统 / 装回旧版：手边未必有新安装包，
+                        // 所以给出官网地址并提供一键打开（用户反馈）。
+                        // 不再直接展示 `{e}` 里的 schema 编号——用户对不上号，
+                        // 改说应用版本；编号留在末尾供反馈排查。
+                        const SITE_URL: &str = "https://kb.ruoyi.plus/";
+                        let ver = env!("CARGO_PKG_VERSION");
+                        // MessageBoxW 只有「是 / 否」按钮，正文得说清点哪个；其它平台按钮带文字
+                        let action_hint = if cfg!(windows) {
+                            "点「是」打开官网下载最新版，点「否」关闭。"
+                        } else {
+                            "点「打开官网下载」即可前往下载最新版。"
+                        };
+                        crash_handler::show_startup_notice_with_link(
                             "知识库 - 需要升级应用",
                             &format!(
-                                "{e}\n\n\
+                                "你的数据是用更新版本的知识库保存的，当前安装的 v{ver} 打不开。\n\
+                                 （常见于还原系统或装回了旧版本）\n\n\
                                  你的数据没有被改动，仍完整保存在：\n\
                                  {db_path_str}\n\n\
-                                 请安装最新版本的知识库后再打开。\n\
-                                 若确实要用旧版，请先整体备份上面这个目录。"
+                                 请安装最新版本的知识库后再打开，官网：\n\
+                                 {SITE_URL}\n\
+                                 若确实要用旧版，请先整体备份上面这个目录。\n\n\
+                                 {action_hint}\n\n\
+                                 （数据格式版本 {db}，当前应用最高支持 {app}）"
                             ),
+                            "打开官网下载",
+                            SITE_URL,
                         );
                     } else {
                         // 迁移脚本出错、库被其他程序占用、磁盘满、没权限……库文件本身没坏，
