@@ -17,6 +17,7 @@ import {
   Inbox,
   Link,
   Lock,
+  Network,
   Palette,
   Pencil,
   PenTool,
@@ -31,6 +32,7 @@ import { MSheet } from "@/components/mobile/MSheet";
 import { QuickCreateSheet } from "@/components/mobile/QuickCreate";
 import { aiChatApi, folderApi, linkApi, noteApi, tagApi, trashApi, whiteboardApi } from "@/lib/api";
 import { useAppStore } from "@/store";
+import { createMindMapAndOpen } from "@/lib/noteCreator";
 import type { Folder, Note, NoteQuery, NoteTagBrief, Tag } from "@/types";
 import { relativeTime } from "@/lib/utils";
 import { notePreviewText } from "@/lib/notePreview";
@@ -370,6 +372,8 @@ export function MobileNotes() {
 
   const folderItems: ActionSheetItem[] = sheetFolder
     ? [
+        // 宫格只放得下 4 个，新建思维导图放列表第一项（导图 = 一篇纯大纲笔记，建好直接进导图编辑）
+        { key: "new-mindmap", label: "新建思维导图", icon: <Network size={20} />, onClick: () => void createMindMapAndOpen(sheetFolder.id, navigate) },
         { key: "rename", label: "重命名", icon: <Pencil size={20} />, onClick: () => setPrompt({ kind: "rename-folder", folder: sheetFolder }) },
         { key: "color", label: "图标颜色", icon: <Palette size={20} />, onClick: () => setColorFolder(sheetFolder) },
         { key: "move", label: "移动到…", icon: <FolderInput size={20} />, onClick: () => setMoveTarget({ kind: "folder", folder: sheetFolder }) },
