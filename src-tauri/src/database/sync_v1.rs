@@ -3,7 +3,7 @@
 //! 不和老 `database/sync.rs`（V0 ZIP 模式的 vacuum_into 等辅助）混在一起，
 //! 单独成模块。老代码保留兼容 V0 流程。
 
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
 use crate::error::AppError;
 use crate::models::{SyncBackend, SyncBackendInput, SyncBackendKind, SyncRemoteState};
@@ -75,6 +75,34 @@ pub(crate) fn seal_config_json(kind: &str, json: &str) -> Result<String, AppErro
     }
     serde_json::to_string(&serde_json::Value::Object(map))
         .map_err(|e| AppError::Custom(format!("config_json 序列化失败: {}", e)))
+}
+
+/// 编辑保存时补回没传的凭据：新 config_json 里缺某个凭据字段 → 沿用库里原来的（密文原样搬）。
+///
+/// 移动端编辑表单不回显密码，「密码留空 / 没重新扫码」时就不带该字段，语义是「不修改」；
+/// 不补的话整份覆盖会把凭据清掉，下次同步才报认证失败。传了（含空串）就以传入为准。
+fn keep_unsent_secrets(kind: &str, new_json: &str, old_raw: &str) -> String {
+    let fields = secret_fields(kind);
+    let (Ok(serde_json::Value::Object(mut map)), Ok(serde_json::Value::Object(old))) = (
+        serde_json::from_str::<serde_json::Value>(new_json),
+        serde_json::from_str::<serde_json::Value>(old_raw),
+    ) else {
+        return new_json.to_string();
+    };
+    let mut changed = false;
+    for f in fields {
+        if map.contains_key(*f) {
+            continue;
+        }
+        if let Some(v) = old.get(*f) {
+            map.insert((*f).to_string(), v.clone());
+            changed = true;
+        }
+    }
+    if !changed {
+        return new_json.to_string();
+    }
+    serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_else(|_| new_json.to_string())
 }
 
 /// 把 config_json 里的凭据字段解密后返回。
@@ -200,11 +228,26 @@ impl Database {
     }
 
     pub fn update_sync_backend(&self, id: i64, input: &SyncBackendInput) -> Result<(), AppError> {
-        let sealed = seal_config_json(kind_to_str(input.kind), &input.config_json)?;
+        let kind = kind_to_str(input.kind);
         let conn = self
             .conn
             .lock()
             .map_err(|e| AppError::Custom(e.to_string()))?;
+        // 没传的凭据沿用原值（只在类型没变时；换了类型旧凭据没意义）
+        let old: Option<(String, String)> = conn
+            .query_row(
+                "SELECT kind, config_json FROM sync_backends WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let merged = match &old {
+            Some((old_kind, old_raw)) if old_kind == kind => {
+                keep_unsent_secrets(kind, &input.config_json, old_raw)
+            }
+            _ => input.config_json.clone(),
+        };
+        let sealed = seal_config_json(kind, &merged)?;
         let affected = conn.execute(
             "UPDATE sync_backends SET
                 kind = ?1, name = ?2, config_json = ?3,
@@ -496,6 +539,53 @@ mod tests {
         db.update_sync_backend(id, &webdav_input("s3cret-pw")).unwrap();
         let listed = db.list_sync_backends().unwrap();
         assert_eq!(config_field(&listed[0].config_json, "password"), "s3cret-pw");
+    }
+
+    /// 编辑时没传凭据字段 = 不修改（移动端表单不回显密码 / 局域网没重新扫码）；传了就以传入为准
+    #[test]
+    fn update_keeps_unsent_secret() {
+        let db = Database::init(":memory:").unwrap();
+        let lan = |cfg: serde_json::Value| SyncBackendInput {
+            kind: SyncBackendKind::Lan,
+            name: "电脑".into(),
+            config_json: cfg.to_string(),
+            enabled: Some(true),
+            auto_sync: Some(false),
+            sync_interval_min: Some(30),
+        };
+        let id = db
+            .create_sync_backend(&lan(serde_json::json!({
+                "hosts": ["192.168.1.5"], "port": 47321, "fp": "ab", "token": "tk-1"
+            })))
+            .unwrap();
+
+        // 只改地址、不带令牌 → 令牌保留，地址更新
+        db.update_sync_backend(id, &lan(serde_json::json!({"hosts": ["10.0.0.9"], "port": 47321, "fp": "ab"})))
+            .unwrap();
+        let cfg = db.get_sync_backend(id).unwrap().unwrap().config_json;
+        assert_eq!(config_field(&cfg, "token"), "tk-1");
+        assert_eq!(config_field(&cfg, "hosts"), serde_json::json!(["10.0.0.9"]));
+        assert!(crate::crypto::is_encrypted_field(
+            config_field(&raw_config(&db, id), "token").as_str().unwrap()
+        ));
+
+        // 重新扫码带了新令牌 → 以新令牌为准
+        db.update_sync_backend(
+            id,
+            &lan(serde_json::json!({"hosts": ["10.0.0.9"], "port": 47321, "fp": "cd", "token": "tk-2"})),
+        )
+        .unwrap();
+        let cfg = db.get_sync_backend(id).unwrap().unwrap().config_json;
+        assert_eq!(config_field(&cfg, "token"), "tk-2");
+
+        // WebDAV 密码留空（字段不传）同理
+        let wid = db.create_sync_backend(&webdav_input("pw-1")).unwrap();
+        let mut no_pw = webdav_input("x");
+        no_pw.config_json = serde_json::json!({"url": "http://nas/dav", "username": "u2"}).to_string();
+        db.update_sync_backend(wid, &no_pw).unwrap();
+        let cfg = db.get_sync_backend(wid).unwrap().unwrap().config_json;
+        assert_eq!(config_field(&cfg, "password"), "pw-1");
+        assert_eq!(config_field(&cfg, "username"), "u2");
     }
 
     /// 历史明文（v68 前写入、迁移失败的行）读取时原样兼容
