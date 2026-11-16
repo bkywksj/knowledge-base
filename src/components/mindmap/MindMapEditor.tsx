@@ -32,6 +32,8 @@ import { DEFAULT_LAYOUT, hitDropTarget, layoutMindMap, type LayoutOptions, type 
 import { renderInline } from "./inline";
 import { toPng } from "html-to-image";
 import { ContextMenuOverlay, type ContextMenuEntry } from "@/components/ui/ContextMenuOverlay";
+import { ActionSheet, type ActionSheetItem } from "@/components/mobile/ActionSheet";
+import { useKeyboardInset } from "@/hooks/useKeyboardInset";
 import {
   ArrowDown,
   ArrowUp,
@@ -62,6 +64,26 @@ export interface MindMapEditorHandle {
   fit: () => void;
   /** 导出整张图为 PNG（dataURL），不受当前缩放 / 平移 / 窗口大小影响 */
   exportPng: (background: string) => Promise<string>;
+  undo: () => void;
+  redo: () => void;
+  /** 对选中节点执行一个操作（手机端底部操作栏用，没有键盘快捷键可按） */
+  act: (action: MindAction) => void;
+  /** 打开选中节点的操作菜单（触屏模式下是底部面板） */
+  openMenu: () => void;
+  /** 立刻把没写回的改动交给父组件（关闭前调） */
+  flush: () => void;
+}
+
+/** 节点操作：与键盘快捷键 / 右键菜单一一对应 */
+export type MindAction = "child" | "sibling" | "edit" | "delete" | "up" | "down" | "indent" | "outdent" | "collapse";
+
+/** 编辑器状态快照，给外层工具栏决定按钮可不可用 */
+export interface MindEditorState {
+  selectedId: string;
+  /** 选中的是中心主题（不能删、不能加同级） */
+  isRoot: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 interface Props {
@@ -75,10 +97,19 @@ interface Props {
   palette: string[];
   /** "both" = 一级分支左右分布；"right" = 全部向右 */
   layoutMode?: LayoutOptions["mode"];
+  /**
+   * 触屏模式（手机端）：单指平移、双指缩放；点一下选中、再点一下改文字；长按出底部操作面板。
+   * 不做拖动节点（和平移画布抢手势），改文字放到贴着键盘的底部输入条（节点缩小后太小、还会被键盘挡住）
+   */
+  touch?: boolean;
+  onStateChange?: (state: MindEditorState) => void;
 }
 
 /** 拖动阈值（屏幕像素）：小于它算点击，不算拖 */
 const DRAG_THRESHOLD = 4;
+/** 触屏：手指移动超过它就不算点按（也取消长按） */
+const TAP_SLOP = 10;
+const LONG_PRESS_MS = 500;
 
 interface Snapshot {
   root: MindNode;
@@ -92,10 +123,11 @@ const EMIT_DELAY = 300;
 const HISTORY_LIMIT = 100;
 
 export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function MindMapEditor(
-  { markdown, title, onChange, onTitleChange, palette, layoutMode = "both" },
+  { markdown, title, onChange, onTitleChange, palette, layoutMode = "both", touch = false, onStateChange },
   ref,
 ) {
   const { token } = antdTheme.useToken();
+  const keyboardInset = useKeyboardInset();
 
   const [root, setRoot] = useState<MindNode>(() => parseMindMap(markdown, title).root);
   const [selectedId, setSelectedId] = useState<string>(() => root.id);
@@ -145,9 +177,12 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
       lastEmitted.current = md;
       pendingEmit.current = md;
       if (emitTimer.current != null) window.clearTimeout(emitTimer.current);
-      emitTimer.current = window.setTimeout(flushEmit, EMIT_DELAY);
+      // 触屏没有连按快捷键，每次都是一下点按，不用防抖；而且手势返回离开页面时父组件先卸载、
+      // 先做兜底保存，防抖里没交出去的改动就赶不上了
+      if (touch) flushEmit();
+      else emitTimer.current = window.setTimeout(flushEmit, EMIT_DELAY);
     },
-    [flushEmit],
+    [flushEmit, touch],
   );
 
   // 卸载（关闭导图 / 切笔记）前把没写回的改动交出去
@@ -303,7 +338,22 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
     }
   }, []);
 
-  useImperativeHandle(ref, () => ({ zoomBy: (f) => zoomAt(f), fit, exportPng }), [zoomAt, fit, exportPng]);
+  // act / undo 等是每次渲染新建的普通函数，handle 里经 ref 调最新的一份，免得拿到旧闭包
+  const latest = useRef({ act: (_a: MindAction) => {}, undo: () => {}, redo: () => {}, openMenu: () => {} });
+  useImperativeHandle(
+    ref,
+    () => ({
+      zoomBy: (f) => zoomAt(f),
+      fit,
+      exportPng,
+      undo: () => latest.current.undo(),
+      redo: () => latest.current.redo(),
+      act: (a) => latest.current.act(a),
+      openMenu: () => latest.current.openMenu(),
+      flush: () => flushRef.current(),
+    }),
+    [zoomAt, fit, exportPng],
+  );
 
   // 键盘移动选中后，选中节点跑出可视区就平移过去
   useEffect(() => {
@@ -412,6 +462,63 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
     });
   }
 
+  /** 节点操作的统一入口：键盘、右键菜单、手机底部操作栏都走这里 */
+  function act(action: MindAction, id: string = selectedIdRef.current) {
+    const cur = rootRef.current;
+    switch (action) {
+      case "child": {
+        const r = addChild(cur, id);
+        // 往折叠着的节点里加：先展开，新节点才看得见
+        if (r) {
+          setCollapsed((s) => {
+            if (!s.has(id)) return s;
+            const n = new Set(s);
+            n.delete(id);
+            return n;
+          });
+        }
+        run(r, true);
+        break;
+      }
+      case "sibling":
+        run(addSibling(cur, id), true);
+        break;
+      case "edit":
+        startEdit(id);
+        break;
+      case "delete":
+        run(removeNode(cur, id));
+        break;
+      case "up":
+      case "down":
+        run(moveAmongSiblings(cur, id, action === "up" ? -1 : 1));
+        break;
+      case "indent": {
+        const r = indent(cur, id);
+        if (r) revealAncestors(r.root, r.selectId);
+        run(r);
+        break;
+      }
+      case "outdent":
+        run(outdent(cur, id));
+        break;
+      case "collapse":
+        toggleCollapse(id);
+        break;
+    }
+  }
+
+  // 把可用状态报给外层（手机端顶栏的撤销 / 重做、底部栏的删除 / 加同级要据此置灰）
+  useEffect(() => {
+    if (!onStateChange) return;
+    onStateChange({
+      selectedId,
+      isRoot: !locate(root, selectedId)?.parent,
+      canUndo: undoStack.current.length > 0,
+      canRedo: redoStack.current.length > 0,
+    });
+  }, [root, selectedId, onStateChange]);
+
   // ─── 键盘 ───────────────────────────────────
 
   /** 方向键导航：左右按节点所在侧决定是「往外（子节点）」还是「往里（父节点）」 */
@@ -460,18 +567,8 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
     if (mod && !e.shiftKey && key.toLowerCase() === "z") restore(undoStack.current, redoStack.current);
     else if (mod && (key.toLowerCase() === "y" || (e.shiftKey && key.toLowerCase() === "z")))
       restore(redoStack.current, undoStack.current);
-    else if (key === "Tab") {
-      const r = addChild(root, selectedId);
-      if (r) {
-        setCollapsed((s) => {
-          if (!s.has(selectedId)) return s;
-          const n = new Set(s);
-          n.delete(selectedId);
-          return n;
-        });
-      }
-      run(r, true);
-    } else if (key === "Enter") run(addSibling(root, selectedId), true);
+    else if (key === "Tab") act("child");
+    else if (key === "Enter") run(addSibling(root, selectedId), true);
     else if (key === "Delete" || key === "Backspace") run(removeNode(root, selectedId));
     else if (key === "F2") startEdit(selectedId);
     else if (key === " ") toggleCollapse(selectedId);
@@ -609,43 +706,39 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
     const isRoot = !loc.parent;
     const hasKids = loc.node.children.length > 0;
     const sibs = loc.parent?.children ?? [];
-    const act = (fn: () => void) => () => {
+    const pick = (fn: () => void) => () => {
       setMenu(null);
       containerRef.current?.focus();
       fn();
     };
     const items: ContextMenuEntry[] = [
-      { key: "child", icon: <Plus size={14} />, label: "加子节点", hint: "Tab", onClick: act(() => run(addChild(root, id), true)) },
+      { key: "child", icon: <Plus size={14} />, label: "加子节点", hint: "Tab", onClick: pick(() => act("child", id)) },
     ];
     if (!isRoot) {
-      items.push({ key: "sibling", icon: <CornerDownRight size={14} />, label: "加同级节点", hint: "Enter", onClick: act(() => run(addSibling(root, id), true)) });
+      items.push({ key: "sibling", icon: <CornerDownRight size={14} />, label: "加同级节点", hint: "Enter", onClick: pick(() => act("sibling", id)) });
     }
     if (!isRoot || onTitleChange) {
-      items.push({ key: "edit", icon: <PencilLine size={14} />, label: "改文字", hint: "F2", onClick: act(() => startEdit(id)) });
+      items.push({ key: "edit", icon: <PencilLine size={14} />, label: "改文字", hint: "F2", onClick: pick(() => act("edit", id)) });
     }
     if (!isRoot) {
       items.push(
         { type: "divider" },
-        { key: "up", icon: <ArrowUp size={14} />, label: "上移", hint: "Alt+↑", disabled: loc.index === 0, onClick: act(() => run(moveAmongSiblings(root, id, -1))) },
-        { key: "down", icon: <ArrowDown size={14} />, label: "下移", hint: "Alt+↓", disabled: loc.index === sibs.length - 1, onClick: act(() => run(moveAmongSiblings(root, id, 1))) },
+        { key: "up", icon: <ArrowUp size={14} />, label: "上移", hint: "Alt+↑", disabled: loc.index === 0, onClick: pick(() => act("up", id)) },
+        { key: "down", icon: <ArrowDown size={14} />, label: "下移", hint: "Alt+↓", disabled: loc.index === sibs.length - 1, onClick: pick(() => act("down", id)) },
         {
           key: "indent",
           icon: <IndentIncrease size={14} />,
           label: "降一级",
           hint: "变成上一个同级的子节点",
           disabled: loc.index === 0,
-          onClick: act(() => {
-            const r = indent(root, id);
-            if (r) revealAncestors(r.root, r.selectId);
-            run(r);
-          }),
+          onClick: pick(() => act("indent", id)),
         },
         {
           key: "outdent",
           icon: <IndentDecrease size={14} />,
           label: "升一级",
           disabled: !loc.parent?.kind || loc.parent.kind.type === "root",
-          onClick: act(() => run(outdent(root, id))),
+          onClick: pick(() => act("outdent", id)),
         },
       );
     }
@@ -658,7 +751,7 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
           icon: isCollapsed ? <UnfoldVertical size={14} /> : <FoldVertical size={14} />,
           label: isCollapsed ? `展开（${loc.node.children.length}）` : "折叠",
           hint: "空格",
-          onClick: act(() => toggleCollapse(id)),
+          onClick: pick(() => act("collapse", id)),
         },
       );
     }
@@ -671,11 +764,130 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
           label: hasKids ? "删除（含子节点）" : "删除",
           hint: "Delete",
           danger: true,
-          onClick: act(() => run(removeNode(root, id))),
+          onClick: pick(() => act("delete", id)),
         },
       );
     }
     return items;
+  }
+
+  // ─── 触屏 ─────────────────────────────────
+  /** 触屏的操作面板（长按节点 / 底部栏「更多」）：菜单项与右键菜单同一份，去掉分隔线和不可用的 */
+  const [sheetId, setSheetId] = useState<string | null>(null);
+  function sheetItems(id: string): ActionSheetItem[] {
+    return menuItems(id).flatMap((e) =>
+      "key" in e && "label" in e && !e.disabled && e.onClick
+        ? [{ key: e.key, label: String(e.label), icon: e.icon, danger: e.danger, onClick: e.onClick as () => void }]
+        : [],
+    );
+  }
+
+  latest.current = {
+    act,
+    undo: () => restore(undoStack.current, redoStack.current),
+    redo: () => restore(redoStack.current, undoStack.current),
+    openMenu: () => setSheetId(selectedIdRef.current),
+  };
+
+  /** 屏幕上按着的手指（pointerId → 屏幕坐标），两指时做捏合缩放 */
+  const touchPts = useRef(new Map<number, { x: number; y: number }>());
+  /** 捏合开始时的两指距离、中点（容器坐标）和视图 */
+  const pinchRef = useRef<{ d: number; mx: number; my: number; view: { x: number; y: number; scale: number } } | null>(null);
+  /** 这次按下是不是一次点按：id = 按在哪个节点上（空白处为 null），wasSelected = 按下前它是否已选中 */
+  const tapRef = useRef<{ id: string | null; wasSelected: boolean; sx: number; sy: number } | null>(null);
+  const longPressTimer = useRef<number | null>(null);
+  function cancelLongPress() {
+    if (longPressTimer.current != null) {
+      window.clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }
+  useEffect(() => cancelLongPress, []);
+
+  function containerPoint(x: number, y: number) {
+    const rect = containerRef.current!.getBoundingClientRect();
+    return { x: x - rect.left, y: y - rect.top };
+  }
+
+  function touchDown(e: ReactPointerEvent<HTMLDivElement>) {
+    if (!e.currentTarget.contains(e.target as Node)) return;
+    // 压掉随后的兼容鼠标事件：否则 mousedown 会把焦点挪到画布容器（tabIndex=0），
+    // 「再点一下改文字」刚弹出的输入框立刻失焦、被当成确认关掉（真机实测，模拟事件复现不出）
+    e.preventDefault();
+    const pts = touchPts.current;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    capturePointer(e);
+    if (pts.size >= 2) {
+      // 第二根手指落下：转为捏合，取消点按 / 长按 / 平移
+      cancelLongPress();
+      tapRef.current = null;
+      panRef.current = null;
+      const [a, b] = [...pts.values()];
+      const m = containerPoint((a.x + b.x) / 2, (a.y + b.y) / 2);
+      pinchRef.current = { d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), mx: m.x, my: m.y, view };
+      return;
+    }
+    if (editingRef.current) commitEdit();
+    const el = (e.target as HTMLElement).closest<HTMLElement>("[data-mm-node]");
+    const id = el?.dataset.mmId ?? null;
+    tapRef.current = { id, wasSelected: id != null && id === selectedIdRef.current, sx: e.clientX, sy: e.clientY };
+    // 按在节点上也是平移画布（手机上不拖节点），没挪动才算点按
+    panRef.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
+    if (id) {
+      longPressTimer.current = window.setTimeout(() => {
+        longPressTimer.current = null;
+        tapRef.current = null;
+        panRef.current = null;
+        navigator.vibrate?.(15);
+        setSelectedId(id);
+        setSheetId(id);
+      }, LONG_PRESS_MS);
+    }
+  }
+
+  function touchMove(e: ReactPointerEvent<HTMLDivElement>) {
+    const pts = touchPts.current;
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const pin = pinchRef.current;
+    if (pin && pts.size >= 2) {
+      const [a, b] = [...pts.values()];
+      const m = containerPoint((a.x + b.x) / 2, (a.y + b.y) / 2);
+      const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, (pin.view.scale * Math.hypot(a.x - b.x, a.y - b.y)) / pin.d));
+      const k = scale / pin.view.scale;
+      // 捏合开始时两指中点下的那一点，始终跟着当前的两指中点走（缩放 + 平移一起）
+      setView({ scale, x: m.x - (pin.mx - pin.view.x) * k, y: m.y - (pin.my - pin.view.y) * k });
+      return;
+    }
+    const t = tapRef.current;
+    if (t && Math.hypot(e.clientX - t.sx, e.clientY - t.sy) > TAP_SLOP) {
+      tapRef.current = null;
+      cancelLongPress();
+    }
+    const p = panRef.current;
+    if (p) setView((v) => ({ ...v, x: p.vx + e.clientX - p.x, y: p.vy + e.clientY - p.y }));
+  }
+
+  function touchUp(e: ReactPointerEvent<HTMLDivElement>, cancelled: boolean) {
+    const pts = touchPts.current;
+    pts.delete(e.pointerId);
+    cancelLongPress();
+    if (pinchRef.current) {
+      if (pts.size < 2) {
+        pinchRef.current = null;
+        // 松开一指，剩下那根接着平移，不跳
+        const rest = [...pts.values()][0];
+        panRef.current = rest ? { x: rest.x, y: rest.y, vx: view.x, vy: view.y } : null;
+      }
+      return;
+    }
+    const t = tapRef.current;
+    tapRef.current = null;
+    panRef.current = null;
+    if (cancelled || !t || t.id == null) return;
+    // 点已选中的节点 = 改文字；点别的节点 = 选中它
+    if (t.wasSelected) startEdit(t.id);
+    else setSelectedId(t.id);
   }
 
   // wheel 要非 passive 才能 preventDefault（React 的 onWheel 是 passive）
@@ -715,10 +927,12 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
       ref={containerRef}
       tabIndex={0}
       onKeyDown={onKeyDown}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
+      onPointerDown={touch ? touchDown : onPointerDown}
+      onPointerMove={touch ? touchMove : onPointerMove}
+      onPointerUp={touch ? (e) => touchUp(e, false) : onPointerUp}
+      onPointerCancel={touch ? (e) => touchUp(e, true) : onPointerUp}
+      // 触屏长按空白处别弹系统的选字菜单（长按节点自己出操作面板）
+      onContextMenu={touch ? (e) => e.preventDefault() : undefined}
       className="kb-mm-editor"
       style={{
         position: "absolute",
@@ -728,6 +942,8 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
         cursor: panRef.current || drag ? "grabbing" : "default",
         background: token.colorBgContainer,
         userSelect: "none",
+        // 手势全部自己处理：不让 WebView 拿去滚动页面 / 双指缩放整页
+        touchAction: touch ? "none" : undefined,
       }}
     >
       <div
@@ -771,21 +987,24 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
             <div
               key={p.id}
               data-mm-node
+              data-mm-id={p.id}
               ref={(el) => {
                 if (el) nodeEls.current.set(p.id, el);
                 else nodeEls.current.delete(p.id);
               }}
               onPointerDown={(e) => {
-                if (e.button !== 0) return;
+                // 触屏：选中 / 改文字 / 长按都由容器按点按判定（按在节点上拖也是平移）
+                if (touch || e.button !== 0) return;
                 if (editing && editing.id !== p.id) commitEdit();
                 setSelectedId(p.id);
                 // 中心主题拖不动；正在改文字的节点里按下是在输入框里选字
                 if (!isRoot && !isEditing) pendingDrag.current = { id: p.id, sx: e.clientX, sy: e.clientY };
               }}
-              onDoubleClick={() => startEdit(p.id)}
+              onDoubleClick={touch ? undefined : () => startEdit(p.id)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
+                if (touch) return; // 长按由容器的计时器处理，出底部面板
                 if (editing) commitEdit();
                 setSelectedId(p.id);
                 setMenu({ id: p.id, x: e.clientX, y: e.clientY, ts: Date.now() });
@@ -817,7 +1036,14 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
                 cursor: drag ? "grabbing" : "default",
               }}
             >
-              {isEditing ? (
+              {isEditing && touch ? (
+                // 触屏在底部输入条里改，节点上实时显示草稿
+                editing.draft ? (
+                  renderInline(editing.draft)
+                ) : (
+                  <span style={{ opacity: 0.5 }}>{isRoot ? "中心主题" : "输入内容"}</span>
+                )
+              ) : isEditing ? (
                 <AutoWidthInput
                   value={editing.draft}
                   placeholder={isRoot ? "中心主题" : "输入内容"}
@@ -853,17 +1079,18 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
                   style={{
                     position: "absolute",
                     top: "50%",
-                    [p.side === "left" ? "left" : "right"]: -22,
+                    // 触屏手指粗，按钮放大一圈
+                    [p.side === "left" ? "left" : "right"]: touch ? -30 : -22,
                     transform: "translateY(-50%)",
-                    minWidth: 18,
-                    height: 18,
+                    minWidth: touch ? 24 : 18,
+                    height: touch ? 24 : 18,
                     padding: "0 4px",
-                    borderRadius: 9,
+                    borderRadius: touch ? 12 : 9,
                     border: `1px solid ${color}`,
                     background: token.colorBgContainer,
                     color,
-                    fontSize: 11,
-                    lineHeight: "16px",
+                    fontSize: touch ? 13 : 11,
+                    lineHeight: touch ? "22px" : "16px",
                     cursor: "pointer",
                   }}
                 >
@@ -930,9 +1157,125 @@ export const MindMapEditor = forwardRef<MindMapEditorHandle, Props>(function Min
           }}
         />
       )}
+
+      {touch && editing && (
+        <TouchEditBar
+          // 换一个节点就重新挂载，重新聚焦、全选
+          key={editing.id}
+          value={editing.draft}
+          placeholder={locate(root, editing.id)?.parent ? "输入内容" : "中心主题"}
+          bottom={keyboardInset}
+          onChange={(v) => setEditing((s) => (s ? { ...s, draft: v } : s))}
+          onCommit={commitEdit}
+        />
+      )}
+      {touch && (
+        <ActionSheet
+          open={sheetId != null}
+          title={sheetId ? nodesById.get(sheetId)?.text || "（空）" : undefined}
+          items={sheetId ? sheetItems(sheetId) : []}
+          onClose={() => setSheetId(null)}
+        />
+      )}
     </div>
   );
 });
+
+/**
+ * 触屏改文字的底部输入条：贴在键盘上方（fixed + 键盘高度），不受画布缩放影响。
+ * 回车或点「完成」确认；失焦（收起键盘、点画布）也算确认，和电脑端输入框失焦一致。
+ */
+function TouchEditBar({
+  value,
+  placeholder,
+  bottom,
+  onChange,
+  onCommit,
+}: {
+  value: string;
+  placeholder: string;
+  bottom: number;
+  onChange: (v: string) => void;
+  onCommit: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  }, []);
+  return (
+    // 用 form：Android 输入法的回车常报 keyCode 229，keydown 里认不出，提交事件总能收到
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        onCommit();
+      }}
+      // 按在输入条上不要冒泡到画布（画布按下会先确认编辑、开始平移）
+      onPointerDown={(e) => e.stopPropagation()}
+      style={{
+        position: "fixed",
+        left: 0,
+        right: 0,
+        bottom,
+        zIndex: 2,
+        display: "flex",
+        gap: 8,
+        alignItems: "center",
+        padding: bottom ? "8px 12px" : "8px 12px calc(8px + env(safe-area-inset-bottom, 0px))",
+        background: "var(--m-surface)",
+        borderTop: "1px solid var(--m-hair)",
+      }}
+    >
+      <input
+        ref={inputRef}
+        value={value}
+        placeholder={placeholder}
+        enterKeyHint="done"
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={onCommit}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+          if (e.key === "Enter") {
+            e.preventDefault();
+            onCommit();
+          }
+        }}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          height: 40,
+          padding: "0 12px",
+          // 16px 以下 Android WebView 聚焦时可能自动放大页面
+          fontSize: 16,
+          borderRadius: "var(--m-r-m)",
+          border: "none",
+          outline: "none",
+          background: "var(--m-well)",
+          color: "var(--m-ink)",
+        }}
+      />
+      <button
+        type="submit"
+        className="m-tapx"
+        style={{
+          height: 40,
+          padding: "0 16px",
+          borderRadius: "var(--m-r-m)",
+          border: "none",
+          background: "var(--m-accent)",
+          color: "var(--m-on-accent)",
+          fontSize: 15,
+          fontWeight: 600,
+        }}
+      >
+        完成
+      </button>
+    </form>
+  );
+}
 
 /**
  * 宽度跟着内容走的单行输入框：底下垫一个看不见的同内容 span 撑宽，输入框盖在上面。
