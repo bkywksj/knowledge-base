@@ -10247,7 +10247,8 @@ main.ant-layout-content:has(.kb-home) {
 /* ═══════════════════════════════════════════════════════════
    列表行距（设置里的「列表行距」/ 笔记页「列」按钮）：:root[data-list-density]
    宽松 = 原来的样子（固定两行高 56），这里只覆盖紧凑和标准。
-   标准：有摘要 44、没摘要只占一行 32；紧凑：不显示摘要，每行 30。
+   标准：笔记页有摘要约 50、没摘要只占一行 38（上下各留 6，原来 3 太挤），其它列表 32；
+   紧凑：不显示摘要，每行 30。
    ═══════════════════════════════════════════════════════════ */
 .kb-density-pick {
   display: flex;
@@ -10258,11 +10259,10 @@ main.ant-layout-content:has(.kb-home) {
 }
 
 /* 笔记页列表视图（卡片 / 时间线不受影响：它们不在表格里） */
-:root[data-list-density="standard"] .notes-list-flat .ant-table-tbody > tr > td,
-:root[data-list-density="compact"] .notes-list-flat .ant-table-tbody > tr > td {
-  height: 32px;
-  padding-top: 3px !important;
-  padding-bottom: 3px !important;
+:root[data-list-density="standard"] .notes-list-flat .ant-table-tbody > tr > td {
+  height: 38px;
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
 }
 :root[data-list-density="compact"] .notes-list-flat .ant-table-tbody > tr > td {
   height: 30px;
