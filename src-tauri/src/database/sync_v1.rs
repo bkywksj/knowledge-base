@@ -227,6 +227,27 @@ impl Database {
         Ok(())
     }
 
+    /// 只改 config_json（凭据字段照常加密）。给程序自动修正配置用，如局域网同步写回 mDNS 找到的新地址；
+    /// 不动 updated_at 以外的列
+    pub fn set_sync_backend_config_json(
+        &self,
+        id: i64,
+        kind: SyncBackendKind,
+        config_json: &str,
+    ) -> Result<(), AppError> {
+        let sealed = seal_config_json(kind_to_str(kind), config_json)?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        conn.execute(
+            "UPDATE sync_backends SET config_json = ?1, updated_at = datetime('now', 'localtime')
+             WHERE id = ?2",
+            params![sealed, id],
+        )?;
+        Ok(())
+    }
+
     pub fn delete_sync_backend(&self, id: i64) -> Result<bool, AppError> {
         let conn = self
             .conn

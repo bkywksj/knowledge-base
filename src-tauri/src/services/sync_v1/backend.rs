@@ -155,6 +155,13 @@ pub trait SyncBackendImpl {
     fn list_root_files(&self) -> Result<Option<Vec<String>>, AppError> {
         Ok(None)
     }
+
+    /// 本次同步中找到的远端新地址（取走即清空），调用方写回同步源配置，下次直接连。
+    ///
+    /// 目前只有局域网同步用：电脑换了 IP 后客户端用 mDNS 找到它（见 backend_lan）。其它 backend 恒为 None
+    fn take_discovered_hosts(&self) -> Option<Vec<String>> {
+        None
+    }
 }
 
 /// 从 sync_backends.config_json 解析为 BackendAuth

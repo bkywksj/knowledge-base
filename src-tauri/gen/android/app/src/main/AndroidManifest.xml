@@ -15,6 +15,9 @@
          Android 8.0+ 除了这条声明，用户还得在设置里给本应用单独开「允许安装未知应用」，
          应用不能自己授予 —— 只能用 Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES 引导过去。 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 局域网同步：电脑换了 IP 后用 mDNS 找电脑，Wi-Fi 默认丢弃组播包，要临时持有组播锁
+         （MulticastHelper.kt）。普通权限，装上即授予 -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- 没摄像头的设备也允许安装（required=false） -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />

@@ -67,9 +67,11 @@ pub mod lan_server;
 // 局域网同步电脑端编排：开关 / 配对 / 本机中转同步源 / 租约。仅桌面端
 #[cfg(desktop)]
 pub mod lan_sync;
-// 局域网同步 mDNS 广播 / 查找（换 IP 后按证书指纹找回电脑）。仅桌面端
-#[cfg(desktop)]
+// 局域网同步 mDNS（换 IP 后按证书指纹找回电脑）：广播只在桌面端，查找桌面 / 手机都用
 pub mod lan_discovery;
+// Rust 调应用自有 Kotlin 类的公共件（借 Context 的 ClassLoader）。仅 Android
+#[cfg(target_os = "android")]
+pub mod android_jni;
 pub mod note;
 pub mod note_excerpt;
 #[cfg(desktop)]

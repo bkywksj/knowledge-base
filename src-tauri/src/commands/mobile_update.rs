@@ -314,50 +314,11 @@ pub async fn download_mobile_update(
 }
 
 /// Android JNI 桥：调 `com.agilefr.kb.ApkInstaller` 的静态方法。
-///
-/// 🔴 核心坑：`attach_current_thread` 出来的线程用的是**系统 ClassLoader**，
-/// `find_class("com/agilefr/kb/ApkInstaller")` 必然 ClassNotFoundException
-/// （系统 ClassLoader 看不到应用自己的 dex）。必须借 Context 的 ClassLoader
-/// 反射 `loadClass` 才能拿到应用类 —— 这是 Rust 调 Android 自有类的标准做法。
+/// 加载应用类为什么要借 Context 的 ClassLoader，见 `services::android_jni`。
 #[cfg(target_os = "android")]
 mod android_jni {
-    use jni::objects::{JClass, JObject, JString, JValue};
-    use jni::JavaVM;
-
-    /// 拿到 (JavaVM, Context)。Context 由 ndk_context 提供，tao 在启动时塞进去。
-    fn vm_and_context() -> Result<(JavaVM, *mut std::ffi::c_void), String> {
-        let ctx = ndk_context::android_context();
-        let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }
-            .map_err(|e| format!("取 JavaVM 失败: {e}"))?;
-        Ok((vm, ctx.context()))
-    }
-
-    /// 借 Context 的 ClassLoader 加载应用自有类（绕开系统 ClassLoader 看不见 dex 的问题）
-    fn load_app_class<'a>(
-        env: &mut jni::JNIEnv<'a>,
-        context: &JObject<'a>,
-        class_name: &str,
-    ) -> Result<JClass<'a>, String> {
-        let loader = env
-            .call_method(context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])
-            .map_err(|e| format!("取 ClassLoader 失败: {e}"))?
-            .l()
-            .map_err(|e| format!("ClassLoader 返回值异常: {e}"))?;
-        let name = env
-            .new_string(class_name)
-            .map_err(|e| format!("构造类名字符串失败: {e}"))?;
-        let class_obj = env
-            .call_method(
-                &loader,
-                "loadClass",
-                "(Ljava/lang/String;)Ljava/lang/Class;",
-                &[JValue::Object(&name)],
-            )
-            .map_err(|e| format!("loadClass({class_name}) 失败: {e}"))?
-            .l()
-            .map_err(|e| format!("loadClass 返回值异常: {e}"))?;
-        Ok(JClass::from(class_obj))
-    }
+    use crate::services::android_jni::{load_app_class, vm_and_context};
+    use jni::objects::{JObject, JString, JValue};
 
     /// 调 `(Context) -> String` 或 `(Context, String) -> String` 的静态方法，
     /// 返回 Kotlin 侧给的错误串（空串 = 成功）

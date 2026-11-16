@@ -484,6 +484,7 @@ mod tests {
     fn client(f: &Fixture) -> LanBackend {
         let mut c = LanBackend::new(&format!("https://{}", f.server.addr), &f.token, &f.fingerprint).unwrap();
         c.set_busy_wait(Duration::ZERO);
+        c.set_discover_timeout(Duration::ZERO);
         c
     }
 
@@ -584,6 +585,23 @@ mod tests {
         assert!(LanBackend::with_hosts(&[], port, &f.token, &f.fingerprint).is_err());
     }
 
+    /// 记下的地址失效（电脑换了 IP）：按指纹经 mDNS 找到电脑，连上并交出新地址供写回配置。
+    /// 会在本机 UDP 5353 收发真实组播，Windows 首次运行可能弹防火墙询问，默认不跑。
+    /// 手动验证：cargo test --lib lan_server::tests::rediscovers_moved_desktop -- --ignored
+    #[test]
+    #[ignore]
+    fn rediscovers_moved_desktop() {
+        let f = fixture();
+        let port = f.server.addr.port();
+        let _ad = crate::services::lan_discovery::advertise("测试电脑", &f.fingerprint, port).unwrap();
+        let mut c = LanBackend::with_hosts(&["192.0.2.1".into()], port, &f.token, &f.fingerprint).unwrap();
+        c.set_discover_timeout(Duration::from_secs(5));
+        c.test_connection().unwrap();
+        let hosts = c.take_discovered_hosts().expect("应交出新地址");
+        assert!(hosts.iter().all(|h| h.ends_with(&format!(":{port}"))), "{hosts:?}");
+        assert!(c.take_discovered_hosts().is_none(), "取走后清空");
+    }
+
     #[test]
     fn lease_conflicts_with_desktop_sync() {
         let f = fixture();
@@ -630,7 +648,9 @@ mod tests {
 
         // 冒充的电脑：证书指纹对不上，TLS 握手就失败，根本发不出带令牌的请求
         let other = cert_fingerprint(&generate_identity().unwrap().cert_der);
-        let bad_fp = LanBackend::new(&format!("https://{}", f.server.addr), &f.token, &other).unwrap();
+        let mut bad_fp = LanBackend::new(&format!("https://{}", f.server.addr), &f.token, &other).unwrap();
+        // 连不上时本来会去 mDNS 找电脑；测试里不碰真实组播
+        bad_fp.set_discover_timeout(Duration::ZERO);
         let e = bad_fp.test_connection().unwrap_err().to_string();
         assert!(e.contains("连不上电脑端"), "{e}");
     }

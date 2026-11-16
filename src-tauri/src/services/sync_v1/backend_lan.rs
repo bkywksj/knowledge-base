@@ -6,7 +6,9 @@
 //! - 库级租约自动管理：第一次读 manifest 或写入时申请，后端对象释放（一次同步结束）时归还；
 //!   电脑端同一时刻只允许一方写，避免两边交错写 manifest 互相覆盖。读 manifest 时就拿是因为
 //!   push 是「读 → 合并 → 写」，读完再拿租约的话中间电脑写入的内容会被覆盖
-//! - 地址：配对二维码里带本机所有局域网地址，第一次请求时逐个试连，记住能连上的那个
+//! - 地址：配对二维码里带本机所有局域网地址，第一次请求时逐个试连，记住能连上的那个；
+//!   都连不上（电脑换了 Wi-Fi / IP）时按证书指纹用 mDNS 在局域网里找电脑（services::lan_discovery），
+//!   找到的新地址经 [`SyncBackendImpl::take_discovered_hosts`] 交给调用方写回同步源配置
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -85,11 +87,20 @@ const BUSY_MSG: &str = "电脑端正在同步，请稍后再试";
 const BUSY_WAIT: Duration = Duration::from_secs(60);
 const BUSY_RETRY_INTERVAL: Duration = Duration::from_secs(1);
 
+/// 记下的地址都连不上时，mDNS 找电脑最多等多久（电脑开着时通常 1 秒内就有回应）
+const DISCOVER_TIMEOUT: Duration = Duration::from_secs(4);
+
 pub struct LanBackend {
     /// 候选地址，形如 `https://192.168.1.8:47321`；第一次请求时挑能连上的
     candidates: Vec<String>,
     /// 已选中的地址
     base_url: Mutex<Option<String>>,
+    /// 配对时记下的证书指纹：TLS 校验用，也用来在 mDNS 里认出是哪台电脑
+    fingerprint: String,
+    /// mDNS 找到的新地址（`IP:端口`），还没被调用方取走写回配置
+    discovered: Mutex<Option<Vec<String>>>,
+    /// 见 [`DISCOVER_TIMEOUT`]；测试里设成 0 关掉查找（测试机上不碰真实组播）
+    discover_timeout: Duration,
     token: String,
     client: reqwest::Client,
     lease: Mutex<Option<String>>,
@@ -136,6 +147,9 @@ impl LanBackend {
         Ok(Self {
             candidates: vec![base_url.trim_end_matches('/').to_string()],
             base_url: Mutex::new(None),
+            fingerprint: fingerprint.to_string(),
+            discovered: Mutex::new(None),
+            discover_timeout: DISCOVER_TIMEOUT,
             token: token.to_string(),
             client,
             lease: Mutex::new(None),
@@ -148,37 +162,80 @@ impl LanBackend {
         self.busy_wait = d;
     }
 
-    /// 选一个能连上的地址并记住。只试一个候选时不探测，直接用（省一次往返）
+    #[cfg(test)]
+    pub fn set_discover_timeout(&mut self, d: Duration) {
+        self.discover_timeout = d;
+    }
+
+    /// 逐个试连候选地址，返回第一个能连上的
+    async fn probe(&self, candidates: &[String]) -> Option<String> {
+        for c in candidates {
+            let probe = self
+                .client
+                .get(format!("{c}{API_PREFIX}/ping"))
+                .bearer_auth(&self.token)
+                .timeout(Duration::from_secs(3))
+                .send()
+                .await;
+            // 任何 HTTP 响应（哪怕 401）都说明这个地址上确实是那台电脑（证书指纹已校验过）
+            if probe.is_ok() {
+                return Some(c.clone());
+            }
+        }
+        None
+    }
+
+    /// 选一个能连上的地址并记住：先试配对时记下的地址，都不通再用 mDNS 按指纹找电脑。
+    /// 只有一个候选也先探测（局域网里一次往返几十毫秒），否则地址失效时没机会去找
     async fn base(&self) -> Result<String, AppError> {
         if let Some(b) = self.base_url.lock().map_err(|e| AppError::Custom(e.to_string()))?.clone() {
             return Ok(b);
         }
-        let chosen = if self.candidates.len() == 1 {
-            self.candidates[0].clone()
-        } else {
-            let mut ok = None;
-            for c in &self.candidates {
-                let probe = self
-                    .client
-                    .get(format!("{c}{API_PREFIX}/ping"))
-                    .bearer_auth(&self.token)
-                    .timeout(Duration::from_secs(3))
-                    .send()
-                    .await;
-                // 任何 HTTP 响应（哪怕 401）都说明这个地址上确实是那台电脑（证书指纹已校验过）
-                if probe.is_ok() {
-                    ok = Some(c.clone());
-                    break;
-                }
-            }
-            ok.ok_or_else(|| {
-                AppError::Custom(format!(
-                    "连不上电脑端（试了 {}）：确认电脑开着知识库并已开启局域网同步、两台设备在同一个 Wi-Fi",
-                    self.candidates.join("、")
-                ))
-            })?
+        let chosen = match self.probe(&self.candidates).await {
+            Some(c) => c,
+            None => self.rediscover().await?,
         };
         *self.base_url.lock().map_err(|e| AppError::Custom(e.to_string()))? = Some(chosen.clone());
+        Ok(chosen)
+    }
+
+    /// 记下的地址都连不上：在局域网里按证书指纹找电脑，找到就记下新地址留给调用方写回配置
+    async fn rediscover(&self) -> Result<String, AppError> {
+        let unreachable = || {
+            AppError::Custom(format!(
+                "连不上电脑端（试了 {}）：确认电脑开着知识库并已开启局域网同步、两台设备在同一个 Wi-Fi",
+                self.candidates.join("、")
+            ))
+        };
+        if self.discover_timeout.is_zero() {
+            return Err(unreachable());
+        }
+        let fp = self.fingerprint.clone();
+        let timeout = self.discover_timeout;
+        // mDNS 查找是阻塞等待，放到阻塞线程池里，别占着异步任务
+        let found = tokio::task::spawn_blocking(move || crate::services::lan_discovery::discover(&fp, timeout))
+            .await
+            .map_err(|e| AppError::Custom(format!("mDNS 查找线程异常: {e}")))?;
+        let addrs = match found {
+            Ok(a) => a,
+            Err(e) => {
+                // 查找本身失败（组播锁 / 网卡问题）不改变结论：还是连不上，按原来的提示报
+                log::warn!("[lan-sync] mDNS 查找电脑失败: {e}");
+                return Err(unreachable());
+            }
+        };
+        let hosts: Vec<String> = addrs.iter().map(|a| a.to_string()).collect();
+        let fresh: Vec<String> = hosts
+            .iter()
+            .map(|h| format!("https://{h}"))
+            .filter(|c| !self.candidates.contains(c))
+            .collect();
+        let Some(chosen) = self.probe(&fresh).await else {
+            log::info!("[lan-sync] mDNS 没找到可连的电脑（找到 {} 个地址）", hosts.len());
+            return Err(unreachable());
+        };
+        log::info!("[lan-sync] 记下的地址连不上，mDNS 找到电脑新地址 {chosen}");
+        *self.discovered.lock().map_err(|e| AppError::Custom(e.to_string()))? = Some(hosts);
         Ok(chosen)
     }
 
@@ -350,6 +407,10 @@ impl SyncBackendImpl for LanBackend {
         serde_json::from_slice(&b)
             .map(Some)
             .map_err(|e| AppError::Custom(format!("文件列表解析失败: {e}")))
+    }
+
+    fn take_discovered_hosts(&self) -> Option<Vec<String>> {
+        self.discovered.lock().ok()?.take()
     }
 }
 

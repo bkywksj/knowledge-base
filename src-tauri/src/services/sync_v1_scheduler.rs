@@ -342,9 +342,10 @@ fn pull_inner(
         &state.data_dir,
         app, // AppHandle 自身实现 Emitter
         allow_mass_delete,
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(r)
+    );
+    // 成败都要看：地址是连上之后才记下的，哪怕后面同步出错，新地址本身是对的
+    remember_discovered_hosts(&state.db, &cfg, backend_impl.as_ref());
+    r.map_err(|e| e.to_string())
 }
 
 fn push_inner(app: &AppHandle, backend_id: i64) -> Result<SyncPushResult, String> {
@@ -373,9 +374,39 @@ fn push_inner(app: &AppHandle, backend_id: i64) -> Result<SyncPushResult, String
         &device,
         &state.data_dir,
         app,
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(r)
+    );
+    remember_discovered_hosts(&state.db, &cfg, backend_impl.as_ref());
+    r.map_err(|e| e.to_string())
+}
+
+/// 局域网同步：记下的地址连不上、经 mDNS 找到电脑新地址时，写回同步源配置的 `hosts`，下次直接连。
+/// 写失败只记日志（下次同步会再找一遍，不影响本次结果）
+fn remember_discovered_hosts(
+    db: &crate::database::Database,
+    cfg: &SyncBackend,
+    backend_impl: &dyn sync_v1::backend::SyncBackendImpl,
+) {
+    let Some(hosts) = backend_impl.take_discovered_hosts() else { return };
+    match updated_hosts_config(&cfg.config_json, &hosts) {
+        Some(json) => match db.set_sync_backend_config_json(cfg.id, cfg.kind, &json) {
+            Ok(()) => log::info!("[sync-v1] backend #{} 电脑地址已更新为 {}", cfg.id, hosts.join("、")),
+            Err(e) => log::warn!("[sync-v1] backend #{} 写回电脑新地址失败: {}", cfg.id, e),
+        },
+        None => log::warn!("[sync-v1] backend #{} 配置读不出或凭据已失效，不写回新地址", cfg.id),
+    }
+}
+
+/// 把 config_json 的 `hosts` 换成新地址；配置解析不了或凭据解不开（`_secretUnreadable`，
+/// 此时令牌已被置空，写回会把空令牌存进去）时返回 None
+fn updated_hosts_config(config_json: &str, hosts: &[String]) -> Option<String> {
+    let serde_json::Value::Object(mut map) = serde_json::from_str::<serde_json::Value>(config_json).ok()? else {
+        return None;
+    };
+    if map.contains_key(crate::database::sync_v1::SECRET_UNREADABLE_KEY) {
+        return None;
+    }
+    map.insert("hosts".into(), serde_json::json!(hosts));
+    serde_json::to_string(&serde_json::Value::Object(map)).ok()
 }
 
 /// emit 同步结果给前端（设置页 SyncV1Section 监听，失败时弹 toast 提示）
@@ -408,6 +439,27 @@ fn hostname_short() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovered_hosts_replace_only_hosts() {
+        let cfg = r#"{"hosts":["192.168.1.8"],"port":47321,"fp":"AB:CD","token":"t0k"}"#;
+        let json = updated_hosts_config(cfg, &["192.168.3.20:47321".into()]).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["hosts"], serde_json::json!(["192.168.3.20:47321"]));
+        assert_eq!(v["port"], 47321);
+        assert_eq!(v["fp"], "AB:CD");
+        assert_eq!(v["token"], "t0k");
+        // 解析出的地址能被局域网客户端直接用（IP:端口 形式）
+        let auth = sync_v1::backend::parse_auth(crate::models::SyncBackendKind::Lan, &json).unwrap();
+        assert!(matches!(auth, sync_v1::backend::BackendAuth::Lan { ref hosts, .. } if hosts.len() == 1));
+    }
+
+    #[test]
+    fn discovered_hosts_not_written_when_token_unreadable() {
+        let cfg = r#"{"hosts":["192.168.1.8"],"port":47321,"fp":"AB:CD","token":"","_secretUnreadable":true}"#;
+        assert!(updated_hosts_config(cfg, &["192.168.3.20:47321".into()]).is_none());
+        assert!(updated_hosts_config("not json", &["192.168.3.20:47321".into()]).is_none());
+    }
 
     #[test]
     fn backoff_doubles_from_one_tick() {

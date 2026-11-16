@@ -1,15 +1,17 @@
-//! 局域网同步的 mDNS 自动发现（仅桌面端广播；手机端查找在第 4 步接入，见 docs/tasks/lan-sync-tasks.md）。
+//! 局域网同步的 mDNS 自动发现（电脑端广播，手机端查找；见 docs/tasks/lan-sync-tasks.md）。
 //!
 //! 为什么要：配对二维码里的地址是当时的 IP，电脑换了 Wi-Fi / DHCP 重新分配后就连不上了。
 //! 电脑开着局域网同步时在 `_kb-lan._tcp` 下广播自己，TXT 里带证书指纹；
-//! 手机按配对时记下的指纹去找，拿到电脑当前的地址（同一局域网里多台电脑也不会认错）。
+//! 手机连不上记下的地址时按配对时的指纹去找，拿到电脑当前的地址（同一局域网里多台电脑也不会认错）。
 //!
-//! 广播失败不影响同步服务本身（只是换 IP 后要重新扫码），调用方只记日志。
+//! 广播 / 查找失败都不影响同步本身（只是换 IP 后要重新扫码），调用方只记日志。
 
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
-use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+#[cfg(desktop)]
+use mdns_sd::ServiceInfo;
+use mdns_sd::{ServiceDaemon, ServiceEvent};
 
 use crate::error::AppError;
 
@@ -21,13 +23,12 @@ pub fn fp_compact(fingerprint: &str) -> String {
 }
 
 /// TXT 里的指纹是否就是配对时那台电脑
-// 查找由手机端在第 4 步调用（Android 收组播要先申请 MulticastLock，需真机）；现在只有测试用
-#[allow(dead_code)]
 pub fn fp_matches(txt_fp: Option<&str>, expected_fingerprint: &str) -> bool {
     txt_fp.is_some_and(|t| t.eq_ignore_ascii_case(&fp_compact(expected_fingerprint)))
 }
 
 /// 实例名：设备名 + 指纹前 8 位（同名电脑也能区分）。DNS 标签上限 63 字节，中文设备名按字符截断
+#[cfg(any(desktop, test))]
 pub fn instance_name(device_name: &str, fingerprint: &str) -> String {
     let short = &fp_compact(fingerprint)[..8.min(fp_compact(fingerprint).len())];
     let mut name = String::new();
@@ -44,11 +45,13 @@ pub fn instance_name(device_name: &str, fingerprint: &str) -> String {
 }
 
 /// 正在广播的服务；Drop 时注销并关掉 mDNS 守护线程
+#[cfg(desktop)]
 pub struct Advertiser {
     daemon: ServiceDaemon,
     fullname: String,
 }
 
+#[cfg(desktop)]
 impl Drop for Advertiser {
     fn drop(&mut self) {
         let _ = self.daemon.unregister(&self.fullname);
@@ -56,6 +59,7 @@ impl Drop for Advertiser {
     }
 }
 
+#[cfg(desktop)]
 pub fn advertise(device_name: &str, fingerprint: &str, port: u16) -> Result<Advertiser, AppError> {
     let daemon = ServiceDaemon::new().map_err(|e| AppError::Custom(format!("mDNS 启动失败: {e}")))?;
     let fp = fp_compact(fingerprint);
@@ -71,10 +75,11 @@ pub fn advertise(device_name: &str, fingerprint: &str, port: u16) -> Result<Adve
     Ok(Advertiser { daemon, fullname })
 }
 
-/// 在局域网里找指纹匹配的电脑，返回它当前的地址（IPv4 优先、去重）。超时没找到返回空
-// 查找由手机端在第 4 步调用（Android 收组播要先申请 MulticastLock，需真机）；现在只有测试用
-#[allow(dead_code)]
+/// 在局域网里找指纹匹配的电脑，返回它当前的地址（只取 IPv4、已排序）。超时没找到返回空
 pub fn discover(fingerprint: &str, timeout: Duration) -> Result<Vec<SocketAddr>, AppError> {
+    // Android 的 Wi-Fi 默认丢弃组播包，不拿 MulticastLock 收不到电脑的回应；查找期间持有，返回时释放
+    #[cfg(target_os = "android")]
+    let _lock = multicast_lock::MulticastLock::acquire()?;
     let daemon = ServiceDaemon::new().map_err(|e| AppError::Custom(format!("mDNS 启动失败: {e}")))?;
     let rx = daemon.browse(SERVICE_TYPE).map_err(|e| AppError::Custom(format!("mDNS 查找失败: {e}")))?;
     let deadline = Instant::now() + timeout;
@@ -96,6 +101,56 @@ pub fn discover(fingerprint: &str, timeout: Duration) -> Result<Vec<SocketAddr>,
     let _ = daemon.stop_browse(SERVICE_TYPE);
     let _ = daemon.shutdown();
     Ok(found)
+}
+
+/// Android Wi-Fi 组播锁，调 `com.agilefr.kb.MulticastHelper`（Kotlin 侧引用计数，并发查找各拿各放）
+#[cfg(target_os = "android")]
+mod multicast_lock {
+    use crate::error::AppError;
+    use crate::services::android_jni::{load_app_class, vm_and_context};
+    use jni::objects::{JObject, JString, JValue};
+
+    const CLASS: &str = "com.agilefr.kb.MulticastHelper";
+
+    pub struct MulticastLock;
+
+    impl MulticastLock {
+        pub fn acquire() -> Result<Self, AppError> {
+            let (vm, context_ptr) = vm_and_context().map_err(AppError::Custom)?;
+            let mut env = vm.attach_current_thread().map_err(|e| AppError::Custom(format!("attach JNI 线程失败: {e}")))?;
+            let context = unsafe { JObject::from_raw(context_ptr.cast()) };
+            let class = load_app_class(&mut env, &context, CLASS).map_err(AppError::Custom)?;
+            let ret = env
+                .call_static_method(&class, "acquire", "(Landroid/content/Context;)Ljava/lang/String;", &[JValue::Object(&context)])
+                .and_then(|v| v.l())
+                .map_err(|e| AppError::Custom(format!("申请组播锁失败: {e}")))?;
+            let err: String = env
+                .get_string(&JString::from(ret))
+                .map_err(|e| AppError::Custom(format!("读取组播锁结果失败: {e}")))?
+                .into();
+            if err.is_empty() {
+                Ok(Self)
+            } else {
+                Err(AppError::Custom(format!("申请组播锁失败: {err}")))
+            }
+        }
+    }
+
+    impl Drop for MulticastLock {
+        fn drop(&mut self) {
+            let release = || -> Result<(), String> {
+                let (vm, context_ptr) = vm_and_context()?;
+                let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+                let context = unsafe { JObject::from_raw(context_ptr.cast()) };
+                let class = load_app_class(&mut env, &context, CLASS)?;
+                env.call_static_method(&class, "release", "()V", &[]).map_err(|e| e.to_string())?;
+                Ok(())
+            };
+            if let Err(e) = release() {
+                log::warn!("[lan-sync] 释放组播锁失败: {e}");
+            }
+        }
+    }
 }
 
 #[cfg(test)]

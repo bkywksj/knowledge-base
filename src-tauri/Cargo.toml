@@ -58,6 +58,9 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 # 🔴 feature 全局合并：开启后，任何没显式设置 proxy 的 reqwest 客户端都会自动走系统代理且没有内网直连。
 #    新建 Client 一律经 http_client::with_system_proxy（或明确 .no_proxy()），不要直接 Client::new()。
 hyper-util = { version = "0.1.20", default-features = false, features = ["client-proxy", "client-proxy-system"] }
+# 局域网同步 mDNS：电脑端广播本机服务，手机端按配对时的证书指纹找电脑（电脑换 IP 后不用重新扫码）。
+# 纯 Rust、不依赖异步运行时
+mdns-sd = "0.21"
 http = "1"
 # ai-profile：模型服务的预置、协议拼写、端点拼接、零成本验证、限额、ai.profile 协议（同级公共库）。
 # 按 crates.io 版本引用；升级流程见 ai-profile 仓库的 docs/downstream.md 与本项目技能 ai-profile-integration。
@@ -186,8 +189,6 @@ rcgen = { version = "0.13", default-features = false, features = ["ring", "pem",
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1.20", default-features = false, features = ["server", "http1", "tokio", "service"] }
-# 局域网同步：mDNS 广播本机服务（电脑换 IP 后手机按证书指纹仍能找到）；纯 Rust、不依赖异步运行时
-mdns-sd = "0.21"
 # 列出本机所有局域网 IPv4 给配对二维码（多网卡 / VPN 时不只一个）；与 mdns-sd 内部同版本，不重复编译
 if-addrs = "0.15"
 # Excel / ODS 解析（calamine 在 Android target 编译失败，先桌面端独享；

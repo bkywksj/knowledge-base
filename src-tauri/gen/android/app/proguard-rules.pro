@@ -36,3 +36,9 @@
 -keep class com.agilefr.kb.ApkInstaller {
     public static <methods>;
 }
+# ─── 局域网同步：mDNS 查找时的 Wi-Fi 组播锁（JNI 反射调用，R8 看不见）────────────
+# services/lan_discovery.rs 的 multicast_lock 经 ClassLoader.loadClass 调 acquire / release，
+# 不 keep 会和上面 ApkInstaller 一样被 tree-shake 成空壳，运行时 NoSuchMethodError
+-keep class com.agilefr.kb.MulticastHelper {
+    public static <methods>;
+}
