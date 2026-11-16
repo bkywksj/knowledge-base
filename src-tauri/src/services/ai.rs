@@ -767,6 +767,28 @@ fn continuation_messages(base: &[Value], written: &str) -> Vec<Value> {
     messages
 }
 
+/// 工具调用轮次用满后，最后一轮请求用的消息：把「别再调工具」的提示拼进**开头那条** system。
+///
+/// 🔴 不能另起一条 system 追加在末尾：Qwen3 等 GGUF 自带的聊天模板严格要求 system 只在第一条，
+///    Jan / llama.cpp 会直接抛 `System message must be at the beginning` 返回 500。
+///    开头没有 system 时（理论上不会）才插一条到最前面。
+fn finalization_messages(base: &[Value]) -> Vec<Value> {
+    const HINT: &str = "工具调用次数已达上限，工具不再可用。请基于你已经从工具拿到的信息，\
+                        直接给出最终中文答复。\
+                        绝对不要再输出 <tool_call>、<tool_use>、```tool_call、\
+                        functions.xxx(...) 等任何形式的工具调用语法或代码块；\
+                        如果信息不足以回答，明确告诉用户笔记里没有相关内容。";
+    let mut messages = base.to_vec();
+    match messages.first_mut() {
+        Some(first) if first["role"].as_str() == Some("system") => {
+            let content = first["content"].as_str().unwrap_or_default();
+            first["content"] = json!(format!("{content}\n\n{HINT}"));
+        }
+        _ => messages.insert(0, json!({ "role": "system", "content": HINT })),
+    }
+    messages
+}
+
 /// 截断后没再续（次数用完 / 上一段为空）时追加在正文末尾的提示
 fn truncation_notice(continued: u32) -> String {
     if continued == 0 {
@@ -2638,22 +2660,13 @@ impl AiService {
                 json!({ "conversationId": conversation_id, "round": round }),
             );
 
-            // finalization 轮：临时往 messages 里加一条 system 提示，劝模型不要继续模仿
+            // finalization 轮：临时给 system 加一段提示，劝模型不要继续模仿
             // 工具调用语法（前几轮的 tool_calls 历史会让模型有"再调一次"的惯性）。
             // 用本地 Cow 避免污染主 messages 数组——下一轮请求又得用原始版。
             let req_messages: std::borrow::Cow<'_, [Value]> = if allow_tools {
                 std::borrow::Cow::Borrowed(&messages[..])
             } else {
-                let mut m = messages.clone();
-                m.push(json!({
-                    "role": "system",
-                    "content": "工具调用次数已达上限，工具不再可用。请基于你已经从工具拿到的信息，\
-                                直接给出最终中文答复。\
-                                绝对不要再输出 <tool_call>、<tool_use>、```tool_call、\
-                                functions.xxx(...) 等任何形式的工具调用语法或代码块；\
-                                如果信息不足以回答，明确告诉用户笔记里没有相关内容。"
-                }));
-                std::borrow::Cow::Owned(m)
+                std::borrow::Cow::Owned(finalization_messages(&messages))
             };
 
             let tools_arg: &[Value] = if allow_tools { &tool_schemas } else { &[] };
@@ -6002,6 +6015,30 @@ mod sse_stream_tests {
         // 代码块已闭合：不提醒
         let m = continuation_messages(&base, "```rust\nfn main() {}\n```\n接下来");
         assert!(!m[3]["content"].as_str().unwrap().contains("代码块中间"));
+    }
+
+    // ───────────── 工具轮次用满后的收尾轮 ─────────────
+
+    #[test]
+    fn finalization_messages_keep_system_only_at_the_beginning() {
+        // Qwen3 GGUF 模板（Jan / llama.cpp）遇到不在开头的 system 直接 500
+        let base = vec![
+            json!({ "role": "system", "content": "你是知识库助手" }),
+            json!({ "role": "user", "content": "问题" }),
+            json!({ "role": "assistant", "content": "", "tool_calls": [] }),
+            json!({ "role": "tool", "tool_call_id": "1", "content": "结果" }),
+        ];
+        let m = finalization_messages(&base);
+        assert_eq!(m.len(), base.len(), "不新增消息");
+        assert!(m.iter().skip(1).all(|x| x["role"] != "system"));
+        let sys = m[0]["content"].as_str().unwrap();
+        assert!(sys.starts_with("你是知识库助手") && sys.contains("工具调用次数已达上限"), "{sys}");
+        assert_eq!(base[0]["content"], "你是知识库助手", "不污染原数组");
+
+        // 开头没有 system：补一条到最前面
+        let m = finalization_messages(&base[1..]);
+        assert_eq!(m[0]["role"], "system");
+        assert!(m.iter().skip(1).all(|x| x["role"] != "system"));
     }
 
     #[test]
