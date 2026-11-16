@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Button, Spin, Tag } from "antd";
+import { Button, Popconfirm, Spin, Tag } from "antd";
 import { AlertOctagon, Bell, BellOff, Check, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { taskApi } from "@/lib/api";
@@ -350,8 +350,30 @@ export default function EmergencyReminderPage() {
           </div>
         </div>
 
-        {/* 主操作 */}
-        <div className="flex items-center justify-end gap-2">
+        {/* 主操作：左侧弱化的「结束循环」（低频，灰色小字 + 二次确认防误触），右侧 知道了 + 完成 */}
+        <div className="flex items-center gap-2">
+          {isRepeating && (
+            <Popconfirm
+              title="结束整条循环？"
+              description="之后不会再按规则提醒，任务会标记为已完成。"
+              okText="结束循环"
+              okButtonProps={{ danger: true }}
+              cancelText="取消"
+              placement="topLeft"
+              onConfirm={handleEndSeries}
+            >
+              <Button
+                data-tauri-drag-region={false}
+                type="text"
+                size="small"
+                disabled={!task || acting}
+                style={{ color: "var(--kb-text-tertiary, #6b7280)", fontSize: 12 }}
+              >
+                结束循环
+              </Button>
+            </Popconfirm>
+          )}
+          <div className="flex-1" />
           {/* 知道了：仅关窗 + 停铃，任务保留待办、本次不再响（与主窗 Modal 语义一致） */}
           <Button
             data-tauri-drag-region={false}
@@ -361,17 +383,6 @@ export default function EmergencyReminderPage() {
           >
             知道了
           </Button>
-          {isRepeating && (
-            <Button
-              data-tauri-drag-region={false}
-              size="small"
-              danger
-              disabled={!task || acting}
-              onClick={handleEndSeries}
-            >
-              结束循环
-            </Button>
-          )}
           <Button
             data-tauri-drag-region={false}
             type="primary"

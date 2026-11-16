@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { App as AntdApp, Button, Modal, Tag, Tooltip, Typography } from "antd";
+import { App as AntdApp, Button, Modal, Popconfirm, Tag, Tooltip, Typography } from "antd";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { taskApi } from "@/lib/api";
 import { useAppStore } from "@/store";
@@ -137,8 +137,30 @@ export function TaskReminderListener() {
             </div>
           </div>
 
-          {/* 主操作：知道了（关弹窗不动任务） + 结束循环（仅循环任务） + 标记完成 */}
-          <div className="flex items-center justify-end gap-2">
+          {/* 主操作：左侧弱化的「结束循环」（仅循环任务），右侧 知道了 + 标记完成。
+              结束循环是低频操作，放到最左并改成灰色小字 + 二次确认，避免夹在主按钮之间被误触 */}
+          <div className="flex items-center gap-2">
+            {isRepeating && (
+              <Popconfirm
+                title="结束整条循环？"
+                description="之后不会再按规则提醒，任务会标记为已完成。"
+                okText="结束循环"
+                okButtonProps={{ danger: true }}
+                cancelText="取消"
+                placement="topLeft"
+                onConfirm={handleEndSeries}
+              >
+                <Button
+                  type="text"
+                  size="small"
+                  disabled={acting}
+                  style={{ color: "var(--ant-color-text-tertiary)", fontSize: 12 }}
+                >
+                  结束循环
+                </Button>
+              </Popconfirm>
+            )}
+            <div className="flex-1" />
             <Tooltip
               title="任务保留待办，本次提醒不再响。循环任务会按规则在下一次到点继续提醒。"
               placement="top"
@@ -147,11 +169,6 @@ export function TaskReminderListener() {
                 知道了
               </Button>
             </Tooltip>
-            {isRepeating && (
-              <Button danger disabled={acting} onClick={handleEndSeries}>
-                结束循环
-              </Button>
-            )}
             <Button
               type="primary"
               loading={acting}
