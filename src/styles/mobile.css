@@ -233,6 +233,7 @@
   color: var(--m-ink2);
 }
 .m-icon-btn:active { background: var(--m-accent-soft); }
+.m-icon-btn:disabled { opacity: 0.35; background: none; }
 .m-icon-btn.is-primary { background: var(--m-grad); color: var(--m-on-accent); }
 
 /* 主按钮：无阴影 */

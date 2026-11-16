@@ -55,8 +55,8 @@ const SHORTCUT_HELP =
   "Alt+↑↓ 调顺序 · Alt+←→ 调层级 · 空格 折叠 · Ctrl+Z/Y 撤销重做 · " +
   "拖动节点 调位置（放上沿/下沿=插到前/后，放中间=变成子节点）· 右键 更多操作 · 滚轮缩放 · 拖空白处平移";
 
-/** 编辑模式的布局偏好（左右分布 / 全部向右），跨笔记记住 */
-const LAYOUT_KEY = "kb.mindmap.layoutMode";
+/** 编辑模式的布局偏好（左右分布 / 全部向右），跨笔记记住；手机端导图共用 */
+export const LAYOUT_KEY = "kb.mindmap.layoutMode";
 
 /**
  * 思维导图视图：默认只读 markmap 渲染；纯大纲笔记可切到编辑模式（自研 MindMapEditor）

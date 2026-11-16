@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState, useCallback, useRef } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   AlignCenter,
   AlignLeft,
@@ -20,7 +20,6 @@ import {
   ListTree,
   Network,
   Presentation,
-  X,
   Image as ImageIcon,
   Italic,
   KeyboardOff,
@@ -59,7 +58,7 @@ import { LinkBadge, MSwitch } from "@/components/mobile/primitives";
 import { SlideshowView } from "@/components/notes/SlideshowView";
 
 // 思维导图依赖 markmap，体积不小：用到才加载（同 PC）
-const MindMapView = lazy(() => import("@/components/notes/MindMapView").then((m) => ({ default: m.MindMapView })));
+const MobileMindMap = lazy(() => import("@/components/mobile/MobileMindMap").then((m) => ({ default: m.MobileMindMap })));
 
 /**
  * 移动端笔记编辑页（v4 原型第 04 / 06 屏；功能底稿 docs/tasks/mobile-v4-feature-inventory.md）
@@ -104,6 +103,7 @@ function findPath(list: Folder[], id: number, trail: Folder[] = []): Folder[] | 
 
 export function MobileNoteEditor() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id: idParam } = useParams<{ id: string }>();
   const noteId = Number(idParam);
   // 从搜索结果进来会带 ?q=：交给编辑器自动展开查找条并定位到第一处命中（同 PC）
@@ -137,6 +137,10 @@ export function MobileNoteEditor() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
   const [mindMapOpen, setMindMapOpen] = useState(false);
+  /** 打开导图时直接进编辑（「新建思维导图」跳过来） */
+  const [mindMapEditDefault, setMindMapEditDefault] = useState(false);
+  /** 导图里改过正文：关闭时要把新正文重灌进编辑器 / 源码框 */
+  const mindMapChangedRef = useRef(false);
   const [slideshowOpen, setSlideshowOpen] = useState(false);
   /** 插入链接的输入框（选中了文字 = 给文字加链接；没选 = 把网址本身插进去） */
   const [linkPromptOpen, setLinkPromptOpen] = useState(false);
@@ -524,9 +528,37 @@ export function MobileNoteEditor() {
   /** 思维导图 / 演示都基于当前正文；先收起键盘 */
   function openViewer(kind: "mindmap" | "slideshow") {
     editor?.commands.blur();
-    if (kind === "mindmap") setMindMapOpen(true);
-    else setSlideshowOpen(true);
+    if (kind === "mindmap") {
+      setMindMapEditDefault(false);
+      setMindMapOpen(true);
+    } else setSlideshowOpen(true);
   }
+
+  /** 关导图：导图里改过正文的话，编辑器 / 源码框还是打开前的内容，按新正文重灌一次 */
+  function closeMindMap() {
+    setMindMapOpen(false);
+    if (!mindMapChangedRef.current) return;
+    mindMapChangedRef.current = false;
+    if (sourceMode) {
+      setSourceText(contentRef.current);
+    } else {
+      setEditorSeed(contentRef.current);
+      setSeedKey((k) => k + 1);
+    }
+  }
+
+  // 「新建思维导图」跳过来：笔记加载好后直接打开导图并进编辑；用完清掉路由 state，
+  // 免得前进后退回到这篇又自动弹出（同 PC 编辑页）
+  useEffect(() => {
+    if (!note || note.id !== noteId) return;
+    const st = location.state as { openMindMap?: string } | null;
+    if (st?.openMindMap !== "edit") return;
+    setReadingMode(false);
+    setMindMapEditDefault(true);
+    setMindMapOpen(true);
+    navigate(location.pathname + location.search, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [note]);
 
   if (Number.isNaN(noteId)) {
     return <div className="m-t-meta p-4 text-center">笔记 ID 无效</div>;
@@ -837,20 +869,30 @@ export function MobileNoteEditor() {
       {note && <NoteHistorySheet open={historyOpen} onClose={() => setHistoryOpen(false)} noteId={note.id} onRestored={applyRestored} />}
       {note && <NoteTagsSheet open={tagsOpen} onClose={() => setTagsOpen(false)} noteId={note.id} tags={tags} onChange={setTags} />}
 
-      {/* 思维导图：PC 是右侧分栏，手机改全屏；导图本身（markmap）支持双指缩放、拖动 */}
+      {/* 思维导图：PC 是右侧分栏，手机改全屏；纯大纲笔记可点「编辑」直接改，改动写回正文自动保存 */}
       {mindMapOpen && (
         <div className="m-mindmap fixed inset-0 z-[70] flex flex-col" style={{ background: "var(--m-surface)", paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
-          <header className="flex h-12 shrink-0 items-center pr-1.5 pl-1">
-            <button type="button" aria-label="关闭思维导图" className="m-icon-btn" onClick={() => setMindMapOpen(false)}>
-              <X size={22} />
-            </button>
-            <span className="m-t-title min-w-0 flex-1 truncate">思维导图</span>
-          </header>
-          <div className="min-h-0 flex-1">
-            <Suspense fallback={<div className="m-t-meta py-10 text-center">加载中…</div>}>
-              <MindMapView open onClose={() => setMindMapOpen(false)} markdown={contentRef.current} title={titleRef.current} variant="standalone" />
-            </Suspense>
-          </div>
+          <Suspense fallback={<div className="m-t-meta py-10 text-center">加载中…</div>}>
+            <MobileMindMap
+              markdown={contentRef.current}
+              title={titleRef.current}
+              onClose={closeMindMap}
+              defaultEditing={mindMapEditDefault}
+              editBlockedReason={
+                readOnly ? "加密笔记手机端只读" : readingMode ? "阅读模式下不能编辑，先切回顶部的「编辑」" : undefined
+              }
+              onMarkdownChange={(md) => {
+                contentRef.current = md;
+                mindMapChangedRef.current = true;
+                scheduleSave();
+              }}
+              onTitleChange={(t) => {
+                titleRef.current = t;
+                setTitle(t);
+                scheduleSave();
+              }}
+            />
+          </Suspense>
         </div>
       )}
       {/* 演示：与 PC 同一个全屏组件，按分割线分页；左右两侧点按翻页 */}
