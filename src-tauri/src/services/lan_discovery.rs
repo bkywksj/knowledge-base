@@ -93,6 +93,12 @@ pub fn discover(fingerprint: &str, timeout: Duration) -> Result<Vec<SocketAddr>,
             let port = svc.get_port();
             let mut addrs: Vec<SocketAddr> =
                 svc.get_addresses_v4().into_iter().map(|ip| SocketAddr::new(IpAddr::V4(ip), port)).collect();
+            // mdns-sd 拿到任意地址就报 Resolved：实测手机上第一条常常只有电脑的 IPv6 链路本地地址，
+            // IPv4（A 记录）随后才到，到了会再报一次 Resolved。所以没 IPv4 就接着等，别急着返回空
+            if addrs.is_empty() {
+                log::debug!("[lan-sync] mDNS 找到电脑但还没有 IPv4 地址，继续等: {:?}", svc.get_addresses());
+                continue;
+            }
             addrs.sort();
             found = addrs;
             break;
