@@ -173,6 +173,20 @@ export const EDITOR_FONT_SIZE_OPTIONS = [12, 13, 14, 15, 16, 18, 20, 22] as cons
 export const EDITOR_LINE_HEIGHT_OPTIONS = [1.4, 1.5, 1.6, 1.8, 2.0] as const;
 
 /**
+ * 段间距预设（em，段落之后的留白）。行距只管段内行与行，段与段之间的空白
+ * 由它决定——从 Word / 网页复制来的内容常混着「段内换行」和「真分段」，
+ * 段间距调紧后两者的观感差就小了。
+ */
+export const EDITOR_PARAGRAPH_SPACING_OPTIONS = [0, 0.3, 0.6, 1.05, 1.6] as const;
+export const EDITOR_PARAGRAPH_SPACING_LABELS: Record<number, string> = {
+  0: "无",
+  0.3: "紧凑",
+  0.6: "适中",
+  1.05: "标准",
+  1.6: "宽松",
+};
+
+/**
  * 代码块字号预设（px）。仿语雀「代码块统一字号、一处设置全文生效」。
  * 0 = 跟随正文（保持相对正文 0.9em 的老行为，向后兼容）；> 0 = 绝对 px。
  * UI 把 0 单列成「跟随正文」选项。
@@ -194,6 +208,8 @@ export const EDITOR_FONT_DEFAULTS = {
   // v4 原型正文 16px；行高原型 1.86，取预设里最近的 1.8
   size: 16,
   lineHeight: 1.8,
+  // v4 原型 .prose 段后 1.05em
+  paragraphSpacing: 1.05,
   codeSize: 0, // 0 = 代码块字号跟随正文（相对 0.9em），保持老行为
 };
 
@@ -431,6 +447,8 @@ interface AppStore {
   editorFontSize: number;
   /** 编辑器行距倍数（持久化） */
   editorLineHeight: number;
+  /** 编辑器段间距 em（段落之后的留白，持久化） */
+  editorParagraphSpacing: number;
   /** 编辑器代码块字号 px（持久化）。0 = 跟随正文（相对 0.9em），> 0 = 绝对 px */
   editorCodeFontSize: number;
   /** 编辑器正文阅读列宽 px（持久化）。0 = 不限制（铺满） */
@@ -740,6 +758,8 @@ interface AppStore {
   setEditorFontSize: (size: number) => void;
   /** 设置编辑器行距倍数 */
   setEditorLineHeight: (lineHeight: number) => void;
+  /** 设置编辑器段间距（em，clamp 到 [0, 2]） */
+  setEditorParagraphSpacing: (spacing: number) => void;
   /** 设置代码块字号（px，0 = 跟随正文；非 0 会 clamp 到 [12, 20]） */
   setEditorCodeFontSize: (size: number) => void;
   /** 重置编辑器字体 + 版面到默认值 */
@@ -975,6 +995,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   editorHeadingFontFamily: EDITOR_FONT_DEFAULTS.headingFamily,
   editorFontSize: EDITOR_FONT_DEFAULTS.size,
   editorLineHeight: EDITOR_FONT_DEFAULTS.lineHeight,
+  editorParagraphSpacing: EDITOR_FONT_DEFAULTS.paragraphSpacing,
   editorCodeFontSize: EDITOR_FONT_DEFAULTS.codeSize,
   editorReadingWidth: EDITOR_LAYOUT_DEFAULTS.readingWidth,
   editorPaper: EDITOR_LAYOUT_DEFAULTS.paper,
@@ -1329,6 +1350,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const clamped = Math.max(1.2, Math.min(2.5, Number(lineHeight) || 1.8));
     set({ editorLineHeight: clamped });
   },
+  setEditorParagraphSpacing: (spacing) => {
+    const n = Number(spacing);
+    const clamped = Number.isFinite(n) ? Math.max(0, Math.min(2, n)) : EDITOR_FONT_DEFAULTS.paragraphSpacing;
+    set({ editorParagraphSpacing: clamped });
+  },
   setEditorCodeFontSize: (size) => {
     // 0 = 跟随正文（保留 0.9em 老行为）；非 0 时 clamp 到合法预设范围 [12, 20]
     const n = Math.round(Number(size) || 0);
@@ -1341,6 +1367,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       editorHeadingFontFamily: EDITOR_FONT_DEFAULTS.headingFamily,
       editorFontSize: EDITOR_FONT_DEFAULTS.size,
       editorLineHeight: EDITOR_FONT_DEFAULTS.lineHeight,
+      editorParagraphSpacing: EDITOR_FONT_DEFAULTS.paragraphSpacing,
       editorCodeFontSize: EDITOR_FONT_DEFAULTS.codeSize,
       editorReadingWidth: EDITOR_LAYOUT_DEFAULTS.readingWidth,
       editorPaper: EDITOR_LAYOUT_DEFAULTS.paper,
@@ -1607,6 +1634,7 @@ export function applyEditorTypography(state: {
   editorHeadingFontFamily: EditorFontFamily;
   editorFontSize: number;
   editorLineHeight: number;
+  editorParagraphSpacing: number;
   editorCodeFontSize: number;
 }) {
   const root = document.documentElement;
@@ -1628,6 +1656,7 @@ export function applyEditorTypography(state: {
   }
   root.style.setProperty("--editor-font-size", `${state.editorFontSize}px`);
   root.style.setProperty("--editor-line-height", String(state.editorLineHeight));
+  root.style.setProperty("--editor-paragraph-spacing", `${state.editorParagraphSpacing}em`);
   // 代码块字号：> 0 写绝对 px（全文代码块统一生效）；0 → 移除变量，CSS 回退到相对正文的 0.9em
   if (state.editorCodeFontSize > 0) {
     root.style.setProperty("--editor-code-font-size", `${state.editorCodeFontSize}px`);
@@ -1892,6 +1921,10 @@ export async function loadThemeFromStore() {
     if (typeof lh === "number" && Number.isFinite(lh)) {
       useAppStore.getState().setEditorLineHeight(lh);
     }
+    const eps = await store.get<number>("editorParagraphSpacing");
+    if (typeof eps === "number" && Number.isFinite(eps)) {
+      useAppStore.getState().setEditorParagraphSpacing(eps);
+    }
     const cfs = await store.get<number>("editorCodeFontSize");
     if (typeof cfs === "number" && Number.isFinite(cfs)) {
       useAppStore.getState().setEditorCodeFontSize(cfs);
@@ -2137,6 +2170,7 @@ function collectPersistPayload(state: AppStore): Record<string, unknown> {
     editorHeadingFontFamily: state.editorHeadingFontFamily,
     editorFontSize: state.editorFontSize,
     editorLineHeight: state.editorLineHeight,
+    editorParagraphSpacing: state.editorParagraphSpacing,
     editorCodeFontSize: state.editorCodeFontSize,
     editorReadingWidth: state.editorReadingWidth,
     editorPaper: state.editorPaper,
@@ -2356,7 +2390,7 @@ setExportFontsProvider(() => {
 // 编辑器字体偏好变化时实时同步到 CSS 变量（无需刷新页面）
 let _prevTypographyKey = "";
 useAppStore.subscribe((state) => {
-  const key = `${state.editorFontFamily}|${state.editorHeadingFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.editorCodeFontSize}`;
+  const key = `${state.editorFontFamily}|${state.editorHeadingFontFamily}|${state.editorFontSize}|${state.editorLineHeight}|${state.editorParagraphSpacing}|${state.editorCodeFontSize}`;
   if (key !== _prevTypographyKey) {
     _prevTypographyKey = key;
     applyEditorTypography(state);

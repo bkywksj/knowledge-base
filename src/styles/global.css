@@ -8031,9 +8031,9 @@ body:not(.has-custom-bg) .ant-layout-content.kb-content-tinted {
   background: transparent !important;
   padding: 0 !important;
 }
-/* 正文（原型 .prose）：段后 1.05em；标题按原型二级 21px（1.3125em）同比例收一级 / 三级 */
+/* 正文（原型 .prose）：段后默认 1.05em，可在设置里调段间距；标题按原型二级 21px（1.3125em）同比例收一级 / 三级 */
 .editor-content-area .tiptap p {
-  margin: 0 0 1.05em;
+  margin: 0 0 var(--editor-paragraph-spacing, 1.05em);
 }
 .editor-content-area .tiptap h1 {
   font-size: 1.6em;

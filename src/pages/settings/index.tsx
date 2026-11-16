@@ -42,6 +42,8 @@ import {
   EDITOR_HEADING_FONT_FOLLOW,
   EDITOR_FONT_SIZE_OPTIONS,
   EDITOR_LINE_HEIGHT_OPTIONS,
+  EDITOR_PARAGRAPH_SPACING_OPTIONS,
+  EDITOR_PARAGRAPH_SPACING_LABELS,
   EDITOR_CODE_FONT_SIZE_OPTIONS,
   EDITOR_READING_WIDTH_OPTIONS,
   EDITOR_READING_WIDTH_LABELS,
@@ -401,6 +403,8 @@ function DesktopSettingsPage() {
   );
   const setEditorFontSize = useAppStore((s) => s.setEditorFontSize);
   const setEditorLineHeight = useAppStore((s) => s.setEditorLineHeight);
+  const editorParagraphSpacing = useAppStore((s) => s.editorParagraphSpacing);
+  const setEditorParagraphSpacing = useAppStore((s) => s.setEditorParagraphSpacing);
   const setEditorCodeFontSize = useAppStore((s) => s.setEditorCodeFontSize);
   const resetEditorTypography = useAppStore((s) => s.resetEditorTypography);
   // 系统已安装字体（供「正文字体」自选）。仅桌面端有 list_system_fonts；
@@ -2273,6 +2277,24 @@ function DesktopSettingsPage() {
             options={EDITOR_LINE_HEIGHT_OPTIONS.map((h) => ({
               value: h,
               label: h.toFixed(1),
+            }))}
+          />
+        </div>
+
+        <div className="flex items-center justify-between py-1">
+          <div>
+            <div>段间距</div>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              段落与段落之间的留白；复制来的内容间距忽大忽小时可调紧
+            </Text>
+          </div>
+          <Select
+            value={editorParagraphSpacing}
+            onChange={setEditorParagraphSpacing}
+            style={{ width: 120 }}
+            options={EDITOR_PARAGRAPH_SPACING_OPTIONS.map((v) => ({
+              value: v,
+              label: EDITOR_PARAGRAPH_SPACING_LABELS[v] ?? `${v} em`,
             }))}
           />
         </div>

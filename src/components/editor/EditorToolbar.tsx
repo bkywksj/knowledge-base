@@ -76,6 +76,7 @@ import { CompareClipboardButton } from "./CompareClipboardButton";
 import { CompareNotesButton } from "./CompareNotesButton";
 import { parseEmbedUrl, SUPPORTED_PROVIDERS } from "./embedVideoProviders";
 import { useFormatPainter } from "./useFormatPainter";
+import { mergeParagraphs, splitHardBreaks } from "./lineBreakCleanup";
 import { PluginKey } from "@tiptap/pm/state";
 import type { DecorationSet } from "@tiptap/pm/view";
 import { createFakeSelectionPlugin, setFakeSelection } from "./fakeSelection";
@@ -130,6 +131,28 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
     }
     view.dispatch(tr);
     message.success(`已删除 ${ranges.length} 个多余空行`);
+  }
+
+  /** 全文段内换行（Shift+Enter / 粘贴来的 <br>）改为分段，让每行间距一致 */
+  function unifyLineBreaks() {
+    const res = splitHardBreaks(editor.state);
+    if (!res) {
+      message.info("没有段内换行");
+      return;
+    }
+    editor.view.dispatch(res.tr);
+    message.success(`已把 ${res.count} 处段内换行改为分段`);
+  }
+
+  /** 选中的几段合成一段、用段内换行连接，适合排得紧凑的名单 / 履历 */
+  function mergeSelectedParagraphs() {
+    const res = mergeParagraphs(editor.state);
+    if (!res) {
+      message.info("请先选中至少两段相邻的文字");
+      return;
+    }
+    editor.view.dispatch(res.tr);
+    message.success(`已合并 ${res.count + 1} 段`);
   }
 
   /** 按规则清洗所有正文文字 */
@@ -1288,6 +1311,17 @@ export function EditorToolbar({ editor, noteId, ensureNoteId, onOpenSearch }: To
             key: "cleanup-blank",
             label: "删除多余空行",
             onClick: dropBlankParagraphs,
+          },
+          {
+            // 复制来的内容混着「段内换行」和「分段」，间距忽大忽小；统一成分段后一致
+            key: "cleanup-linebreaks",
+            label: "统一换行（段内换行改为分段）",
+            onClick: unifyLineBreaks,
+          },
+          {
+            key: "cleanup-merge",
+            label: "选中段落合并为紧凑行",
+            onClick: mergeSelectedParagraphs,
           },
           {
             key: "cleanup-spaces",
