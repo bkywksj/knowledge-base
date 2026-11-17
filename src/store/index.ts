@@ -12,7 +12,7 @@ import {
   setExportFontsProvider,
 } from "@/lib/api";
 import type { HeadingNumberFormat } from "@/lib/headingNumber";
-import { SIDE_PANEL_AUTO_HIDE_BELOW } from "@/lib/sidePanelLayout";
+import { SIDE_PANEL_AUTO_HIDE_BELOW, usesOverlayMode } from "@/lib/sidePanelLayout";
 import {
   DEFAULT_NOTES_COLUMN_PREFS,
   clampColumnWidth,
@@ -418,6 +418,8 @@ interface AppStore {
   isNarrowWindow: boolean;
   /** 窄窗口下面板浮层是否打开（不持久化，也不影响 sidePanelVisible） */
   narrowPanelOpen: boolean;
+  /** 窄窗口也把面板固定在左侧（持久化）：不再是用完就收的浮层，见 sidePanelLayout.ts */
+  narrowPanelPinned: boolean;
   /**
    * ActivityBar 自动隐藏开关（持久化）。
    * 开启时 ActivityBar 不再占据布局宽度，鼠标移到屏幕左边缘 6px 热区时
@@ -740,6 +742,8 @@ interface AppStore {
   /** 窗口宽窄变化时调用；变化时顺带关掉浮层 */
   setIsNarrowWindow: (narrow: boolean) => void;
   setNarrowPanelOpen: (open: boolean) => void;
+  /** 固定 / 取消固定窄窗口面板；两个方向都保持面板当前可见，不让它闪一下没了 */
+  setNarrowPanelPinned: (pinned: boolean) => void;
   /** 设置 ActivityBar 自动隐藏开关（持久化） */
   setAutoHideActivityBar: (on: boolean) => void;
   setActivityBarShowLabels: (on: boolean) => void;
@@ -987,6 +991,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   sidePanelVisible: true,
   isNarrowWindow: typeof window !== "undefined" && window.innerWidth < SIDE_PANEL_AUTO_HIDE_BELOW,
   narrowPanelOpen: false,
+  narrowPanelPinned: false,
   autoHideActivityBar: false,
   activityBarShowLabels: true,
   focusModeKeepTabs: true,
@@ -1286,7 +1291,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setSidePanelVisible: (visible) => set({ sidePanelVisible: visible }),
   toggleSidePanel: () =>
     set((s) =>
-      s.isNarrowWindow
+      usesOverlayMode(s.isNarrowWindow, s.narrowPanelPinned)
         ? { narrowPanelOpen: !s.narrowPanelOpen }
         : { sidePanelVisible: !s.sidePanelVisible },
     ),
@@ -1294,6 +1299,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set((s) => (s.isNarrowWindow === narrow ? s : { isNarrowWindow: narrow, narrowPanelOpen: false })),
   setNarrowPanelOpen: (open) =>
     set((s) => (s.narrowPanelOpen === open ? s : { narrowPanelOpen: open })),
+  setNarrowPanelPinned: (pinned) =>
+    set(pinned ? { narrowPanelPinned: true, sidePanelVisible: true } : { narrowPanelPinned: false, narrowPanelOpen: true }),
   setAutoHideActivityBar: (on) => set({ autoHideActivityBar: on }),
   setActivityBarShowLabels: (on) => set({ activityBarShowLabels: !!on }),
   setFocusModeKeepTabs: (on) => set({ focusModeKeepTabs: !!on }),
@@ -1879,6 +1886,10 @@ export async function loadThemeFromStore() {
     if (typeof spv === "boolean") {
       useAppStore.getState().setSidePanelVisible(spv);
     }
+    const nppin = await store.get<boolean>("narrowPanelPinned");
+    if (typeof nppin === "boolean") {
+      useAppStore.setState({ narrowPanelPinned: nppin });
+    }
     const ahab = await store.get<boolean>("autoHideActivityBar");
     if (typeof ahab === "boolean") {
       useAppStore.getState().setAutoHideActivityBar(ahab);
@@ -2162,6 +2173,7 @@ function collectPersistPayload(state: AppStore): Record<string, unknown> {
     alwaysOnTop: state.alwaysOnTop,
     sidePanelWidth: state.sidePanelWidth,
     sidePanelVisible: state.sidePanelVisible,
+    narrowPanelPinned: state.narrowPanelPinned,
     autoHideActivityBar: state.autoHideActivityBar,
     activityBarShowLabels: state.activityBarShowLabels,
     focusModeKeepTabs: state.focusModeKeepTabs,

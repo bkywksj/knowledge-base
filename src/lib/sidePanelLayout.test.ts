@@ -7,6 +7,7 @@ const base = {
   isNarrowWindow: false,
   sidePanelVisible: true,
   narrowPanelOpen: false,
+  narrowPanelPinned: false,
 };
 
 describe("resolveSidePanelLayout", () => {
@@ -43,6 +44,18 @@ describe("resolveSidePanelLayout", () => {
       }).overlay,
     ).toBe(true);
     expect(resolveSidePanelLayout({ ...base, narrowPanelOpen: true }).overlay).toBe(false);
+  });
+
+  it("固定后窄窗口也按宽窗口规则占位，浮层开关不再起作用", () => {
+    const pinned = { ...base, isNarrowWindow: true, narrowPanelPinned: true };
+    expect(resolveSidePanelLayout(pinned)).toEqual({ canToggle: true, docked: true, overlay: false });
+    expect(resolveSidePanelLayout({ ...pinned, sidePanelVisible: false, narrowPanelOpen: true })).toEqual({
+      canToggle: true,
+      docked: false,
+      overlay: false,
+    });
+    // 宽窗口里固定与否没有区别
+    expect(resolveSidePanelLayout({ ...base, narrowPanelPinned: true })).toEqual(resolveSidePanelLayout(base));
   });
 
   it("没有面板的视图和全页路由不显示按钮，也不显示面板", () => {

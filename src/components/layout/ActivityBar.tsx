@@ -23,6 +23,7 @@ import {
 } from "./railIcons";
 import { useAppStore } from "@/store";
 import type { ActiveView } from "@/store";
+import { usesOverlayMode } from "@/lib/sidePanelLayout";
 
 /**
  * ActivityBar —— 方案 C 侧边栏的左侧 48px 窄图标栏。
@@ -152,7 +153,8 @@ export function ActivityBar() {
   const sidePanelVisible = useAppStore((s) => s.sidePanelVisible);
   const setSidePanelVisible = useAppStore((s) => s.setSidePanelVisible);
   const toggleSidePanel = useAppStore((s) => s.toggleSidePanel);
-  const isNarrowWindow = useAppStore((s) => s.isNarrowWindow);
+  // 固定了面板的窄窗口按宽窗口处理
+  const overlayMode = useAppStore((s) => usesOverlayMode(s.isNarrowWindow, s.narrowPanelPinned));
   const urgentTodoCount = useAppStore((s) => s.urgentTodoCount);
   const refreshTaskStats = useAppStore((s) => s.refreshTaskStats);
   const isHiddenUnlocked = useAppStore((s) => s.isHiddenUnlocked);
@@ -189,7 +191,7 @@ export function ActivityBar() {
     startTransition(() => {
       setActiveView(item.view);
       // 窄窗口切视图不弹浮层，也不能改用户在宽窗口下的偏好
-      if (!sidePanelVisible && !isNarrowWindow) setSidePanelVisible(true);
+      if (!sidePanelVisible && !overlayMode) setSidePanelVisible(true);
       navigate(item.route);
     });
   }

@@ -2,7 +2,7 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import { Layout, Button, Tooltip, Dropdown, message } from "antd";
 import { SettingOutlined, PushpinOutlined, PushpinFilled } from "@ant-design/icons";
-import { Search, Palette, ArrowLeft, ArrowRight, PanelLeftClose, PanelLeftOpen, FilePlus2 } from "lucide-react";
+import { Search, Palette, ArrowLeft, ArrowRight, PanelLeftClose, PanelLeftOpen, Pin, PinOff, FilePlus2 } from "lucide-react";
 import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -148,6 +148,7 @@ export function AppLayout() {
     sidePanelWidth, setSidePanelWidth,
     sidePanelVisible, toggleSidePanel,
     isNarrowWindow, narrowPanelOpen, setIsNarrowWindow, setNarrowPanelOpen,
+    narrowPanelPinned, setNarrowPanelPinned,
     autoHideActivityBar,
     focusModeKeepTabs,
     activityBarShowLabels,
@@ -172,6 +173,8 @@ export function AppLayout() {
       narrowPanelOpen: s.narrowPanelOpen,
       setIsNarrowWindow: s.setIsNarrowWindow,
       setNarrowPanelOpen: s.setNarrowPanelOpen,
+      narrowPanelPinned: s.narrowPanelPinned,
+      setNarrowPanelPinned: s.setNarrowPanelPinned,
       autoHideActivityBar: s.autoHideActivityBar,
       focusModeKeepTabs: s.focusModeKeepTabs,
       activityBarShowLabels: s.activityBarShowLabels,
@@ -236,6 +239,7 @@ export function AppLayout() {
     isNarrowWindow,
     sidePanelVisible,
     narrowPanelOpen,
+    narrowPanelPinned,
   });
   const { canGoBack, canGoForward } = useHistoryNav();
   // Sider 永远只占 ActivityBar 宽度（48px），SidePanel 走绝对定位浮层覆盖在主区上方，
@@ -649,6 +653,18 @@ export function AppLayout() {
                     )
                   }
                   onClick={toggleSidePanel}
+                />
+              </Tooltip>
+            )}
+            {/* 只在窄窗口、面板开着时出现：宽窗口本来就占位，固定与否没区别 */}
+            {isNarrowWindow && (panelOverlay || (narrowPanelPinned && panelDocked)) && (
+              <Tooltip title={narrowPanelPinned ? "取消固定（窄窗口下用完自动收起）" : "固定面板（窄窗口也不自动收起）"}>
+                <Button
+                  type="text"
+                  className="kb-tb-btn"
+                  aria-pressed={narrowPanelPinned}
+                  icon={narrowPanelPinned ? <PinOff size={16} /> : <Pin size={16} />}
+                  onClick={() => setNarrowPanelPinned(!narrowPanelPinned)}
                 />
               </Tooltip>
             )}

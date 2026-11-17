@@ -5,6 +5,9 @@
  * 窗口窄时默认收起给内容区留空间，点按钮才以浮层盖在内容上（overlay）。
  * 窄窗口的开关单独记、不持久化：1366×768 + 125% 缩放这类屏幕永远够不到宽窗口，
  * 以前窄窗口连按钮都不显示，这些用户的文件夹树和标签面板根本打不开。
+ *
+ * 浮层用完就收（选笔记、切视图、点内容区），常在窄窗口里整理文件夹的用户嫌来回点烦（用户反馈），
+ * 所以浮层上有「固定」：固定后（持久化）窄窗口也按宽窗口的规则走，面板占位、开关改 sidePanelVisible。
  */
 
 /**
@@ -29,6 +32,13 @@ export interface SidePanelLayoutInput {
   sidePanelVisible: boolean;
   /** 窄窗口下浮层是否打开 */
   narrowPanelOpen: boolean;
+  /** 用户把面板固定住了：窄窗口也占布局位置 */
+  narrowPanelPinned: boolean;
+}
+
+/** 当前要不要按窄窗口的浮层规则走（固定后就不走了） */
+export function usesOverlayMode(isNarrowWindow: boolean, narrowPanelPinned: boolean): boolean {
+  return isNarrowWindow && !narrowPanelPinned;
 }
 
 export interface SidePanelLayout {
@@ -42,9 +52,10 @@ export interface SidePanelLayout {
 
 export function resolveSidePanelLayout(input: SidePanelLayoutInput): SidePanelLayout {
   const canToggle = !input.isStandalonePage && input.viewHasPanel;
+  const overlayMode = usesOverlayMode(input.isNarrowWindow, input.narrowPanelPinned);
   return {
     canToggle,
-    docked: canToggle && !input.isNarrowWindow && input.sidePanelVisible,
-    overlay: canToggle && input.isNarrowWindow && input.narrowPanelOpen,
+    docked: canToggle && !overlayMode && input.sidePanelVisible,
+    overlay: canToggle && overlayMode && input.narrowPanelOpen,
   };
 }
