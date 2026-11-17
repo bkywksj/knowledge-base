@@ -36,6 +36,7 @@ import { createMindMapAndOpen } from "@/lib/noteCreator";
 import type { Folder, Note, NoteQuery, NoteTagBrief, Tag } from "@/types";
 import { relativeTime } from "@/lib/utils";
 import { notePreviewText } from "@/lib/notePreview";
+import { folderSubtreeCount } from "@/lib/searchBrowse";
 import { useLongPress } from "@/hooks/useLongPress";
 import { ActionSheet, type ActionSheetItem } from "@/components/mobile/ActionSheet";
 import { FolderPickerSheet } from "@/components/mobile/FolderPickerSheet";
@@ -95,6 +96,8 @@ export function MobileNotes() {
   const [loading, setLoading] = useState(true);
   const [sortBy, setSortBy] = useState<Exclude<SortBy, "custom">>("default");
   const [tags, setTags] = useState<Tag[]>([]);
+  /** 根目录「未分类」行的篇数；null = 还没取到（不显示数字） */
+  const [uncategorizedCount, setUncategorizedCount] = useState<number | null>(null);
 
   // 弹层状态
   const [sheetNote, setSheetNote] = useState<Note | null>(null);
@@ -166,6 +169,15 @@ export function MobileNotes() {
   useEffect(() => {
     if (tab === "folders") void loadNotes(1);
   }, [loadNotes, refreshTick, tab]);
+
+  // 「未分类」不是真文件夹，folderApi.list 不带它的篇数；按进去后列表的同一查询取 total，数字和点进去看到的条数一致
+  useEffect(() => {
+    if (tab !== "folders" || folderParam != null) return;
+    noteApi
+      .list({ uncategorized: true, page: 1, page_size: 1 })
+      .then((res) => setUncategorizedCount(res.total ?? 0))
+      .catch((e) => console.error("[MobileNotes] count uncategorized failed:", e));
+  }, [folderParam, refreshTick, foldersTick, tab]);
 
   useEffect(() => {
     if (tab !== "tags") return;
@@ -477,6 +489,7 @@ export function MobileNotes() {
                       <Inbox size={21} />
                     </span>
                     <span className="min-w-0 flex-1 truncate text-[15px]">未分类</span>
+                    {uncategorizedCount != null && <span className="m-t-meta m-num">{uncategorizedCount}</span>}
                     <ChevronRight size={16} style={{ color: "var(--m-ink4)" }} />
                   </button>
                 )}
@@ -657,7 +670,8 @@ function FolderRow({ folder, onOpen, onMenu }: { folder: Folder; onOpen: () => v
         <FolderIcon size={21} />
       </span>
       <span className="min-w-0 flex-1 truncate text-[15px]">{folder.name}</span>
-      <span className="m-t-meta m-num">{folder.note_count}</span>
+      {/* 含子文件夹的总数，与 PC 侧栏一致；只数本层的话，笔记都在子文件夹里的文件夹会显示 0（用户反馈） */}
+      <span className="m-t-meta m-num">{folderSubtreeCount(folder)}</span>
       <ChevronRight size={16} style={{ color: "var(--m-ink4)" }} />
     </div>
   );
