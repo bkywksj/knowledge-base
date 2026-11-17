@@ -44,15 +44,12 @@ impl DailyService {
         db.list_all_dailies()
     }
 
-    /// 快速记一笔：把一段文字以「带时间戳的 callout 块」形式追加到今天的日记末尾。
+    /// 快速记一笔（全局快捷键入口）：把一段文字带 `[HH:MM]` 时间戳追加到今天的日记末尾。
     ///
-    /// 实现：
-    ///   1. get_or_create_daily(today) 拿到当天日记 Note
-    ///   2. 把 text 包装成 `<div data-callout="info">…</div>` 的 HTML callout 块。
-    ///      —— 本项目编辑器（Callout.ts）的 callout 节点就是靠 `div[data-callout]`
-    ///      parseHTML 识别的，tiptap-markdown `html:true` 透传；不能用 Obsidian 的
-    ///      `> [!info]` 语法（编辑器不解析，会原样显示出 `[!info]` 文本）。
-    ///   3. 追加到 content 末尾后调 update_note_content
+    /// 写法与首页「记一笔」（PC 首页 / 手机端 mobileQuickNote.ts）一致：
+    /// `<p><strong>[HH:MM]</strong> 第一行<br>第二行</p>`。以前这里写的是带 🕐 的 info callout，
+    /// 和首页记出来的条目混在同一篇日记里，蓝框 + 图标显得突兀（用户反馈）；旧日记里的 callout
+    /// 条目不改写，手机日记时间线（dailyTimeline.ts）仍认得。
     ///
     /// 返回当天日记的 id —— 前端可选择性跳转过去查看效果。
     pub fn append_quick_capture(db: &Database, text: &str) -> Result<i64, AppError> {
@@ -69,18 +66,15 @@ impl DailyService {
         fn esc(s: &str) -> String {
             s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
         }
-        // 每个非空行 → 一个 <p>；空行跳过（callout 内不留空段）
+        // 多行用 <br> 接在同一段里（空行跳过）：整块挤在一行，markdown-it 的 raw HTML 块遇到空行会提前中断
         let body = text
             .lines()
             .map(|l| l.trim_end())
             .filter(|l| !l.is_empty())
-            .map(|l| format!("<p>{}</p>", esc(l)))
-            .collect::<String>();
-        // callout HTML 必须整块挤在一行：markdown-it 的 raw HTML 块遇到空行会提前中断
-        let block = format!(
-            "<div data-callout=\"info\"><p>🕐 {}</p>{}</div>",
-            now, body
-        );
+            .map(esc)
+            .collect::<Vec<_>>()
+            .join("<br>");
+        let block = format!("<p><strong>[{}]</strong> {}</p>", now, body);
 
         // 与已有内容之间留一个空行，确保 markdown-it 把它当作独立的 HTML 块解析
         let new_content = if note.content.is_empty() {
@@ -125,4 +119,21 @@ fn validate_date(date: &str) -> Result<(), AppError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 快捷键记一笔与首页「记一笔」同一写法：`[HH:MM]` 加粗前缀，多行用 <br>，HTML 转义
+    #[test]
+    fn quick_capture_uses_bracket_stamp_like_home() {
+        let db = Database::init(":memory:").unwrap();
+        let id = DailyService::append_quick_capture(&db, "第一行\n\n<b>第二行</b>").unwrap();
+        let content = db.get_note(id).unwrap().unwrap().content;
+        assert!(!content.contains("data-callout"));
+        let block = content.rsplit("\n\n").next().unwrap();
+        assert!(block.starts_with("<p><strong>["), "{block}");
+        assert!(block.ends_with("</strong> 第一行<br>&lt;b&gt;第二行&lt;/b&gt;</p>"), "{block}");
+    }
 }
