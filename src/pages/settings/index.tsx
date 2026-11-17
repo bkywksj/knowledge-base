@@ -1345,7 +1345,7 @@ function DesktopSettingsPage() {
         message.warning(`端点不认识当前模型，已为你载入它提供的 ${err.available.length} 个可用模型`);
         break;
       case "auth_failed":
-        message.warning({ content: `密钥无效或已过期：${err.detail}`, duration: 8 });
+        message.warning({ content: `鉴权失败（密钥无效、已过期，或账号 / 地区无权访问）：${err.detail}`, duration: 8 });
         break;
       case "unreachable":
         // 唯一「改配置也没用」的一类：让用户去改地址是误导
