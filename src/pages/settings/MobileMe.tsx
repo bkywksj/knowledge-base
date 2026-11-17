@@ -1,4 +1,4 @@
-import { cloneElement, isValidElement, useEffect, useMemo, useRef, useState } from "react";
+import { cloneElement, isValidElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { message, Modal, Progress } from "antd";
@@ -46,6 +46,7 @@ import { useLongPress } from "@/hooks/useLongPress";
 import { MGroup, MRow, MSectionHeader } from "@/components/mobile/primitives";
 import { MSheet, PickRow } from "@/components/mobile/MSheet";
 import { ActionSheet, type ActionSheetItem } from "@/components/mobile/ActionSheet";
+import { MobileAiModelsSheet } from "@/components/ai/MobileAiModelsSheet";
 
 /**
  * 移动端「我的」页（v4 原型 12 屏）
@@ -83,6 +84,8 @@ export function MobileMe() {
   const [backends, setBackends] = useState<SyncBackend[] | null>(null);
   const [version, setVersion] = useState<string>("");
   const [themeOpen, setThemeOpen] = useState(false);
+  const [modelsOpen, setModelsOpen] = useState(false);
+  const onModelsChanged = useCallback((n: number) => setCounts((c) => ({ ...c, modelCount: n })), []);
   const [tabFor, setTabFor] = useState<ActivityItem | null>(null);
 
   const enabledViews = useAppStore((s) => s.enabledViews);
@@ -434,7 +437,7 @@ export function MobileMe() {
           <MRow icon={<Palette size={20} style={iconStyle} />} chevron right={currentTheme?.label} onClick={() => setThemeOpen(true)}>
             外观与主题
           </MRow>
-          <MRow icon={<Sparkles size={20} style={iconStyle} />} chevron right={`${counts.modelCount} 个`} onClick={() => navigate("/ai")}>
+          <MRow icon={<Sparkles size={20} style={iconStyle} />} chevron right={`${counts.modelCount} 个`} onClick={() => setModelsOpen(true)}>
             模型服务
           </MRow>
           <MRow icon={<Boxes size={20} style={iconStyle} />} chevron onClick={() => navigate("/feature-toggle")}>
@@ -549,6 +552,8 @@ export function MobileMe() {
           下载完成后会自动拉起系统安装器。请保持应用在前台。
         </div>
       </Modal>
+
+      <MobileAiModelsSheet open={modelsOpen} onClose={() => setModelsOpen(false)} onChanged={onModelsChanged} />
 
     </div>
   );
