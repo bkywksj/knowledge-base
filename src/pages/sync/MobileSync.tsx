@@ -12,6 +12,8 @@ import {
   Share2,
   Download,
   RefreshCw,
+  Smartphone,
+  ChevronRight,
 } from "lucide-react";
 import { ShareConfigModal } from "@/components/config-share/ShareConfigModal";
 import { ImportConfigModal } from "@/components/config-share/ImportConfigModal";
@@ -19,6 +21,7 @@ import { exportSyncBackend, type Envelope } from "@/lib/configShare";
 import { Modal, Form, Input, Segmented, message } from "antd";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { syncV1Api } from "@/lib/api";
+import { listUserSyncBackends } from "@/lib/mobileSyncBackends";
 import { confirmHeldDeletions } from "@/lib/syncGuards";
 import { notifySystem } from "@/lib/notify";
 import { useAppStore } from "@/store";
@@ -32,6 +35,7 @@ import type {
 import { relativeTime } from "@/lib/utils";
 import { MNavBar } from "@/components/mobile/primitives";
 import { QrScanner } from "@/components/mobile/QrScanner";
+import { MobileLanHostSheet } from "@/components/mobile/MobileLanHostSheet";
 
 /**
  * 移动端云端同步管理（v4 样式，交互同原版；支持 WebDAV、S3 与局域网直连电脑）
@@ -147,6 +151,7 @@ export function MobileSync() {
   // 配置分享 / 导入
   const [shareEnv, setShareEnv] = useState<Envelope | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [hostOpen, setHostOpen] = useState(false);
 
   // 监听后端推/拉进度事件，渲染到对应 backend 卡片下
   useEffect(() => {
@@ -168,8 +173,7 @@ export function MobileSync() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await syncV1Api.listBackends();
-      setBackends(list);
+      setBackends(await listUserSyncBackends());
     } catch (e) {
       console.error("[MobileSync] load failed:", e);
     } finally {
@@ -473,13 +477,27 @@ export function MobileSync() {
         <div className="flex items-start gap-2 rounded-[var(--m-r-l)] px-3 py-2.5" style={{ background: "var(--m-info-soft)", color: "var(--m-info)" }}>
           <CloudUpload size={16} className="mt-0.5 shrink-0" />
           <p className="text-[13px] leading-relaxed">
-            移动端手动同步，建议每次记录后「一键同步」。支持 WebDAV、S3（AWS / 阿里云 OSS / 腾讯云 COS / R2 / MinIO），以及在家里直连电脑的局域网同步。
+            移动端手动同步，建议每次记录后「一键同步」。支持 WebDAV、S3（AWS / 阿里云 OSS / 腾讯云 COS / R2 / MinIO），以及同一 Wi-Fi 下直连电脑或另一台手机的局域网同步。
           </p>
         </div>
       </div>
 
       {/* 列表 */}
       <main className="m-gutter flex-1 overflow-y-auto pt-3 pb-6">
+        {/* 手机之间直连：本机当主机，另一台手机扫码同步（不用电脑、不经云端） */}
+        <button
+          type="button"
+          onClick={() => setHostOpen(true)}
+          className="mb-3 flex w-full items-center gap-3 rounded-[var(--m-r-l)] px-3 py-3 text-left"
+          style={{ background: "var(--m-surface)" }}
+        >
+          <Smartphone size={20} className="shrink-0" style={{ color: "var(--m-accent-ink)" }} />
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="text-[15px]">让本机当主机</span>
+            <span className="m-t-cap">手机之间同步：另一台手机扫码即可，不用电脑</span>
+          </span>
+          <ChevronRight size={18} className="shrink-0" style={{ color: "var(--m-ink3)" }} />
+        </button>
         {loading ? (
           <div className="m-t-meta py-8 text-center">加载中…</div>
         ) : backends.length === 0 ? (
@@ -508,6 +526,15 @@ export function MobileSync() {
           </div>
         )}
       </main>
+
+      <MobileLanHostSheet
+        open={hostOpen}
+        onClose={() => {
+          setHostOpen(false);
+          // 对方同步过的话本机库已变；刷新列表与「最近同步」时间
+          void load();
+        }}
+      />
 
       {/* 添加 / 编辑 Modal */}
       <Modal
@@ -562,7 +589,7 @@ export function MobileSync() {
           {formKind === "lan" ? (
             <div>
               <div className="mb-2" style={{ fontSize: 13, color: "var(--m-ink3)", lineHeight: 1.7 }}>
-                在电脑上打开「设置 → 数据同步与备份 → 局域网同步」，开启后扫描显示的二维码。两台设备要连同一个 Wi-Fi。
+                在电脑上打开「设置 → 数据同步与备份 → 局域网同步」，或在另一台手机的「同步 → 让本机当主机」，扫描显示的二维码。两台设备要连同一个 Wi-Fi（或一台开热点、另一台连上）。
               </div>
               {lanScanning ? (
                 <QrScanner

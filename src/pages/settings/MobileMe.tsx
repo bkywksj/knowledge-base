@@ -28,8 +28,8 @@ import {
   aiModelApi,
   promptApi,
   mobileUpdateApi,
-  syncV1Api,
 } from "@/lib/api";
+import { listUserSyncBackends } from "@/lib/mobileSyncBackends";
 import {
   MOBILE_UPDATE_PROGRESS_EVENT,
   type DashboardStats,
@@ -273,8 +273,7 @@ export function MobileMe() {
         console.error("[MobileMe] load failed:", e);
       }
     })();
-    syncV1Api
-      .listBackends()
+    listUserSyncBackends()
       .then((b) => alive && setBackends(b))
       .catch(() => alive && setBackends([]));
     // 「关于」行原来写死 v1.7.1，改读真实版本

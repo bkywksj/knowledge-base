@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { message } from "antd";
 import { Check, ChevronDown, ChevronUp, Cloud, PencilLine, Pin, Search, SendHorizontal } from "lucide-react";
-import { cardApi, folderApi, noteApi, syncV1Api, systemApi, taskApi, taskCategoryApi } from "@/lib/api";
+import { cardApi, folderApi, noteApi, systemApi, taskApi, taskCategoryApi } from "@/lib/api";
+import { listUserSyncBackends } from "@/lib/mobileSyncBackends";
 import { appendQuickNoteToDaily } from "@/lib/mobileQuickNote";
 import { relativeTime } from "@/lib/utils";
 import { notePreviewText } from "@/lib/notePreview";
@@ -96,8 +97,7 @@ export function MobileHome() {
   const [syncBackend, setSyncBackend] = useState<SyncBackend | null>(null);
   useEffect(() => {
     let alive = true;
-    syncV1Api
-      .listBackends()
+    listUserSyncBackends()
       .then((list) => alive && setSyncBackend(list.find((b) => b.enabled) ?? list[0] ?? null))
       .catch(() => {});
     return () => {
