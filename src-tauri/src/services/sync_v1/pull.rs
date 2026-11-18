@@ -396,6 +396,8 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
     let remote_states = db.list_remote_state(backend_id)?;
 
     // ── 处理 to_pull（远端独有 / 远端较新）
+    // manifest 登记了但远端 .md 不存在的条目：(stable_id, 当时的 content_hash)，收尾时从远端 manifest 摘掉
+    let mut dangling: Vec<(String, String)> = Vec::new();
     let total_pull = diff.to_pull.len();
     for (idx, entry) in diff.to_pull.iter().enumerate() {
         let _ = emitter.emit(
@@ -411,10 +413,13 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
         let body = match backend.get_note(&entry.remote_path)? {
             Some(s) => s,
             None => {
+                // 只报一次：收尾时把这条从远端 manifest 摘掉（drop_dangling_from_remote），
+                // 持有这篇笔记的设备下次 push 会当成「仅本地有」重新上传
                 result.errors.push(format!(
-                    "远端 manifest 有 {} 但 .md 文件丢失",
-                    entry.remote_path
+                    "云端缺少「{}」的正文文件（{}），已从云端清单移除；有这篇笔记的设备下次同步会自动补传",
+                    entry.title, entry.remote_path
                 ));
+                dangling.push((entry.stable_id.clone(), entry.content_hash.clone()));
                 continue;
             }
         };
@@ -806,6 +811,10 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
     cs::apply_pulled_prompts(db, &diff.prompts_to_pull, &mut result);
     cs::apply_pulled_note_templates(db, &diff.note_templates_to_pull, &mut result);
 
+    if !dangling.is_empty() {
+        drop_dangling_from_remote(backend, &dangling, &mut result);
+    }
+
     db.touch_sync_backend_pull(backend_id)?;
 
     let _ = emitter.emit(
@@ -826,6 +835,35 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
     );
 
     Ok(result)
+}
+
+/// 把 pull 时发现的悬空条目（manifest 登记了、.md 不存在）从远端 manifest 摘掉。
+///
+/// 重新读一次远端再摘：pull 期间别的设备可能补传了新版本，`drop_dangling_entries` 只摘 hash 未变的。
+/// 不做 push 那样的写后重读校验：这里和别的设备并发写 manifest 时，最坏是吞掉对方刚写进的条目，
+/// 而对方下次 push 会当成「仅本地有」再写回来 —— 与摘悬空条目本身同一套自愈路径。
+fn drop_dangling_from_remote(
+    backend: &dyn SyncBackendImpl,
+    dangling: &[(String, String)],
+    result: &mut SyncPullResult,
+) {
+    let mut remote = match backend.read_manifest() {
+        Ok(Some(m)) => m,
+        Ok(None) => return,
+        Err(e) => {
+            result.errors.push(format!("清理云端清单失败（读取）: {}", e));
+            return;
+        }
+    };
+    let dropped = super::manifest::drop_dangling_entries(&mut remote, dangling);
+    if dropped == 0 {
+        return;
+    }
+    remote.generated_at = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    match backend.write_manifest(&remote) {
+        Ok(()) => log::warn!("[sync_v1] 已从远端 manifest 摘掉 {} 条缺 .md 的悬空条目", dropped),
+        Err(e) => result.errors.push(format!("清理云端清单失败（写入）: {}", e)),
+    }
 }
 
 /// pull → 任务分类：远端独有 → create_with_uuid；双方都有 → update_synced（按 name 等字段对齐）。
@@ -1251,6 +1289,69 @@ mod tests {
         std::fs::write(dir.join("kb-sync-PC1.zip"), b"x").unwrap();
         let snap = remote_data_hint(&b).unwrap().expect("快照目录应提示");
         assert!(snap.contains("快照归档"), "{}", snap);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 用户反馈「远端 manifest 有 notes/x.md 但 .md 文件丢失」：pull 收尾把悬空条目从远端 manifest 摘掉，
+    /// 写回后其他条目原样保留；同一条再报一次时已无可摘，不重复写
+    #[test]
+    fn drop_dangling_from_remote_rewrites_manifest_once() {
+        use crate::models::{ManifestEntry, SyncManifestV1};
+        let dir = std::env::temp_dir().join(format!("kb-dangling-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let b = super::super::backend_local::LocalPathBackend::new(dir.to_str().unwrap());
+
+        let mk = |id: &str, hash: &str| ManifestEntry {
+            stable_id: id.into(),
+            title: id.into(),
+            content_hash: hash.into(),
+            updated_at: "2026-11-18 10:00:00".into(),
+            remote_path: format!("notes/{}.md", id),
+            tombstone: false,
+            folder_path: String::new(),
+            encrypted: false,
+            is_daily: false,
+            daily_date: None,
+            is_hidden: false,
+            tags: None,
+            note_type: None,
+            folder_moved_at: None,
+        };
+        let manifest = SyncManifestV1 {
+            manifest_version: SyncManifestV1::VERSION,
+            app_version: "t".into(),
+            device: "pc".into(),
+            generated_at: String::new(),
+            entries: vec![mk("gone", "h1"), mk("keep", "h2")],
+            hash_algo: Some(SyncManifestV1::HASH_ALGO_V2.into()),
+            vault: None,
+            attachments: vec![],
+            projects: vec![],
+            tasks: vec![],
+            task_categories: vec![],
+            cards: vec![],
+            card_review_logs: vec![],
+            prompts: vec![],
+            note_templates: vec![],
+        };
+        b.write_manifest(&manifest).unwrap();
+
+        let dangling = vec![("gone".to_string(), "h1".to_string())];
+        let mut result = SyncPullResult::default();
+        drop_dangling_from_remote(&b, &dangling, &mut result);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let after = b.read_manifest().unwrap().unwrap();
+        let ids: Vec<&str> = after.entries.iter().map(|e| e.stable_id.as_str()).collect();
+        assert_eq!(ids, vec!["keep"]);
+
+        // 无可摘时不该再写：先放一个标记值，再跑一次看它还在不在
+        let mut marked = after;
+        marked.generated_at = "SENTINEL".into();
+        b.write_manifest(&marked).unwrap();
+        drop_dangling_from_remote(&b, &dangling, &mut result);
+        assert_eq!(b.read_manifest().unwrap().unwrap().generated_at, "SENTINEL", "无可摘时不该再写");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

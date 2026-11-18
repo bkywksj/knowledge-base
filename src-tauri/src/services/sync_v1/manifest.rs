@@ -797,6 +797,25 @@ fn merge_task_category_entries(
     out
 }
 
+/// 从远端 manifest 里摘掉「登记了但 .md 不存在」的笔记条目，返回摘掉的条数。
+///
+/// `missing` 是 pull 时 `get_note` 返回空的条目：`(stable_id, 当时 manifest 里的 content_hash)`。
+/// 只摘 content_hash 仍等于缺失那一版的 —— 读回 manifest 时若别的设备已经补传了新版本，
+/// 那条是好的，不能动。
+///
+/// 为什么要摘：manifest 宣告了不存在的 .md，持有这篇笔记的设备比对 manifest 看到同 hash，
+/// 永远不会重传，其他设备每次 pull 都报「文件丢失」。摘掉以后，持有它的设备下次 push 时
+/// 看到「仅本地有」→ 重新上传；没有任何设备持有的，条目本来就没有内容，消失即可。
+pub fn drop_dangling_entries(manifest: &mut SyncManifestV1, missing: &[(String, String)]) -> usize {
+    let before = manifest.entries.len();
+    manifest.entries.retain(|e| {
+        !missing
+            .iter()
+            .any(|(id, hash)| e.stable_id == *id && e.content_hash == *hash && !e.tombstone)
+    });
+    before - manifest.entries.len()
+}
+
 /// 比对本地 vs 远端 manifest
 ///
 /// 算法：以 stable_id 为键 outer-join 两边
@@ -1119,6 +1138,50 @@ mod tests {
             prompts: vec![],
             note_templates: vec![],
         }
+    }
+
+    /// 用户反馈「远端 manifest 有 notes/x.md 但 .md 文件丢失」的成因链：
+    /// 对端删除（远端 .md 已删、manifest 记 tombstone）后，本机同一篇内容没变、只是 updated_at 更晚
+    /// → diff 判「编辑胜过删除」放进 to_push，merge 也选本地 alive 写进 manifest。
+    /// 所以 push 必须真的把 .md 传上去（push.rs 不能再按 sync_remote_state 同 hash 跳过），否则就是悬空条目。
+    #[test]
+    fn edit_wins_over_delete_with_unchanged_content_needs_reupload() {
+        let local = manifest(vec![entry("1", "a", "h1", "2026-11-18 10:00:00", false)]);
+        let remote = manifest(vec![entry("1", "a", "h1", "2026-11-18 09:00:00", true)]);
+        let d = diff_manifests(&local, &remote);
+        assert_eq!(d.to_push.len(), 1, "本地更新晚于删除 → 要重新推上去");
+        assert!(d.to_delete_local.is_empty());
+        let merged = merge_manifests(&local, &remote);
+        assert!(!merged.entries[0].tombstone, "merge 写出的是 alive 条目，远端必须有对应 .md");
+    }
+
+    #[test]
+    fn drop_dangling_entries_only_removes_the_missing_version() {
+        let mut m = manifest(vec![
+            entry("gone", "a", "h1", "2026-11-18", false),
+            // 读回 manifest 时别的设备已经补传了新版本：好条目，不能摘
+            entry("reuploaded", "b", "h2-new", "2026-11-18", false),
+            entry("deleted", "c", "h3", "2026-11-18", true),
+            entry("other", "d", "h4", "2026-11-18", false),
+        ]);
+        let missing = vec![
+            ("gone".to_string(), "h1".to_string()),
+            ("reuploaded".to_string(), "h2-old".to_string()),
+            ("deleted".to_string(), "h3".to_string()),
+        ];
+        assert_eq!(drop_dangling_entries(&mut m, &missing), 1);
+        let ids: Vec<&str> = m.entries.iter().map(|e| e.stable_id.as_str()).collect();
+        assert_eq!(ids, vec!["reuploaded", "deleted", "other"]);
+    }
+
+    /// 摘掉悬空条目后，持有这篇笔记的设备下次 push 看到「仅本地有」→ 自动重传（自愈）
+    #[test]
+    fn owner_reuploads_after_dangling_entry_dropped() {
+        let local = manifest(vec![entry("1", "a", "h1", "2026-11-18", false)]);
+        let mut remote = manifest(vec![entry("1", "a", "h1", "2026-11-18", false)]);
+        assert!(diff_manifests(&local, &remote).to_push.is_empty(), "摘之前：同 hash，永远不重传");
+        drop_dangling_entries(&mut remote, &[("1".into(), "h1".into())]);
+        assert_eq!(diff_manifests(&local, &remote).to_push.len(), 1);
     }
 
     #[test]

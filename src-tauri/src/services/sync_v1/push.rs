@@ -273,13 +273,13 @@ pub fn push<R: Runtime, E: Emitter<R>>(
             }
         };
 
-        // 跳过：sync_remote_state 已记录同 hash（幂等）
-        if let Some(state) = state_map.get(&note_id) {
-            if state.last_synced_hash == entry.content_hash && !state.tombstone {
-                result.skipped += 1;
-                continue;
-            }
-        }
+        // 🔴 这里不能按 sync_remote_state「同 hash 已同步过」跳过上传。
+        // 进 to_push 本身就说明远端 manifest 里没有这一版：仅本地有 / 远端是 tombstone /
+        // 远端是别的版本。这时远端很可能根本没有这个 .md —— 比如对端删除时已经把文件删了，
+        // 本机这篇只是 updated_at 更晚（改标签、移文件夹、两端时钟不一致）就走了「编辑胜过删除」。
+        // 以前在这里跳过，下面 merge 照样把它写进 manifest → 远端宣告一个不存在的 .md，
+        // 对端每次 pull 都报「.md 文件丢失」，本机比对 manifest 又看到同 hash、永远不再重传（用户反馈）。
+        // 宁可多传一次，manifest 只宣告确已落到远端的内容。
 
         // T-S014：加密笔记走密文上传分支
         let body_to_upload: String = if entry.encrypted {
