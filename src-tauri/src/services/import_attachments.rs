@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use base64::Engine;
+use futures::StreamExt;
 use regex::Regex;
 use walkdir::WalkDir;
 
@@ -768,18 +769,37 @@ pub async fn rewrite_external_images(
         return Ok(RewriteResult::unchanged(body.to_string()));
     }
 
-    // 30s 超时，避免单张大图卡死整个导入流程
+    // 30s 总超时，避免单张大图卡死整个导入流程；连接单独 8s 超时 ——
+    // 图床被墙 / 不可达时通常卡在建连，不必陪它等满 30s
     let client = crate::services::http_client::with_system_proxy(reqwest::Client::builder())
+        .connect_timeout(std::time::Duration::from_secs(8))
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| AppError::Custom(format!("HTTP client 初始化失败: {}", e)))?;
 
+    // 限量并发下载：双击打开外部 .md 时用户在前台干等，串行下载会把每张图的耗时
+    // 累加起来（实测 6 张徽章图 ≈ 12s）。并发数压在 4：微信 CDN 并发过高容易限流。
+    // `buffered` 保持原顺序产出，下面按下标对回 matches；落盘仍串行做，
+    // 不让 save_bytes 的"时间戳+序号"文件名在并发下撞车。
+    //
+    // URL 先克隆成 Vec<String> 再按值喂给闭包：闭包参数若是 `&(usize, usize, …)` 借用，
+    // 外层 async command 的 future 要证明 Send 时 rustc 推不出高阶生命周期
+    // （"implementation of FnOnce is not general enough"，tauri 2.12 起的 command 宏会触发）
+    let urls: Vec<String> = matches.iter().map(|(_, _, _, url)| url.clone()).collect();
+    let downloads: Vec<Result<(Vec<u8>, String), AppError>> =
+        futures::stream::iter(urls.into_iter().map(|url| {
+            let client = &client;
+            async move { download_external_image(client, &url).await }
+        }))
+        .buffered(4)
+        .collect()
+        .await;
+
     let mut copied = 0usize;
     let mut missing: Vec<String> = Vec::new();
-    // 顺序下载（微信 CDN 并发请求容易触发限流；导入是后台流程，串行就够用）
     let mut replacements: Vec<Option<String>> = Vec::with_capacity(matches.len());
-    for (_, _, _, url) in &matches {
-        match download_external_image(&client, url).await {
+    for ((_, _, _, url), downloaded) in matches.iter().zip(downloads) {
+        match downloaded {
             Ok((bytes, file_name)) => {
                 match crate::services::image::ImageService::save_bytes(
                     app_data_dir,

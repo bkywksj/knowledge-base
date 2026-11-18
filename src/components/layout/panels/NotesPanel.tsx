@@ -883,6 +883,7 @@ export function NotesPanel() {
 
   /** 打开本机 .md / .txt 文件 → 导入/复用笔记 → 跳转 */
   async function handleOpenMarkdown() {
+    const key = "open-md:picker";
     try {
       const picked = await openDialog({
         multiple: false,
@@ -895,9 +896,13 @@ export function NotesPanel() {
       // 先问以什么方式打开（已记住偏好则直接返回，不弹窗）
       const fileName = path.split(/[\\/]/).pop() || path;
       const mode = await resolveOpenMdMode(fileName);
+      // 网络图片要先下载完才返回，可能要等几秒，期间给个提示（同 AppLayout 双击打开）
+      message.loading({ content: `正在打开「${fileName}」…`, key, duration: 0 });
       const result = await importApi.openMarkdownFile(path, mode === "scratch");
       if (result.wasSynced) {
-        message.info("已根据最新 md 文件同步笔记内容");
+        message.info({ content: "已根据最新 md 文件同步笔记内容", key });
+      } else {
+        message.destroy(key);
       }
       // Q-003：首次打开外部 .md 弹一次说明，让用户知道"已加入本地库 + 编辑会写回原文件"
       // 临时编辑不弹：那条说明讲的是"已加入知识库"，与临时模式的预期相反
@@ -905,7 +910,7 @@ export function NotesPanel() {
       useAppStore.getState().bumpNotesRefresh();
       navigate(`/notes/${result.noteId}`);
     } catch (e) {
-      message.error(`打开失败: ${e}`);
+      message.error({ content: `打开失败: ${e}`, key });
     }
   }
 

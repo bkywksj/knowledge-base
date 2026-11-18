@@ -363,13 +363,20 @@ export function AppLayout() {
       const now = Date.now();
       if (lastOpen && lastOpen.path === path && now - lastOpen.at < 3000) return;
       lastOpen = { path, at: now };
+      // 同一个 key 让 loading 被后面的结果提示原地替换；按路径区分，连开两个文件互不覆盖
+      const key = `open-md:${path}`;
       try {
         // 先问以什么方式打开（已记住偏好则直接返回，不弹窗）
         const fileName = path.split(/[\\/]/).pop() || path;
         const mode = await resolveOpenMdMode(fileName);
+        // 文中的网络图片要先下载到本地才返回，慢的时候要等好几秒 ——
+        // 没有这条提示，用户双击后只看到窗口停在原页，会以为"打不开"
+        message.loading({ content: `正在打开「${fileName}」…`, key, duration: 0 });
         const result = await importApi.openMarkdownFile(path, mode === "scratch");
         if (result.wasSynced) {
-          message.info("已根据最新 md 文件同步笔记内容");
+          message.info({ content: "已根据最新 md 文件同步笔记内容", key });
+        } else {
+          message.destroy(key);
         }
         // Q-003：系统快捷菜单 / argv 启动场景，同样需要首次引导（用户报告就是这条路径下找不到保存）
         // 临时编辑不需要这条引导：它讲的是"已加入知识库"，与临时模式的预期相反
@@ -377,7 +384,7 @@ export function AppLayout() {
         useAppStore.getState().bumpNotesRefresh();
         navigate(`/notes/${result.noteId}`);
       } catch (e) {
-        message.error(`打开 ${path} 失败: ${e}`);
+        message.error({ content: `打开 ${path} 失败: ${e}`, key });
       }
     }
 

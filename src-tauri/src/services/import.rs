@@ -632,10 +632,21 @@ impl ImportService {
             db.find_active_note_by_source_path(&canonical)?
         {
             // 外部修改过文件 → 同步最新内容到笔记（含图片处理）
-            let was_synced = existing_content != raw_content;
+            //
+            // 🔴 不能拿 existing_content 和 raw_content 直接比：库里存的是图片已换成本地
+            // asset URL 的正文，而写回原文件时会按 note_url_mapping 还原成原始外链 ——
+            // 只要文中有图片，两边就永远不等，每次打开都被当成"外部改过"，把所有外链图片
+            // 重新串行下载一遍（用户反馈"双击 md 半天没反应"）并误弹"已同步"。
+            // 改用 mtime：首次打开、每次同步、每次写回都会记下当时的文件 mtime，
+            // 一致就说明这期间没有别的程序动过它。没记录过 mtime 的老笔记退回按内容比。
+            let was_synced = match (db.get_writeback_mtime(existing_id)?, read_file_mtime(path)) {
+                (Some(recorded), Some(current)) => recorded != current,
+                _ => existing_content != raw_content,
+            };
             if was_synced {
                 let (processed, mappings) =
-                    process_single_md_images(&raw_content, existing_id, path, app_data_dir).await;
+                    process_single_md_images(&raw_content, existing_id, path, app_data_dir, true)
+                        .await;
                 db.update_note_content(existing_id, &processed)?;
                 // 重新打开 = 重置 URL 映射（外部可能换了图床/路径）
                 let _ = db.clear_url_mappings(existing_id);
@@ -656,9 +667,16 @@ impl ImportService {
                 // 用当前索引规则补跑一次：rewrite 对已是 asset URL 的引用是幂等的，
                 // 没命中也是无副作用；只有真有"现在能命中但当时没命中"的情况才会改 body。
                 // 不重置 mtime（外部 .md 确实没变）。
-                let (processed, mappings) =
-                    process_single_md_images(&existing_content, existing_id, path, app_data_dir)
-                        .await;
+                // 不重试外链下载：库里还留着的外链都是上次下载失败的（图床慢 / 被墙），
+                // 每次打开都重下一遍只会让用户再等一轮超时；它们照样能按原链接显示。
+                let (processed, mappings) = process_single_md_images(
+                    &existing_content,
+                    existing_id,
+                    path,
+                    app_data_dir,
+                    false,
+                )
+                .await;
                 if processed != existing_content {
                     let _ = db.update_note_content(existing_id, &processed);
                     let _ = db.clear_url_mappings(existing_id);
@@ -702,7 +720,7 @@ impl ImportService {
 
         // 处理图片：本地相对路径（同级目录） + 外链下载（绕开微信防盗链等）
         let (processed, mappings) =
-            process_single_md_images(&raw_content, note.id, path, app_data_dir).await;
+            process_single_md_images(&raw_content, note.id, path, app_data_dir, true).await;
         if processed != raw_content {
             if let Err(e) = db.update_note_content(note.id, &processed) {
                 log::warn!("[open-md] 笔记 {} 图片重写后回写失败: {}", note.id, e);
@@ -742,11 +760,14 @@ pub fn read_file_mtime(path: &Path) -> Option<i64> {
 ///
 /// 返回 (处理后的 body, 替换映射)：映射 = `Vec<(原始 URL, 内部 asset URL)>`，
 /// 给 open_markdown_file 写入 `note_url_mapping`，写回 .md 时按 internal_url 反查恢复原链接。
+///
+/// `fetch_remote=false` 只做本地引用改写、不碰网络（外链图片 / 视频保持原样）。
 async fn process_single_md_images(
     body: &str,
     note_id: i64,
     md_path: &Path,
     app_data_dir: &Path,
+    fetch_remote: bool,
 ) -> (String, Vec<(String, String)>) {
     let note_dir = md_path
         .parent()
@@ -774,15 +795,17 @@ async fn process_single_md_images(
         current = rewrite.new_body;
         all_mappings.extend(rewrite.mappings);
     }
-    if let Ok(rewrite) = crate::services::import_attachments::rewrite_external_images(
-        &current,
-        note_id,
-        app_data_dir,
-    )
-    .await
-    {
-        current = rewrite.new_body;
-        all_mappings.extend(rewrite.mappings);
+    if fetch_remote {
+        if let Ok(rewrite) = crate::services::import_attachments::rewrite_external_images(
+            &current,
+            note_id,
+            app_data_dir,
+        )
+        .await
+        {
+            current = rewrite.new_body;
+            all_mappings.extend(rewrite.mappings);
+        }
     }
     // 视频本地引用 + 外链下载（与图片同序：先本地，再外链）
     if let Ok(rewrite) = crate::services::import_video_attachments::rewrite_video_paths(
@@ -795,15 +818,17 @@ async fn process_single_md_images(
         current = rewrite.new_body;
         all_mappings.extend(rewrite.mappings);
     }
-    if let Ok(rewrite) = crate::services::import_video_attachments::rewrite_external_videos(
-        &current,
-        note_id,
-        app_data_dir,
-    )
-    .await
-    {
-        current = rewrite.new_body;
-        all_mappings.extend(rewrite.mappings);
+    if fetch_remote {
+        if let Ok(rewrite) = crate::services::import_video_attachments::rewrite_external_videos(
+            &current,
+            note_id,
+            app_data_dir,
+        )
+        .await
+        {
+            current = rewrite.new_body;
+            all_mappings.extend(rewrite.mappings);
+        }
     }
     (current, all_mappings)
 }
@@ -1125,5 +1150,84 @@ mod tests {
         assert!(!mds.iter().any(|n| n == "lib.md"));
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 建一个"带本地图片的外部 .md"测试现场：图片改写后库里正文 ≠ 磁盘原文，
+    /// 正好复现"库里是 asset URL、磁盘是原始链接"这个形态（外链图片同理，但要联网）
+    fn single_md_fixture(tag: &str) -> (PathBuf, Database, PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "kb_open_md_{}_{}_{}",
+            tag,
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Database::init(dir.join("test.db").to_str().unwrap()).expect("init test db");
+        std::fs::write(dir.join("a.png"), b"\x89PNG\r\n\x1a\nfake").unwrap();
+        let md = dir.join("doc.md");
+        std::fs::write(&md, "# 标题\n\n正文\n\n![图](./a.png)\n").unwrap();
+        (dir, db, md)
+    }
+
+    #[tokio::test]
+    async fn 重复打开未改动的md_不判为外部改过() {
+        let (dir, db, md) = single_md_fixture("same");
+        let md_str = md.to_str().unwrap();
+
+        let first = ImportService::import_single_markdown(&db, md_str, &dir, false)
+            .await
+            .unwrap();
+        assert!(!first.was_synced);
+        // 前提：图片确实被改写了，否则这条用例测不到原来的 bug
+        let (_, body) = db
+            .find_active_note_by_source_path(
+                &std::fs::canonicalize(&md).unwrap().to_string_lossy(),
+            )
+            .unwrap()
+            .unwrap();
+        assert!(!body.contains("./a.png"), "本地图片应已改写为 asset URL");
+
+        let second = ImportService::import_single_markdown(&db, md_str, &dir, false)
+            .await
+            .unwrap();
+        assert_eq!(second.note_id, first.note_id);
+        assert!(!second.was_synced, "文件没动过，不该再同步一遍");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn 外部改过的md_重新打开会同步() {
+        let (dir, db, md) = single_md_fixture("changed");
+        let md_str = md.to_str().unwrap();
+
+        let first = ImportService::import_single_markdown(&db, md_str, &dir, false)
+            .await
+            .unwrap();
+
+        std::fs::write(&md, "# 标题\n\n外部编辑器改过的正文\n").unwrap();
+        // mtime 只到秒级：显式拨到 1 分钟后，免得测试跑太快落在同一秒
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(&md)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+
+        let second = ImportService::import_single_markdown(&db, md_str, &dir, false)
+            .await
+            .unwrap();
+        assert_eq!(second.note_id, first.note_id);
+        assert!(second.was_synced);
+        let (_, body) = db
+            .find_active_note_by_source_path(
+                &std::fs::canonicalize(&md).unwrap().to_string_lossy(),
+            )
+            .unwrap()
+            .unwrap();
+        assert!(body.contains("外部编辑器改过的正文"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
