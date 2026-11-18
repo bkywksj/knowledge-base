@@ -1556,6 +1556,10 @@ pub struct TaskQuery {
     pub category_id: Option<i64>,
     /// true 时只返回 category_id IS NULL 的任务（"未分类"虚拟分类）
     pub uncategorized: Option<bool>,
+    /// 日记页「当天待办」：'YYYY-MM-DD'，只返回截止在这天或在这天完成的待办（不含已放弃）
+    pub day: Option<String>,
+    /// 配合 `day`：再带上截止早于这天、仍未完成的（看今天时把逾期的一起列出来）
+    pub include_overdue: Option<bool>,
 }
 
 /// 顶栏 Ctrl+K 搜索的任务命中（轻量）

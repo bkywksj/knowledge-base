@@ -835,6 +835,8 @@ fn run_get_today_tasks(db: &Database) -> Result<String, AppError> {
         priority: None,
         category_id: None,
         uncategorized: None,
+        day: None,
+        include_overdue: None,
     };
     let tasks = db.list_tasks(query)?;
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();

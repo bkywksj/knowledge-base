@@ -1,14 +1,16 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowUp, ChevronDown, ChevronLeft, ChevronRight, Pencil, Plus } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, Pencil, Plus } from "lucide-react";
 import { message } from "antd";
 import { dailyApi } from "@/lib/api";
 import { parseDailyTimeline } from "@/lib/dailyTimeline";
 import { appendQuickNoteToDaily } from "@/lib/mobileQuickNote";
 import { useAppStore } from "@/store";
-import type { DailyEntry, Note } from "@/types";
+import type { DailyEntry, Note, Task } from "@/types";
 import { MGroup, MSectionHeader } from "@/components/mobile/primitives";
+import { useFeatureEnabled } from "@/hooks/useFeatureEnabled";
+import { useDailyTasks } from "@/hooks/useDailyTasks";
 
 /**
  * 移动端日记页（v4 原型 09 屏，对应 PC 日记页）
@@ -19,6 +21,7 @@ import { MGroup, MSectionHeader } from "@/components/mobile/primitives";
  * - 周条：周一开头（同 PC 日期选择器），左右滑换周；有日记的日子带点
  * - 当天卡片：带时间戳的段落排成时间线（parseDailyTimeline 认三种写法），其余文字作预览；点卡片 / 铅笔进编辑器
  * - 选中今天：卡片底部直接「记一笔」追加（与首页同一写法）；选别的日子：按钮「打开 / 开始写 M 月 D 日的日记」
+ * - 卡片下方「当天待办」：截止在这天 / 这天完成的待办，可勾选、可直接加一条截止在这天的
  * - 下方「本月 N 篇」列表，点一行切到那一天
  *
  * 日记日期集合用 listAll 一次拿全（轻量元数据），换周 / 换月不再逐月请求。
@@ -333,6 +336,8 @@ export function MobileDaily() {
         </div>
       </div>
 
+      <DayTasks date={selected} isToday={isToday} />
+
       {/* 本月列表 */}
       <div className="m-gutter mt-6">
         <MSectionHeader className="mb-2" title={isCurrentMonth ? "本月" : `${headMonth} 月`} count={`${monthList.length} 篇`} />
@@ -357,6 +362,111 @@ export function MobileDaily() {
           )}
         </MGroup>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 「当天待办」：截止在这天 / 这天完成的待办（数据口径同 PC 日记右栏，见 useDailyTasks）。
+ * 勾选框直接完成 / 撤回；底部输入框回车新建一条截止在这天的；今天的逾期收成一行跳待办页。
+ * 待办模块被关掉时整块不渲染。
+ */
+function DayTasks({ date, isToday }: { date: DateStr; isToday: boolean }) {
+  const navigate = useNavigate();
+  const enabled = useFeatureEnabled("tasks");
+  const { tasks, overdue, toggle, add } = useDailyTasks(date, isToday, enabled);
+  const [draft, setDraft] = useState("");
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [adding, setAdding] = useState(false);
+
+  if (!enabled) return null;
+
+  async function onToggle(t: Task) {
+    if (busyId != null) return;
+    setBusyId(t.id);
+    try {
+      await toggle(t);
+    } catch (e) {
+      message.error(`操作失败: ${e}`);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function onAdd() {
+    const title = draft.trim();
+    if (!title || adding) return;
+    setAdding(true);
+    try {
+      await add(title);
+      setDraft("");
+    } catch (e) {
+      message.error(`添加失败: ${e}`);
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  const openCount = tasks.filter((t) => t.status === 0).length;
+
+  return (
+    <div className="m-gutter mt-6">
+      <MSectionHeader className="mb-2" title={isToday ? "今日待办" : "当天待办"} count={tasks.length ? `${openCount} 未完成` : undefined} />
+      <MGroup>
+        {tasks.map((t) => {
+          const done = t.status === 1;
+          const doneAt = done ? (t.completed_at?.slice(11, 16) ?? "") : "";
+          return (
+            <div key={t.id} className="m-row m-row-icon cursor-pointer" style={{ minHeight: 52 }} onClick={() => navigate(`/task-detail/${t.id}`)} role="button" tabIndex={0}>
+              <button
+                type="button"
+                aria-label={done ? "撤回为未完成" : "完成"}
+                disabled={busyId === t.id}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void onToggle(t);
+                }}
+                className="relative flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[var(--m-r-s)] after:absolute after:-inset-[11px] after:content-['']"
+                style={done ? { background: "var(--m-ok)", color: "#fff" } : { boxShadow: "inset 0 0 0 1.6px var(--m-ink4)" }}
+              >
+                {done && <Check size={14} strokeWidth={3} />}
+              </button>
+              <div className="min-w-0 flex-1">
+                <div className={`truncate text-[15px] ${done ? "line-through" : ""}`} style={{ color: done ? "var(--m-ink3)" : "var(--m-ink)" }}>
+                  {t.title}
+                </div>
+                {doneAt && <div className="m-t-cap mt-0.5">{doneAt} 完成</div>}
+              </div>
+            </div>
+          );
+        })}
+        <div className="m-row m-row-icon" style={{ minHeight: 52 }}>
+          <Plus size={18} className="shrink-0" style={{ color: "var(--m-ink3)" }} />
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) void onAdd();
+            }}
+            disabled={adding}
+            enterKeyHint="done"
+            placeholder={isToday ? "添加今天的待办" : "添加这天的待办"}
+            aria-label="添加待办"
+            className="h-11 min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-[var(--m-ink3)]"
+            style={{ color: "var(--m-ink)" }}
+          />
+          {draft.trim() && (
+            <button type="button" className="m-tapx shrink-0 text-[15px] font-semibold" style={{ color: "var(--m-accent-ink)" }} disabled={adding} onClick={() => void onAdd()}>
+              添加
+            </button>
+          )}
+        </div>
+      </MGroup>
+      {overdue.length > 0 && (
+        <button type="button" className="m-tapx mt-2 text-[13px]" style={{ color: "var(--m-bad)" }} onClick={() => navigate("/tasks?filter=overdue")}>
+          另有 {overdue.length} 条逾期 →
+        </button>
+      )}
     </div>
   );
 }

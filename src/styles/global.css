@@ -4689,6 +4689,10 @@ body.sidebar-resizing .kb-panel-resizer {
   color: var(--kb-text-tertiary);
   text-decoration: line-through;
 }
+.kb-day-task-add {
+  margin-top: 6px;
+  font-size: 12px;
+}
 .kb-day-task-overdue {
   display: inline-block;
   margin-top: 6px;

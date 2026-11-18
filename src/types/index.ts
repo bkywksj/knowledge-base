@@ -1615,6 +1615,10 @@ export interface TaskQuery {
   category_id?: number | null;
   /** true 时只看 category_id IS NULL 的任务 */
   uncategorized?: boolean;
+  /** 日记页「当天待办」：'YYYY-MM-DD'，只返回截止在这天或在这天完成的（不含已放弃） */
+  day?: string;
+  /** 配合 day：再带上截止早于这天、仍未完成的 */
+  include_overdue?: boolean;
 }
 
 // ─── 待办分类 ─────────────────────────────────

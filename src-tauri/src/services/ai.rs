@@ -3270,6 +3270,8 @@ impl AiService {
             priority: None,
             category_id: None,
             uncategorized: None,
+            day: None,
+            include_overdue: None,
         })?;
 
         let carry_over: Vec<_> = if req.include_yesterday_unfinished {

@@ -71,6 +71,18 @@ impl super::Database {
         } else if query.uncategorized.unwrap_or(false) {
             where_clauses.push("t.category_id IS NULL".into());
         }
+        // 日记页「当天待办」。due_date / completed_at 可能带时分，取前 10 位比日期
+        if let Some(day) = query.day.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            let mut cond = "substr(t.due_date, 1, 10) = ? OR substr(t.completed_at, 1, 10) = ?".to_string();
+            binds.push(Box::new(day.to_string()));
+            binds.push(Box::new(day.to_string()));
+            if query.include_overdue.unwrap_or(false) {
+                cond.push_str(" OR (t.status = 0 AND substr(t.due_date, 1, 10) < ?)");
+                binds.push(Box::new(day.to_string()));
+            }
+            where_clauses.push(format!("({})", cond));
+            where_clauses.push(format!("t.status != {}", TASK_STATUS_ABANDONED));
+        }
         let where_sql = format!("WHERE {}", where_clauses.join(" AND "));
 
         // LEFT JOIN 子查询：每个主任务的子任务完成数 / 总数
@@ -1433,6 +1445,52 @@ mod tests {
             project_id: None,
             start_date: None,
         }
+    }
+
+    /// 日记页「当天待办」：截止在这天的 + 这天完成的；include_overdue 再带上逾期未完成的；
+    /// 已放弃的不列
+    #[test]
+    fn list_tasks_by_day() {
+        let db = fresh();
+        let due_today = db.create_task(task_input("今天截止", Some("2026-11-18"), None, None)).unwrap();
+        let due_today_timed = db
+            .create_task(task_input("今天下午", Some("2026-11-18 15:00:00"), None, None))
+            .unwrap();
+        let overdue = db.create_task(task_input("逾期", Some("2026-11-10"), None, None)).unwrap();
+        let tomorrow = db.create_task(task_input("明天", Some("2026-11-19"), None, None)).unwrap();
+        let done_today = db.create_task(task_input("今天做完的", None, None, None)).unwrap();
+        let abandoned = db.create_task(task_input("放弃", Some("2026-11-18"), None, None)).unwrap();
+        db.abandon_task(abandoned).unwrap();
+        {
+            let conn = db.conn_lock().unwrap();
+            conn.execute(
+                "UPDATE tasks SET status = 1, completed_at = '2026-11-18 10:00:00' WHERE id = ?1",
+                [done_today],
+            )
+            .unwrap();
+        }
+
+        let ids = |include_overdue: bool| -> Vec<i64> {
+            let mut v: Vec<i64> = db
+                .list_tasks(crate::models::TaskQuery {
+                    day: Some("2026-11-18".into()),
+                    include_overdue: Some(include_overdue),
+                    ..Default::default()
+                })
+                .unwrap()
+                .into_iter()
+                .map(|t| t.id)
+                .collect();
+            v.sort();
+            v
+        };
+        let mut expect = vec![due_today, due_today_timed, done_today];
+        expect.sort();
+        assert_eq!(ids(false), expect);
+        expect.push(overdue);
+        expect.sort();
+        assert_eq!(ids(true), expect);
+        assert!(!ids(true).contains(&tomorrow));
     }
 
     /// 回归：调度器的"下次唤醒时刻"（peek_next_due_at）与醒来后的实际扫描
