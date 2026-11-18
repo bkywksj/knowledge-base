@@ -59,6 +59,7 @@ import { MicButton } from "@/components/MicButton";
 import { useTabsStore } from "@/store/tabs";
 import { aiChatApi, folderApi, importApi, noteApi, searchApi, trashApi } from "@/lib/api";
 import { showExternalMdIntroOnce } from "@/lib/externalMdIntro";
+import { FOLDER_SORT_OPTIONS, sortFolderLevel, type FolderSortMode } from "@/lib/folderSort";
 import { resolveOpenMdMode } from "@/lib/openMdChoice";
 import { ScratchFilesModal } from "@/components/notes/ScratchFilesModal";
 import {
@@ -323,14 +324,6 @@ function findFolderNode(folders: Folder[], id: number): Folder | null {
   return null;
 }
 
-type FolderSortMode = "name-asc" | "name-desc" | "updated" | "created";
-
-const FOLDER_SORT_OPTIONS: { mode: FolderSortMode; label: string }[] = [
-  { mode: "name-asc", label: "按名称 A → Z" },
-  { mode: "name-desc", label: "按名称 Z → A" },
-  { mode: "updated", label: "按最近更新" },
-  { mode: "created", label: "按最近创建" },
-];
 
 /** 在文件夹树中按 id 查找父节点 id（根节点返回 null；未找到返回 null） */
 function findFolderParentId(folders: Folder[], id: number): number | null {
@@ -1811,14 +1804,8 @@ export function NotesPanel() {
    */
   async function sortFolderChildren(parentId: number | null, mode: FolderSortMode) {
     try {
-      if (mode === "name-asc" || mode === "name-desc") {
-        const list = parentId === null ? folders : findFolderNode(folders, parentId)?.children ?? [];
-        const sorted = [...list].sort((a, b) => a.name.localeCompare(b.name, "zh", { numeric: true }));
-        if (mode === "name-desc") sorted.reverse();
-        await folderApi.reorder(sorted.map((f) => f.id));
-      } else {
-        await folderApi.sortChildrenByTime(parentId, mode);
-      }
+      const list = parentId === null ? folders : findFolderNode(folders, parentId)?.children ?? [];
+      await sortFolderLevel(parentId, list, mode);
       loadFolders();
       useAppStore.getState().bumpFoldersRefresh();
       message.success("已排序，之后仍可拖动调整");

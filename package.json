@@ -74,6 +74,7 @@
     "katex": "^0.16.45",
     "lowlight": "^3.3.0",
     "lucide-react": "^0.577.0",
+    "lunar-javascript": "1.7.8",
     "mammoth": "^1.12.0",
     "markmap-lib": "^0.18.12",
     "markmap-view": "^0.18.12",

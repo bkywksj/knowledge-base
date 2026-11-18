@@ -4,6 +4,7 @@ import { message } from "antd";
 import { Check, ChevronDown, ChevronUp, Cloud, PencilLine, Pin, Search, SendHorizontal } from "lucide-react";
 import { cardApi, folderApi, noteApi, systemApi, taskApi, taskCategoryApi } from "@/lib/api";
 import { listUserSyncBackends } from "@/lib/mobileSyncBackends";
+import { lunarLabel } from "@/lib/lunarLabel";
 import { appendQuickNoteToDaily } from "@/lib/mobileQuickNote";
 import { relativeTime } from "@/lib/utils";
 import { notePreviewText } from "@/lib/notePreview";
@@ -155,7 +156,18 @@ export function MobileHome() {
   }, [data.todoTasks]);
 
   const now = new Date();
-  const dateLine = `${now.getMonth() + 1} 月 ${now.getDate()} 日 · ${WEEKDAYS[now.getDay()]}`;
+  // 农历 / 节日 / 节气小字（异步加载农历库，加载完才补上，失败就不显示）
+  const [lunar, setLunar] = useState("");
+  useEffect(() => {
+    let alive = true;
+    lunarLabel(new Date())
+      .then((t) => alive && setLunar(t))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [todayKey]);
+  const dateLine = `${now.getMonth() + 1} 月 ${now.getDate()} 日 · ${WEEKDAYS[now.getDay()]}` + (lunar ? ` · ${lunar}` : "");
 
   const statCells = [
     show("today_words") && { key: "w", value: loaded ? todayWords : "—", label: "今日字数", to: "/daily" },

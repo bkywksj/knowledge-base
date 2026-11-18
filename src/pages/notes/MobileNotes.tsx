@@ -37,6 +37,7 @@ import type { Folder, Note, NoteQuery, NoteTagBrief, Tag } from "@/types";
 import { relativeTime } from "@/lib/utils";
 import { notePreviewText } from "@/lib/notePreview";
 import { folderSubtreeCount } from "@/lib/searchBrowse";
+import { FOLDER_SORT_OPTIONS, sortFolderLevel, type FolderSortMode } from "@/lib/folderSort";
 import { useLongPress } from "@/hooks/useLongPress";
 import { ActionSheet, type ActionSheetItem } from "@/components/mobile/ActionSheet";
 import { FolderPickerSheet } from "@/components/mobile/FolderPickerSheet";
@@ -102,6 +103,8 @@ export function MobileNotes() {
   // 弹层状态
   const [sheetNote, setSheetNote] = useState<Note | null>(null);
   const [sheetFolder, setSheetFolder] = useState<Folder | null>(null);
+  /** 要排序的那一层：parentId = null 是根层；siblings 是这一层当前的子文件夹 */
+  const [folderSort, setFolderSort] = useState<{ parentId: number | null; name: string; siblings: Folder[] } | null>(null);
   /** 「图标颜色」面板（同 PC 文件夹右键的颜色选择） */
   const [colorFolder, setColorFolder] = useState<Folder | null>(null);
   /** 「从模板建」：打开新建面板，目标文件夹预选为这个 */
@@ -261,6 +264,18 @@ export function MobileNotes() {
     }
   }
 
+  /** 文件夹排序（PC 侧栏同一套，见 lib/folderSort），排完刷新列表并通知其它页面 */
+  async function sortFolders(parentId: number | null, siblings: Folder[], mode: FolderSortMode) {
+    try {
+      await sortFolderLevel(parentId, siblings, mode);
+      await loadFolders();
+      useAppStore.getState().bumpFoldersRefresh();
+      message.success("已排序");
+    } catch (e) {
+      message.error(`排序失败: ${e}`);
+    }
+  }
+
   async function deleteNote(note: Note) {
     // 软删到回收站（可在回收站恢复），无需二次确认 —— 与原版一致
     try {
@@ -389,6 +404,16 @@ export function MobileNotes() {
         { key: "rename", label: "重命名", icon: <Pencil size={20} />, onClick: () => setPrompt({ kind: "rename-folder", folder: sheetFolder }) },
         { key: "color", label: "图标颜色", icon: <Palette size={20} />, onClick: () => setColorFolder(sheetFolder) },
         { key: "move", label: "移动到…", icon: <FolderInput size={20} />, onClick: () => setMoveTarget({ kind: "folder", folder: sheetFolder }) },
+        ...((sheetFolder.children?.length ?? 0) >= 2
+          ? [
+              {
+                key: "sort-children",
+                label: "排序子文件夹",
+                icon: <ArrowDownUp size={20} />,
+                onClick: () => setFolderSort({ parentId: sheetFolder.id, name: sheetFolder.name, siblings: sheetFolder.children ?? [] }),
+              },
+            ]
+          : []),
         { key: "ask-ai", label: "对此文件夹问 AI", icon: <Sparkles size={20} />, onClick: () => void askAiAboutFolder(sheetFolder) },
         {
           key: "export",
@@ -474,6 +499,17 @@ export function MobileNotes() {
                 )}
               </span>
             ))}
+            {!isUncategorized && subfolders.length >= 2 && (
+              <button
+                type="button"
+                className="m-tapx m-t-meta ml-auto flex shrink-0 items-center gap-1 pl-3"
+                aria-label="排序文件夹"
+                onClick={() => setFolderSort({ parentId: folderId, name: current?.name ?? "全部", siblings: subfolders })}
+              >
+                <ArrowDownUp size={14} />
+                排序
+              </button>
+            )}
           </div>
 
           {/* 文件夹 */}
@@ -609,6 +645,18 @@ export function MobileNotes() {
       <QuickCreateSheet open={templateFolderId !== undefined} onClose={() => setTemplateFolderId(undefined)} defaultFolderId={templateFolderId ?? null} />
 
       <ActionSheet
+        open={folderSort != null}
+        title={folderSort?.parentId == null ? "排序文件夹" : `排序「${folderSort.name}」的子文件夹`}
+        subtitle="排好后电脑端同步生效"
+        items={FOLDER_SORT_OPTIONS.map((o) => ({
+          key: o.mode,
+          label: o.label,
+          onClick: () => folderSort && void sortFolders(folderSort.parentId, folderSort.siblings, o.mode),
+        }))}
+        onClose={() => setFolderSort(null)}
+      />
+
+      <ActionSheet
         open={sortOpen}
         title="排序"
         items={(Object.keys(SORT_LABEL) as Array<keyof typeof SORT_LABEL>).map((k) => ({
@@ -724,13 +772,14 @@ function NoteRow({ note, extra, onOpen, onMenu }: { note: Note; extra?: RowExtra
   const preview = note.is_encrypted ? "已加密，解锁后查看" : notePreviewText(note.content, { title: note.title, max: 80, noteType: note.note_type });
   return (
     <div {...lp} role="button" tabIndex={0} className="cursor-pointer select-none px-4 py-3.5" style={{ WebkitTouchCallout: "none" }}>
-      <div className="flex items-center gap-1.5">
+      {/* 长标题最多两行（以前一行就截断，用户反馈看不全）；图标对齐第一行 */}
+      <div className="flex items-start gap-1.5">
         {note.is_encrypted ? (
-          <Lock size={14} className="shrink-0" style={{ color: "var(--m-warn)" }} aria-label="已加密" />
+          <Lock size={14} className="mt-[0.3em] shrink-0" style={{ color: "var(--m-warn)" }} aria-label="已加密" />
         ) : note.is_pinned ? (
-          <Pin size={14} className="shrink-0" style={{ color: "var(--m-accent-ink)" }} aria-label="已置顶" />
+          <Pin size={14} className="mt-[0.3em] shrink-0" style={{ color: "var(--m-accent-ink)" }} aria-label="已置顶" />
         ) : null}
-        <span className="m-t-title min-w-0 flex-1 truncate">{note.title || "未命名笔记"}</span>
+        <span className="m-t-title min-w-0 flex-1 line-clamp-2 break-words">{note.title || "未命名笔记"}</span>
       </div>
       {preview && (
         <div className="mt-1 truncate text-[14px]" style={{ color: "var(--m-ink3)" }}>
