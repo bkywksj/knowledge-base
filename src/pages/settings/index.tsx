@@ -1468,6 +1468,11 @@ function DesktopSettingsPage() {
           />
           <Popconfirm
             title="确认删除此模型？"
+            // ai_conversations.model_id 是 ON DELETE CASCADE（库里开着 foreign_keys），对话会跟着删
+            description="用这个模型的对话会一并删除，不可恢复。"
+            okText="删除"
+            okButtonProps={{ danger: true }}
+            cancelText="取消"
             onConfirm={() => handleDeleteModel(record.id)}
           >
             <Button
