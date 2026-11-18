@@ -679,7 +679,9 @@ impl ImportService {
                 .await;
                 if processed != existing_content {
                     let _ = db.update_note_content(existing_id, &processed);
-                    let _ = db.clear_url_mappings(existing_id);
+                    // 只追加、不清空：这里只改写了"这次新命中"的本地引用，之前已经本地化的
+                    // 图（含下载过的外链）不在 mappings 里 —— 清空会让它们写回时对不上映射，
+                    // 被当成新插的图拷进 <名>.assets/
                     let _ = db.insert_url_mappings(existing_id, &mappings);
                     log::info!(
                         "[open-md] 笔记 #{} 用当前索引规则补处理了历史未解析图片引用",
@@ -1227,6 +1229,32 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(body.contains("外部编辑器改过的正文"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn 打开后写回_图片链接还原成原文写法() {
+        let (dir, db, md) = single_md_fixture("writeback");
+        let md_str = md.to_str().unwrap();
+
+        let opened = ImportService::import_single_markdown(&db, md_str, &dir, false)
+            .await
+            .unwrap();
+        let r = crate::services::source_writeback::WriteBackService::write_back(
+            &db,
+            opened.note_id,
+            false,
+        )
+        .unwrap();
+        assert!(
+            matches!(r, crate::services::source_writeback::WriteBackResult::Ok { assets_copied: 0, .. }),
+            "图片应按映射还原，不该再拷一份到 .assets：{:?}",
+            r
+        );
+        let on_disk = std::fs::read_to_string(&md).unwrap();
+        assert!(on_disk.contains("![图](./a.png)"), "原文链接被改写了：{}", on_disk);
+        assert!(!on_disk.contains("asset.localhost"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
