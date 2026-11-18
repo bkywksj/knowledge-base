@@ -1884,6 +1884,27 @@ impl Database {
         Ok(())
     }
 
+    /// 只更新笔记标题（连同 title_normalized，双链匹配 / 查重靠它；全文索引由触发器跟上）。
+    ///
+    /// 用于"外部 md 源文件的一级标题变了 → 重新打开时同步标题"的场景，不动正文和其它元数据。
+    pub fn update_note_title(&self, id: i64, title: &str) -> Result<(), AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let normalized = crate::database::links::normalize_title(title);
+        let affected = conn.execute(
+            "UPDATE notes SET title = ?1, title_normalized = ?2,
+                    updated_at = datetime('now','localtime')
+             WHERE id = ?3",
+            params![title, normalized, id],
+        )?;
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("笔记 {} 不存在", id)));
+        }
+        Ok(())
+    }
+
     /// 列出全部**普通**笔记（非日记）及其所在文件夹的完整路径，供"历史日记转换"扫描用。
     ///
     /// 返回 `(note_id, title, folder_path)`；`folder_path` 是从根到该笔记所在文件夹的

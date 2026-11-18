@@ -689,6 +689,18 @@ impl ImportService {
                     );
                 }
             }
+            // 标题跟着文件走：以前只同步正文，文件一级标题改了以后笔记顶上还是第一次打开时的旧标题（用户反馈）。
+            // 规则见 title_to_sync；用这次打开之前的临时标记判断（下面可能被「加入知识库」摘掉）
+            if let Some(note) = db.get_note(existing_id)? {
+                let was_scratch = db.get_note_scratch(existing_id).unwrap_or(false);
+                let old_content = was_synced.then_some(existing_content.as_str());
+                if let Some(new_title) =
+                    title_to_sync(&note.title, old_content, &raw_content, &file_name, was_scratch)
+                {
+                    db.update_note_title(existing_id, &new_title)?;
+                    log::info!("[open-md] 笔记 #{} 标题跟随源文件更新为「{}」", existing_id, new_title);
+                }
+            }
             // 复用已有笔记时"只升不降"：选了「加入知识库」就把临时标记摘掉，
             // 选了「临时编辑」却撞上一条正式笔记则保持原样（详见函数头注释）
             if !as_scratch {
@@ -898,6 +910,31 @@ fn get_or_create_folder(
     }
     let folder = db.create_folder(name, parent_id)?;
     Ok(folder.id)
+}
+
+/// 重新打开外部 md 时，笔记标题要不要跟着文件变。返回要写入的新标题；None = 不动。
+///
+/// 新标题与首次打开同一规则：文件第一个一级标题，没有就用文件名。
+/// - 临时编辑的笔记：文件是唯一依据（它不进笔记列表），每次打开都对齐 —— 已经过期的老笔记也能自愈
+/// - 正式笔记：只在文件被外部改过（`old_content` 是同步前的正文）时考虑，并且原标题必须本来就是
+///   从旧正文自动取的（或就是文件名）。在应用里改的标题不会写回文件，用户手动改过名就保留，
+///   不能因为外部文件动了一下就冲掉
+fn title_to_sync(
+    current_title: &str,
+    old_content: Option<&str>,
+    new_content: &str,
+    file_stem: &str,
+    is_scratch: bool,
+) -> Option<String> {
+    let new_title = extract_title(new_content).unwrap_or_else(|| file_stem.to_string());
+    if new_title == current_title {
+        return None;
+    }
+    if is_scratch {
+        return Some(new_title);
+    }
+    let old_auto = extract_title(old_content?).unwrap_or_else(|| file_stem.to_string());
+    (current_title == old_auto || current_title == file_stem).then_some(new_title)
 }
 
 /// 从 Markdown 内容提取标题（第一个 # 开头的行）
@@ -1235,6 +1272,90 @@ mod tests {
         // 先关库：Windows 下 test.db 被连接占着时删不掉目录，测试会在 %TEMP% 留垃圾
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 把文件改写成 `content`，并把 mtime 拨到 1 分钟后（mtime 只到秒级，免得和首次打开落在同一秒）
+    fn rewrite_later(md: &std::path::Path, content: &str) {
+        std::fs::write(md, content).unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        std::fs::File::options().write(true).open(md).unwrap().set_modified(later).unwrap();
+    }
+
+    /// 用户反馈：临时打开的 md 改了一级标题后再打开，正文是新的、笔记顶上还是第一次打开时的旧标题
+    #[tokio::test]
+    async fn 外部改了一级标题_重新打开标题跟着变() {
+        let (dir, db, md) = single_md_fixture("retitle");
+        let md_str = md.to_str().unwrap();
+        let first = ImportService::import_single_markdown(&db, md_str, &dir, true).await.unwrap();
+        assert_eq!(db.get_note(first.note_id).unwrap().unwrap().title, "标题");
+
+        rewrite_later(&md, "# 新标题\n\n正文\n");
+        ImportService::import_single_markdown(&db, md_str, &dir, true).await.unwrap();
+        assert_eq!(db.get_note(first.note_id).unwrap().unwrap().title, "新标题");
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 已经过期的临时笔记（旧版本只同步了正文）：文件没再改，打开时也要把标题对齐
+    #[tokio::test]
+    async fn 临时笔记标题过期_文件没改也会对齐() {
+        let (dir, db, md) = single_md_fixture("stale");
+        let md_str = md.to_str().unwrap();
+        let first = ImportService::import_single_markdown(&db, md_str, &dir, true).await.unwrap();
+        db.update_note_title(first.note_id, "旧版本留下的旧标题").unwrap();
+
+        let again = ImportService::import_single_markdown(&db, md_str, &dir, true).await.unwrap();
+        assert!(!again.was_synced);
+        assert_eq!(db.get_note(first.note_id).unwrap().unwrap().title, "标题");
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 正式笔记在应用里改过名：外部文件改了也保留用户起的名字（应用里的标题不会写回文件）
+    #[tokio::test]
+    async fn 正式笔记手动改过名_外部改标题不覆盖() {
+        let (dir, db, md) = single_md_fixture("renamed");
+        let md_str = md.to_str().unwrap();
+        let first = ImportService::import_single_markdown(&db, md_str, &dir, false).await.unwrap();
+        db.update_note_title(first.note_id, "我自己起的名字").unwrap();
+
+        rewrite_later(&md, "# 新标题\n\n正文\n");
+        let second = ImportService::import_single_markdown(&db, md_str, &dir, false).await.unwrap();
+        assert!(second.was_synced);
+        assert_eq!(db.get_note(first.note_id).unwrap().unwrap().title, "我自己起的名字");
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 正式笔记没改过名：外部改了一级标题就跟着变
+    #[tokio::test]
+    async fn 正式笔记未改名_外部改标题跟着变() {
+        let (dir, db, md) = single_md_fixture("formal");
+        let md_str = md.to_str().unwrap();
+        let first = ImportService::import_single_markdown(&db, md_str, &dir, false).await.unwrap();
+
+        rewrite_later(&md, "# 新标题\n\n正文\n");
+        ImportService::import_single_markdown(&db, md_str, &dir, false).await.unwrap();
+        assert_eq!(db.get_note(first.note_id).unwrap().unwrap().title, "新标题");
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn title_to_sync_rules() {
+        // 正式笔记：原标题是旧正文自动取的 → 跟新；没被外部改过（old_content=None）→ 不动
+        assert_eq!(title_to_sync("旧", Some("# 旧\n"), "# 新\n", "doc", false).as_deref(), Some("新"));
+        assert_eq!(title_to_sync("旧", None, "# 新\n", "doc", false), None);
+        // 原标题是文件名（旧正文没有一级标题）→ 新正文有了一级标题就用它
+        assert_eq!(title_to_sync("doc", Some("正文\n"), "# 新\n", "doc", false).as_deref(), Some("新"));
+        // 新正文去掉了一级标题 → 退回文件名
+        assert_eq!(title_to_sync("旧", Some("# 旧\n"), "正文\n", "doc", false).as_deref(), Some("doc"));
+        // 标题本来就一致 → 不写
+        assert_eq!(title_to_sync("新", Some("# 旧\n"), "# 新\n", "doc", true), None);
     }
 
     #[tokio::test]
