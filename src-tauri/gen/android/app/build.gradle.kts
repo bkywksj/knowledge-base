@@ -1,4 +1,5 @@
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.application")
@@ -70,11 +71,15 @@ android {
             )
         }
     }
-    kotlinOptions {
-        jvmTarget = "1.8"
-    }
     buildFeatures {
         buildConfig = true
+    }
+}
+
+// Kotlin 2.2 起 kotlinOptions 是编译错误，改用 compilerOptions（tauri 2.12 的模板同款写法）
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_1_8
     }
 }
 

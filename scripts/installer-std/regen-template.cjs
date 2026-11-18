@@ -97,14 +97,23 @@ function extractTemplate(binFile) {
 }
 
 const PATCHES = [
+  // 声明和重置分成两处锚点：tauri-cli 2.12 在 `Page custom PageReinstall` 与 `Function PageReinstall`
+  // 之间插了 FindWixInstall，原来连在一起的三行锚点对不上了；拆开后 2.10 / 2.12 的原件都只出现一次
   {
     name: 'upgrade-in-place: declare UpgradeInPlace',
-    find: 'Var ReinstallPageCheck\nPage custom PageReinstall PageLeaveReinstall\nFunction PageReinstall\n',
+    find: 'Var ReinstallPageCheck\nPage custom PageReinstall PageLeaveReinstall\n',
     replace: [
       'Var ReinstallPageCheck',
       '; --- installer-std patch: set when this run upgrades an existing NSIS install ---',
       'Var UpgradeInPlace',
       'Page custom PageReinstall PageLeaveReinstall',
+      '',
+    ].join('\n'),
+  },
+  {
+    name: 'upgrade-in-place: reset UpgradeInPlace',
+    find: 'Function PageReinstall\n',
+    replace: [
       'Function PageReinstall',
       '  ; installer-std patch: reset first, this page re-runs if the user goes back and',
       '  ; switches install mode',

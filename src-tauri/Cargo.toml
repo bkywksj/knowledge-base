@@ -140,7 +140,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 # `tauri::image::Image::from_bytes` 解码，没这个 feature 会报 "expected RGBA image data"。
 # 只是复制外链图时的降级路径；笔记内素材走 commands::image::copy_image_to_clipboard，
 # 那条路自己用 image crate 解码，不依赖这个 feature。
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png"] }
 # 桌面专属插件
 tauri-plugin-updater = "2"
 tauri-plugin-autostart = "2"
