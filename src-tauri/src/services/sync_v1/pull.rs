@@ -757,6 +757,15 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
         }
     }
 
+    // ── 同日多篇日记合并
+    // 两台设备各自建了当天日记 → 上面"本地没有就新建"会让本地出现两篇同日日记。
+    // 放在 tombstone 处理之后：对端已经合并、删掉的那篇这时已跟着软删，不会再被追加一遍。
+    match crate::services::daily_import::DailyImportService::merge_duplicate_dailies(db) {
+        Ok(n) if n > 0 => log::info!("[sync_v1] 合并同日日记，{} 篇移入回收站", n),
+        Ok(_) => {}
+        Err(e) => result.errors.push(format!("合并同日日记失败: {}", e)),
+    }
+
     // ── 处理 conflicts（updated_at 相同但 hash 不同）
     for pair in &diff.conflicts {
         result.conflicts += 1;

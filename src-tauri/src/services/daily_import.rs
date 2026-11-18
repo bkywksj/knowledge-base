@@ -496,6 +496,60 @@ impl DailyImportService {
         }
         Ok(moved)
     }
+
+    /// 把"同一天的多篇日记"合并成一篇，返回移入回收站的篇数。
+    ///
+    /// 来源：两台设备离线时各自建了当天日记（UUID 不同），同步后本地就有两篇
+    /// `is_daily=1` 的同日日记 —— 日记页按日期取只能取到其中一篇，另一篇看不到。
+    ///
+    /// 规则（两端必须算出同一个结果，同步后才能收敛）：
+    /// - 保留 `stable_uuid` 最小的那篇，其余正文追加进去，然后移入回收站（可还原）；
+    ///   软删会作为 tombstone 推到对端，对端跟着删掉同一篇
+    /// - 被合并那篇的正文已经包含在保留篇里（对端先合并过、又被同步回来）→ 不重复追加
+    /// - 组内有加密日记 → 整组跳过：看不到明文，没法合并
+    pub fn merge_duplicate_dailies(db: &Database) -> Result<usize, AppError> {
+        let mut moved = 0usize;
+        for (date, members) in db.list_duplicate_dailies()? {
+            let mut notes = Vec::with_capacity(members.len());
+            for (id, _) in &members {
+                if let Some(n) = db.get_note(*id)? {
+                    notes.push(n);
+                }
+            }
+            if notes.len() < 2 || notes.iter().any(|n| n.is_encrypted) {
+                continue;
+            }
+            let keeper_id = notes[0].id;
+            let mut content = notes[0].content.clone();
+            for other in &notes[1..] {
+                let body = other.content.trim();
+                if !body.is_empty() && !content.contains(body) {
+                    // 两篇都叫"{date} 的日记"，拿原标题当分隔标题没有信息量，换成说明性文字
+                    let label = if other.title.trim() == notes[0].title.trim() {
+                        "另一台设备上的当天日记".to_string()
+                    } else {
+                        other.title.clone()
+                    };
+                    content = merge_contents(&[(String::new(), content), (label, other.content.clone())], false);
+                }
+            }
+            if content != notes[0].content {
+                db.update_note_content(keeper_id, &content)?;
+            }
+            for other in &notes[1..] {
+                if db.soft_delete_note(other.id)? {
+                    moved += 1;
+                }
+            }
+            log::info!(
+                "[daily] {} 有 {} 篇日记，已合并进 note#{}",
+                date,
+                notes.len(),
+                keeper_id
+            );
+        }
+        Ok(moved)
+    }
 }
 
 #[cfg(test)]
@@ -739,5 +793,54 @@ mod tests {
     fn primary_falls_back_to_first() {
         let titles = vec!["工作记录".into(), "随笔".into()];
         assert_eq!(pick_primary_index(&titles, "2020-05-20"), 0);
+    }
+
+    // ── merge_duplicate_dailies ──
+
+    fn daily_with_uuid(db: &Database, uuid: &str, date: &str, content: &str) -> i64 {
+        let input = crate::models::NoteInput {
+            title: format!("{date} 的日记"),
+            content: content.into(),
+            folder_id: None,
+        };
+        db.create_note_with_uuid(&input, uuid, true, Some(date), false)
+            .unwrap()
+            .id
+    }
+
+    /// 两端各自建了当天日记 → 保留 UUID 小的那篇，另一篇正文并进来后进回收站
+    #[test]
+    fn merges_same_day_dailies_into_smallest_uuid() {
+        let db = Database::init(":memory:").unwrap();
+        // 后建的那篇 UUID 更小：保留谁看 UUID，不看本地 id
+        let phone = daily_with_uuid(&db, "bbbb", "2026-11-18", "<p>手机写的</p>");
+        let pc = daily_with_uuid(&db, "aaaa", "2026-11-18", "<p>电脑写的</p>");
+        let other_day = daily_with_uuid(&db, "cccc", "2026-11-17", "<p>前一天</p>");
+
+        assert_eq!(DailyImportService::merge_duplicate_dailies(&db).unwrap(), 1);
+
+        let kept = db.get_daily("2026-11-18").unwrap().unwrap();
+        assert_eq!(kept.id, pc);
+        assert!(kept.content.starts_with("<p>电脑写的</p>"));
+        assert!(kept.content.contains("<p>手机写的</p>"));
+        assert!(kept.content.contains("另一台设备上的当天日记"));
+        assert_eq!(db.list_all_dailies().unwrap().len(), 2, "18 号只剩一篇，17 号不受影响");
+        assert!(db.list_all_dailies().unwrap().iter().all(|e| e.id != phone));
+        assert!(db.get_note(other_day).unwrap().is_some());
+
+        // 再跑一次是空操作
+        assert_eq!(DailyImportService::merge_duplicate_dailies(&db).unwrap(), 0);
+    }
+
+    /// 对端已经合并过、又把旧的那篇同步回来 → 只删不再追加，正文不会出现两遍
+    #[test]
+    fn merge_skips_content_already_included() {
+        let db = Database::init(":memory:").unwrap();
+        let merged = "<p>电脑写的</p><p></p><h2>另一台设备上的当天日记</h2><p>手机写的</p>";
+        let keeper = daily_with_uuid(&db, "aaaa", "2026-11-18", merged);
+        daily_with_uuid(&db, "bbbb", "2026-11-18", "<p>手机写的</p>");
+
+        assert_eq!(DailyImportService::merge_duplicate_dailies(&db).unwrap(), 1);
+        assert_eq!(db.get_note(keeper).unwrap().unwrap().content, merged);
     }
 }

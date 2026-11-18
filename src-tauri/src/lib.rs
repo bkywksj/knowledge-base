@@ -1059,6 +1059,15 @@ pub fn run() {
                 log::info!("[startup] 清理 {} 个同步临时孤儿文件", cleaned);
             }
 
+            // 修复旧版本同步留下的"同一天两篇日记"（以后由每次 pull 收尾时合并）
+            match services::daily_import::DailyImportService::merge_duplicate_dailies(
+                &app.state::<AppState>().db,
+            ) {
+                Ok(n) if n > 0 => log::info!("[startup] 合并同日日记，{} 篇移入回收站", n),
+                Ok(_) => {}
+                Err(e) => log::warn!("[startup] 合并同日日记失败: {}", e),
+            }
+
             // 窗口标题：dev build 追加 [DEV]，prod 保留 conf.json 默认标题
             // 仅桌面端：移动端无窗口标题概念（标题栏由系统/状态栏管理）
             #[cfg(desktop)]
