@@ -319,8 +319,7 @@ fn pull_inner(
         sync_v1::backend::parse_auth(cfg.kind, &cfg.config_json).map_err(|e| e.to_string())?;
     let backend_impl = sync_v1::backend::create_backend(auth).map_err(|e| e.to_string())?;
 
-    // 「本机中转」同步源和手机经局域网同步写的是同一个目录：先拿库级租约（见 services::lan_sync）
-    #[cfg(desktop)]
+    // 「本机中转」同步源和别的设备经局域网同步写的是同一个目录：先拿库级租约（见 services::lan_sync）
     let _lan_lease = crate::services::lan_sync::acquire_host_lease(&state.lan_sync, &state.db, backend_id)?;
 
     let app_version = app.package_info().version.to_string();
@@ -359,8 +358,7 @@ fn push_inner(app: &AppHandle, backend_id: i64) -> Result<SyncPushResult, String
         sync_v1::backend::parse_auth(cfg.kind, &cfg.config_json).map_err(|e| e.to_string())?;
     let backend_impl = sync_v1::backend::create_backend(auth).map_err(|e| e.to_string())?;
 
-    // 「本机中转」同步源和手机经局域网同步写的是同一个目录：先拿库级租约（见 services::lan_sync）
-    #[cfg(desktop)]
+    // 「本机中转」同步源和别的设备经局域网同步写的是同一个目录：先拿库级租约（见 services::lan_sync）
     let _lan_lease = crate::services::lan_sync::acquire_host_lease(&state.lan_sync, &state.db, backend_id)?;
 
     let app_version = app.package_info().version.to_string();

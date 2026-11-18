@@ -1,4 +1,4 @@
-//! 局域网同步的 mDNS 自动发现（电脑端广播，手机端查找；见 docs/tasks/lan-sync-tasks.md）。
+//! 局域网同步的 mDNS 自动发现（主机广播、客户端查找；主机可以是电脑，也可以是当主机的手机。见 docs/tasks/lan-sync-tasks.md）。
 //!
 //! 为什么要：配对二维码里的地址是当时的 IP，电脑换了 Wi-Fi / DHCP 重新分配后就连不上了。
 //! 电脑开着局域网同步时在 `_kb-lan._tcp` 下广播自己，TXT 里带证书指纹；
@@ -9,9 +9,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
-#[cfg(desktop)]
-use mdns_sd::ServiceInfo;
-use mdns_sd::{ServiceDaemon, ServiceEvent};
+use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 
 use crate::error::AppError;
 
@@ -28,7 +26,6 @@ pub fn fp_matches(txt_fp: Option<&str>, expected_fingerprint: &str) -> bool {
 }
 
 /// 实例名：设备名 + 指纹前 8 位（同名电脑也能区分）。DNS 标签上限 63 字节，中文设备名按字符截断
-#[cfg(any(desktop, test))]
 pub fn instance_name(device_name: &str, fingerprint: &str) -> String {
     let short = &fp_compact(fingerprint)[..8.min(fp_compact(fingerprint).len())];
     let mut name = String::new();
@@ -45,13 +42,14 @@ pub fn instance_name(device_name: &str, fingerprint: &str) -> String {
 }
 
 /// 正在广播的服务；Drop 时注销并关掉 mDNS 守护线程
-#[cfg(desktop)]
 pub struct Advertiser {
     daemon: ServiceDaemon,
     fullname: String,
+    /// 安卓手机当主机：广播期间一直持有 Wi-Fi 组播锁，否则收不到别人的查询、也就不会回应
+    #[cfg(target_os = "android")]
+    _lock: multicast_lock::MulticastLock,
 }
 
-#[cfg(desktop)]
 impl Drop for Advertiser {
     fn drop(&mut self) {
         let _ = self.daemon.unregister(&self.fullname);
@@ -59,8 +57,9 @@ impl Drop for Advertiser {
     }
 }
 
-#[cfg(desktop)]
 pub fn advertise(device_name: &str, fingerprint: &str, port: u16) -> Result<Advertiser, AppError> {
+    #[cfg(target_os = "android")]
+    let lock = multicast_lock::MulticastLock::acquire()?;
     let daemon = ServiceDaemon::new().map_err(|e| AppError::Custom(format!("mDNS 启动失败: {e}")))?;
     let fp = fp_compact(fingerprint);
     let host = format!("kb-{}.local.", &fp[..8.min(fp.len())]);
@@ -72,7 +71,12 @@ pub fn advertise(device_name: &str, fingerprint: &str, port: u16) -> Result<Adve
     let fullname = info.get_fullname().to_string();
     daemon.register(info).map_err(|e| AppError::Custom(format!("mDNS 广播失败: {e}")))?;
     log::info!("[lan-sync] mDNS 广播 {fullname}");
-    Ok(Advertiser { daemon, fullname })
+    Ok(Advertiser {
+        daemon,
+        fullname,
+        #[cfg(target_os = "android")]
+        _lock: lock,
+    })
 }
 
 /// 在局域网里找指纹匹配的电脑，返回它当前的地址（只取 IPv4、已排序）。超时没找到返回空

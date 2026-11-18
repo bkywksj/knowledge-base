@@ -1,4 +1,4 @@
-//! 局域网同步服务端（仅桌面端）：把本机「局域网库目录」按同步接口暴露给手机。
+//! 局域网同步服务端：把本机「局域网库目录」按同步接口暴露给别的设备（电脑常驻；手机当主机时临时开启）。
 //!
 //! 协议约定见 `sync_v1::lan_protocol`，客户端见 `sync_v1::backend_lan`。要点：
 //! - HTTPS（自签证书，手机按配对时拿到的指纹固定校验）+ Bearer 令牌
@@ -458,7 +458,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("kb-lan-test-{}", uuid::Uuid::new_v4().simple()));
         let identity = generate_identity().unwrap();
         let fingerprint = cert_fingerprint(&identity.cert_der);
-        let token = crate::services::mcp_http::generate_token();
+        let token = crate::services::sync_v1::lan_protocol::random_token();
         let lease = VaultLease::new(Duration::from_secs(LEASE_TTL_SECS));
         let wrote_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let server = rt

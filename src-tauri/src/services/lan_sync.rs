@@ -1,6 +1,7 @@
-//! 局域网同步（电脑端编排，仅桌面）：开关 / 配对 / 本机中转同步源 / 租约。
+//! 局域网同步（主机端编排）：开关 / 配对 / 本机中转同步源 / 租约。
 //!
-//! 整体方案见 docs/tasks/lan-sync-tasks.md。电脑端做两件事：
+//! 整体方案见 docs/tasks/lan-sync-tasks.md。电脑常驻当主机；手机也能当主机（只在「当主机」页面开着时），
+//! 让别的手机直接同步，不用电脑。主机做两件事：
 //! 1. 「本机中转」同步源：一个指向 `<数据目录>/lan-vault` 的普通「本地目录」同步源，
 //!    电脑照常把笔记同步进去（同步列表里看得到，自动同步默认开）
 //! 2. 局域网服务（lan_server）：把同一个目录按同步接口暴露给手机
@@ -87,12 +88,28 @@ pub fn vault_root(data_dir: &Path) -> PathBuf {
     data_dir.join(VAULT_DIR)
 }
 
+/// 主机名：配对码里给对方看、mDNS 实例名里用
 pub fn device_name() -> String {
+    // 安卓的 hostname 是 localhost 之类，对方看不出是哪台手机：取机型名
+    #[cfg(target_os = "android")]
+    if let Some(name) = android_model_name() {
+        return name;
+    }
     hostname::get()
         .ok()
         .and_then(|h| h.into_string().ok())
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "我的电脑".into())
+        .filter(|s| !s.trim().is_empty() && s != "localhost")
+        .unwrap_or_else(|| if cfg!(mobile) { "我的手机".into() } else { "我的电脑".into() })
+}
+
+/// 安卓机型名：先取营销名（如「Xiaomi 15 Ultra」），没有再取型号。应用进程可直接执行 getprop
+#[cfg(target_os = "android")]
+fn android_model_name() -> Option<String> {
+    ["ro.product.marketname", "ro.product.model"].iter().find_map(|prop| {
+        let out = std::process::Command::new("getprop").arg(prop).output().ok()?;
+        let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (!name.is_empty()).then_some(name)
+    })
 }
 
 pub fn port(db: &Database) -> u16 {
@@ -120,7 +137,7 @@ fn ensure_token(db: &Database) -> Result<String, AppError> {
     if !t.trim().is_empty() {
         return Ok(t);
     }
-    let t = crate::services::mcp_http::generate_token();
+    let t = crate::services::sync_v1::lan_protocol::random_token();
     db.set_config(KEY_TOKEN, &t)?;
     Ok(t)
 }
@@ -270,7 +287,7 @@ pub fn pairing_payload(db: &Database) -> Result<String, AppError> {
 
 /// 换令牌：所有已配对设备立即失效（服务在跑的话调用方要重启服务才生效）
 pub fn reset_token(db: &Database) -> Result<(), AppError> {
-    db.set_config(KEY_TOKEN, &crate::services::mcp_http::generate_token())?;
+    db.set_config(KEY_TOKEN, &crate::services::sync_v1::lan_protocol::random_token())?;
     Ok(())
 }
 
@@ -280,6 +297,8 @@ pub fn lan_ipv4_hosts() -> Vec<String> {
     let all: Vec<std::net::Ipv4Addr> = if_addrs::get_if_addrs()
         .map(|ifs| {
             ifs.into_iter()
+                // 手机当主机：移动数据网卡拿到的运营商地址也是 10.x 私网段，放进二维码对方会先试它、等超时
+                .filter(|i| !is_cellular_iface(&i.name))
                 .filter_map(|i| match i.ip() {
                     std::net::IpAddr::V4(v4) => Some(v4),
                     _ => None,
@@ -288,6 +307,12 @@ pub fn lan_ipv4_hosts() -> Vec<String> {
         })
         .unwrap_or_default();
     order_hosts(default_route_ipv4(), all)
+}
+
+/// 安卓移动数据网卡（高通 rmnet、联发科 ccmni 等）。真机实测 Xiaomi 15 Ultra 上 rmnet 拿到 10.95.x.x，
+/// 按私网段过滤拦不住，只能按网卡名排除。电脑上没有这些名字，不受影响
+fn is_cellular_iface(name: &str) -> bool {
+    ["rmnet", "ccmni", "pdp", "v4-rmnet", "clat"].iter().any(|p| name.starts_with(p))
 }
 
 /// 出口网卡地址：UDP connect 到公网地址只选路、不真的发包，断网时只要有默认路由也能拿到
@@ -301,12 +326,14 @@ fn default_route_ipv4() -> Option<std::net::Ipv4Addr> {
 }
 
 /// 过滤并排序：只留私网地址（10/8、172.16/12、192.168/16），去掉回环 / 169.254 自动地址；
-/// 默认路由地址排第一，其余按地址排序去重
+/// 默认路由地址排第一，其余按地址排序去重。
+/// 默认路由地址必须本来就在 `all` 里才挪到第一位：手机只开移动数据时默认路由走 rmnet，
+/// 它已被按网卡名排除，不能从这里又塞回去
 fn order_hosts(default: Option<std::net::Ipv4Addr>, all: Vec<std::net::Ipv4Addr>) -> Vec<String> {
     let mut v: Vec<std::net::Ipv4Addr> = all.into_iter().filter(|ip| ip.is_private()).collect();
     v.sort();
     v.dedup();
-    if let Some(d) = default.filter(|d| d.is_private()) {
+    if let Some(d) = default.filter(|d| v.contains(d)) {
         v.retain(|ip| *ip != d);
         v.insert(0, d);
     }
@@ -374,6 +401,18 @@ mod tests {
         // 默认路由不是私网地址（比如直接拨号拿到公网 IP）就不放进来
         assert_eq!(order_hosts(Some(ip("8.8.8.8")), all), vec!["10.8.0.2", "172.20.1.5", "192.168.1.23"]);
         assert!(order_hosts(None, vec![ip("127.0.0.1")]).is_empty());
+        // 默认路由地址不在候选里（手机只开移动数据，rmnet 已按网卡名排除）→ 不塞回去
+        assert_eq!(order_hosts(Some(ip("10.95.156.27")), vec![ip("192.168.31.53")]), vec!["192.168.31.53"]);
+    }
+
+    #[test]
+    fn cellular_interfaces_excluded_by_name() {
+        for name in ["rmnet_data0", "rmnet1", "ccmni0", "v4-rmnet_data0", "clat4"] {
+            assert!(is_cellular_iface(name), "{name}");
+        }
+        for name in ["wlan0", "swlan0", "ap0", "eth0", "以太网", "Wi-Fi"] {
+            assert!(!is_cellular_iface(name), "{name}");
+        }
     }
 
     #[test]

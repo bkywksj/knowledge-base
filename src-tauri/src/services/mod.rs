@@ -61,13 +61,11 @@ pub mod mcp_client;
 // （移动端没有"被别的进程连"的场景，也不该在手机上开监听端口）
 #[cfg(desktop)]
 pub mod mcp_http;
-// 局域网同步服务端：把本机局域网库目录按同步接口暴露给手机。仅桌面端（手机只做客户端）
-#[cfg(desktop)]
+// 局域网同步服务端：把本机局域网库目录按同步接口暴露给别的设备。桌面常驻；手机在「当主机」页面开着时临时提供
 pub mod lan_server;
-// 局域网同步电脑端编排：开关 / 配对 / 本机中转同步源 / 租约。仅桌面端
-#[cfg(desktop)]
+// 局域网同步主机端编排：开关 / 配对 / 本机中转同步源 / 租约
 pub mod lan_sync;
-// 局域网同步 mDNS（换 IP 后按证书指纹找回电脑）：广播只在桌面端，查找桌面 / 手机都用
+// 局域网同步 mDNS（换 IP 后按证书指纹找回主机）：主机广播、客户端查找，桌面 / 手机都用
 pub mod lan_discovery;
 // Rust 调应用自有 Kotlin 类的公共件（借 Context 的 ClassLoader）。仅 Android
 #[cfg(target_os = "android")]

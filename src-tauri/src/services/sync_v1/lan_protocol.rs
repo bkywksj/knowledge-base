@@ -1,4 +1,4 @@
-//! 局域网同步：服务端（桌面）与客户端（手机 / 桌面）共用的协议约定。
+//! 局域网同步：服务端（桌面 / 手机当主机）与客户端（手机 / 桌面）共用的协议约定。
 //!
 //! 设计（见 docs/tasks/lan-sync-tasks.md）：
 //! - 电脑端把笔记照常同步进本机一个「局域网库目录」（LocalPathBackend），
@@ -7,8 +7,6 @@
 //! - 只暴露同步接口这几个操作，不是通用文件服务；所有路径在服务端二次校验
 //! - 安全：自签证书 + 客户端按证书指纹固定校验（配对时拿到）+ Bearer 令牌；
 //!   写操作必须持有库级租约，防止手机和电脑同时写 manifest 互相覆盖
-// 服务端专用的常量 / 校验只在桌面端用（手机只做客户端），手机端编译时放行未使用警告
-#![cfg_attr(mobile, allow(dead_code))]
 
 /// 所有接口的前缀（带版本，以后协议不兼容时换 v2）
 pub const API_PREFIX: &str = "/kb-lan/v1";
@@ -75,6 +73,14 @@ pub fn cert_fingerprint(der: &[u8]) -> String {
         .map(|b| format!("{:02X}", b))
         .collect::<Vec<_>>()
         .join(":")
+}
+
+/// 生成配对令牌：32 字节随机数的十六进制（64 位）
+pub fn random_token() -> String {
+    use rand::RngCore;
+    let mut buf = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut buf);
+    buf.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// 常量时间比较令牌，避免按响应时间逐字节猜

@@ -1184,7 +1184,9 @@ pub fn run() {
                 });
             }
 
-            // 局域网同步：上次开着的话启动时自动拉起（同 MCP HTTP）
+            // 局域网同步：上次开着的话启动时自动拉起（同 MCP HTTP）。
+            // 只在桌面端：手机当主机是临时的，只在「当主机」页面开着时提供服务（离开页面就停），
+            // 冷启动不该自己开监听端口
             #[cfg(desktop)]
             {
                 let app_handle_lan = app.handle().clone();
@@ -1326,16 +1328,11 @@ pub fn run() {
             commands::mcp::start_mcp_http,
             #[cfg(desktop)]
             commands::mcp::stop_mcp_http,
-            // 局域网同步（桌面端专属：手机只做客户端）
-            #[cfg(desktop)]
+            // 局域网同步（本机当主机）：桌面常驻；手机在「当主机」页面开着时临时开启
             commands::lan_sync::lan_sync_status,
-            #[cfg(desktop)]
             commands::lan_sync::lan_sync_enable,
-            #[cfg(desktop)]
             commands::lan_sync::lan_sync_disable,
-            #[cfg(desktop)]
             commands::lan_sync::lan_sync_pairing_payload,
-            #[cfg(desktop)]
             commands::lan_sync::lan_sync_reset_pairing,
             // 系统模块
             commands::system::greet,

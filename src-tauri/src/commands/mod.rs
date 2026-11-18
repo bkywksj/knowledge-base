@@ -21,8 +21,7 @@ pub mod image;
 pub mod import;
 pub mod links;
 pub mod mcp;
-// 局域网同步（手机 ↔ 本机）：仅桌面端
-#[cfg(desktop)]
+// 局域网同步（本机当主机）：桌面常驻，手机在「当主机」页面临时开启
 pub mod lan_sync;
 // 移动端"检查更新"（桌面端用 tauri-plugin-updater，不需要这个）
 #[cfg(mobile)]
