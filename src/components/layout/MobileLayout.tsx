@@ -162,7 +162,7 @@ export function MobileLayout() {
       }`}
       // Android 状态栏让出 padding（系统会在这块绘制信号/电量）。
       // box-border 下 h-screen 自动扣掉这段，不会溢出。
-      style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
+      style={{ paddingTop: "var(--kb-safe-top)" }}
     >
       {/* 主内容：可滚动 */}
       <main className="relative flex-1 overflow-y-auto overflow-x-hidden">

@@ -9,6 +9,11 @@
    ═══════════════════════════════════════════════════════════ */
 
 :root {
+  /* ── 顶部安全区 ── 所有让状态栏的地方都用它，别再直接写 env(safe-area-inset-top)：
+     旧版 Android WebView 的 env 只算刘海不算状态栏，澎湃 OS 3 上取到 0，页面头部压在状态栏上（用户反馈）。
+     --kb-native-sat 是原生层报的真实状态栏高度（src/lib/systemBars.ts），取较大者；桌面端两者都是 0 */
+  --kb-safe-top: max(env(safe-area-inset-top, 0px), var(--kb-native-sat, 0px));
+
   /* ── 底色 ── */
   --m-page: var(--kb-bg-panel, #F6F3FD);
   --m-surface: var(--kb-bg-raised, #FFFFFF);
@@ -438,7 +443,7 @@
 /* 编辑页「更多 → 演示」：复用 PC 的 SlideshowView。退出按钮放大到 44；「← / → 翻页 · Esc 退出」是键盘提示，手机上没意义 */
 /* 全屏层画在状态栏底下（edge-to-edge）：顶部让出状态栏，否则标题和关闭按钮压在时间 / 信号图标上（真机实测） */
 .m-slideshow [aria-label="幻灯片演示"] {
-  padding-top: env(safe-area-inset-top, 0px);
+  padding-top: var(--kb-safe-top);
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 .m-slideshow [aria-label="幻灯片演示"] > div:first-child { padding: 6px 8px 6px 16px !important; font-size: 13px !important; }
@@ -512,7 +517,7 @@
 /* 手机白板「历史版本」：复用 PC 的 SnapshotDrawer（mobile 模式加 rootClassName），次要字换手机令牌、按钮热区 44 */
 .m-wb-history .ant-typography-secondary { color: var(--m-ink3) !important; }
 /* 抽屉铺满整屏、画在状态栏底下：标题栏让出状态栏 */
-.m-wb-history .ant-drawer-header { padding-top: calc(env(safe-area-inset-top, 0px) + 12px) !important; }
+.m-wb-history .ant-drawer-header { padding-top: calc(var(--kb-safe-top) + 12px) !important; }
 .m-wb-history .ant-drawer-header .ant-btn,
 .m-wb-history .ant-drawer-body > div > div:first-child .ant-btn { min-height: 44px; }
 .m-wb-history .ant-drawer-close {
@@ -544,11 +549,11 @@
   border-radius: 0;
   min-height: 100dvh;
   /* 左右不留边：Excalidraw 手机工具条要 ~380px，留边就被裁；标题和按钮行自己留边 */
-  padding: calc(env(safe-area-inset-top, 0px) + 8px) 0 calc(env(safe-area-inset-bottom, 0px) + 8px);
+  padding: calc(var(--kb-safe-top) + 8px) 0 calc(env(safe-area-inset-bottom, 0px) + 8px);
 }
 .m-wb-modal .ant-modal-header,
 .m-wb-modal .ant-modal-footer { padding: 0 12px; }
-.m-wb-modal .ant-modal-close { width: 44px; height: 44px; top: calc(env(safe-area-inset-top, 0px) + 4px); }
+.m-wb-modal .ant-modal-close { width: 44px; height: 44px; top: calc(var(--kb-safe-top) + 4px); }
 .m-wb-modal .ant-modal-footer .ant-btn,
 .m-wb-modal .ant-modal-title .ant-btn { min-height: 44px; }
 
@@ -679,4 +684,4 @@
 
 /* 全局提示（message.success 等）：antd 默认贴视口顶 8px，手机页面从状态栏底下开始画，提示会压在状态栏上。
    往下让一个状态栏；桌面端 safe-area-inset-top 为 0，位置不变 */
-.ant-message { top: calc(env(safe-area-inset-top, 0px) + 8px) !important; }
+.ant-message { top: calc(var(--kb-safe-top) + 8px) !important; }

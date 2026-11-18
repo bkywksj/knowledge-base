@@ -145,7 +145,7 @@ export default function QuickCapturePage() {
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col bg-gradient-to-br from-amber-500 via-orange-500 to-amber-600"
-      style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
+      style={{ paddingTop: "var(--kb-safe-top)" }}
     >
       {/* 顶栏 */}
       <header className="flex h-12 items-center justify-between px-3 shrink-0">

@@ -586,7 +586,7 @@ export function MobileNoteEditor() {
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col"
-      style={{ background: "var(--m-surface)", paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: keyboardInset }}
+      style={{ background: "var(--m-surface)", paddingTop: "var(--kb-safe-top)", paddingBottom: keyboardInset }}
     >
       {/* 顶栏：返回 · 保存状态 · 编辑/阅读 · 问 AI · 更多 */}
       <header className="flex h-12 shrink-0 items-center pl-1 pr-1.5">
@@ -871,7 +871,7 @@ export function MobileNoteEditor() {
 
       {/* 思维导图：PC 是右侧分栏，手机改全屏；纯大纲笔记可点「编辑」直接改，改动写回正文自动保存 */}
       {mindMapOpen && (
-        <div className="m-mindmap fixed inset-0 z-[70] flex flex-col" style={{ background: "var(--m-surface)", paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+        <div className="m-mindmap fixed inset-0 z-[70] flex flex-col" style={{ background: "var(--m-surface)", paddingTop: "var(--kb-safe-top)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
           <Suspense fallback={<div className="m-t-meta py-10 text-center">加载中…</div>}>
             <MobileMindMap
               markdown={contentRef.current}

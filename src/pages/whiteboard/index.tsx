@@ -460,7 +460,7 @@ export default function WhiteboardPage() {
       // 全屏盖住底部 Tab（同手机编辑页）；画布用 Excalidraw 自带的手机布局与触屏手势
       <div
         className="fixed inset-0 z-50 flex flex-col"
-        style={{ background: "var(--m-surface)", paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+        style={{ background: "var(--m-surface)", paddingTop: "var(--kb-safe-top)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
       >
         {!presenting && (
           <header className="flex h-12 shrink-0 items-center gap-1 pr-1.5 pl-1">

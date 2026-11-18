@@ -451,7 +451,7 @@ export function MobileAiChat() {
   return (
     <div
       className="m-root fixed inset-0 z-50 flex flex-col"
-      style={{ background: "var(--m-page)", color: "var(--m-ink)", paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: keyboardInset }}
+      style={{ background: "var(--m-page)", color: "var(--m-ink)", paddingTop: "var(--kb-safe-top)", paddingBottom: keyboardInset }}
     >
       <div className="shrink-0">
         <MNavBar
