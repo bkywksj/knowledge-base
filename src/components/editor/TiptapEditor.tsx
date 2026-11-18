@@ -1673,6 +1673,10 @@ export function TiptapEditor({
       TableWithMarkdown.configure({
         resizable: true,
         HTMLAttributes: { class: "tiptap-table" },
+        // 手机上加大「没设列宽的列」的最小宽度（默认 25px）。电脑上拖过某一列宽度的表格，那一列记了
+        // 固定宽度，其余列只有最小宽度；手机屏幕窄，固定列占掉大半，其余列被挤成一个字一行（用户反馈视频）。
+        // 加大后表格总宽超出屏幕就在 .tableWrapper 里横向滑动。电脑端保持默认，不影响已有排版
+        cellMinWidth: /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ? 88 : 25,
       }),
       TableRow,
       TableCell,

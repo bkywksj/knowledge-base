@@ -12,6 +12,9 @@ import { useCallback, useRef } from "react";
  * - 手指移动超过阈值即判定为"滚动/拖拽"→ 取消长按，且不误触发普通点击（避免
  *   滑动列表时误进入详情）；
  * - 长按已触发时抑制随后的 tap（onClick 不再触发），避免"长按完手一抬又进详情"；
+ * - 🔴 轻点在浏览器的 click 事件里触发，不在 pointerup 里：pointerup 时就跳转的话，页面立即重绘，
+ *   随后补发的 click 按坐标落到重绘后同一位置的新元素上。用户反馈：点进一个没有子文件夹的文件夹，
+ *   原来那一行的位置变成「新建子文件夹」，紧跟着就弹出了新建框；
  * - 长按成功给一次轻微震动反馈（navigator.vibrate，Android 支持；iOS/桌面自动降级）；
  * - `onContextMenu` 一并返回并 preventDefault，压掉 Android WebView 长按弹出的
  *   文字选择/系统菜单。
@@ -40,6 +43,26 @@ export interface LongPressHandlers {
   onPointerLeave: (e: React.PointerEvent) => void;
   onPointerCancel: (e: React.PointerEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
+  onClick: (e: React.MouseEvent) => void;
+}
+
+/**
+ * 长按触发后抬手：吞掉紧跟着的那一次 click（不管落在哪个元素上）。
+ * 长按通常会弹出面板，面板的遮罩正好盖在手指下，浏览器补发的 click 落到遮罩上，刚打开的面板立刻又关了
+ * （真机自动化测试里复现；系统长按手势一般会取消这次 click，但不能依赖）。行自己的 click 由 handleClick 拦。
+ */
+function swallowNextClick() {
+  const swallow = (e: MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    cleanup();
+  };
+  const cleanup = () => {
+    document.removeEventListener("click", swallow, true);
+    window.clearTimeout(timer);
+  };
+  const timer = window.setTimeout(cleanup, 500);
+  document.addEventListener("click", swallow, true);
 }
 
 export function useLongPress(
@@ -102,16 +125,27 @@ export function useLongPress(
     [clearTimer, moveTolerance],
   );
 
+  // 抬手只收尾；普通点击交给下面的 onClick（原因见文件头）
   const onPointerUp = useCallback(() => {
     clearTimer();
     startRef.current = null;
-    // 长按已触发 或 本次是滑动 → 都不触发普通点击
-    if (firedRef.current || movedRef.current) {
-      firedRef.current = false;
-      return;
-    }
-    onClick?.();
-  }, [clearTimer, onClick]);
+    if (firedRef.current) swallowNextClick();
+  }, [clearTimer]);
+
+  const handleClick = useCallback(
+    (e: React.MouseEvent) => {
+      // 长按已触发 或 本次是滑动 → 都不触发普通点击；也拦下冒泡，免得外层按钮把它当成点击
+      if (firedRef.current || movedRef.current) {
+        firedRef.current = false;
+        movedRef.current = false;
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      onClick?.();
+    },
+    [onClick],
+  );
 
   const onPointerLeave = useCallback(() => {
     clearTimer();
@@ -135,5 +169,6 @@ export function useLongPress(
     onPointerLeave,
     onPointerCancel,
     onContextMenu,
+    onClick: handleClick,
   };
 }
