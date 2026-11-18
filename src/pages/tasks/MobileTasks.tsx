@@ -16,6 +16,7 @@ import { taskApi, taskCategoryApi } from "@/lib/api";
 import type { Task, TaskCategory, TaskQuery } from "@/types";
 import { useAppStore } from "@/store";
 import { useLongPress } from "@/hooks/useLongPress";
+import { useSheetDragToClose } from "@/hooks/useSheetDragToClose";
 import {
   applySmartFilter,
   describeDueDate,
@@ -84,6 +85,7 @@ export function MobileTasks() {
   const [keyword, setKeyword] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
+  const filterSheetRef = useSheetDragToClose(filterOpen, () => setFilterOpen(false));
   const [doneOpen, setDoneOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [sheetTask, setSheetTask] = useState<Task | null>(null);
@@ -344,7 +346,7 @@ export function MobileTasks() {
       {filterOpen && (
         <div className="m-sheet-mask" role="dialog" aria-modal="true" aria-label="筛选待办">
           <div className="m-sheet-backdrop" onClick={() => setFilterOpen(false)} />
-          <div className="m-sheet">
+          <div className="m-sheet" ref={filterSheetRef}>
             <div className="m-sheet-grabber" />
             <div className="m-gutter m-t-sec pt-1 pb-3">筛选</div>
             <div className="m-gutter">

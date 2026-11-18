@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
+import { useSheetDragToClose } from "@/hooks/useSheetDragToClose";
 
 /**
  * 移动端底部动作面板（Bottom Action Sheet）。
@@ -49,6 +50,7 @@ interface ActionSheetProps {
 }
 
 export function ActionSheet({ open, title, subtitle, headerIcon, grid, items, onClose }: ActionSheetProps) {
+  const sheetRef = useSheetDragToClose(open, onClose);
   // 打开时锁定背景滚动，关闭/卸载时还原
   useEffect(() => {
     if (!open) return;
@@ -72,7 +74,7 @@ export function ActionSheet({ open, title, subtitle, headerIcon, grid, items, on
     <div className="m-sheet-mask" role="dialog" aria-modal="true">
       <div className="m-sheet-backdrop" onClick={onClose} />
 
-      <div className="m-sheet">
+      <div className="m-sheet" ref={sheetRef}>
         <div className="m-sheet-grabber" />
 
         {title && (

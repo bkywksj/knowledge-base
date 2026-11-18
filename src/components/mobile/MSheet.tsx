@@ -1,11 +1,12 @@
 import { useEffect } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { Check } from "lucide-react";
+import { useSheetDragToClose } from "@/hooks/useSheetDragToClose";
 
 /**
  * 手机端通用底部面板外壳：遮罩 + 抓手 + 标题 + 内容 + 底部「取消」。
  * 和 ActionSheet 同一套样式（.m-sheet-*），区别是内容由调用方自己放——单选列表、表单都行。
- * 打开时锁背景滚动；点遮罩 / 「取消」关闭。
+ * 打开时锁背景滚动；点遮罩 / 「取消」/ 下滑面板关闭。
  */
 export function MSheet({
   open,
@@ -29,6 +30,7 @@ export function MSheet({
   footer?: ReactNode | null;
   cancelText?: string;
 }) {
+  const sheetRef = useSheetDragToClose(open, onClose);
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
@@ -43,7 +45,7 @@ export function MSheet({
   return (
     <div className="m-sheet-mask" role="dialog" aria-modal="true" aria-label={title}>
       <div className="m-sheet-backdrop" onClick={onClose} />
-      <div className="m-sheet">
+      <div className="m-sheet" ref={sheetRef}>
         <div className="m-sheet-grabber" />
         <div className="m-gutter pt-1 pb-3">
           <div className="flex items-baseline gap-2">

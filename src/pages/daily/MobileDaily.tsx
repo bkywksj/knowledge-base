@@ -1,9 +1,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import type { ReactNode, TouchEvent as ReactTouchEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, Pencil, Plus } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, ChevronLeft, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
 import { message } from "antd";
-import { dailyApi } from "@/lib/api";
+import { dailyApi, trashApi } from "@/lib/api";
 import { parseDailyTimeline } from "@/lib/dailyTimeline";
 import { appendQuickNoteToDaily } from "@/lib/mobileQuickNote";
 import { useAppStore } from "@/store";
@@ -11,6 +11,9 @@ import type { DailyEntry, Note, Task } from "@/types";
 import { MGroup, MSectionHeader } from "@/components/mobile/primitives";
 import { useFeatureEnabled } from "@/hooks/useFeatureEnabled";
 import { useDailyTasks } from "@/hooks/useDailyTasks";
+import { useLongPress } from "@/hooks/useLongPress";
+import { SwipeRow } from "@/components/mobile/SwipeRow";
+import { ActionSheet } from "@/components/mobile/ActionSheet";
 
 /**
  * 移动端日记页（v4 原型 09 屏，对应 PC 日记页）
@@ -22,7 +25,7 @@ import { useDailyTasks } from "@/hooks/useDailyTasks";
  * - 当天卡片：带时间戳的段落排成时间线（parseDailyTimeline 认三种写法），其余文字作预览；点卡片 / 铅笔进编辑器
  * - 选中今天：卡片底部直接「记一笔」追加（与首页同一写法）；选别的日子：按钮「打开 / 开始写 M 月 D 日的日记」
  * - 卡片下方「当天待办」：截止在这天 / 这天完成的待办，可勾选、可直接加一条截止在这天的
- * - 下方「本月 N 篇」列表，点一行切到那一天
+ * - 下方「本月 N 篇」列表，点一行切到那一天；左滑 / 长按可打开编辑或删除（与笔记列表同一套手势）
  *
  * 日记日期集合用 listAll 一次拿全（轻量元数据），换周 / 换月不再逐月请求。
  */
@@ -94,6 +97,8 @@ export function MobileDaily() {
   const [loadingNote, setLoadingNote] = useState(false);
   const [quick, setQuick] = useState("");
   const [sending, setSending] = useState(false);
+  /** 本月列表长按出菜单的那一篇 */
+  const [sheetEntry, setSheetEntry] = useState<DailyEntry | null>(null);
 
   const loadAll = useCallback(async () => {
     try {
@@ -151,23 +156,52 @@ export function MobileDaily() {
     setView({ year: new Date().getFullYear(), month: new Date().getMonth() + 1 });
   }
 
-  // 日历区手势：左右滑 = 换周（展开时换月）；下拉展开、上推收起
-  const drag = useRef<{ x: number; y: number } | null>(null);
-  function onCalDown(e: ReactPointerEvent) {
-    drag.current = { x: e.clientX, y: e.clientY };
+  // 日历区手势：左右滑 = 换周（展开时换月）；下拉展开、上推收起。
+  // 🔴 用 touch 事件不用 pointer 事件：日历区 touchAction 是 pan-y，竖向滑动由浏览器当页面滚动处理，
+  // 一开始滚动就发 pointercancel、收不到 pointerup —— 以前「下拉展开」从来没生效过，用户以为抓手拉不动（用户反馈）。
+  // touch 事件在页面滚动时照样有 touchend。页面真的滚了（日历位置变了）就不算展开 / 收起手势
+  const calRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; y: number; top: number } | null>(null);
+  function onCalStart(e: ReactTouchEvent) {
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    drag.current = { x: t.clientX, y: t.clientY, top: calRef.current?.getBoundingClientRect().top ?? 0 };
   }
-  function onCalUp(e: ReactPointerEvent) {
+  function onCalEnd(e: ReactTouchEvent) {
     const s = drag.current;
     drag.current = null;
-    if (!s) return;
-    const dx = e.clientX - s.x;
-    const dy = e.clientY - s.y;
+    const t = e.changedTouches[0];
+    if (!s || !t) return;
+    const dx = t.clientX - s.x;
+    const dy = t.clientY - s.y;
     if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.2) {
       const dir = dx < 0 ? 1 : -1;
       if (expanded) shiftMonth(dir);
       else setSelected((d) => addDays(d, dir * 7));
     } else if (Math.abs(dy) > 40 && Math.abs(dy) > Math.abs(dx) * 1.2) {
-      toggleExpanded(dy > 0);
+      if (dy > 0) {
+        // 下拉：页面不在顶部时这一下是在把页面往回滚，不算展开
+        const scrolled = Math.abs((calRef.current?.getBoundingClientRect().top ?? 0) - s.top) > 4;
+        if (!scrolled) toggleExpanded(true);
+      } else {
+        // 上推：整月展开后页面变长，上推必然带着页面滚动，不能拿位置变化来排除（真机实测收不起来）
+        toggleExpanded(false);
+      }
+    }
+  }
+
+  function openEntry(d: DailyEntry) {
+    navigate(`/notes/${d.id}`);
+  }
+
+  async function deleteEntry(d: DailyEntry) {
+    try {
+      await trashApi.softDelete(d.id);
+      message.success("已移到回收站");
+      await loadAll();
+      if (d.daily_date === selected) await loadDay(selected);
+    } catch (e) {
+      message.error(`删除失败: ${e}`);
     }
   }
 
@@ -233,7 +267,7 @@ export function MobileDaily() {
       </div>
 
       {/* 日历：周条 / 整月（原型不套卡片，直接铺在页面上） */}
-      <div className="m-gutter mt-1 select-none" style={{ touchAction: "pan-y" }} onPointerDown={onCalDown} onPointerUp={onCalUp} onPointerCancel={() => (drag.current = null)}>
+      <div ref={calRef} className="m-gutter mt-1 select-none" style={{ touchAction: "pan-y" }} onTouchStart={onCalStart} onTouchEnd={onCalEnd} onTouchCancel={() => (drag.current = null)}>
         <div>
           <div className="grid grid-cols-7 pb-1.5 text-center">
             {WEEK_HEAD.map((w) => (
@@ -345,23 +379,62 @@ export function MobileDaily() {
           {monthList.length === 0 ? (
             <div className="m-t-meta py-6 text-center">这个月还没有日记</div>
           ) : (
-            monthList.map((d) => {
-              const on = d.daily_date === selected;
-              return (
-                <button key={d.id} type="button" className="m-row" style={{ "--m-inset": "60px" } as React.CSSProperties} onClick={() => setSelected(d.daily_date)} aria-current={on ? "date" : undefined} aria-label={`${d.daily_date} ${weekdayCN(d.daily_date)}`}>
-                  <span className="m-num w-8 shrink-0 text-[18px] font-bold" style={{ color: "var(--m-accent-ink)" }}>
-                    {parseDate(d.daily_date).getDate()}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-[15px]" style={on ? { color: "var(--m-accent-ink)", fontWeight: 700 } : { color: "var(--m-ink)" }}>
-                    {d.title || d.daily_date}
-                  </span>
-                  <span className="m-t-cap m-num shrink-0">{d.word_count} 字</span>
-                </button>
-              );
-            })
+            monthList.map((d, i) => (
+              <div key={d.id} className="relative">
+                {/* 分隔线画在左滑容器外，滑动时不跟着动（同笔记列表） */}
+                {i > 0 && <span className="pointer-events-none absolute top-0 right-0 left-[60px] z-[1] h-[0.5px]" style={{ background: "var(--m-hair)" }} />}
+                <SwipeRow
+                  actions={[
+                    { key: "open", label: "编辑", icon: <Pencil size={18} />, tone: "info", onClick: () => openEntry(d) },
+                    { key: "del", label: "删除", icon: <Trash2 size={18} />, tone: "bad", onClick: () => void deleteEntry(d) },
+                  ]}
+                >
+                  <DailyRow entry={d} on={d.daily_date === selected} onPick={() => setSelected(d.daily_date)} onMenu={() => setSheetEntry(d)} />
+                </SwipeRow>
+              </div>
+            ))
           )}
         </MGroup>
       </div>
+
+      <ActionSheet
+        open={sheetEntry != null}
+        title={sheetEntry?.title || sheetEntry?.daily_date}
+        subtitle={sheetEntry ? `${sheetEntry.word_count} 字` : undefined}
+        items={
+          sheetEntry
+            ? [
+                { key: "open", label: "打开编辑", icon: <Pencil size={20} />, onClick: () => openEntry(sheetEntry) },
+                { key: "del", label: "删除（移到回收站）", icon: <Trash2 size={20} />, danger: true, onClick: () => void deleteEntry(sheetEntry) },
+              ]
+            : []
+        }
+        onClose={() => setSheetEntry(null)}
+      />
+    </div>
+  );
+}
+
+/** 本月列表一行：轻点切到那一天，长按出菜单（外层 SwipeRow 负责左滑） */
+function DailyRow({ entry, on, onPick, onMenu }: { entry: DailyEntry; on: boolean; onPick: () => void; onMenu: () => void }) {
+  const lp = useLongPress(onMenu, { onClick: onPick });
+  return (
+    <div
+      {...lp}
+      role="button"
+      tabIndex={0}
+      className="m-row cursor-pointer select-none"
+      style={{ WebkitTouchCallout: "none" }}
+      aria-current={on ? "date" : undefined}
+      aria-label={`${entry.daily_date} ${weekdayCN(entry.daily_date)}`}
+    >
+      <span className="m-num w-8 shrink-0 text-[18px] font-bold" style={{ color: "var(--m-accent-ink)" }}>
+        {parseDate(entry.daily_date).getDate()}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-[15px]" style={on ? { color: "var(--m-accent-ink)", fontWeight: 700 } : { color: "var(--m-ink)" }}>
+        {entry.title || entry.daily_date}
+      </span>
+      <span className="m-t-cap m-num shrink-0">{entry.word_count} 字</span>
     </div>
   );
 }

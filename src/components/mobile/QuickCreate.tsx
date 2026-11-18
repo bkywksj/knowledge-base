@@ -17,6 +17,7 @@ import { appendQuickNoteToDaily } from "@/lib/mobileQuickNote";
 import { quickTextToNote } from "@/lib/quickNote";
 import { todayYmd } from "@/lib/utils";
 import { useAppStore } from "@/store";
+import { useSheetDragToClose } from "@/hooks/useSheetDragToClose";
 import type { Folder, NoteTemplate } from "@/types";
 import { KingKongIcon } from "./KingKongIcons";
 import { FolderPickerSheet } from "./FolderPickerSheet";
@@ -67,6 +68,7 @@ export function QuickCreatePanel({ defaultFolderId = null, onDone, replaceOnNavi
   const [folders, setFolders] = useState<Folder[]>([]);
   const [pickFolder, setPickFolder] = useState(false);
   const [templates, setTemplates] = useState<NoteTemplate[] | null>(null);
+  const templatesRef = useSheetDragToClose(templates != null, () => setTemplates(null));
   const [clipOpen, setClipOpen] = useState(false);
   const [clipUrl, setClipUrl] = useState("");
   const [clipping, setClipping] = useState(false);
@@ -303,7 +305,7 @@ export function QuickCreatePanel({ defaultFolderId = null, onDone, replaceOnNavi
       {templates && (
         <div className="m-sheet-mask" role="dialog" aria-modal="true">
           <div className="m-sheet-backdrop" onClick={() => setTemplates(null)} />
-          <div className="m-sheet">
+          <div className="m-sheet" ref={templatesRef}>
             <div className="m-sheet-grabber" />
             <div className="m-gutter m-t-sec pt-1 pb-3">从模板新建</div>
             <div className="m-gutter">
@@ -375,6 +377,7 @@ export function QuickCreatePanel({ defaultFolderId = null, onDone, replaceOnNavi
 
 /** FAB 点开的底部面板 */
 export function QuickCreateSheet({ open, onClose, defaultFolderId }: { open: boolean; onClose: () => void; defaultFolderId?: number | null }) {
+  const sheetRef = useSheetDragToClose(open, onClose);
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
@@ -388,7 +391,7 @@ export function QuickCreateSheet({ open, onClose, defaultFolderId }: { open: boo
   return (
     <div className="m-sheet-mask" role="dialog" aria-modal="true" aria-label="新建">
       <div className="m-sheet-backdrop" onClick={onClose} />
-      <div className="m-sheet">
+      <div className="m-sheet" ref={sheetRef}>
         <div className="m-sheet-grabber" />
         <QuickCreatePanel defaultFolderId={defaultFolderId} onDone={onClose} />
       </div>

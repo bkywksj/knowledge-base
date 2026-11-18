@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from "react";
+import { useSheetDragToClose } from "@/hooks/useSheetDragToClose";
 import { Check, Folder as FolderIcon, Inbox } from "lucide-react";
 import type { Folder } from "@/types";
 
@@ -40,6 +41,7 @@ function flatten(list: Folder[], depth: number, skipId: number | undefined, out:
 
 export function FolderPickerSheet({ open, title, folders, currentId, movingFolderId, rootLabel, onPick, onClose }: Props) {
   const items = useMemo(() => flatten(folders, 0, movingFolderId, []), [folders, movingFolderId]);
+  const sheetRef = useSheetDragToClose(open, onClose);
 
   useEffect(() => {
     if (!open) return;
@@ -80,7 +82,7 @@ export function FolderPickerSheet({ open, title, folders, currentId, movingFolde
   return (
     <div className="m-sheet-mask" role="dialog" aria-modal="true">
       <div className="m-sheet-backdrop" onClick={onClose} />
-      <div className="m-sheet">
+      <div className="m-sheet" ref={sheetRef}>
         <div className="m-sheet-grabber" />
         <div className="m-gutter m-t-sec pt-1 pb-3">{title}</div>
         <div className="m-gutter">

@@ -624,17 +624,14 @@ export function MobileNoteEditor() {
       </header>
 
       <main className="m-gutter flex-1 overflow-y-auto pb-16">
-        <input
+        <TitleField
           value={title}
           readOnly={readOnly || readingMode}
-          onChange={(e) => {
-            titleRef.current = e.target.value;
-            setTitle(e.target.value);
+          onChange={(v) => {
+            titleRef.current = v;
+            setTitle(v);
             scheduleSave();
           }}
-          placeholder="无标题笔记"
-          className="w-full bg-transparent pt-3 text-[26px] font-bold leading-snug outline-none placeholder:text-[var(--m-ink4)]"
-          style={{ color: "var(--m-ink)", letterSpacing: "-0.01em" }}
         />
 
         {/* 文件夹（点击移动）· 标签 · 链入 */}
@@ -1018,5 +1015,44 @@ function SaveBadge({ status }: { status: SaveStatus }) {
       <span className="m-dot" style={{ width: 6, height: 6, background: dirty ? "var(--m-ink4)" : "var(--m-ok)" }} />
       {dirty ? "未保存" : "已保存"}
     </span>
+  );
+}
+
+/**
+ * 标题输入：随内容自动增高、长标题换行显示全。
+ *
+ * 以前是单行 input，长标题只露出前半截（用户反馈，希望像跑马灯一样滚动显示）。这里改成换行而不是滚动：
+ * 一眼看全不用等，标题同时是编辑框，内容在动时很难点准光标；电脑端的标题本来也是换行显示。
+ * 标题仍是一行文字：回车不换行，粘贴进来的换行替换成空格。
+ */
+function TitleField({ value, readOnly, onChange }: { value: string; readOnly: boolean; onChange: (v: string) => void }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const fit = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, []);
+  useEffect(fit, [value, fit]);
+  // 横竖屏切换 / 字体加载后宽度变了，行数跟着变
+  useEffect(() => {
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [fit]);
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      value={value}
+      readOnly={readOnly}
+      onChange={(e) => onChange(e.target.value.replace(/\r?\n/g, " "))}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.preventDefault();
+      }}
+      enterKeyHint="done"
+      placeholder="无标题笔记"
+      className="block w-full resize-none overflow-hidden bg-transparent pt-3 text-[26px] font-bold leading-snug outline-none placeholder:text-[var(--m-ink4)]"
+      style={{ color: "var(--m-ink)", letterSpacing: "-0.01em" }}
+    />
   );
 }

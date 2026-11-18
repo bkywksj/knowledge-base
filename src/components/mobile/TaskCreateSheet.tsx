@@ -5,6 +5,7 @@ import { Bell, Calendar, Flag, Repeat, Star, Tag } from "lucide-react";
 import { taskApi, taskCategoryApi } from "@/lib/api";
 import type { CreateTaskInput, Task, TaskCategory } from "@/types";
 import { useKeyboardInset } from "@/hooks/useKeyboardInset";
+import { useSheetDragToClose } from "@/hooks/useSheetDragToClose";
 import { describeRepeat } from "@/lib/taskRepeat";
 import { REMIND_OPTIONS, dueChipLabel, flattenCategories, remindLabel, toLocalInput, toSqliteDate } from "@/lib/taskForm";
 import { MSheet, PickRow } from "./MSheet";
@@ -58,6 +59,7 @@ interface TaskCreateSheetProps {
 
 export function TaskCreateSheet({ open, onClose, onCreated }: TaskCreateSheetProps) {
   const keyboardInset = useKeyboardInset();
+  const sheetRef = useSheetDragToClose(open, onClose);
   const inputRef = useRef<HTMLInputElement>(null);
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
@@ -142,6 +144,7 @@ export function TaskCreateSheet({ open, onClose, onCreated }: TaskCreateSheetPro
       <div className="m-sheet-backdrop" onClick={onClose} />
 
       <div
+        ref={sheetRef}
         className="m-sheet"
         style={{
           background: "var(--m-surface)",
