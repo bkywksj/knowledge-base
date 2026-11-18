@@ -162,6 +162,8 @@ mod tests {
             .unwrap();
         let map = db.list_url_mappings(id).unwrap();
         assert_eq!(map.get(INTERNAL).map(String::as_str), Some(ORIGINAL));
+        // 先关库：Windows 下 test.db 被连接占着时删不掉目录，测试会在 %TEMP% 留垃圾
+        drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -179,6 +181,8 @@ mod tests {
         let map = db.list_url_mappings(id).unwrap();
         assert_eq!(map.get(INTERNAL).map(String::as_str), Some(ORIGINAL));
         assert!(!map.contains_key(ORIGINAL));
+        // 先关库：Windows 下 test.db 被连接占着时删不掉目录，测试会在 %TEMP% 留垃圾
+        drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

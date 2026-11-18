@@ -1195,6 +1195,8 @@ mod tests {
         assert_eq!(second.note_id, first.note_id);
         assert!(!second.was_synced, "文件没动过，不该再同步一遍");
 
+        // 先关库：Windows 下 test.db 被连接占着时删不掉目录，测试会在 %TEMP% 留垃圾
+        drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1230,6 +1232,8 @@ mod tests {
             .unwrap();
         assert!(body.contains("外部编辑器改过的正文"));
 
+        // 先关库：Windows 下 test.db 被连接占着时删不掉目录，测试会在 %TEMP% 留垃圾
+        drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1256,6 +1260,8 @@ mod tests {
         assert!(on_disk.contains("![图](./a.png)"), "原文链接被改写了：{}", on_disk);
         assert!(!on_disk.contains("asset.localhost"));
 
+        // 先关库：Windows 下 test.db 被连接占着时删不掉目录，测试会在 %TEMP% 留垃圾
+        drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
