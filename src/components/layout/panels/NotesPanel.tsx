@@ -2909,7 +2909,9 @@ export function NotesPanel() {
     >
       {/* 视图标题栏（v4 原型 .ph：无底边线、标题 14/700，样式见 global.css .kb-ph） */}
       <div className="kb-ph">
-        <span className="kb-ph-title">笔记</span>
+        <span className="kb-ph-title" title="把 .md / .txt 文件拖到下方文件夹区域，可直接新建为笔记">
+          笔记
+        </span>
         <div style={{ flex: 1 }} />
         <Button
           type="text"
@@ -3077,20 +3079,14 @@ export function NotesPanel() {
       </div>
 
       {/* 文件夹小节 —— 兼任 OS 文件拖入区（.md/.txt → 新建笔记）
-          Q-004：启用 virtual scroll 时本层必须 overflow-hidden + flex-col，让 Tree 占满剩余空间且自己接管滚动；
-          节点数少时退化回 overflow-auto，保持旧体验 */}
+          本层固定 overflow-hidden + flex-col、自己不滚：文件夹卡片内部滚动，标签卡片钉在下方，
+          文件夹多了也不会把标签挤出视野（Q-004 虚拟滚动时 Tree 同样在卡片里自己接管滚动） */}
       <div
-        className={
-          treeVirtualActive
-            ? "flex-1 overflow-hidden flex flex-col"
-            : "flex-1 overflow-auto"
-        }
+        className="flex-1 overflow-hidden flex flex-col"
         style={{
           minHeight: 0,
           paddingTop: 4,
-          // 始终预留滚动条空间——展开未分类后内容超长出现滚动条时，
-          // 不会让上方文件夹/标题区的可用宽度突然收缩。WebView2 / Chromium 94+ 原生支持
-          scrollbarGutter: "stable",
+          paddingBottom: 10,
           outline: fileDragOver
             ? `2px dashed ${token.colorPrimary}`
             : "none",
@@ -3271,8 +3267,12 @@ export function NotesPanel() {
           <div
             ref={treeContainerRef}
             // Q-004：virtual 模式下让本层 flex-1 + 自己 overflow-hidden，Tree 才能拿到稳定可测的高度（外层不滚 → 内层撑满）
-            className={treeVirtualActive ? "flex-1 min-h-0 overflow-hidden" : undefined}
-            style={{ padding: "0 12px" }}
+            // 文件夹树包成一张卡片，与下方标签卡片分区（用户反馈：左栏希望有区域分割）
+            // 非虚拟：高度随内容（flex 0 1 auto），放不下时收缩并内部滚动，标签卡片紧跟其下；
+            // 虚拟：flex-1 撑满剩余空间，Tree 拿测得的高度自己滚
+            className={`kb-panel-card min-h-0 ${treeVirtualActive ? "flex-1 overflow-hidden" : "overflow-auto"}`}
+            // 预留滚动条空间：展开未分类后出现滚动条时，行宽不会突然收缩
+            style={{ scrollbarGutter: "stable" }}
             tabIndex={0}
             onKeyDown={handleTreeKeyDown}
           >
@@ -3440,13 +3440,10 @@ export function NotesPanel() {
         )}
 
         {!searchActive && (
+          // 原来底部常驻一个「拖入 .md / .txt」虚线框；分区后它成了第三块不协调的框，去掉。
+          // 拖文件进来时整个区域仍有虚线高亮（fileDragOver），面板标题的悬停提示里也写明了
           <div className="shrink-0">
             <NotesTagPills />
-            <div className="kb-drop-hint">
-              拖入 .md / .txt 文件到这里
-              <br />
-              直接新建为笔记
-            </div>
           </div>
         )}
       </div>

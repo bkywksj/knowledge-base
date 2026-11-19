@@ -644,7 +644,7 @@ export function AppLayout() {
             <Tooltip title="回到首页">
               <button type="button" className="kb-tb-brand" onClick={() => navigate("/")}>
                 <BrandLogo size={22} />
-                <span>Knowledge Base</span>
+                <span>知识库</span>
               </button>
             </Tooltip>
             {canTogglePanel && (
