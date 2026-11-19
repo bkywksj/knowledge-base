@@ -38,7 +38,8 @@ tauri-plugin-opener = "2"
 tauri-plugin-store = "2"
 tauri-plugin-log = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# preserve_order：一键接入改写 ~/.claude.json 等客户端配置时保住用户原来的键顺序（默认 BTreeMap 会按字母重排整份文件）
+serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
 # functions：注册 kb_word_count() 给字数触发器用（schema v69）
 rusqlite = { version = "0.31", features = ["bundled", "functions"] }

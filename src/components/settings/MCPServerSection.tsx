@@ -51,6 +51,8 @@ interface InstallResult {
   configPath: string;
   createdNew: boolean;
   overwritten: boolean;
+  /** 写入的条目名（开发版 knowledge-base-dev / 正式版 knowledge-base） */
+  entryName: string;
 }
 
 // 用浏览器原生 clipboard，省一个 npm 依赖；webview 在 https / tauri:// 协议下都允许
@@ -66,6 +68,8 @@ interface McpRuntimeInfo {
   dbPath: string;
   targetTriple: string;
   os: string;
+  /** 客户端配置里本应用条目的名字（开发版与正式版不同） */
+  entryName: string;
 }
 
 interface McpToolInfo {
@@ -282,7 +286,7 @@ export function MCPServerSection() {
                 r.createdNew
                   ? "已新建配置文件并写入"
                   : r.overwritten
-                    ? "已覆盖原有的 knowledge-base 配置（其它 MCP server 保留）"
+                    ? `已更新原有的 ${r.entryName} 配置（你在这一条里加的其它设置、其它 MCP server 都保留）`
                     : "已合并到现有配置（其它 MCP server 保留）"
               }
               description={`重启 ${label} 后生效${writable ? "（已开启可写模式，LLM 能修改你的笔记）" : ""}`}
@@ -313,7 +317,7 @@ export function MCPServerSection() {
     const claudeConfig = JSON.stringify(
       {
         mcpServers: {
-          "knowledge-base": {
+          [info.entryName]: {
             command: escapedBinary,
             args: ["--db-path", escapedDb],
           },
@@ -325,7 +329,7 @@ export function MCPServerSection() {
     const claudeWritable = JSON.stringify(
       {
         mcpServers: {
-          "knowledge-base": {
+          [info.entryName]: {
             command: escapedBinary,
             args: ["--db-path", escapedDb, "--writable"],
           },
@@ -338,7 +342,7 @@ export function MCPServerSection() {
     const cursorConfig = JSON.stringify(
       {
         mcpServers: {
-          "knowledge-base": {
+          [info.entryName]: {
             command: info.sidecarBinaryPath.replace(/\\/g, "/"),
             args: ["--db-path", info.dbPath.replace(/\\/g, "/")],
           },
