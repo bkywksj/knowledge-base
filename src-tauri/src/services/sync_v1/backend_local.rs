@@ -217,6 +217,7 @@ mod tests {
                 tags: None,
                 note_type: None,
                 folder_moved_at: None,
+                folder_uuid: None,
             }],
             hash_algo: Some(SyncManifestV1::HASH_ALGO_V2.into()),
             vault: None,
@@ -228,6 +229,7 @@ mod tests {
             card_review_logs: vec![],
             prompts: vec![],
             note_templates: vec![],
+            folders: vec![],
         };
         backend.write_manifest(&m).unwrap();
         let got = backend.read_manifest().unwrap().expect("应能读回 manifest");

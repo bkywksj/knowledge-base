@@ -71,7 +71,7 @@ pub fn push<R: Runtime, E: Emitter<R>>(
             message: "计算本地 manifest…".into(),
         },
     );
-    let local = manifest::compute_local_manifest(db, app_version, device)?;
+    let mut local = manifest::compute_local_manifest(db, app_version, device)?;
 
     let _ = emitter.emit(
         event_name,
@@ -135,7 +135,14 @@ pub fn push<R: Runtime, E: Emitter<R>>(
         card_review_logs: vec![],
         prompts: vec![],
         note_templates: vec![],
+        folders: vec![],
     });
+
+    // v73：升级后第一次同步的文件夹配对（同 pull）。只推不拉时也要配，否则会把另一套 uuid
+    // 写上远端，别的设备拉下来就是两份同名文件夹。配上了就重算本地 manifest
+    if super::folder_sync::adopt_remote_folder_ids(db, &remote.folders)? > 0 {
+        local = manifest::compute_local_manifest(db, app_version, device)?;
+    }
 
     let diff = manifest::diff_manifests(&local, &remote);
 
@@ -536,6 +543,7 @@ pub fn push<R: Runtime, E: Emitter<R>>(
         card_review_logs: vec![],
         prompts: vec![],
         note_templates: vec![],
+        folders: vec![],
     };
 
     // Critical 修复：写 manifest 用的本地视图 —— 剔除本轮上传失败的笔记 / 附件。
@@ -747,6 +755,7 @@ mod tests {
             tags: None,
             note_type: None,
             folder_moved_at: None,
+            folder_uuid: None,
         }
     }
 
@@ -776,6 +785,7 @@ mod tests {
             card_review_logs: vec![],
             prompts: vec![],
             note_templates: vec![],
+            folders: vec![],
         }
     }
 

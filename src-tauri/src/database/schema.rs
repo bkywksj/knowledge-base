@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::error::AppError;
 
 /// 当前 Schema 版本
-pub const SCHEMA_VERSION: i32 = 72;
+pub const SCHEMA_VERSION: i32 = 73;
 
 /// `ai_models.max_context` 的历史默认值。v51 把旧默认 32000 统一抬到它，此后新建也默认填它 ——
 /// 所以存量里的 128000 分不清是用户填的还是默认值，v62 一律当作「未设置」。
@@ -112,6 +112,7 @@ pub fn migrate(conn: &Connection) -> Result<(), AppError> {
             69 => migrate_v69_to_v70(conn)?,
             70 => migrate_v70_to_v71(conn)?,
             71 => migrate_v71_to_v72(conn)?,
+            72 => migrate_v72_to_v73(conn)?,
             _ => {
                 return Err(AppError::Custom(format!("未知的数据库版本: {}", version)));
             }
@@ -2606,6 +2607,78 @@ const SQL_UUID_V4: &str = "lower(hex(randomblob(4))) || '-' || lower(hex(randomb
 /// 迁移 v0→v1 预置的四个笔记模板。它们在每台设备上各插一份，
 /// stable_id 用 `preset:<名称>` 固定下来，同步后才不会每端各多出一套。
 const PRESET_NOTE_TEMPLATES: [&str; 4] = ["会议记录", "读书笔记", "周报", "项目文档"];
+
+/// v72 -> v73：文件夹加入多端同步（以前只靠笔记带的路径在对端补建，空文件夹 / 改名 / 删除都传不过去）。
+///
+/// - `stable_uuid`：跨端识别同一个文件夹，改名、移动后仍能对上；INSERT 触发器给新行自动填
+/// - `updated_at`：多端谁新用谁。改名 / 移动 / 排序 / 改颜色由 UPDATE 触发器记时间，
+///   主应用和 kb-core（MCP）的所有写入路径都能盖到；语句自己写了 updated_at（同步落库带远端时间）时不覆盖
+/// - 删除照提示词的做法：物理删除，DELETE 触发器把删除记进 `sync_tombstones`（kind = folder）
+///
+/// 存量文件夹各端各自生成 uuid，对不上：升级后第一次同步按「同一父级 + 同名」配对，
+/// 改用远端的 uuid（见 sync_v1::folder_sync::adopt_remote_folder_ids）。
+fn migrate_v72_to_v73(conn: &Connection) -> Result<(), AppError> {
+    log::info!("数据库迁移: v72 -> v73 (文件夹加入多端同步)");
+
+    let cols = list_columns(conn, "folders")?;
+    if !cols.iter().any(|c| c == "stable_uuid") {
+        conn.execute_batch("ALTER TABLE folders ADD COLUMN stable_uuid TEXT;")?;
+    }
+    if !cols.iter().any(|c| c == "updated_at") {
+        conn.execute_batch("ALTER TABLE folders ADD COLUMN updated_at TEXT;")?;
+    }
+
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE folders SET updated_at = created_at WHERE updated_at IS NULL",
+        [],
+    )?;
+    let ids: Vec<i64> = {
+        let mut stmt = tx.prepare("SELECT id FROM folders WHERE stable_uuid IS NULL")?;
+        let rows = stmt.query_map([], |r| r.get::<_, i64>(0))?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    for id in &ids {
+        tx.execute(
+            "UPDATE folders SET stable_uuid = ?1 WHERE id = ?2",
+            rusqlite::params![uuid::Uuid::new_v4().to_string(), id],
+        )?;
+    }
+    tx.commit()?;
+    log::info!("[v73] 回填 {} 个文件夹的 stable_uuid", ids.len());
+
+    conn.execute_batch(&format!(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_stable_uuid
+            ON folders(stable_uuid) WHERE stable_uuid IS NOT NULL;
+
+         CREATE TRIGGER IF NOT EXISTS folders_fill_sync_cols
+         AFTER INSERT ON folders WHEN NEW.stable_uuid IS NULL OR NEW.updated_at IS NULL
+         BEGIN
+             UPDATE folders SET
+                 stable_uuid = COALESCE(NEW.stable_uuid, {uuid}),
+                 updated_at = COALESCE(NEW.updated_at, datetime('now', 'localtime'))
+             WHERE id = NEW.id;
+         END;
+         CREATE TRIGGER IF NOT EXISTS folders_touch_updated_at
+         AFTER UPDATE OF name, parent_id, sort_order, color ON folders
+         WHEN NEW.updated_at IS OLD.updated_at
+          AND (NEW.name IS NOT OLD.name OR NEW.parent_id IS NOT OLD.parent_id
+               OR NEW.sort_order IS NOT OLD.sort_order OR NEW.color IS NOT OLD.color)
+         BEGIN
+             UPDATE folders SET updated_at = datetime('now', 'localtime') WHERE id = NEW.id;
+         END;
+         CREATE TRIGGER IF NOT EXISTS folders_tombstone
+         AFTER DELETE ON folders WHEN OLD.stable_uuid IS NOT NULL
+         BEGIN
+             INSERT OR REPLACE INTO sync_tombstones (kind, stable_uuid, deleted_at)
+             VALUES ('folder', OLD.stable_uuid, datetime('now', 'localtime'));
+         END;",
+        uuid = SQL_UUID_V4
+    ))?;
+
+    set_version(conn, 73)?;
+    Ok(())
+}
 
 /// v71 -> v72：闪卡 / 复习记录 / 提示词 / 笔记模板加入多端同步。
 ///

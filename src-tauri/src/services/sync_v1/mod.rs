@@ -17,6 +17,7 @@ pub mod backend_lan;
 pub mod backend_local;
 pub mod conflicts;
 pub mod content_sync;
+pub mod folder_sync;
 pub mod lan_protocol;
 pub mod lock;
 // S3 backend（T-M026 起桌面/移动端统一可用）：改用 rusty-s3 纯签名 + 全局 reqwest 执行，

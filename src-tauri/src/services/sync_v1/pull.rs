@@ -227,6 +227,8 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
         }
     };
 
+    // v73：升级后第一次同步，先把本地与远端同名同位置的文件夹配成同一个 uuid，再算本地 manifest
+    super::folder_sync::adopt_remote_folder_ids(db, &remote.folders)?;
     let local = manifest::compute_local_manifest(db, app_version, device)?;
 
     let _ = emitter.emit(
@@ -240,6 +242,9 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
         },
     );
     let diff = manifest::diff_manifests(&local, &remote);
+
+    // v73：文件夹先于笔记落库 —— 下面拉笔记时按 folder_uuid 找文件夹，找不到才按路径补建
+    super::folder_sync::apply_pulled_folders(db, &diff.folders_to_pull, &mut result);
 
     // ── T-S024：附件下载阶段（先于笔记 entry pull，让笔记内容拉下来时附件已就位）
     //
@@ -435,7 +440,11 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
                 }
                 _ => (entry.folder_path.as_str(), false),
             };
-        let folder_id = ensure_folder_path(db, folder_path)?;
+        let folder_id = resolve_pulled_note_folder(
+            db,
+            folder_path,
+            if keep_local_folder { None } else { entry.folder_uuid.as_deref() },
+        )?;
         // 用了远端位置：移动时间也照远端记，见 set_note_folder_moved_at
         let restore_folder_moved_at = |local_id: i64, errors: &mut Vec<String>| {
             if keep_local_folder {
@@ -816,6 +825,11 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
     }
 
     db.touch_sync_backend_pull(backend_id)?;
+
+    // 拉取走的是主连接，data_version 轮询（见 lib.rs start_db_change_watcher）感知不到；
+    // 借同一个事件让前端把笔记 / 文件夹 / 标签 / 待办都重拉一遍。以前各个同步入口只刷新笔记列表，
+    // 拉下来的文件夹要切走再切回才显示；手动、自动、局域网同步都走这里，一处补齐
+    let _ = emitter.emit("db:external-changed", ());
 
     let _ = emitter.emit(
         event_name,
@@ -1215,6 +1229,23 @@ fn local_has_unpushed_change(local_hash: Option<&str>, last_synced_hash: Option<
     }
 }
 
+/// 拉下来的笔记放进哪个文件夹：有 `folder_uuid` 且本地找得到就用它，否则按路径找 / 补建。
+///
+/// 远端清单里没重新上传的笔记，路径还是文件夹改名前写的；只按路径找会多建一个旧名文件夹。
+/// 保留本地位置时调用方传 `folder_uuid = None`，直接按本地路径找
+fn resolve_pulled_note_folder(
+    db: &Database,
+    folder_path: &str,
+    folder_uuid: Option<&str>,
+) -> Result<Option<i64>, AppError> {
+    if let Some(u) = folder_uuid {
+        if let Some(id) = db.get_folder_id_by_stable_uuid(u)? {
+            return Ok(Some(id));
+        }
+    }
+    ensure_folder_path(db, folder_path)
+}
+
 /// 把 "工作/周报" 风格的路径递归展平成 folder_id
 ///
 /// 复用 `FolderService::ensure_path`（T-006 阶段已实现）
@@ -1243,6 +1274,24 @@ mod mass_delete_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pulled_note_follows_folder_uuid_not_stale_path() {
+        let db = Database::init(":memory:").unwrap();
+        let f = db.create_folder("新名", None).unwrap();
+        let uuid: String = db
+            .conn_lock()
+            .unwrap()
+            .query_row("SELECT stable_uuid FROM folders WHERE id = ?1", [f.id], |r| r.get(0))
+            .unwrap();
+        // 远端条目还带着改名前的路径，但 folder_uuid 对得上 → 放进现有文件夹，不新建「旧名」
+        assert_eq!(resolve_pulled_note_folder(&db, "旧名", Some(&uuid)).unwrap(), Some(f.id));
+        assert_eq!(db.find_folder_by_name(None, "旧名").unwrap(), None);
+        // 旧客户端写的条目没有 folder_uuid / 找不到 → 照旧按路径补建
+        let by_path = resolve_pulled_note_folder(&db, "别处/子", Some("不存在")).unwrap();
+        assert!(by_path.is_some());
+        assert_eq!(resolve_pulled_note_folder(&db, "", None).unwrap(), None);
+    }
 
     #[test]
     fn divergence_only_when_both_changed_and_differ() {
@@ -1318,6 +1367,7 @@ mod tests {
             tags: None,
             note_type: None,
             folder_moved_at: None,
+            folder_uuid: None,
         };
         let manifest = SyncManifestV1 {
             manifest_version: SyncManifestV1::VERSION,
@@ -1335,6 +1385,7 @@ mod tests {
             card_review_logs: vec![],
             prompts: vec![],
             note_templates: vec![],
+            folders: vec![],
         };
         b.write_manifest(&manifest).unwrap();
 

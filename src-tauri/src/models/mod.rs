@@ -2190,6 +2190,11 @@ pub struct ManifestEntry {
     /// （旧客户端 / 升级前移动过），比任何有值的都旧，两边都是 None 时不改文件夹。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub folder_moved_at: Option<String>,
+    /// 所在文件夹的 stable_uuid（v73）。拉取时优先按它找本地文件夹，找不到再按 `folder_path` 补建：
+    /// 文件夹在别处改过名时，远端清单里没重新上传的笔记还带着旧路径，按路径找会多建一个旧名文件夹。
+    /// None = 根层 / 旧客户端写的条目
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder_uuid: Option<String>,
 }
 
 /// V1 同步 manifest 顶层的附件清单条目（T-S022 sidecar CAS 附件同步）
@@ -2287,6 +2292,10 @@ pub struct SyncManifestV1 {
     /// v72：笔记模板。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub note_templates: Vec<NoteTemplateManifestEntry>,
+    /// v73：文件夹树（含空文件夹）。以前文件夹只靠笔记带的路径在对端补建，
+    /// 空文件夹、改名、删除、排序都传不过去。空 Vec 不序列化；旧客户端读到也忽略
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folders: Vec<FolderManifestEntry>,
 }
 
 /// 复习记录在 manifest 里保留的天数。manifest 每次同步都整份读写，
@@ -2414,6 +2423,25 @@ pub struct TaskCategoryManifestEntry {
     /// 旧版本客户端不认识这个字段会直接忽略（serde default），只是看到的是平铺列表
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_stable_id: Option<String>,
+}
+
+/// v73：文件夹跨端同步条目。按 `updated_at` 新者赢；删除靠 tombstone 传播（同提示词）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderManifestEntry {
+    pub stable_id: String,
+    pub content_hash: String,
+    pub updated_at: String,
+    pub name: String,
+    /// 父文件夹的 stable_id；None = 根层
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_stable_id: Option<String>,
+    #[serde(default)]
+    pub sort_order: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub tombstone: bool,
 }
 
 /// v72：闪卡跨端同步条目（正反面 + FSRS 调度状态）。

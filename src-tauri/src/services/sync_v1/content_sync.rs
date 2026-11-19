@@ -27,7 +27,7 @@ fn days_ago(days: i64) -> String {
         .to_string()
 }
 
-fn tombstone_cutoff() -> String {
+pub(super) fn tombstone_cutoff() -> String {
     days_ago(TOMBSTONE_RETENTION_DAYS)
 }
 
@@ -243,7 +243,7 @@ pub fn merge_card_logs(
 }
 
 /// 提示词 / 笔记模板共用的「updated_at 新者赢」合并
-trait LwwEntry: Clone {
+pub(super) trait LwwEntry: Clone {
     fn id(&self) -> &str;
     fn updated(&self) -> &str;
     fn hash(&self) -> &str;
@@ -280,7 +280,7 @@ impl LwwEntry for NoteTemplateManifestEntry {
     }
 }
 
-fn merge_lww<T: LwwEntry>(local: &[T], remote: &[T]) -> Vec<T> {
+pub(super) fn merge_lww<T: LwwEntry>(local: &[T], remote: &[T]) -> Vec<T> {
     let cutoff = tombstone_cutoff();
     let mut map: HashMap<String, T> = local.iter().map(|e| (e.id().to_string(), e.clone())).collect();
     for re in remote {
@@ -300,7 +300,7 @@ fn merge_lww<T: LwwEntry>(local: &[T], remote: &[T]) -> Vec<T> {
 }
 
 /// 要拉的条目：远端独有且不是 tombstone，或双方都有、指纹不同且远端更新
-fn diff_lww<T: LwwEntry>(local: &[T], remote: &[T]) -> Vec<T> {
+pub(super) fn diff_lww<T: LwwEntry>(local: &[T], remote: &[T]) -> Vec<T> {
     let local_map: HashMap<&str, &T> = local.iter().map(|e| (e.id(), e)).collect();
     remote
         .iter()

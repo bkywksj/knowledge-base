@@ -1,4 +1,4 @@
-//! v72：闪卡 / 复习记录 / 提示词 / 笔记模板的同步读写
+//! v72：闪卡 / 复习记录 / 提示词 / 笔记模板的同步读写；v73 加文件夹
 //!
 //! 只给 sync_v1 用：读出带 stable_uuid 的全量行拼 manifest，拉取时按 stable_uuid 落库。
 //! 拉取写入一律用远端的 updated_at，不打本地时间戳 —— 否则刚拉下来的条目会显得比远端新，
@@ -9,12 +9,17 @@ use rusqlite::{params, OptionalExtension};
 use super::Database;
 use crate::error::AppError;
 use crate::models::{
-    CardManifestEntry, CardReviewLogManifestEntry, NoteTemplateManifestEntry, PromptManifestEntry,
+    CardManifestEntry, CardReviewLogManifestEntry, FolderManifestEntry, NoteTemplateManifestEntry,
+    PromptManifestEntry,
 };
 
 /// `sync_tombstones.kind` 取值
 pub const TOMBSTONE_KIND_PROMPT: &str = "prompt";
 pub const TOMBSTONE_KIND_NOTE_TEMPLATE: &str = "note_template";
+pub const TOMBSTONE_KIND_FOLDER: &str = "folder";
+
+/// 配对用的本地文件夹行：(id, stable_uuid, parent_id, name)
+pub type FolderSyncRow = (i64, Option<String>, Option<i64>, String);
 
 impl Database {
     // ─── 闪卡 ─────────────────────────────────────────────────
@@ -340,6 +345,146 @@ impl Database {
         )?;
         tx.commit()?;
         Ok(())
+    }
+
+    // ─── 文件夹（v73） ────────────────────────────────────────
+
+    /// 全部文件夹（tombstone 由 [`Self::list_sync_tombstones`] 另外补）。父级换成父文件夹的 stable_uuid
+    pub fn list_folders_for_sync(&self) -> Result<Vec<FolderManifestEntry>, AppError> {
+        let conn = self.conn_lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT f.stable_uuid, COALESCE(f.updated_at, f.created_at), f.name, p.stable_uuid,
+                    f.sort_order, f.color
+             FROM folders f LEFT JOIN folders p ON p.id = f.parent_id
+             WHERE f.stable_uuid IS NOT NULL",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(FolderManifestEntry {
+                    stable_id: r.get(0)?,
+                    content_hash: String::new(),
+                    updated_at: r.get(1)?,
+                    name: r.get(2)?,
+                    parent_stable_id: r.get(3)?,
+                    sort_order: r.get(4)?,
+                    color: r.get(5)?,
+                    tombstone: false,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// 全部文件夹的 (id, stable_uuid, parent_id, name)，首次同步配对用
+    pub fn list_folder_sync_rows(&self) -> Result<Vec<FolderSyncRow>, AppError> {
+        let conn = self.conn_lock()?;
+        let mut stmt = conn.prepare("SELECT id, stable_uuid, parent_id, name FROM folders")?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// 改用远端的 stable_uuid（首次同步配对）。只动这一列，不会触发 updated_at 记时
+    pub fn set_folder_stable_uuid(&self, id: i64, stable_uuid: &str) -> Result<(), AppError> {
+        let conn = self.conn_lock()?;
+        conn.execute(
+            "UPDATE folders SET stable_uuid = ?1 WHERE id = ?2",
+            params![stable_uuid, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_folder_id_by_stable_uuid(&self, stable_uuid: &str) -> Result<Option<i64>, AppError> {
+        let conn = self.conn_lock()?;
+        let id = conn
+            .query_row(
+                "SELECT id FROM folders WHERE stable_uuid = ?1",
+                params![stable_uuid],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(id)
+    }
+
+    /// 拉取落库：有 → 覆盖（含挪父级），没有 → 插入；同时清掉本地对它的删除记录。返回本地 id。
+    ///
+    /// 两端同时把 A 挪进 B、B 挪进 A 时，各自按新者赢会拼出环 —— 新父级落在自己子树里就改放根层。
+    pub fn upsert_folder_synced(
+        &self,
+        e: &FolderManifestEntry,
+        parent_id: Option<i64>,
+    ) -> Result<i64, AppError> {
+        let mut conn = self.conn_lock()?;
+        let tx = conn.transaction()?;
+        let existing: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM folders WHERE stable_uuid = ?1",
+                params![e.stable_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let id = match existing {
+            Some(id) => {
+                let parent_id = match parent_id {
+                    Some(p) if super::folders::bfs_descendant_ids(&tx, id)?.contains(&p) => {
+                        log::warn!(
+                            "[sync_v1] 文件夹「{}」的新父级在它自己的子树里，改放根层以免成环",
+                            e.name
+                        );
+                        None
+                    }
+                    other => other,
+                };
+                tx.execute(
+                    "UPDATE folders SET name = ?1, parent_id = ?2, sort_order = ?3, color = ?4,
+                        updated_at = ?5
+                     WHERE id = ?6",
+                    params![e.name, parent_id, e.sort_order, e.color, e.updated_at, id],
+                )?;
+                id
+            }
+            None => {
+                tx.execute(
+                    "INSERT INTO folders (stable_uuid, name, parent_id, sort_order, color, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![e.stable_id, e.name, parent_id, e.sort_order, e.color, e.updated_at],
+                )?;
+                tx.last_insert_rowid()
+            }
+        };
+        tx.execute(
+            "DELETE FROM sync_tombstones WHERE kind = ?1 AND stable_uuid = ?2",
+            params![TOMBSTONE_KIND_FOLDER, e.stable_id],
+        )?;
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// 按远端删除事件删掉本地文件夹：里面的笔记移到未分类、子文件夹提到根层（不删笔记），
+    /// 删除记录的时间改成远端的删除时间（同 [`Self::delete_synced_by_uuid`]）
+    pub fn delete_folder_synced(&self, stable_uuid: &str, deleted_at: &str) -> Result<bool, AppError> {
+        let mut conn = self.conn_lock()?;
+        let tx = conn.transaction()?;
+        let id: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM folders WHERE stable_uuid = ?1",
+                params![stable_uuid],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(id) = id {
+            tx.execute("UPDATE notes SET folder_id = NULL WHERE folder_id = ?1", params![id])?;
+            tx.execute("UPDATE folders SET parent_id = NULL WHERE parent_id = ?1", params![id])?;
+            tx.execute("DELETE FROM folders WHERE id = ?1", params![id])?;
+        }
+        tx.execute(
+            "INSERT OR REPLACE INTO sync_tombstones (kind, stable_uuid, deleted_at)
+             VALUES (?1, ?2, ?3)",
+            params![TOMBSTONE_KIND_FOLDER, stable_uuid, deleted_at],
+        )?;
+        tx.commit()?;
+        Ok(id.is_some())
     }
 
     // ─── 删除记录 ─────────────────────────────────────────────

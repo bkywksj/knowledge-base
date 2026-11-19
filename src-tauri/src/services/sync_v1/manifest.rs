@@ -230,23 +230,29 @@ pub fn compute_local_manifest(
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
 
-    // 拿 folders 全树（id → (parent_id, name)）— 用来反查文件夹路径
-    let mut stmt2 = conn.prepare("SELECT id, parent_id, name FROM folders")?;
-    let folder_rows: Vec<(i64, Option<i64>, String)> = stmt2
+    // 拿 folders 全树（id → (parent_id, name)）— 用来反查文件夹路径；
+    // v73 起顺带拿 stable_uuid，写进笔记条目的 folder_uuid
+    let mut stmt2 = conn.prepare("SELECT id, parent_id, name, stable_uuid FROM folders")?;
+    let folder_rows: Vec<(i64, Option<i64>, String, Option<String>)> = stmt2
         .query_map([], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, Option<i64>>(1)?,
                 get_text_lossy(row, 2, "folders.name")?,
+                get_opt_text_lossy(row, 3, "folders.stable_uuid")?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt2);
     drop(conn);
 
+    let folder_uuid_by_id: HashMap<i64, String> = folder_rows
+        .iter()
+        .filter_map(|(id, _, _, uuid)| uuid.clone().map(|u| (*id, u)))
+        .collect();
     let folders_by_id: HashMap<i64, (Option<i64>, String)> = folder_rows
         .into_iter()
-        .map(|(id, p, name)| (id, (p, name)))
+        .map(|(id, p, name, _)| (id, (p, name)))
         .collect();
 
     // Bug 12a：一次性拿全库 (note_id → tag names) 映射，避免 entries 循环里挨个查 DB
@@ -324,6 +330,7 @@ pub fn compute_local_manifest(
                 Some(note_type_col)
             },
             folder_moved_at,
+            folder_uuid: folder_id.and_then(|id| folder_uuid_by_id.get(&id).cloned()),
         });
     }
 
@@ -396,6 +403,11 @@ pub fn compute_local_manifest(
         log::warn!("[manifest] 读取 note_templates 失败 ({}), 留空", e);
         Vec::new()
     });
+    // v73：文件夹树
+    let folders = super::folder_sync::build_folder_entries(db).unwrap_or_else(|e| {
+        log::warn!("[manifest] 读取 folders 失败 ({}), 留空", e);
+        Vec::new()
+    });
 
     Ok(SyncManifestV1 {
         manifest_version: SyncManifestV1::VERSION,
@@ -413,6 +425,7 @@ pub fn compute_local_manifest(
         card_review_logs,
         prompts,
         note_templates,
+        folders,
     })
 }
 
@@ -607,6 +620,8 @@ pub struct ManifestDiff {
     // ─── v72：闪卡 / 复习记录 / 提示词 / 笔记模板（只记要拉的；推送靠 merge_manifests 整份写）───
     pub cards_to_pull: Vec<crate::models::CardManifestEntry>,
     pub card_logs_to_pull: Vec<crate::models::CardReviewLogManifestEntry>,
+    /// v73：要拉的文件夹（含远端删除）
+    pub folders_to_pull: Vec<crate::models::FolderManifestEntry>,
     pub prompts_to_pull: Vec<crate::models::PromptManifestEntry>,
     pub note_templates_to_pull: Vec<crate::models::NoteTemplateManifestEntry>,
 }
@@ -732,6 +747,7 @@ pub fn merge_manifests(local: &SyncManifestV1, remote: &SyncManifestV1) -> SyncM
         card_review_logs: super::content_sync::merge_card_logs(&local.card_review_logs, &remote.card_review_logs),
         prompts: super::content_sync::merge_prompts(&local.prompts, &remote.prompts),
         note_templates: super::content_sync::merge_note_templates(&local.note_templates, &remote.note_templates),
+        folders: super::folder_sync::merge_folders(&local.folders, &remote.folders),
     }
 }
 
@@ -851,6 +867,7 @@ fn adopt_newer_folder(target: &mut ManifestEntry, a: &ManifestEntry, b: &Manifes
     };
     target.folder_path = newer.folder_path.clone();
     target.folder_moved_at = newer.folder_moved_at.clone();
+    target.folder_uuid = newer.folder_uuid.clone();
 }
 
 pub fn diff_manifests(local: &SyncManifestV1, remote: &SyncManifestV1) -> ManifestDiff {
@@ -965,6 +982,7 @@ pub fn diff_manifests(local: &SyncManifestV1, remote: &SyncManifestV1) -> Manife
     use super::content_sync as cs;
     diff.cards_to_pull = cs::diff_cards(&local.cards, &remote.cards);
     diff.card_logs_to_pull = cs::diff_card_logs(&local.card_review_logs, &remote.card_review_logs);
+    diff.folders_to_pull = super::folder_sync::diff_folders(&local.folders, &remote.folders);
     diff.prompts_to_pull = cs::diff_prompts(&local.prompts, &remote.prompts);
     diff.note_templates_to_pull = cs::diff_note_templates(&local.note_templates, &remote.note_templates);
 
@@ -1089,6 +1107,7 @@ mod tests {
             tags: None,
             note_type: None,
             folder_moved_at: None,
+            folder_uuid: None,
         }
     }
 
@@ -1137,6 +1156,7 @@ mod tests {
             card_review_logs: vec![],
             prompts: vec![],
             note_templates: vec![],
+            folders: vec![],
         }
     }
 
@@ -1730,6 +1750,7 @@ mod tests {
             card_review_logs: vec![],
             prompts: vec![],
             note_templates: vec![],
+            folders: vec![],
         };
         let json = serde_json::to_string(&m).unwrap();
         assert!(!json.contains("hashAlgo"), "None 时不应输出该字段; got = {}", json);
@@ -2464,6 +2485,7 @@ mod folder_move_tests {
             tags: None,
             note_type: None,
             folder_moved_at: moved_at.map(String::from),
+            folder_uuid: None,
         }
     }
 
@@ -2484,6 +2506,7 @@ mod folder_move_tests {
             card_review_logs: vec![],
             prompts: vec![],
             note_templates: vec![],
+            folders: vec![],
         }
     }
 

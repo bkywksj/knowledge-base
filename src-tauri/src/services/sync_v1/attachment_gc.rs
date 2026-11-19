@@ -246,6 +246,7 @@ mod tests {
             card_review_logs: vec![],
             prompts: vec![],
             note_templates: vec![],
+            folders: vec![],
         };
         backend.write_manifest(&manifest).unwrap();
 
@@ -320,6 +321,7 @@ mod tests {
             card_review_logs: vec![],
             prompts: vec![],
             note_templates: vec![],
+            folders: vec![],
         };
         backend.write_manifest(&manifest_empty).unwrap();
         let db = Database::init(":memory:").unwrap();
