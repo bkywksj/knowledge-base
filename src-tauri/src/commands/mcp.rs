@@ -146,10 +146,10 @@ pub fn mcp_get_claude_md_template(
 }
 
 fn build_claude_md_template() -> String {
-    // 这里硬编码模板，避免读盘 / 拼接复杂度。后续如果需要可填变量再扩展
+    // 这里硬编码模板，避免读盘 / 拼接复杂度；条目名开发版 / 正式版不同，用占位符替换
     r#"# 知识库助手 (kb-mcp)
 
-本环境已接入用户的本地知识库（MCP server `knowledge-base`，由 zhuawashi/knowledge_base 桌面应用提供）。
+本环境已接入用户的本地知识库（MCP server `{entry}`，由 zhuawashi/knowledge_base 桌面应用提供）。
 处理用户问题时遵循以下准则。
 
 ## 可用工具
@@ -291,7 +291,8 @@ fn build_claude_md_template() -> String {
 - 时间格式：`YYYY-MM-DD`
 
 > 上面的偏好可以按你的实际习惯改。
-"#.to_string()
+"#
+    .replace("{entry}", client_entry_name())
 }
 
 fn build_settings_snippet(sidecar: &str, db: &str, writable: bool) -> String {
@@ -1083,7 +1084,7 @@ pub fn mcp_uninstall_from_client(target: InstallTarget) -> Result<UninstallResul
     })
 }
 
-/// 检查指定客户端是否已安装 knowledge-base，前端拿来决定按钮状态
+/// 检查指定客户端是否已接入本 build 的条目，前端拿来决定按钮状态
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientInstallStatus {
@@ -1425,5 +1426,12 @@ mod tests {
         install_entry_at(&q, "knowledge-base", fresh("a")).unwrap();
         let v: JsonValue = serde_json::from_str(&std::fs::read_to_string(&q).unwrap()).unwrap();
         assert_eq!(v["keep"], 1);
+    }
+
+    #[test]
+    fn claude_md_template_uses_build_entry_name() {
+        let md = build_claude_md_template();
+        assert!(md.contains(&format!("MCP server `{}`", client_entry_name())));
+        assert!(!md.contains("{entry}"));
     }
 }
