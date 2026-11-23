@@ -111,9 +111,12 @@ fn compute_sleep_duration(app: &AppHandle) -> Duration {
 }
 
 fn read_base_time(state: &AppState) -> String {
-    state
-        .db
-        .get_config("all_day_reminder_time")
+    all_day_base_time(&state.db)
+}
+
+/// 全天任务（截止只有日期）的提醒钟点，HH:MM:SS；同步 pull 判断提醒时刻也用它
+pub fn all_day_base_time(db: &crate::database::Database) -> String {
+    db.get_config("all_day_reminder_time")
         .ok()
         .flatten()
         .map(|s| if s.len() == 5 { format!("{}:00", s) } else { s })

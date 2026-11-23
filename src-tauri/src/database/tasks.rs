@@ -1330,6 +1330,39 @@ impl super::Database {
         )?;
         Ok(())
     }
+
+    /// 同步 pull 写入提前量，并按新的提醒时刻重置本地「已提醒」标记。
+    ///
+    /// - 提醒时刻还没到 → 清掉 reminded_at（截止 / 提前量在别处改过，要按新时刻再提醒一次）
+    /// - 已经过了 → 记为已提醒：别的设备当时已经提醒过；更重要的是，升级后第一次同步会把
+    ///   一大批早已过期的老任务带上提前量，不压住就会一口气全弹出来
+    ///
+    /// 不碰 updated_at（被动接收）。`all_day_base_time` 是全天任务的提醒钟点（HH:MM:SS）。
+    pub fn apply_synced_task_reminder(
+        &self,
+        local_id: i64,
+        remind_before_minutes: Option<i32>,
+        all_day_base_time: &str,
+    ) -> Result<(), AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        conn.execute(
+            "UPDATE tasks SET remind_before_minutes = ?1 WHERE id = ?2",
+            params![remind_before_minutes, local_id],
+        )?;
+        let sql = format!(
+            "UPDATE tasks
+             SET reminded_at = CASE
+                 WHEN {REMIND_AT_SQL} <= datetime('now','localtime')
+                 THEN COALESCE(reminded_at, datetime('now','localtime'))
+                 ELSE NULL END
+             WHERE id = ?2 AND status = 0 AND is_deleted = 0 AND {REMINDABLE_SQL}"
+        );
+        conn.execute(&sql, params![all_day_base_time, local_id])?;
+        Ok(())
+    }
 }
 
 fn insert_link(conn: &Connection, task_id: i64, input: &TaskLinkInput) -> Result<(), AppError> {

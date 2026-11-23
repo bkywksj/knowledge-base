@@ -53,8 +53,8 @@ pub fn project_content_hash(p: &ProjectManifestEntry) -> String {
 }
 
 /// 任务 entry 的 content_hash —— 字段全拼接（参与同步的所有字段都纳入）。
-/// 不含 reminded_at / repeat_done_count / remind_before_minutes / source_batch_id
-/// 这些"本地推进 / 本地偏好"字段（避免双端互相 advance 状态）。
+/// 不含 reminded_at / repeat_done_count / source_batch_id 这些"本地推进"字段（避免双端互相 advance 状态）。
+/// remind_before_minutes 只在有值时才拼进来：没设提醒的任务 hash 与旧版完全一致，升级后不会整批重传。
 pub fn task_content_hash(t: &TaskManifestEntry) -> String {
     let mut h = Sha256::new();
     h.update(t.title.as_bytes());
@@ -97,6 +97,10 @@ pub fn task_content_hash(t: &TaskManifestEntry) -> String {
     );
     h.update(b"\n");
     h.update(if t.tombstone { b"1" } else { b"0" });
+    if let Some(m) = t.remind_before_minutes {
+        h.update(format!("
+remind:{}", m).as_bytes());
+    }
     format!("{:x}", h.finalize())
 }
 
@@ -559,6 +563,7 @@ fn build_task_entries(db: &Database) -> Result<Vec<TaskManifestEntry>, AppError>
             repeat_until: t.repeat_until,
             repeat_count: t.repeat_count,
             tombstone: t.is_deleted,
+            remind_before_minutes: t.remind_before_minutes,
         };
         entry.content_hash = task_content_hash(&entry);
         entries.push(entry);
@@ -1079,7 +1084,15 @@ fn diff_tasks(
                 if le.content_hash == re.content_hash {
                     continue;
                 }
-                if le.updated_at >= re.updated_at {
+                // 升级过渡：提前量以前不同步，接收端本地是 None、时间与远端相同。
+                // 按「平手本地赢」会把 None 推回去盖掉发起端的提醒，两台电脑来回互推。
+                // 平手时远端带提醒、本地没有 → 拉。用户真在本机删了提醒会冒泡 updated_at，不是平手。
+                let upgrade_pull = le.updated_at == re.updated_at
+                    && le.remind_before_minutes.is_none()
+                    && re.remind_before_minutes.is_some();
+                if upgrade_pull {
+                    diff.tasks_to_pull.push((*re).clone());
+                } else if le.updated_at >= re.updated_at {
                     diff.tasks_to_push.push(le.clone());
                 } else {
                     diff.tasks_to_pull.push((*re).clone());
@@ -2362,6 +2375,7 @@ mod tests {
             repeat_until: None,
             repeat_count: None,
             tombstone,
+            remind_before_minutes: None,
         }
     }
 
@@ -2451,6 +2465,42 @@ mod tests {
         let d = diff_manifests(&local, &remote);
         assert_eq!(d.tasks_to_pull.len(), 1);
         assert_eq!(d.tasks_to_push.len(), 0);
+    }
+
+    /// 升级过渡：提前量以前不同步，接收端是 None、时间相同 → 拉远端带提醒的版本，而不是平手推本地
+    #[test]
+    fn diff_tasks_tie_pulls_remote_reminder_on_upgrade() {
+        let mut with_remind = task("t", "h_r", "2026-02-01", false);
+        with_remind.remind_before_minutes = Some(30);
+        let mut local = manifest(vec![]);
+        local.tasks = vec![task("t", "h_l", "2026-02-01", false)];
+        let mut remote = manifest(vec![]);
+        remote.tasks = vec![with_remind.clone()];
+        let d = diff_manifests(&local, &remote);
+        assert_eq!(d.tasks_to_pull.len(), 1);
+        assert!(d.tasks_to_push.is_empty());
+
+        // 反过来（本地有提醒、远端没有）仍是平手本地赢 → 推
+        let mut local = manifest(vec![]);
+        local.tasks = vec![with_remind];
+        let mut remote = manifest(vec![]);
+        remote.tasks = vec![task("t", "h_l", "2026-02-01", false)];
+        let d = diff_manifests(&local, &remote);
+        assert_eq!(d.tasks_to_push.len(), 1);
+        assert!(d.tasks_to_pull.is_empty());
+    }
+
+    /// 没设提醒的任务 hash 与旧版一致（升级不整批重传）；提前量变了 hash 跟着变
+    #[test]
+    fn task_hash_includes_reminder_only_when_set() {
+        let plain = task("t", "", "2026-02-01", false);
+        let mut a = plain.clone();
+        a.remind_before_minutes = Some(30);
+        let mut b = plain.clone();
+        b.remind_before_minutes = Some(60);
+        let h = task_content_hash(&plain);
+        assert_ne!(h, task_content_hash(&a));
+        assert_ne!(task_content_hash(&a), task_content_hash(&b));
     }
 
     /// 分类无 updated_at → hash 不等本地权威，push 把本地版本写过去

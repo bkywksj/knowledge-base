@@ -2356,7 +2356,6 @@ pub struct ProjectManifestEntry {
 /// **不跨端**字段：
 /// - `reminded_at`（本地提醒去重；多端各算各的）
 /// - `repeat_done_count`（本地推进，避免双端互相 advance）
-/// - `remind_before_minutes` 也是本地偏好（不同端通知策略可不同）
 /// - `source_batch_id`（本地批次标识）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2407,6 +2406,12 @@ pub struct TaskManifestEntry {
     pub repeat_count: Option<i32>,
     #[serde(default)]
     pub tombstone: bool,
+    /// 截止前多少分钟提醒（None = 不提醒）。
+    ///
+    /// 早期当成「本机偏好」不同步，结果另一台电脑上的任务没有提前量、永远不会提醒（用户反馈）。
+    /// 提醒时间是任务本身的属性，现在跟着同步；旧客户端的条目没这个字段 → None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remind_before_minutes: Option<i32>,
 }
 
 /// Bug 12b：任务分类跨端同步条目（v44 引入）。

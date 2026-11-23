@@ -342,6 +342,8 @@ fn pull_inner(
         app, // AppHandle 自身实现 Emitter
         allow_mass_delete,
     );
+    // 拉下来的任务可能改了截止 / 提前量：唤醒提醒调度重算下次时刻（它平时只在本机改任务时被叫醒）
+    state.reminder_notify.notify_one();
     // 成败都要看：地址是连上之后才记下的，哪怕后面同步出错，新地址本身是对的
     remember_discovered_hosts(&state.db, &cfg, backend_impl.as_ref());
     r.map_err(|e| e.to_string())

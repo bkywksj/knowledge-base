@@ -1092,7 +1092,7 @@ fn apply_pulled_tasks(
             priority: Some(e.priority),
             important: Some(e.important),
             due_date: e.due_date.clone(),
-            remind_before_minutes: None,
+            remind_before_minutes: e.remind_before_minutes,
             links: None,
             repeat_kind: Some(e.repeat_kind.clone()),
             repeat_interval: Some(e.repeat_interval),
@@ -1183,6 +1183,19 @@ fn apply_pulled_tasks(
             Err(err) => result
                 .errors
                 .push(format!("查任务 UUID 失败 {}: {}", e.title, err)),
+        }
+    }
+    // 提前量 + 已提醒标记：建 / 改都走这里，过期的不补弹，见 apply_synced_task_reminder
+    let base_time = crate::services::task_reminder::all_day_base_time(db);
+    for e in entries.iter().filter(|e| !e.tombstone) {
+        if let Ok(Some(local_id)) = db.get_task_id_by_stable_uuid(&e.stable_id) {
+            if let Err(err) =
+                db.apply_synced_task_reminder(local_id, e.remind_before_minutes, &base_time)
+            {
+                result
+                    .errors
+                    .push(format!("同步任务 {} 的提醒设置失败: {}", e.title, err));
+            }
         }
     }
     // Pass 2：回填 parent_task_id（拿到所有 task 的 local_id 后再处理）
@@ -1518,6 +1531,7 @@ mod tests {
             repeat_until: None,
             repeat_count: None,
             tombstone,
+            remind_before_minutes: None,
         }
     }
 
@@ -1725,5 +1739,38 @@ mod tests {
             .expect("应占位创建");
         assert!(row.is_deleted, "远端 tombstone → 本地软删");
         assert!(result.errors.is_empty(), "应无错误: {:?}", result.errors);
+    }
+
+    /// 提前量跟着同步：未到点的保持待提醒，早已过期的记为已提醒（升级后不一口气弹一堆）
+    #[test]
+    fn apply_pulled_tasks_carries_reminder_and_suppresses_past_ones() {
+        let db = Database::init(":memory:").unwrap();
+        let mut result = SyncPullResult::default();
+        let mut future = mk_task_entry("tk-future", "下周的会", "2026-03-01 10:00:00", None, None, None, false);
+        future.due_date = Some("2099-01-01 10:00".into());
+        future.remind_before_minutes = Some(30);
+        let mut past = mk_task_entry("tk-past", "去年的事", "2026-03-01 10:00:00", None, None, None, false);
+        past.due_date = Some("2020-01-01 10:00".into());
+        past.remind_before_minutes = Some(30);
+        apply_pulled_tasks(&db, &[future.clone(), past], &mut result);
+        assert!(result.errors.is_empty(), "应无错误: {:?}", result.errors);
+
+        let get = |uuid: &str| {
+            let id = db.get_task_id_by_stable_uuid(uuid).unwrap().unwrap();
+            db.get_task(id).unwrap().unwrap()
+        };
+        let f = get("tk-future");
+        assert_eq!(f.remind_before_minutes, Some(30));
+        assert!(f.reminded_at.is_none(), "未到点 → 等着提醒");
+        assert_eq!(f.updated_at, "2026-03-01 10:00:00", "不冒泡 updated_at");
+        let p = get("tk-past");
+        assert_eq!(p.remind_before_minutes, Some(30));
+        assert!(p.reminded_at.is_some(), "已过期 → 不补弹");
+
+        // 已存在的任务（本地还是旧版拉下来的 None）再拉一次也补上提前量
+        let mut changed = future;
+        changed.remind_before_minutes = Some(60);
+        apply_pulled_tasks(&db, &[changed], &mut result);
+        assert_eq!(get("tk-future").remind_before_minutes, Some(60));
     }
 }
