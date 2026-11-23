@@ -17,6 +17,8 @@ import Paragraph from "@tiptap/extension-paragraph";
 import Heading from "@tiptap/extension-heading";
 import { Fragment } from "@tiptap/pm/model";
 import { TextStyle } from "@tiptap/extension-text-style";
+import type { Editor } from "@tiptap/react";
+import { stepFontSize } from "./fontSizeStep";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -95,6 +97,18 @@ export const FontSize = TextStyle.extend({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       unsetFontFamily: () => ({ chain }: { chain: () => any }) =>
         chain().setMark("textStyle", { fontFamily: null }).run(),
+    };
+  },
+  // 同 Word：Ctrl+Shift+> 放大一档、Ctrl+Shift+< 缩小一档。
+  // 两种写法都绑：按住 Shift 时浏览器给的 key 是 ">"，部分键盘布局只认基础键 "."
+  addKeyboardShortcuts() {
+    const grow = () => stepFontSize(this.editor as Editor, 1);
+    const shrink = () => stepFontSize(this.editor as Editor, -1);
+    return {
+      "Mod-Shift->": grow,
+      "Mod-Shift-.": grow,
+      "Mod-Shift-<": shrink,
+      "Mod-Shift-,": shrink,
     };
   },
 });

@@ -1,6 +1,6 @@
 /**
- * 选中文字后浮条里的格式按钮：加粗 / 斜体 / 下划线 / 删除线 / 高亮 / 行内代码，
- * 后面跟复制 / 剪切，闪卡模块开着时再跟一个「转为闪卡」。
+ * 选中文字后浮条里的格式按钮：加粗 / 斜体 / 下划线 / 删除线 / 高亮 / 行内代码、
+ * 字号放大 / 缩小一档，后面跟复制 / 剪切，闪卡模块开着时再跟一个「转为闪卡」。
  *
  * 放在 AI 划词浮条最前面，跟 AI 提示词共用一条：选中文字后最常做的就是改格式，
  * 不用再回到顶部工具栏去找。AI 功能关掉时浮条只剩这一组。
@@ -12,6 +12,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useEditorState, type Editor } from "@tiptap/react";
 import { Tooltip, theme as antdTheme } from "antd";
 import {
+  AArrowDown,
+  AArrowUp,
   Bold,
   Check,
   Code,
@@ -23,6 +25,7 @@ import {
   Strikethrough,
   Underline as UnderlineIcon,
 } from "lucide-react";
+import { stepFontSize } from "./fontSizeStep";
 
 interface FormatItem {
   key: "bold" | "italic" | "underline" | "strike" | "highlight" | "code";
@@ -141,6 +144,33 @@ export function SelectionFormatButtons({
           </Tooltip>
         );
       })}
+      {/* 字号：用户反馈想要 Word 那样选中就能调大小，不必回顶部工具栏找下拉；阅读模式下不能改 */}
+      {editor.isEditable &&
+        ([
+          { dir: 1, label: "增大字号 Ctrl+Shift+>", icon: <AArrowUp size={14} /> },
+          { dir: -1, label: "减小字号 Ctrl+Shift+<", icon: <AArrowDown size={14} /> },
+        ] as const).map((it) => (
+          <Tooltip key={it.dir} title={it.label} mouseEnterDelay={0.3}>
+            <button
+              type="button"
+              aria-label={it.label}
+              className="flex items-center justify-center rounded hover:bg-black/5 transition-colors"
+              style={{
+                width: 24,
+                height: 24,
+                flexShrink: 0,
+                border: "none",
+                cursor: "pointer",
+                background: "transparent",
+                color: token.colorText,
+              }}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => stepFontSize(editor, it.dir)}
+            >
+              {it.icon}
+            </button>
+          </Tooltip>
+        ))}
       <span
         aria-hidden
         style={{ width: 1, height: 16, margin: "0 3px", flexShrink: 0, background: token.colorBorderSecondary }}
