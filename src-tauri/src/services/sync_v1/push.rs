@@ -756,6 +756,7 @@ mod tests {
             note_type: None,
             folder_moved_at: None,
             folder_uuid: None,
+            created_at: None,
         }
     }
 

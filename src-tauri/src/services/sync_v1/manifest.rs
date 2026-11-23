@@ -177,7 +177,7 @@ pub fn compute_local_manifest(
     let mut stmt = conn.prepare(
         "SELECT id, stable_uuid, title, content_hash, updated_at, folder_id, is_deleted, deleted_at,
                 is_encrypted, encrypted_blob, is_daily, daily_date, is_hidden, note_type,
-                folder_moved_at
+                folder_moved_at, created_at
          FROM notes
          WHERE stable_uuid IS NOT NULL
            AND (is_deleted = 0 OR (is_deleted = 1 AND deleted_at IS NOT NULL AND deleted_at >= ?1))",
@@ -199,6 +199,7 @@ pub fn compute_local_manifest(
         i64,            // is_hidden
         String,         // note_type
         Option<String>, // folder_moved_at
+        Option<String>, // created_at
     )> = stmt
         .query_map(rusqlite::params![tombstone_cutoff], |row| {
             // 所有 TEXT 列走降级读（`get_text_lossy`）而非 `row.get::<_, String>`：
@@ -225,6 +226,7 @@ pub fn compute_local_manifest(
                 row.get::<_, i64>(12)?,
                 get_text_lossy(row, 13, "notes.note_type")?,
                 get_opt_text_lossy(row, 14, "notes.folder_moved_at")?,
+                get_opt_text_lossy(row, 15, "notes.created_at")?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -275,6 +277,7 @@ pub fn compute_local_manifest(
         is_hidden_int,
         note_type_col,
         folder_moved_at,
+        created_at,
     ) in rows
     {
         let path = folder_path_for(&folders_by_id, folder_id);
@@ -331,6 +334,7 @@ pub fn compute_local_manifest(
             },
             folder_moved_at,
             folder_uuid: folder_id.and_then(|id| folder_uuid_by_id.get(&id).cloned()),
+            created_at,
         });
     }
 
@@ -870,6 +874,38 @@ fn adopt_newer_folder(target: &mut ManifestEntry, a: &ManifestEntry, b: &Manifes
     target.folder_uuid = newer.folder_uuid.clone();
 }
 
+/// 找出「修改时间被老版本写成同步时刻」的本地笔记：返回 (stable_id, 远端 updated_at)。
+///
+/// 老版本 pull 新建笔记时不写时间列，第一次同步到新设备的笔记全成了「刚改过」。
+/// 内容一致的条目 diff 直接跳过，光修新建路径修不回这批存量，所以每次 pull 顺带对一遍。
+///
+/// 条件全满足才算：两边都没删、内容指纹相同、标签相同、本地时间比远端新。
+/// 标签必须相同 —— 加删标签会冒泡 updated_at，标签 diff 靠它判谁新（见 diff_manifests），
+/// 本地刚改过标签时把时间往回调，会让远端旧标签反过来盖掉本地。
+pub fn stale_synced_note_times(
+    local: &SyncManifestV1,
+    remote: &SyncManifestV1,
+) -> Vec<(String, String)> {
+    let remote_by_id: HashMap<&str, &ManifestEntry> = remote
+        .entries
+        .iter()
+        .map(|e| (e.stable_id.as_str(), e))
+        .collect();
+    local
+        .entries
+        .iter()
+        .filter_map(|le| {
+            let re = remote_by_id.get(le.stable_id.as_str())?;
+            let stale = !le.tombstone
+                && !re.tombstone
+                && le.content_hash == re.content_hash
+                && le.tags == re.tags
+                && le.updated_at > re.updated_at;
+            stale.then(|| (le.stable_id.clone(), re.updated_at.clone()))
+        })
+        .collect()
+}
+
 pub fn diff_manifests(local: &SyncManifestV1, remote: &SyncManifestV1) -> ManifestDiff {
     let local_map: HashMap<&str, &ManifestEntry> = local
         .entries
@@ -1108,6 +1144,7 @@ mod tests {
             note_type: None,
             folder_moved_at: None,
             folder_uuid: None,
+            created_at: None,
         }
     }
 
@@ -1137,6 +1174,30 @@ mod tests {
         let mut e = entry(id, title, hash, ts, false);
         e.is_hidden = true;
         e
+    }
+
+    #[test]
+    fn stale_synced_note_times_only_flags_identical_notes_with_inflated_time() {
+        let remote_ts = "2025-06-01 10:00:00";
+        let synced_ts = "2026-11-23 12:00:00"; // 老版本新建时写成的同步时刻
+        let local = manifest(vec![
+            entry_with_tags("same", "a", "h1", synced_ts, vec!["工作"]),
+            entry("edited", "b", "h2-local", synced_ts, false),
+            entry_with_tags("tag-changed", "c", "h3", synced_ts, vec!["新标签"]),
+            entry("older", "d", "h4", "2025-01-01 00:00:00", false),
+            entry("deleted", "e", "h5", synced_ts, true),
+        ]);
+        let remote = manifest(vec![
+            entry_with_tags("same", "a", "h1", remote_ts, vec!["工作"]),
+            entry("edited", "b", "h2-remote", remote_ts, false),
+            entry_with_tags("tag-changed", "c", "h3", remote_ts, vec!["旧标签"]),
+            entry("older", "d", "h4", remote_ts, false),
+            entry("deleted", "e", "h5", remote_ts, false),
+        ]);
+        assert_eq!(
+            stale_synced_note_times(&local, &remote),
+            vec![("same".to_string(), remote_ts.to_string())]
+        );
     }
 
     fn manifest(entries: Vec<ManifestEntry>) -> SyncManifestV1 {
@@ -2486,6 +2547,7 @@ mod folder_move_tests {
             note_type: None,
             folder_moved_at: moved_at.map(String::from),
             folder_uuid: None,
+            created_at: None,
         }
     }
 

@@ -402,6 +402,49 @@ impl Database {
         self.get_note_inner(&conn, id)
     }
 
+    /// 同步 pull 新建笔记后调用：把时间对齐到远端条目。
+    ///
+    /// `create_note_with_uuid` 的 INSERT 不写时间列，两个时间都会落成「现在」——
+    /// 第一次同步到新设备时，所有笔记的修改时间、创建时间都变成同步那一刻（用户反馈）。
+    /// `created_at` 为 None（旧客户端的条目没这个字段）时保留本机值。
+    pub fn set_note_synced_times(
+        &self,
+        id: i64,
+        updated_at: &str,
+        created_at: Option<&str>,
+    ) -> Result<(), AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        conn.execute(
+            "UPDATE notes SET updated_at = ?1, created_at = COALESCE(?2, created_at) WHERE id = ?3",
+            params![updated_at, created_at, id],
+        )?;
+        Ok(())
+    }
+
+    /// 修复老版本留下的同步时间失真：把修改时间往回对齐到远端（只往早调，不往晚调）。
+    ///
+    /// 哪些笔记该修由 `manifest::stale_synced_note_times` 判定（内容、标签都与远端一致）。
+    /// 返回是否改了。
+    pub fn repair_note_synced_updated_at(
+        &self,
+        id: i64,
+        remote_updated_at: &str,
+    ) -> Result<bool, AppError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AppError::Custom(e.to_string()))?;
+        let affected = conn.execute(
+            "UPDATE notes SET updated_at = ?1
+             WHERE id = ?2 AND is_deleted = 0 AND updated_at > ?1",
+            params![remote_updated_at, id],
+        )?;
+        Ok(affected > 0)
+    }
+
     /// 批量移动笔记到指定文件夹（`folder_id = None` 表示移到根目录）
     ///
     /// 只改 `folder_id`，**不碰 `updated_at`**：批量整理属于"归档动作"，
@@ -2358,6 +2401,56 @@ mod stable_uuid_tests {
 
         db.sync_note_hidden_state(n.id, true).unwrap();
         assert!(note_is_hidden(&db, n.id), "已隐藏时再'远端隐藏'幂等");
+    }
+
+    // ───────── 修 Bug：pull 新建的笔记时间不能是同步时刻 ─────────
+
+    #[test]
+    fn set_note_synced_times_copies_remote_times() {
+        let db = fresh_db();
+        let n = db
+            .create_note_with_uuid(
+                &NoteInput {
+                    title: "远端笔记".into(),
+                    content: "正文".into(),
+                    folder_id: None,
+                },
+                "uuid-a",
+                false,
+                None,
+                false,
+            )
+            .unwrap();
+        db.set_note_synced_times(n.id, "2025-03-01 08:00:00", Some("2024-12-31 09:00:00"))
+            .unwrap();
+        let got = db.get_note(n.id).unwrap().unwrap();
+        assert_eq!(got.updated_at, "2025-03-01 08:00:00");
+        assert_eq!(got.created_at, "2024-12-31 09:00:00");
+
+        // 旧客户端的条目没有 created_at → 只改修改时间，创建时间保留
+        db.set_note_synced_times(n.id, "2025-04-01 08:00:00", None).unwrap();
+        let got = db.get_note(n.id).unwrap().unwrap();
+        assert_eq!(got.updated_at, "2025-04-01 08:00:00");
+        assert_eq!(got.created_at, "2024-12-31 09:00:00");
+    }
+
+    #[test]
+    fn repair_note_synced_updated_at_only_moves_backwards() {
+        let db = fresh_db();
+        let n = db
+            .create_note(&NoteInput {
+                title: "t".into(),
+                content: "c".into(),
+                folder_id: None,
+            })
+            .unwrap();
+        db.set_note_synced_times(n.id, "2026-11-20 10:00:00", None).unwrap();
+
+        assert!(!db.repair_note_synced_updated_at(n.id, "2026-11-21 10:00:00").unwrap());
+        assert_eq!(db.get_note(n.id).unwrap().unwrap().updated_at, "2026-11-20 10:00:00");
+
+        assert!(db.repair_note_synced_updated_at(n.id, "2025-01-01 00:00:00").unwrap());
+        assert_eq!(db.get_note(n.id).unwrap().unwrap().updated_at, "2025-01-01 00:00:00");
     }
 
     // ───────── 修 Bug：pull 不把 updated_at 冒泡到 now ─────────

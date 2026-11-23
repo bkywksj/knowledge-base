@@ -2195,6 +2195,11 @@ pub struct ManifestEntry {
     /// None = 根层 / 旧客户端写的条目
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub folder_uuid: Option<String>,
+    /// 笔记创建时间（notes.created_at）。拉取端新建笔记时照抄，否则对端看到的创建时间
+    /// 全是「第一次同步那一刻」。不参与 content_hash，也不参与新旧判断。
+    /// None = 旧客户端写的条目 → 新建时用本机当前时间（与改造前一致）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
 }
 
 /// V1 同步 manifest 顶层的附件清单条目（T-S022 sidecar CAS 附件同步）

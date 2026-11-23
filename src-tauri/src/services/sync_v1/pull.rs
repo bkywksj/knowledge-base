@@ -243,6 +243,19 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
     );
     let diff = manifest::diff_manifests(&local, &remote);
 
+    // 修老版本留下的时间失真：内容一致的笔记 diff 会跳过，只能在这里单独对齐，见 stale_synced_note_times
+    for (stable_id, remote_ts) in manifest::stale_synced_note_times(&local, &remote) {
+        let repaired = db
+            .get_note_id_by_stable_uuid(&stable_id)
+            .and_then(|id| match id {
+                Some(id) => db.repair_note_synced_updated_at(id, &remote_ts),
+                None => Ok(false),
+            });
+        if let Err(e) = repaired {
+            log::warn!("[sync_v1] 对齐笔记 {} 修改时间失败: {}", stable_id, e);
+        }
+    }
+
     // v73：文件夹先于笔记落库 —— 下面拉笔记时按 folder_uuid 找文件夹，找不到才按路径补建
     super::folder_sync::apply_pulled_folders(db, &diff.folders_to_pull, &mut result);
 
@@ -516,6 +529,16 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
                 Ok(local_id) => {
                     result.downloaded += 1;
                     restore_folder_moved_at(local_id, &mut result.errors);
+                    // upsert 会把时间写成「现在」，被动接收的版本要用远端时间（同 update_note_synced）
+                    if let Err(e) = db.set_note_synced_times(
+                        local_id,
+                        &entry.updated_at,
+                        entry.created_at.as_deref(),
+                    ) {
+                        result
+                            .errors
+                            .push(format!("对齐加密笔记时间失败 {}: {}", entry.title, e));
+                    }
                     if let Err(e) = db.upsert_remote_state(
                         backend_id,
                         local_id,
@@ -670,6 +693,16 @@ pub fn pull<R: Runtime, E: Emitter<R>>(
                                     .errors
                                     .push(format!("新建笔记设置类型失败 {}: {}", entry.title, e));
                             }
+                        }
+                        // 放在最后：前面设标签 / 类型的步骤可能再碰 updated_at
+                        if let Err(e) = db.set_note_synced_times(
+                            n.id,
+                            &entry.updated_at,
+                            entry.created_at.as_deref(),
+                        ) {
+                            result
+                                .errors
+                                .push(format!("新建笔记对齐时间失败 {}: {}", entry.title, e));
                         }
                         Some(n.id)
                     }
@@ -1368,6 +1401,7 @@ mod tests {
             note_type: None,
             folder_moved_at: None,
             folder_uuid: None,
+            created_at: None,
         };
         let manifest = SyncManifestV1 {
             manifest_version: SyncManifestV1::VERSION,
