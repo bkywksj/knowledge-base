@@ -698,10 +698,13 @@ export function NotesPanel() {
     };
   }, [searchQuery, notesRefreshTick]);
 
-  /** 打开搜索结果里的某篇笔记：跳转 + 高亮，并清空搜索恢复文件夹树视图 */
+  /**
+   * 打开搜索结果里的某篇笔记：跳转 + 高亮。
+   * 不清空搜索词 —— 命中多篇时用户常要挨个点开比对，清空就得每次重输；
+   * 点 × 或按 Esc 才退出搜索，届时树已按 URL 展开到最后打开的那篇
+   */
   function openSearchResult(id: number) {
     setSelectedKey(noteKey(id));
-    setSearchQuery("");
     navigate(`/notes/${id}`);
   }
 
@@ -3160,7 +3163,10 @@ export function NotesPanel() {
                 未找到匹配的笔记
               </div>
             ) : (
-              searchResults.map((r) => (
+              searchResults.map((r) => {
+                // 搜索结果点开后列表保留，标出当前打开的那篇，来回切换时不看串
+                const restBg = r.id === noteIdFromUrl ? `${token.colorPrimary}1f` : "transparent";
+                return (
                 <div
                   key={r.id}
                   onClick={() => openSearchResult(r.id)}
@@ -3169,13 +3175,14 @@ export function NotesPanel() {
                     padding: "6px 10px",
                     borderRadius: 6,
                     marginBottom: 2,
+                    background: restBg,
                     transition: "background .15s",
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = `${token.colorPrimary}10`;
+                    if (r.id !== noteIdFromUrl) e.currentTarget.style.background = `${token.colorPrimary}10`;
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "transparent";
+                    e.currentTarget.style.background = restBg;
                   }}
                 >
                   <div
@@ -3203,7 +3210,8 @@ export function NotesPanel() {
                     </div>
                   )}
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         )}
