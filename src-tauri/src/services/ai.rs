@@ -236,11 +236,108 @@ fn chat_request(
     let mut req = client
         .post(build_openai_chat_url(api_url))
         .header("Content-Type", "application/json")
-        .json(body);
+        .json(&*with_fixed_sampling(body));
     if let Some(key) = api_key.map(str::trim).filter(|k| !k.is_empty()) {
         req = req.header("Authorization", format!("Bearer {}", key));
     }
     req
+}
+
+/// 第一道防线：采样参数被锁死的模型（ai-profile `sampling::fixed_sampling`），
+/// 把请求体里**已带的**采样参数换成它唯一接受的值。
+///
+/// Kimi K 系（kimi-k2.5 / k2.6 / k3 / k3.1-pro）在 OpenAI 兼容 `/chat/completions` 上只接受
+/// temperature=1、top_p=0.95、两个 penalty=0，本项目写死的 `temperature: 0.85` 发过去一律
+/// 400 `invalid temperature: only 1 is allowed for this model`。
+/// 调用方没带的参数仍不带（服务端默认值总是合法的）；值用 crate 给的 f64 写进 JSON，
+/// 不经 f32（`0.95_f32` 会写成 `0.949999988…`，服务端精确比较照样 400）。
+/// 只在 OpenAI 兼容分支调用：Anthropic 转换本来就丢掉采样参数。
+fn with_fixed_sampling(body: &Value) -> std::borrow::Cow<'_, Value> {
+    use std::borrow::Cow;
+    let Some(fixed) = body
+        .get("model")
+        .and_then(Value::as_str)
+        .and_then(ai_profile::sampling::fixed_sampling)
+    else {
+        return Cow::Borrowed(body);
+    };
+    let pairs = [
+        ("temperature", fixed.temperature),
+        ("top_p", fixed.top_p),
+        ("presence_penalty", fixed.presence_penalty),
+        ("frequency_penalty", fixed.frequency_penalty),
+    ];
+    let mut fixed_body: Option<Value> = None;
+    for (key, only) in pairs {
+        let Some(only) = only else { continue };
+        let current = body.get(key).filter(|v| !v.is_null());
+        if current.is_none() || current.and_then(Value::as_f64) == Some(only) {
+            continue;
+        }
+        fixed_body.get_or_insert_with(|| body.clone())[key] = json!(only);
+    }
+    fixed_body.map(Cow::Owned).unwrap_or(Cow::Borrowed(body))
+}
+
+/// 请求体顶层是否带了任一采样参数（`ai_profile::sampling::SAMPLING_PARAMS`）。
+fn has_sampling_params(body: &Value) -> bool {
+    ai_profile::sampling::SAMPLING_PARAMS
+        .iter()
+        .any(|k| body.get(*k).is_some_and(|v| !v.is_null()))
+}
+
+/// 去掉全部采样参数后的请求体（用服务端默认值，对所有模型都合法）。
+fn without_sampling_params(body: &Value) -> Value {
+    let mut out = body.clone();
+    if let Some(map) = out.as_object_mut() {
+        for k in ai_profile::sampling::SAMPLING_PARAMS {
+            map.remove(*k);
+        }
+    }
+    out
+}
+
+/// 发出对话请求（[`chat_request`] / [`model_chat_request`] 构造的那个），带第二道防线。
+///
+/// 表外的模型因采样参数被拒（ai-profile `sampling::is_sampling_rejected`：400/422、提到采样参数名、
+/// 不是上下文超长）→ 去掉全部采样参数**重发一次**。只重发一次：去掉后仍失败说明不是采样参数的问题，
+/// 那次的响应原样交给调用方走原有错误路径（上下文超长降档、错误翻译等都不受影响）。
+///
+/// 不重发的情况直接 `send()`：Anthropic 协议（转换时已丢采样参数；且这里拿的是 OpenAI 结构的 body，
+/// 重发会发错形状）、请求体没带采样参数、请求体不可克隆。
+/// 为了判断而读掉的错误响应体会按原状态码 / 响应头 / 正文重新包成 `Response` 交回，调用方照旧 `.text()`。
+/// 流式与非流式共用：成功（2xx）的响应原样返回，流不受影响。
+async fn send_chat(
+    request: reqwest::RequestBuilder,
+    provider: &str,
+    body: &Value,
+) -> Result<reqwest::Response, reqwest::Error> {
+    if anthropic::is_anthropic(provider) || !has_sampling_params(body) {
+        return request.send().await;
+    }
+    let Some(retry) = request.try_clone() else {
+        return request.send().await;
+    };
+    let resp = request.send().await?;
+    let status = resp.status();
+    if !matches!(status.as_u16(), 400 | 422) {
+        return Ok(resp);
+    }
+    let headers = resp.headers().clone();
+    let bytes = resp.bytes().await.unwrap_or_default();
+    let text = String::from_utf8_lossy(&bytes);
+    if ai_profile::sampling::is_sampling_rejected(status.as_u16(), &text) {
+        log::warn!(
+            "模型 {} 不接受请求里的采样参数，去掉后重发一次：{}",
+            body.get("model").and_then(Value::as_str).unwrap_or(""),
+            text.chars().take(200).collect::<String>()
+        );
+        return retry.json(&without_sampling_params(body)).send().await;
+    }
+    let mut rebuilt = http::Response::new(bytes);
+    *rebuilt.status_mut() = status;
+    *rebuilt.headers_mut() = headers;
+    Ok(reqwest::Response::from(rebuilt))
 }
 
 /// [`chat_request`] 的已存配置版。
@@ -409,15 +506,18 @@ fn emit_ai_error(app: &AppHandle, conversation_id: i64, error: &str) {
 /// 不看信号。本地模型首次加载 / prompt-eval 可能在这里卡几十秒到几分钟，期间点「停止」
 /// 毫无反应，要等模型开口才生效。drop 掉 send 的 future 会断开连接，Ollama 等服务端
 /// 看到断开会停止生成，不会在后台继续白算。
+///
+/// 接收「发送」这个 future（`request.send()` 或 [`send_chat`]），而不是 `RequestBuilder`：
+/// 对话请求要走 `send_chat` 的采样参数被拒重发，重发那一次同样能被「停止」打断。
 async fn send_unless_cancelled(
-    request: reqwest::RequestBuilder,
+    send: impl std::future::Future<Output = Result<reqwest::Response, reqwest::Error>>,
     cancel_rx: &mut watch::Receiver<bool>,
 ) -> Option<Result<reqwest::Response, reqwest::Error>> {
     if *cancel_rx.borrow() {
         return None;
     }
     tokio::select! {
-        r = request.send() => Some(r),
+        r = send => Some(r),
         _ = async {
             // changed() 出错 = Sender 已 drop（命令结束），不算取消，永远挂起让 send 跑完
             while cancel_rx.changed().await.is_ok() {
@@ -1533,9 +1633,7 @@ impl AiService {
                 "seed": seed,
                 "stream": false
             });
-            let response = model_chat_request(client, &model, &body)
-                .timeout(timeout)
-                .send()
+            let response = send_chat(model_chat_request(client, &model, &body).timeout(timeout), &model.provider, &body)
                 .await
                 .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
             if !response.status().is_success() {
@@ -1629,9 +1727,7 @@ impl AiService {
                 "max_tokens": 800,
                 "stream": false
             });
-            let response = model_chat_request(client, &model, &body)
-                .timeout(timeout)
-                .send()
+            let response = send_chat(model_chat_request(client, &model, &body).timeout(timeout), &model.provider, &body)
                 .await
                 .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
             if !response.status().is_success() {
@@ -1722,16 +1818,12 @@ impl AiService {
             "max_tokens": 5,
             "stream": false
         });
-        let response = chat_request(
-            client,
+        let response = send_chat(
+            chat_request(client, &input.provider, &input.api_url, input.api_key.as_deref(), &body, 5)
+                .timeout(timeout),
             &input.provider,
-            &input.api_url,
-            input.api_key.as_deref(),
             &body,
-            5,
         )
-        .timeout(timeout)
-        .send()
         .await
         .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
         if !response.status().is_success() {
@@ -1849,9 +1941,8 @@ impl AiService {
         });
         apply_max_tokens(&mut body, model);
 
-        let response = model_chat_request(client, model, &body)
-            .send()
-            .await
+        let response = send_chat(model_chat_request(client, model, &body), &model.provider, &body)
+                .await
             .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
         if !response.status().is_success() {
             let status = response.status();
@@ -2339,7 +2430,7 @@ impl AiService {
         });
         apply_max_tokens(&mut body, model);
 
-        let response = match send_unless_cancelled(client.post(&url).json(&body), &mut cancel_rx).await {
+        let response = match send_unless_cancelled(client.post(&url).json(&body).send(), &mut cancel_rx).await {
             // 还没开口就被停止：返回空文本，由 chat_stream 存成「已停止」卡片
             None => return Ok(StreamText::whole(String::new())),
             Some(Ok(r)) => r,
@@ -2447,7 +2538,7 @@ impl AiService {
         apply_max_tokens(&mut body, model);
         let request = model_chat_request(client, model, &body);
 
-        let response = match send_unless_cancelled(request, &mut cancel_rx).await {
+        let response = match send_unless_cancelled(send_chat(request, &model.provider, &body), &mut cancel_rx).await {
             // 还没开口就被停止：返回空文本，由 chat_stream 存成「已停止」卡片
             None => return Ok(StreamText::whole(String::new())),
             Some(Ok(r)) => r,
@@ -2929,7 +3020,7 @@ impl AiService {
 
         let request = model_chat_request(client, model, &request_body);
 
-        let response = match send_unless_cancelled(request, &mut cancel_rx).await {
+        let response = match send_unless_cancelled(send_chat(request, &model.provider, &request_body), &mut cancel_rx).await {
             // 还没开口就被停止：chat_stream_with_skills 看到取消信号后存「已停止」卡片
             None => {
                 return Ok(ToolRound { content: String::new(), tool_calls: Vec::new(), truncated: false })
@@ -3058,7 +3149,7 @@ impl AiService {
         // 优雅降级成纯对话，而不是整条请求挂掉、前端一直转圈（Bug B）。
         // 失败的早返回路径都补发 ai:error，保证错误一定能冒到前端 UI。
         let response = loop {
-            let resp = match send_unless_cancelled(client.post(&url).json(&request_body), &mut cancel_rx).await {
+            let resp = match send_unless_cancelled(client.post(&url).json(&request_body).send(), &mut cancel_rx).await {
                 // 还没开口就被停止：chat_stream_with_skills 看到取消信号后存「已停止」卡片
                 None => return (Ok(String::new()), Some(Vec::new())),
                 Some(Ok(r)) => r,
@@ -3409,9 +3500,8 @@ impl AiService {
         // 拿 JSON（见 supports_json_response_format 里"漏发比误发安全"的取舍）
         strip_unsupported_response_format(&mut req_body, &model);
 
-        let response = model_chat_request(client, &model, &req_body)
-            .send()
-            .await
+        let response = send_chat(model_chat_request(client, &model, &req_body), &model.provider, &req_body)
+                .await
             .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
         if !response.status().is_success() {
             let status = response.status();
@@ -3507,9 +3597,8 @@ impl AiService {
         // 拿 JSON（见 supports_json_response_format 里"漏发比误发安全"的取舍）
         strip_unsupported_response_format(&mut req_body, &model);
 
-        let response = model_chat_request(client, &model, &req_body)
-            .send()
-            .await
+        let response = send_chat(model_chat_request(client, &model, &req_body), &model.provider, &req_body)
+                .await
             .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
         if !response.status().is_success() {
             let status = response.status();
@@ -3600,9 +3689,8 @@ impl AiService {
         });
         strip_unsupported_response_format(&mut req_body, &model);
 
-        let response = model_chat_request(client, &model, &req_body)
-            .send()
-            .await
+        let response = send_chat(model_chat_request(client, &model, &req_body), &model.provider, &req_body)
+                .await
             .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
         if !response.status().is_success() {
             let status = response.status();
@@ -3717,9 +3805,8 @@ impl AiService {
         // 拿 JSON（见 supports_json_response_format 里"漏发比误发安全"的取舍）
         strip_unsupported_response_format(&mut req_body, &model);
 
-        let response = model_chat_request(client, &model, &req_body)
-            .send()
-            .await
+        let response = send_chat(model_chat_request(client, &model, &req_body), &model.provider, &req_body)
+                .await
             .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
         if !response.status().is_success() {
             let status = response.status();
@@ -3857,9 +3944,8 @@ impl AiService {
         // 拿 JSON（见 supports_json_response_format 里"漏发比误发安全"的取舍）
         strip_unsupported_response_format(&mut req_body, &model);
 
-        let response = model_chat_request(client, &model, &req_body)
-            .send()
-            .await
+        let response = send_chat(model_chat_request(client, &model, &req_body), &model.provider, &req_body)
+                .await
             .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
         if !response.status().is_success() {
             let status = response.status();
@@ -4025,9 +4111,8 @@ impl AiService {
         // 拿 JSON（见 supports_json_response_format 里"漏发比误发安全"的取舍）
         strip_unsupported_response_format(&mut req_body, &model);
 
-        let response = model_chat_request(client, &model, &req_body)
-            .send()
-            .await
+        let response = send_chat(model_chat_request(client, &model, &req_body), &model.provider, &req_body)
+                .await
             .map_err(|e| AppError::Custom(format!("API 请求失败: {}", e)))?;
         if !response.status().is_success() {
             let status = response.status();
@@ -5361,7 +5446,7 @@ mod turn_tests {
 
         let started = std::time::Instant::now();
         let req = reqwest::Client::new().get(format!("http://{addr}/"));
-        let out = send_unless_cancelled(req, &mut rx).await;
+        let out = send_unless_cancelled(req.send(), &mut rx).await;
         assert!(out.is_none(), "应被取消");
         assert!(started.elapsed() < std::time::Duration::from_secs(5), "取消没有及时生效");
     }
@@ -5385,7 +5470,7 @@ mod turn_tests {
         let (tx, mut rx) = watch::channel(false);
         drop(tx);
         let req = reqwest::Client::new().get(format!("http://{addr}/"));
-        let out = send_unless_cancelled(req, &mut rx).await;
+        let out = send_unless_cancelled(req.send(), &mut rx).await;
         assert!(matches!(out, Some(Ok(_))), "应正常拿到响应");
     }
 
@@ -6237,6 +6322,159 @@ mod sse_stream_tests {
         assert_eq!(r.tool_calls[0].id, "c1", "只交出最后一段的完整调用");
         let bodies = bodies.lock().unwrap().clone();
         assert!(bodies[1]["tools"].is_array(), "续写请求仍带工具");
+    }
+
+    // ───────────── 采样参数被锁死 / 被拒（ai-profile sampling，Kimi K 系 400） ─────────────
+
+    const KIMI_TEMP_400: &str =
+        r#"{"error":{"message":"invalid temperature: only 1 is allowed for this model","type":"invalid_request_error"}}"#;
+
+    fn local_client() -> Client {
+        Client::builder().no_proxy().build().unwrap()
+    }
+
+    /// 第一道防线：Kimi K 系的请求体里已带的采样参数换成唯一接受的值，没带的不补；别的模型原样
+    #[test]
+    fn fixed_sampling_rewrites_locked_model_body() {
+        let body = json!({ "model": "kimi-k3", "temperature": 0.85, "top_p": 0.95, "seed": 7, "stream": false });
+        let fixed = with_fixed_sampling(&body);
+        assert_eq!(fixed["temperature"], json!(1.0));
+        assert_eq!(fixed["top_p"], json!(0.95), "0.95 必须是 f64 的 0.95，不能是 0.9499999…");
+        assert_eq!(fixed["seed"], json!(7), "非采样参数不动");
+        assert!(fixed.get("presence_penalty").is_none(), "调用方没带的不补");
+        assert!(fixed.get("frequency_penalty").is_none());
+
+        // 聚合站写法也命中（取最后一段）
+        let agg = json!({ "model": "moonshotai/Kimi-K2.5", "temperature": 0.2 });
+        assert_eq!(with_fixed_sampling(&agg)["temperature"], json!(1.0));
+
+        // 表外模型：原样借用，不克隆
+        let other = json!({ "model": "deepseek-chat", "temperature": 0.85 });
+        assert!(matches!(with_fixed_sampling(&other), std::borrow::Cow::Borrowed(_)));
+        // 没带采样参数：也原样
+        let plain = json!({ "model": "kimi-k3", "messages": [] });
+        assert!(matches!(with_fixed_sampling(&plain), std::borrow::Cow::Borrowed(_)));
+    }
+
+    /// 第一道防线端到端：发出去的请求体里 temperature 已是 1（经真实 HTTP，看服务端收到的）
+    #[tokio::test]
+    async fn locked_model_request_sends_temperature_one() {
+        let (url, bodies) = serve_seq(vec![(200, json!({ "choices": [] }).to_string())]).await;
+        let body = json!({ "model": "kimi-k3", "messages": [], "temperature": 0.85, "top_p": 0.95, "stream": false });
+        let client = local_client();
+        let resp = send_chat(
+            chat_request(&client, "moonshot", &url, Some("k"), &body, 64),
+            "moonshot",
+            &body,
+        )
+        .await
+        .unwrap();
+        assert!(resp.status().is_success());
+        let bodies = bodies.lock().unwrap().clone();
+        assert_eq!(bodies.len(), 1, "被锁模型第一道防线就该过，不需要重发");
+        assert_eq!(bodies[0]["temperature"], json!(1.0));
+        assert_eq!(bodies[0]["top_p"], json!(0.95));
+    }
+
+    /// 第二道防线（流式）：表外模型被拒 → 去掉全部采样参数重发一次 → 流照常读完
+    #[tokio::test]
+    async fn sampling_rejected_stream_retries_once_without_sampling_params() {
+        let (url, bodies) = serve_seq(vec![(400, KIMI_TEMP_400.into()), oa_answer("你好", "stop")]).await;
+        let mut model = test_model(url);
+        model.model_id = "kimi-k9-future".into(); // 表里没有的新模型，只能靠第二道防线
+        let body = json!({
+            "model": model.model_id, "messages": [], "stream": true,
+            "temperature": 0.85, "top_p": 0.9, "presence_penalty": 0.1, "frequency_penalty": 0.2, "seed": 1,
+        });
+        let client = local_client();
+        let resp = send_chat(model_chat_request(&client, &model, &body), &model.provider, &body)
+            .await
+            .unwrap();
+        assert!(resp.status().is_success(), "重发那次应成功");
+        let rec = Rec::default();
+        let (_tx, mut rx) = watch::channel(false);
+        let text = consume_text_stream(&rec, resp, OA, &mut rx).await.ok().unwrap().text;
+        assert_eq!(text, "你好");
+
+        let bodies = bodies.lock().unwrap().clone();
+        assert_eq!(bodies.len(), 2, "被拒后只重发一次");
+        assert_eq!(bodies[0]["temperature"], json!(0.85), "第一次照原样发");
+        for k in ai_profile::sampling::SAMPLING_PARAMS {
+            assert!(bodies[1].get(*k).is_none(), "重发时应去掉 {k}：{}", bodies[1]);
+        }
+        assert_eq!(bodies[1]["seed"], json!(1), "非采样参数保留");
+        assert_eq!(bodies[1]["stream"], json!(true));
+    }
+
+    /// 第二道防线（非流式）：重发成功后照常解析 JSON
+    #[tokio::test]
+    async fn sampling_rejected_non_stream_retry_succeeds() {
+        let ok = json!({ "choices": [{ "message": { "content": "好的" } }] }).to_string();
+        let (url, bodies) = serve_seq(vec![(422, KIMI_TEMP_400.into()), (200, ok)]).await;
+        let model = test_model(url);
+        let body = json!({ "model": "m", "messages": [], "temperature": 0.3, "stream": false });
+        let client = local_client();
+        let resp = send_chat(model_chat_request(&client, &model, &body), &model.provider, &body)
+            .await
+            .unwrap();
+        let v: Value = resp.json().await.unwrap();
+        assert_eq!(completion_text(&model.provider, &v).as_deref(), Some("好的"));
+        assert_eq!(bodies.lock().unwrap().len(), 2);
+    }
+
+    /// 只重发一次：去掉采样参数后仍被拒，第二次的错误响应原样交给调用方，不再发第三次
+    #[tokio::test]
+    async fn sampling_rejected_retries_only_once() {
+        let (url, bodies) = serve_seq(vec![
+            (400, KIMI_TEMP_400.into()),
+            (400, KIMI_TEMP_400.into()),
+            oa_answer("不该走到这里", "stop"),
+        ])
+        .await;
+        let model = test_model(url);
+        let body = json!({ "model": "m", "messages": [], "temperature": 0.85, "stream": true });
+        let client = local_client();
+        let resp = send_chat(model_chat_request(&client, &model, &body), &model.provider, &body)
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 400);
+        assert!(resp.text().await.unwrap().contains("invalid temperature"));
+        assert_eq!(bodies.lock().unwrap().len(), 2, "只重发一次");
+    }
+
+    /// 别的 400（不是采样参数）不重发；读掉的错误正文重新包好交回，调用方的错误翻译照常拿到原文
+    #[tokio::test]
+    async fn other_400_is_not_retried_and_body_preserved() {
+        let err = r#"{"error":{"message":"model not found"}}"#;
+        let (url, bodies) = serve_seq(vec![(400, err.into()), oa_answer("x", "stop")]).await;
+        let model = test_model(url);
+        let body = json!({ "model": "m", "messages": [], "temperature": 0.85 });
+        let client = local_client();
+        let resp = send_chat(model_chat_request(&client, &model, &body), &model.provider, &body)
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 400);
+        assert_eq!(
+            resp.headers().get("content-type").and_then(|v| v.to_str().ok()),
+            Some("application/json"),
+            "响应头一并保留"
+        );
+        assert_eq!(resp.text().await.unwrap(), err);
+        assert_eq!(bodies.lock().unwrap().len(), 1);
+    }
+
+    /// 请求体本来就没带采样参数：被拒也不重发（重发也是同一个请求）
+    #[tokio::test]
+    async fn no_sampling_params_no_retry() {
+        let (url, bodies) = serve_seq(vec![(400, KIMI_TEMP_400.into()), oa_answer("x", "stop")]).await;
+        let model = test_model(url);
+        let body = json!({ "model": "m", "messages": [] });
+        let client = local_client();
+        let resp = send_chat(model_chat_request(&client, &model, &body), &model.provider, &body)
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 400);
+        assert_eq!(bodies.lock().unwrap().len(), 1);
     }
 }
 

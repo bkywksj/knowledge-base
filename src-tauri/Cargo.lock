@@ -86,9 +86,9 @@ dependencies = [
 
 [[package]]
 name = "ai-profile"
-version = "0.1.7"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "393a5544e4c923910cbe0ebce653ec2311e54357dde0977154bd07bbe3ce5aff"
+checksum = "b1a8f26c6e2e3b2b347eb344b889e7a6082efeaab10448b8ae76d03930c93f43"
 dependencies = [
  "base64 0.22.1",
  "log",
