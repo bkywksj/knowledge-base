@@ -6,6 +6,7 @@ import { Search, Palette, ArrowLeft, ArrowRight, PanelLeftClose, PanelLeftOpen, 
 import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { importApi } from "@/lib/api";
 import { showExternalMdIntroOnce } from "@/lib/externalMdIntro";
 import { resolveOpenMdMode } from "@/lib/openMdChoice";
@@ -53,6 +54,7 @@ const { Sider, Content } = Layout;
 const IS_MAC =
   typeof navigator !== "undefined" && /Mac OS X|Macintosh/.test(navigator.userAgent);
 const HEADER_LEFT_PADDING = IS_MAC ? 80 : 10;
+const OFFICIAL_SITE = "https://kb.ruoyi.plus/";
 
 function getAppWindow(): Window | null {
   try {
@@ -62,23 +64,59 @@ function getAppWindow(): Window | null {
   }
 }
 
-/** 标题栏中间的可拖拽空白区域（单击拖动窗口，双击最大化 / 还原） */
-function DragRegion() {
-  const windowRef = useRef<Window | null>(getAppWindow());
+/** 标题栏空白处按下：单击拖动窗口，双击最大化 / 还原（中间空白、左段空白共用） */
+function dragWindowOnMouseDown(e: React.MouseEvent) {
+  const win = getAppWindow();
+  if (e.buttons !== 1 || !win) return;
+  if (e.detail === 2) void win.toggleMaximize();
+  else void win.startDragging();
+}
 
-  function handleMouseDown(e: React.MouseEvent) {
-    if (e.buttons === 1 && windowRef.current) {
-      if (e.detail === 2) {
-        windowRef.current.toggleMaximize();
-      } else {
-        windowRef.current.startDragging();
-      }
-    }
+/**
+ * 左上角品牌按钮：点一下打开官网，按住移动超过 4px 改为拖窗口。
+ * 左上角是最顺手抓窗口的位置，标签一多右侧空白又被挤没（用户反馈）；
+ * 不能一按下就 startDragging —— 系统接管鼠标后 click 不再触发，点击就失效了。
+ */
+function useBrandDrag(onClick: () => void) {
+  // 本次按下是否已转成拖窗口；拖完 click 可能还会到，靠它吞掉。每次按下重置，
+  // 免得 click 没到时标记残留、吞掉下一次正常点击
+  const draggedRef = useRef(false);
+
+  function onMouseDown(e: React.MouseEvent) {
+    draggedRef.current = false;
+    if (e.button !== 0) return;
+    const sx = e.clientX;
+    const sy = e.clientY;
+    const cleanup = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", cleanup);
+    };
+    const onMove = (ev: MouseEvent) => {
+      if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 4) return;
+      cleanup();
+      draggedRef.current = true;
+      void getAppWindow()?.startDragging();
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", cleanup);
   }
 
+  function handleClick() {
+    if (draggedRef.current) {
+      draggedRef.current = false;
+      return;
+    }
+    onClick();
+  }
+
+  return { onMouseDown, onClick: handleClick };
+}
+
+/** 标题栏中间的可拖拽空白区域（单击拖动窗口，双击最大化 / 还原） */
+function DragRegion() {
   return (
     <div
-      onMouseDown={handleMouseDown}
+      onMouseDown={dragWindowOnMouseDown}
       style={{
         flex: 1,
         // 标签多时标签区会占满中间，这里保底 40px 一定能抓住窗口拖
@@ -340,6 +378,10 @@ export function AppLayout() {
     [sidePanelWidth, setSidePanelWidth, effectiveSiderWidth],
   );
   const navigate = useNavigate();
+  // 回首页有活动栏「首页」，品牌按钮改为打开官网（用户要求）
+  const brandDrag = useBrandDrag(() => {
+    openUrl(OFFICIAL_SITE).catch((e) => message.error(`打开失败: ${e}`));
+  });
 
   // URL → activeView 单向同步：任意来源的 navigate（ActivityBar / 命令面板 /
   // 快捷键 / 笔记列表跳转等）都会更新 store.activeView，保证 SidePanel 正确分发
@@ -628,7 +670,7 @@ export function AppLayout() {
     >
       {/*
         v4 标题栏：通栏横跨窗口（原型 docs/design/ui-v4 .titlebar），活动栏 / 侧栏面板 / 主区都在它下面。
-        左段宽度 = 活动栏 + 面板（面板展开时），与下方两列对齐；面板收起时按内容宽（CSS 最小 196px）。
+        左段宽度 = 活动栏 + 面板（面板展开时），与下方两列对齐；面板收起时按内容宽（CSS 最小 250px，给拖动窗口留空白）。
         专注模式 / pop-out 窗口不显示（与原 Header 一致）。样式见 global.css .kb-titlebar
       */}
       {!focusMode && (
@@ -640,9 +682,18 @@ export function AppLayout() {
               paddingLeft: HEADER_LEFT_PADDING,
               width: panelDocked ? effectiveSiderWidth + sidePanelWidth : undefined,
             }}
+            // 只响应左段自身（品牌按钮 margin-right:auto 撑出来的空白），按钮的点击不受影响
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) dragWindowOnMouseDown(e);
+            }}
           >
-            <Tooltip title="回到首页">
-              <button type="button" className="kb-tb-brand" onClick={() => navigate("/")}>
+            <Tooltip title="访问官网 kb.ruoyi.plus">
+              <button
+                type="button"
+                className="kb-tb-brand"
+                onMouseDown={brandDrag.onMouseDown}
+                onClick={brandDrag.onClick}
+              >
                 <BrandLogo size={22} />
                 <span>知识库</span>
               </button>
@@ -675,8 +726,8 @@ export function AppLayout() {
                 />
               </Tooltip>
             )}
-          </div>
-          <div className="kb-tb-right">
+            {/* 后退 / 前进放左段（原在右段标签前）：左段面板展开时本来就空着一大块，
+                挪过来给标签多让出 60px（用户反馈标签多了右上角不够用） */}
             <Tooltip title="后退 (Alt+←)">
               <Button
                 type="text"
@@ -695,6 +746,8 @@ export function AppLayout() {
                 onClick={() => navigate(1)}
               />
             </Tooltip>
+          </div>
+          <div className="kb-tb-right">
             {/* 笔记标签：v4 起嵌在标题栏里（原型 .tabs），只在笔记工作区挂载——挂载条件的理由见下方 row 形态处的注释。
                 标题栏只在非专注模式出现，所以这里天然就是「!focusMode」分支 */}
             {isNoteWorkspacePath(location.pathname) && <TabBar variant="titlebar" />}

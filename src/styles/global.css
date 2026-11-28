@@ -3015,7 +3015,8 @@ textarea.tiptap-front-matter-input.ant-input:focus {
   display: flex;
   align-items: center;
   gap: 2px;
-  min-width: 196px;
+  /* 品牌 + 折叠 + 后退 / 前进约 195px，再多留 ~55px 空白可以抓着拖窗口 */
+  min-width: 250px;
   padding-right: 6px;
   box-sizing: border-box;
   transition: width 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
